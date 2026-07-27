@@ -191,16 +191,9 @@ public sealed class TerminalSession : IDisposable
                     var read = _ptyOutput!.Read(buffer, 0, buffer.Length);
                     if (read <= 0)
                         break;
-                    if (read == buffer.Length)
-                    {
-                        OutputReceived?.Invoke(buffer);
-                    }
-                    else
-                    {
-                        var chunk = new byte[read];
-                        Array.Copy(buffer, chunk, read);
-                        OutputReceived?.Invoke(chunk);
-                    }
+                    var chunk = new byte[read];
+                    Array.Copy(buffer, chunk, read);
+                    OutputReceived?.Invoke(chunk);
                 }
             }
             catch (IOException)
