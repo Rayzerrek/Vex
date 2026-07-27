@@ -26,13 +26,19 @@ public sealed partial class TerminalControl : UserControl, IDisposable
 
     public event Action<string>? TitleChanged;
     public event Action<int>? ProcessExited;
+    public event Action? FocusGained;
+    public event Action<TerminalCommand>? CommandRequested;
 
     public TerminalControl(string workingDirectory)
     {
         _workingDirectory = workingDirectory;
         InitializeComponent();
         Loaded += OnLoaded;
+        WebView.GotFocus += (_, _) => FocusGained?.Invoke();
+        WebView.GotKeyboardFocus += (_, _) => FocusGained?.Invoke();
     }
+
+    public void FocusTerminal() => WebView.Focus();
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -86,6 +92,17 @@ public sealed partial class TerminalControl : UserControl, IDisposable
                 break;
             case "title":
                 TitleChanged?.Invoke(root.GetProperty("title").GetString() ?? "");
+                break;
+            case "command":
+                var command = root.GetProperty("name").GetString() switch
+                {
+                    "splitRight" => TerminalCommand.SplitRight,
+                    "splitDown" => TerminalCommand.SplitDown,
+                    "newTab" => TerminalCommand.NewTab,
+                    _ => (TerminalCommand?)null,
+                };
+                if (command is { } requested)
+                    CommandRequested?.Invoke(requested);
                 break;
         }
     }
