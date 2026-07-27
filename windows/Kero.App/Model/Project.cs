@@ -16,7 +16,7 @@ public sealed class Project : ObservableObject
     {
         _name = name;
         WorkingDirectory = workingDirectory;
-        var tab = new WorkspaceTab("Terminal 1");
+        var tab = new WorkspaceTab("Terminal 1", workingDirectory);
         Tabs.Add(tab);
         _selectedTab = tab;
     }
@@ -41,7 +41,7 @@ public sealed class Project : ObservableObject
 
     public WorkspaceTab NewTab()
     {
-        var tab = new WorkspaceTab($"Terminal {Tabs.Count + 1}");
+        var tab = new WorkspaceTab($"Terminal {Tabs.Count + 1}", WorkingDirectory);
         Tabs.Add(tab);
         SelectedTab = tab;
         return tab;

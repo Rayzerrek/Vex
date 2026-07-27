@@ -13,9 +13,7 @@
         <DataTemplate DataType="{x:Type m:LeafPane}">
             <Border Background="{StaticResource KeroSurface}" BorderBrush="{StaticResource KeroBorder}"
                     BorderThickness="1" Margin="2">
-                <TextBlock Text="Terminal — wired in a later commit"
-                           Foreground="{StaticResource KeroTextDim}"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <ContentPresenter Content="{Binding View}"/>
             </Border>
         </DataTemplate>
         <DataTemplate DataType="{x:Type m:SplitPane}">
