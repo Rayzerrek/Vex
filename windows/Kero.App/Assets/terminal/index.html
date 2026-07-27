@@ -40,7 +40,7 @@
   // captured here (before xterm sees them) and forwarded to the app.
   window.addEventListener('keydown', function (e) {
     if (e.ctrlKey && e.shiftKey && !e.altKey) {
-      var command = { ArrowRight: 'splitRight', ArrowDown: 'splitDown', KeyT: 'newTab' }[e.code];
+      var command = { ArrowRight: 'splitRight', ArrowDown: 'splitDown', KeyT: 'newTab', KeyW: 'closePane' }[e.code];
       if (command) {
         e.preventDefault();
         e.stopPropagation();
