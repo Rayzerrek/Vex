@@ -2,6 +2,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Kero.Terminal\Kero.Terminal.csproj" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Ship the xterm.js bundle as plain files; the app maps them to a
+         virtual host for the WebView2 at runtime. -->
+    <None Remove="Assets\**\*" />
+    <None Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <PropertyGroup>
