@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using Kero.App.Model;
 using Kero.Terminal;
 using Microsoft.Web.WebView2.Core;
 
@@ -36,6 +37,50 @@ public sealed partial class TerminalControl : UserControl, IDisposable
         Loaded += OnLoaded;
         WebView.GotFocus += (_, _) => FocusGained?.Invoke();
         WebView.GotKeyboardFocus += (_, _) => FocusGained?.Invoke();
+        AppSettings.Instance.PropertyChanged += OnSettingsChanged;
+    }
+
+    private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (_rendererReady)
+            ApplySettings();
+    }
+
+    private void ApplySettings()
+    {
+        if (_disposed || WebView.CoreWebView2 is null) return;
+        var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName) ?? BuiltInThemes.KeroDark;
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "theme",
+            fontFamily = AppSettings.Instance.FontFamily,
+            fontSize = AppSettings.Instance.FontSize,
+            cursorBlink = AppSettings.Instance.CursorBlink,
+            theme = new
+            {
+                background = theme.Background,
+                foreground = theme.Foreground,
+                cursor = theme.Cursor,
+                selectionBackground = theme.SelectionBackground,
+                black = theme.Black,
+                red = theme.Red,
+                green = theme.Green,
+                yellow = theme.Yellow,
+                blue = theme.Blue,
+                magenta = theme.Magenta,
+                cyan = theme.Cyan,
+                white = theme.White,
+                brightBlack = theme.BrightBlack,
+                brightRed = theme.BrightRed,
+                brightGreen = theme.BrightGreen,
+                brightYellow = theme.BrightYellow,
+                brightBlue = theme.BrightBlue,
+                brightMagenta = theme.BrightMagenta,
+                brightCyan = theme.BrightCyan,
+                brightWhite = theme.BrightWhite
+            }
+        });
+        WebView.CoreWebView2.PostWebMessageAsJson(payload);
     }
 
     public void FocusTerminal() => WebView.Focus();
@@ -78,6 +123,7 @@ public sealed partial class TerminalControl : UserControl, IDisposable
         {
             case "ready":
                 _rendererReady = true;
+                ApplySettings();
                 FlushPendingOutput();
                 break;
             case "size":
@@ -173,6 +219,7 @@ public sealed partial class TerminalControl : UserControl, IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
         _session?.Dispose();
         WebView.Dispose();
     }
