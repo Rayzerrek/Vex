@@ -61,7 +61,13 @@ public sealed class LeafPane : PaneNode, IDisposable
         view.TitleChanged += title =>
         {
             if (!string.IsNullOrWhiteSpace(title))
+            {
+                if (title.Contains('\\') || title.Contains('/'))
+                {
+                    try { title = System.IO.Path.GetFileNameWithoutExtension(title); } catch {}
+                }
                 Title = title;
+            }
         };
         view.FocusGained += () => FocusRequested?.Invoke();
         view.ProcessExited += exitCode => ProcessExited?.Invoke(this);

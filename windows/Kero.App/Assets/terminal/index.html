@@ -6,12 +6,18 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
   #term { height: 100%; padding: 2px 0 0 6px; box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #3D4354; border-radius: 5px; border: 2px solid #1F1F24; }
+  ::-webkit-scrollbar-thumb:hover { background: #5a6075; }
+  ::-webkit-scrollbar-corner { background: transparent; }
 </style>
 </head>
 <body>
 <div id="term"></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
+<script src="xterm-addon-webgl.js"></script>
 <script>
 (function () {
   var send = function (msg) { window.chrome.webview.postMessage(msg); };
@@ -35,6 +41,15 @@
   var fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(document.getElementById('term'));
+
+  try {
+    var webgl = new WebglAddon.WebglAddon();
+    // WebGL addon can sometimes fail depending on the system/browser
+    webgl.onContextLoss(function(e) { webgl.dispose(); });
+    term.loadAddon(webgl);
+  } catch (e) {
+    console.error("WebGL failed to load, falling back to DOM renderer", e);
+  }
 
   // Workspace shortcuts. Keystrokes live inside the WebView2, so they are
   // captured here (before xterm sees them) and forwarded to the app.
