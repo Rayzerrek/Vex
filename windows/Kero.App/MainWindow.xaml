@@ -68,6 +68,9 @@
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsSelected" Value="True">
                                                 <Setter Property="Background" Value="{StaticResource KeroHover}" TargetName="chrome"/>
+                                                <Setter Property="BorderThickness" Value="2,0,0,0" TargetName="chrome"/>
+                                                <Setter Property="BorderBrush" Value="{StaticResource KeroAccent}" TargetName="chrome"/>
+                                                <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
                                             </Trigger>
                                             <Trigger Property="IsMouseOver" Value="True">
                                                 <Setter Property="Background" Value="{StaticResource KeroSurface}" TargetName="chrome"/>
@@ -106,30 +109,64 @@
 
             <Border Grid.Row="0" BorderBrush="{StaticResource KeroBorder}" BorderThickness="0,0,0,1">
                 <DockPanel>
-                    <ItemsControl DockPanel.Dock="Left"
-                                  ItemsSource="{Binding SelectedProject.Tabs}">
-                        <ItemsControl.ItemsPanel>
+                    <ListBox DockPanel.Dock="Left"
+                             ItemsSource="{Binding SelectedProject.Tabs}"
+                             SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
+                             Background="Transparent" BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                             ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                        <ListBox.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <StackPanel Orientation="Horizontal"/>
                             </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="10,6"/>
+                                <Setter Property="BorderThickness" Value="0,0,1,0"/>
+                                <Setter Property="BorderBrush" Value="{StaticResource KeroBorder}"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="chrome" Background="Transparent"
+                                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                    Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource KeroHover}" TargetName="chrome"/>
+                                                    <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
+                                                </Trigger>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource KeroSurface}" TargetName="chrome"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Border Padding="10,6" BorderThickness="0,0,1,0"
-                                        BorderBrush="{StaticResource KeroBorder}"
-                                        MouseLeftButtonUp="TabHeader_Select">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding Title}" MaxWidth="180"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center"/>
-                                        <Button Style="{StaticResource GhostButton}" Padding="4,0"
-                                                Margin="6,0,0,0" ToolTip="Close Tab"
-                                                Click="CloseTab_Click">×</Button>
-                                    </StackPanel>
-                                </Border>
+                                <StackPanel Orientation="Horizontal" Background="Transparent"
+                                            MouseLeftButtonDown="TabHeader_MouseDown">
+                                    <TextBlock x:Name="TitleBlock" Text="{Binding Title}" MaxWidth="180"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center"/>
+                                    <TextBox x:Name="TitleEditBox" Text="{Binding Title}" MaxWidth="180"
+                                             Visibility="Collapsed"
+                                             VerticalAlignment="Center"
+                                             KeyDown="TitleEditBox_KeyDown"
+                                             LostFocus="TitleEditBox_LostFocus"/>
+                                    <Button Style="{StaticResource GhostButton}" Padding="4,0"
+                                            Margin="6,0,0,0" ToolTip="Close Tab"
+                                            Click="CloseTab_Click">×</Button>
+                                </StackPanel>
                             </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                     <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)"
                             Click="NewTab_Click">＋</Button>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">

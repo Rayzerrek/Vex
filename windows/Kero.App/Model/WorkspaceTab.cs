@@ -34,6 +34,8 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         set => Set(ref _title, value);
     }
 
+    public bool HasCustomTitle { get; set; }
+
     public PaneNode Root
     {
         get => _root;
@@ -54,7 +56,8 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             if (value is not null)
             {
                 value.IsFocused = true;
-                Title = value.Title;
+                if (!HasCustomTitle)
+                    Title = value.Title;
             }
         }
     }
@@ -113,7 +116,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     private void OnLeafPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(LeafPane.Title) && _activeLeaf is { } active && ReferenceEquals(sender, active))
+        if (e.PropertyName == nameof(LeafPane.Title) && _activeLeaf is { } active && ReferenceEquals(sender, active) && !HasCustomTitle)
             Title = active.Title;
     }
 
