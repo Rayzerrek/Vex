@@ -61,6 +61,18 @@ public partial class MainWindow : Window
         _workspace.SelectedProject?.SelectedTab?.Split(System.Windows.Controls.Orientation.Vertical);
     }
 
+    private void TabSplitRight_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WorkspaceTab tab })
+            tab.Split(System.Windows.Controls.Orientation.Horizontal);
+    }
+
+    private void TabSplitDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WorkspaceTab tab })
+            tab.Split(System.Windows.Controls.Orientation.Vertical);
+    }
+
     private void TabHeader_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: WorkspaceTab tab } && _workspace.SelectedProject is { } project)
