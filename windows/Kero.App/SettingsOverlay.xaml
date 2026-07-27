@@ -74,6 +74,25 @@
                             </ListBox.ItemContainerStyle>
                         </ListBox>
 
+                        <!-- Shell -->
+                        <TextBlock Text="Shell" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
+                        <ComboBox ItemsSource="{Binding AvailableShells}" 
+                                  SelectedItem="{Binding Shell, UpdateSourceTrigger=PropertyChanged}" 
+                                  Background="{StaticResource KeroBackground}" 
+                                  Foreground="{StaticResource KeroText}"
+                                  BorderBrush="{StaticResource KeroBorder}"
+                                  BorderThickness="1"
+                                  Padding="8,6"
+                                  Margin="0,0,0,24">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="Background" Value="{StaticResource KeroSurface}"/>
+                                    <Setter Property="Foreground" Value="{StaticResource KeroText}"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
+
                         <!-- Font Family -->
                         <TextBlock Text="Font Family" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
                         <ComboBox ItemsSource="{Binding AvailableFonts}" 
