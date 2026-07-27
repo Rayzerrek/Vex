@@ -75,6 +75,7 @@
   term.onTitleChange(function (t) { send({ type: 'title', title: t }); });
   term.onResize(function (size) { send({ type: 'resize', cols: size.cols, rows: size.rows }); });
 
+  var resizeTimeout;
   var reportSize = function () {
     var rect = document.getElementById('term').getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) {
@@ -84,7 +85,11 @@
     fit.fit();
     send({ type: 'size', cols: term.cols, rows: term.rows });
   };
-  window.addEventListener('resize', reportSize);
+  
+  window.addEventListener('resize', function() {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(reportSize, 50);
+  });
 
   window.chrome.webview.addEventListener('message', function (e) {
     var m = e.data;
@@ -103,7 +108,7 @@
   });
 
   send({ type: 'ready' });
-  reportSize();
+  setTimeout(reportSize, 50);
 })();
 </script>
 </body>
