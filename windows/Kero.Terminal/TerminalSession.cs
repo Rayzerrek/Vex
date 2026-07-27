@@ -48,6 +48,9 @@ public sealed class TerminalSession : IDisposable
         if (_pseudoConsole != IntPtr.Zero)
             throw new InvalidOperationException("Session is already started.");
 
+        _columns = columns;
+        _rows = rows;
+
         var sa = new NativeMethods.SECURITY_ATTRIBUTES
         {
             nLength = Marshal.SizeOf<NativeMethods.SECURITY_ATTRIBUTES>(),
@@ -105,8 +108,15 @@ public sealed class TerminalSession : IDisposable
         }
     }
 
+    private short _columns;
+    private short _rows;
+
     public void Resize(short columns, short rows)
     {
+        if (columns == _columns && rows == _rows) return;
+        _columns = columns;
+        _rows = rows;
+
         if (_pseudoConsole != IntPtr.Zero && !_disposed)
             NativeMethods.ResizePseudoConsole(_pseudoConsole, new NativeMethods.COORD(columns, rows));
     }
