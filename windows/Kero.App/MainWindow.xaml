@@ -154,6 +154,12 @@
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal" Background="Transparent"
                                             MouseDown="TabHeader_MouseDown">
+                                    <StackPanel.ContextMenu>
+                                        <ContextMenu Style="{StaticResource DarkContextMenu}">
+                                            <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+→" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
+                                            <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+↓" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
+                                        </ContextMenu>
+                                    </StackPanel.ContextMenu>
                                     <TextBlock x:Name="TitleBlock" Text="{Binding Title}" MaxWidth="180"
                                                TextTrimming="CharacterEllipsis" FontSize="15"
                                                VerticalAlignment="Center"/>
