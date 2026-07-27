@@ -14,6 +14,15 @@
             <Border Background="{StaticResource KeroSurface}" BorderBrush="{StaticResource KeroBorder}"
                     BorderThickness="1" Margin="2">
                 <ContentPresenter Content="{Binding View}"/>
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFocused}" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource KeroAccent}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
             </Border>
         </DataTemplate>
         <DataTemplate DataType="{x:Type m:SplitPane}">
@@ -97,15 +106,29 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Padding="10,8" BorderThickness="0,0,1,0"
-                                        BorderBrush="{StaticResource KeroBorder}">
-                                    <TextBlock Text="{Binding Title}"/>
+                                <Border Padding="10,6" BorderThickness="0,0,1,0"
+                                        BorderBrush="{StaticResource KeroBorder}"
+                                        MouseLeftButtonUp="TabHeader_Select">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Title}" MaxWidth="180"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <Button Style="{StaticResource GhostButton}" Padding="4,0"
+                                                Margin="6,0,0,0" ToolTip="Close Tab"
+                                                Click="CloseTab_Click">×</Button>
+                                    </StackPanel>
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <Button Style="{StaticResource GhostButton}" ToolTip="New Tab"
+                    <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)"
                             Click="NewTab_Click">＋</Button>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button Style="{StaticResource GhostButton}" ToolTip="Split Right (Ctrl+Shift+→)"
+                                Click="SplitRight_Click">Split →</Button>
+                        <Button Style="{StaticResource GhostButton}" ToolTip="Split Down (Ctrl+Shift+↓)"
+                                Click="SplitDown_Click">Split ↓</Button>
+                    </StackPanel>
                 </DockPanel>
             </Border>
 
