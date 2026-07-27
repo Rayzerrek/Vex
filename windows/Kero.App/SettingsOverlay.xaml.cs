@@ -65,9 +65,9 @@ public partial class SettingsOverlay : UserControl
 
     private void ThemeListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (ThemeListBox.SelectedItem is string themeName)
+        if (ThemeListBox.SelectedItem is TerminalTheme theme)
         {
-            AppSettings.Instance.ThemeName = themeName;
+            AppSettings.Instance.ThemeName = theme.Name;
         }
     }
 }
