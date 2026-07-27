@@ -89,8 +89,8 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     private void OnLeafPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(LeafPane.Title) && ReferenceEquals(sender, _activeLeaf))
-            Title = _activeLeaf.Title;
+        if (e.PropertyName == nameof(LeafPane.Title) && _activeLeaf is { } leaf && ReferenceEquals(sender, leaf))
+            Title = leaf.Title;
     }
 
     private LeafPane? FirstLeaf() => Root switch
