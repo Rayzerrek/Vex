@@ -72,6 +72,12 @@
       var bytes = new Uint8Array(bin.length);
       for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       term.write(bytes);
+    } else if (m.type === 'theme') {
+      term.options.theme = m.theme;
+      term.options.fontFamily = m.fontFamily;
+      term.options.fontSize = m.fontSize;
+      term.options.cursorBlink = m.cursorBlink;
+      fit.fit();
     }
   });
 
