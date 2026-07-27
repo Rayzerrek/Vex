@@ -9,11 +9,15 @@ public sealed class WorkspaceTab : ObservableObject
     private string _title;
     private PaneNode _root;
 
-    public WorkspaceTab(string title)
+    public WorkspaceTab(string title, string workingDirectory)
     {
         _title = title;
-        _root = new LeafPane();
+        WorkingDirectory = workingDirectory;
+        _root = new LeafPane(workingDirectory);
     }
+
+    /// <summary>Directory new panes in this tab start in.</summary>
+    public string WorkingDirectory { get; }
 
     public Guid Id { get; } = Guid.NewGuid();
 
