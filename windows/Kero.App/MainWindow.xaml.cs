@@ -65,9 +65,16 @@ public partial class MainWindow : Window
     {
         if (sender is FrameworkElement { DataContext: WorkspaceTab tab } && _workspace.SelectedProject is { } project)
         {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Middle)
+            {
+                project.CloseTab(tab);
+                e.Handled = true;
+                return;
+            }
+
             project.SelectedTab = tab;
 
-            if (e.ClickCount == 2)
+            if (e.ClickCount == 2 && e.ChangedButton == System.Windows.Input.MouseButton.Left)
             {
                 var panel = (System.Windows.Controls.StackPanel)sender;
                 var textBlock = (System.Windows.Controls.TextBlock)panel.FindName("TitleBlock");
