@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="xterm.css">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #1F1F24; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
   #term { height: 100%; padding: 2px 0 0 6px; box-sizing: border-box; }
 </style>
 </head>
@@ -20,6 +20,7 @@
   };
 
   var term = new Terminal({
+    allowTransparency: true,
     fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, monospace",
     fontSize: 14,
     cursorBlink: true,
