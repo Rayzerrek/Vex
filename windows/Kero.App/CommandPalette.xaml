@@ -1,87 +1,83 @@
 <UserControl x:Class="Kero.App.CommandPalette"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:m="clr-namespace:Kero.App.Model">
-    <Popup x:Name="OverlayPopup" AllowsTransparency="True" Placement="Center"
-           PlacementTarget="{Binding RelativeSource={RelativeSource AncestorType=Window}}"
-           Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=Window}}" 
-           Height="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=Window}}">
-        <Grid Background="#66000000" MouseDown="Backdrop_MouseDown">
-            <Border Background="{StaticResource KeroSurface}"
-                    BorderBrush="{StaticResource KeroBorder}"
-                    BorderThickness="1"
-                    CornerRadius="8"
-                    Width="500"
-                    MaxHeight="400"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Top"
-                    Margin="0,80,0,0"
-                    MouseDown="Border_MouseDown">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.3" />
-                </Border.Effect>
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    
-                    <TextBox x:Name="SearchBox"
-                             Grid.Row="0"
-                             Background="Transparent"
-                             Foreground="{StaticResource KeroText}"
-                             BorderThickness="0"
-                             FontSize="18"
-                             Padding="12,12"
-                             TextChanged="SearchBox_TextChanged"
-                             PreviewKeyDown="SearchBox_PreviewKeyDown" />
-                    
-                    <Border Grid.Row="1" Height="1" Background="{StaticResource KeroBorder}" />
-                    
-                    <ListBox x:Name="ResultList"
-                             Grid.Row="2"
-                             Background="Transparent"
-                             BorderThickness="0"
-                             Padding="0,4"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             MouseDoubleClick="ResultList_MouseDoubleClick">
-                        <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                                <Style.Setters>
-                                    <Setter Property="Padding" Value="12,8"/>
-                                    <Setter Property="Margin" Value="4,1"/>
-                                    <Setter Property="Template">
-                                        <Setter.Value>
-                                            <ControlTemplate TargetType="ListBoxItem">
-                                                <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="4">
-                                                    <ContentPresenter/>
-                                                </Border>
-                                                <ControlTemplate.Triggers>
-                                                    <Trigger Property="IsSelected" Value="True">
-                                                        <Setter Property="Background" Value="{StaticResource KeroHover}" TargetName="chrome"/>
-                                                    </Trigger>
-                                                    <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Background" Value="{StaticResource KeroSurface}" TargetName="chrome"/>
-                                                    </Trigger>
-                                                </ControlTemplate.Triggers>
-                                            </ControlTemplate>
-                                        </Setter.Value>
-                                    </Setter>
-                                </Style.Setters>
-                            </Style>
-                        </ListBox.ItemContainerStyle>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate DataType="{x:Type m:PaletteItem}">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Title}" Foreground="{StaticResource KeroText}" FontWeight="SemiBold"/>
-                                    <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource KeroTextDim}" FontSize="12" Margin="0,2,0,0"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </Grid>
-            </Border>
-        </Grid>
-    </Popup>
+             xmlns:m="clr-namespace:Kero.App.Model"
+             Visibility="Collapsed">
+    <Grid Background="#66000000" MouseDown="Backdrop_MouseDown">
+        <Border Background="{StaticResource KeroSurface}"
+                BorderBrush="{StaticResource KeroBorder}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Width="500"
+                MaxHeight="400"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Top"
+                Margin="0,80,0,0"
+                MouseDown="Border_MouseDown">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.3" />
+            </Border.Effect>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                
+                <TextBox x:Name="SearchBox"
+                         Grid.Row="0"
+                         Background="Transparent"
+                         Foreground="{StaticResource KeroText}"
+                         BorderThickness="0"
+                         FontSize="18"
+                         Padding="12,12"
+                         TextChanged="SearchBox_TextChanged"
+                         PreviewKeyDown="SearchBox_PreviewKeyDown" />
+                
+                <Border Grid.Row="1" Height="1" Background="{StaticResource KeroBorder}" />
+                
+                <ListBox x:Name="ResultList"
+                         Grid.Row="2"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0,4"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         MouseDoubleClick="ResultList_MouseDoubleClick">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Style.Setters>
+                                <Setter Property="Padding" Value="12,8"/>
+                                <Setter Property="Margin" Value="4,1"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="4">
+                                                <ContentPresenter/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource KeroHover}" TargetName="chrome"/>
+                                                </Trigger>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource KeroSurface}" TargetName="chrome"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style.Setters>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type m:PaletteItem}">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Title}" Foreground="{StaticResource KeroText}" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource KeroTextDim}" FontSize="12" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+    </Grid>
 </UserControl>

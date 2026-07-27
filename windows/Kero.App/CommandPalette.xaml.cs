@@ -19,8 +19,7 @@ public partial class CommandPalette : UserControl
             var window = Window.GetWindow(this);
             if (window != null)
             {
-                window.Deactivated += (ws, we) => { if (OverlayPopup.IsOpen) OverlayPopup.IsOpen = false; };
-                // We typically just want to hide CommandPalette if they alt-tab away and don't automatically reopen it
+                window.Deactivated += (ws, we) => { Hide(); };
             }
         };
     }
@@ -28,7 +27,7 @@ public partial class CommandPalette : UserControl
     public void Show(IEnumerable<PaletteItem> items)
     {
         _allItems = items.ToList();
-        OverlayPopup.IsOpen = true;
+        Visibility = Visibility.Visible;
         SearchBox.Text = "";
         UpdateFilter();
         
@@ -41,7 +40,7 @@ public partial class CommandPalette : UserControl
 
     public void Hide()
     {
-        OverlayPopup.IsOpen = false;
+        Visibility = Visibility.Collapsed;
     }
 
     private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e)
