@@ -90,6 +90,7 @@ public sealed partial class TerminalControl : UserControl, IDisposable
         Loaded -= OnLoaded;
         try
         {
+            WebView.DefaultBackgroundColor = System.Drawing.Color.Transparent;
             var userDataFolder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Kero", "WebView2");
@@ -173,19 +174,54 @@ public sealed partial class TerminalControl : UserControl, IDisposable
         }
     }
 
+    private readonly object _outputLock = new();
+    private bool _outputPending;
+    
     private void OnSessionOutput(byte[] chunk)
     {
         // Raised on the PTY reader thread; the WebView2 lives on the UI thread.
+        lock (_outputLock)
+        {
+            if (_pendingOutput.Count < 10000)
+                _pendingOutput.Add(chunk);
+                
+            if (_outputPending) return;
+            _outputPending = true;
+        }
+
         _ = Dispatcher.BeginInvoke(() =>
         {
+            List<byte[]> toProcess;
+            lock (_outputLock)
+            {
+                _outputPending = false;
+                toProcess = _pendingOutput.ToList();
+                _pendingOutput.Clear();
+            }
+
             if (!_rendererReady)
             {
-                // Short-lived: the page loads in well under a second.
-                if (_pendingOutput.Count < 1024)
-                    _pendingOutput.Add(chunk);
+                // Put them back if renderer is not ready
+                lock (_outputLock)
+                {
+                    _pendingOutput.InsertRange(0, toProcess);
+                }
                 return;
             }
-            PostOutput(chunk);
+
+            if (toProcess.Count > 0)
+            {
+                // Combine all chunks into a single byte array to reduce IPC overhead
+                int totalLength = toProcess.Sum(c => c.Length);
+                byte[] combined = new byte[totalLength];
+                int offset = 0;
+                foreach (var c in toProcess)
+                {
+                    Buffer.BlockCopy(c, 0, combined, offset, c.Length);
+                    offset += c.Length;
+                }
+                PostOutput(combined);
+            }
         });
     }
 
@@ -201,9 +237,25 @@ public sealed partial class TerminalControl : UserControl, IDisposable
 
     private void FlushPendingOutput()
     {
-        foreach (var chunk in _pendingOutput)
-            PostOutput(chunk);
-        _pendingOutput.Clear();
+        List<byte[]> toProcess;
+        lock (_outputLock)
+        {
+            toProcess = _pendingOutput.ToList();
+            _pendingOutput.Clear();
+        }
+        
+        if (toProcess.Count > 0)
+        {
+            int totalLength = toProcess.Sum(c => c.Length);
+            byte[] combined = new byte[totalLength];
+            int offset = 0;
+            foreach (var c in toProcess)
+            {
+                Buffer.BlockCopy(c, 0, combined, offset, c.Length);
+                offset += c.Length;
+            }
+            PostOutput(combined);
+        }
     }
 
     private void PostOutput(byte[] chunk)
