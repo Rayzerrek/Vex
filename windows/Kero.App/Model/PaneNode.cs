@@ -37,6 +37,9 @@ public sealed class LeafPane : PaneNode, IDisposable
     /// <summary>Raised when this pane asks for a new tab.</summary>
     public event Action? NewTabRequested;
 
+    /// <summary>Raised when the process running in the terminal exits.</summary>
+    public event Action<LeafPane>? ProcessExited;
+
     public string Title
     {
         get => _title;
@@ -61,6 +64,7 @@ public sealed class LeafPane : PaneNode, IDisposable
                 Title = title;
         };
         view.FocusGained += () => FocusRequested?.Invoke();
+        view.ProcessExited += exitCode => ProcessExited?.Invoke(this);
         view.CommandRequested += command =>
         {
             switch (command)
@@ -73,6 +77,9 @@ public sealed class LeafPane : PaneNode, IDisposable
                     break;
                 case TerminalCommand.NewTab:
                     NewTabRequested?.Invoke();
+                    break;
+                case TerminalCommand.ClosePane:
+                    ProcessExited?.Invoke(this);
                     break;
             }
         };
