@@ -61,6 +61,9 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     /// <summary>Raised when a pane in this tab asks for a new tab.</summary>
     public event Action? NewTabRequested;
+    
+    /// <summary>Raised when the last pane in this tab closes.</summary>
+    public event Action<WorkspaceTab>? TabClosedRequested;
 
     public void Split(Orientation orientation)
     {
@@ -84,13 +87,34 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         };
         leaf.NewTabRequested += () => NewTabRequested?.Invoke();
         leaf.PropertyChanged += OnLeafPropertyChanged;
+        leaf.ProcessExited += OnLeafExited;
         return leaf;
+    }
+
+    private void OnLeafExited(LeafPane leaf)
+    {
+        if (ReferenceEquals(Root, leaf))
+        {
+            TabClosedRequested?.Invoke(this);
+            return;
+        }
+
+        Root = RemoveNode(Root, leaf);
+        if (ReferenceEquals(ActiveLeaf, leaf))
+        {
+            ActiveLeaf = FirstLeaf();
+            ActiveLeaf?.View.FocusTerminal();
+        }
+
+        leaf.PropertyChanged -= OnLeafPropertyChanged;
+        leaf.ProcessExited -= OnLeafExited;
+        leaf.Dispose();
     }
 
     private void OnLeafPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(LeafPane.Title) && _activeLeaf is { } leaf && ReferenceEquals(sender, leaf))
-            Title = leaf.Title;
+        if (e.PropertyName == nameof(LeafPane.Title) && _activeLeaf is { } active && ReferenceEquals(sender, active))
+            Title = active.Title;
     }
 
     private LeafPane? FirstLeaf() => Root switch
@@ -115,6 +139,21 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         {
             split.First = ReplaceNode(split.First, old, replacement);
             split.Second = ReplaceNode(split.Second, old, replacement);
+        }
+        return node;
+    }
+
+    private static PaneNode RemoveNode(PaneNode node, PaneNode toRemove)
+    {
+        if (node is SplitPane split)
+        {
+            if (ReferenceEquals(split.First, toRemove))
+                return split.Second;
+            if (ReferenceEquals(split.Second, toRemove))
+                return split.First;
+
+            split.First = RemoveNode(split.First, toRemove);
+            split.Second = RemoveNode(split.Second, toRemove);
         }
         return node;
     }

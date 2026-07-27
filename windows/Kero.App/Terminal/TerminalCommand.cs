@@ -6,4 +6,5 @@ public enum TerminalCommand
     SplitRight,
     SplitDown,
     NewTab,
+    ClosePane,
 }
