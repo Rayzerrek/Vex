@@ -80,10 +80,18 @@ public sealed class Project : ObservableObject
     public void CloseTab(WorkspaceTab tab)
     {
         var index = Tabs.IndexOf(tab);
-        if (!Tabs.Remove(tab))
-            return;
+        if (index < 0) return;
+
+        bool wasSelected = (SelectedTab == tab);
+        WorkspaceTab? nextTab = null;
+
+        if (wasSelected)
+            nextTab = Tabs.Count > 1 ? Tabs[Math.Max(0, index - 1)] : null;
+
+        Tabs.Remove(tab);
         tab.Dispose();
-        if (SelectedTab == tab)
-            SelectedTab = Tabs.Count > 0 ? Tabs[Math.Max(0, index - 1)] : null;
+
+        if (wasSelected)
+            SelectedTab = nextTab;
     }
 }

@@ -15,6 +15,14 @@ public partial class CommandPalette : UserControl
     public CommandPalette()
     {
         InitializeComponent();
+        Loaded += (s, e) => {
+            var window = Window.GetWindow(this);
+            if (window != null)
+            {
+                window.Deactivated += (ws, we) => { if (OverlayPopup.IsOpen) OverlayPopup.IsOpen = false; };
+                // We typically just want to hide CommandPalette if they alt-tab away and don't automatically reopen it
+            }
+        };
     }
 
     public void Show(IEnumerable<PaletteItem> items)
