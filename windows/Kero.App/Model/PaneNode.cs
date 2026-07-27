@@ -21,16 +21,33 @@ public sealed class LeafPane : PaneNode, IDisposable
     private readonly string _workingDirectory;
     private TerminalControl? _view;
     private string _title = "Terminal";
+    private bool _isFocused;
 
     public LeafPane(string workingDirectory)
     {
         _workingDirectory = workingDirectory;
     }
 
+    /// <summary>Raised when the user clicks into or focuses this pane's surface.</summary>
+    public event Action? FocusRequested;
+
+    /// <summary>Raised when this pane asks to be split in the given orientation.</summary>
+    public event Action<Orientation>? SplitRequested;
+
+    /// <summary>Raised when this pane asks for a new tab.</summary>
+    public event Action? NewTabRequested;
+
     public string Title
     {
         get => _title;
         set => Set(ref _title, value);
+    }
+
+    /// <summary>Last-focused pane of its tab; drives the tab's accent border.</summary>
+    public bool IsFocused
+    {
+        get => _isFocused;
+        set => Set(ref _isFocused, value);
     }
 
     public TerminalControl View => _view ??= CreateView();
@@ -43,6 +60,22 @@ public sealed class LeafPane : PaneNode, IDisposable
             if (!string.IsNullOrWhiteSpace(title))
                 Title = title;
         };
+        view.FocusGained += () => FocusRequested?.Invoke();
+        view.CommandRequested += command =>
+        {
+            switch (command)
+            {
+                case TerminalCommand.SplitRight:
+                    SplitRequested?.Invoke(Orientation.Horizontal);
+                    break;
+                case TerminalCommand.SplitDown:
+                    SplitRequested?.Invoke(Orientation.Vertical);
+                    break;
+                case TerminalCommand.NewTab:
+                    NewTabRequested?.Invoke();
+                    break;
+            }
+        };
         return view;
     }
 
@@ -52,16 +85,27 @@ public sealed class LeafPane : PaneNode, IDisposable
 /// <summary>Two panes separated by a draggable splitter.</summary>
 public sealed class SplitPane : PaneNode
 {
+    private PaneNode _first;
+    private PaneNode _second;
+
     public SplitPane(Orientation orientation, PaneNode first, PaneNode second)
     {
         Orientation = orientation;
-        First = first;
-        Second = second;
+        _first = first;
+        _second = second;
     }
 
     public Orientation Orientation { get; }
 
-    public PaneNode First { get; }
+    public PaneNode First
+    {
+        get => _first;
+        set => Set(ref _first, value);
+    }
 
-    public PaneNode Second { get; }
+    public PaneNode Second
+    {
+        get => _second;
+        set => Set(ref _second, value);
+    }
 }
