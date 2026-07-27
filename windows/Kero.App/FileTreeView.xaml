@@ -28,5 +28,5 @@
         </Style>
     </UserControl.Resources>
     
-    <TreeView ItemsSource="{Binding TreeRoots}" Background="Transparent" BorderThickness="0" MouseDown="TreeView_MouseDown" />
+    <TreeView ItemsSource="{Binding TreeRoots}" Background="Transparent" BorderThickness="0" MouseDown="TreeView_MouseDown" VirtualizingStackPanel.IsVirtualizing="True" VirtualizingStackPanel.VirtualizationMode="Recycling" />
 </UserControl>
