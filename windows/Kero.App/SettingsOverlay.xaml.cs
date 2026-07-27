@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using Kero.App.Model;
 
@@ -13,55 +14,52 @@ public partial class SettingsOverlay : UserControl
     public SettingsOverlay()
     {
         InitializeComponent();
-        DataContext = AppSettings.Instance;
-        
-        ThemeListBox.ItemsSource = BuiltInThemes.All.Select(t => t.Name).ToList();
-        ThemeListBox.SelectedItem = AppSettings.Instance.ThemeName;
         
         Loaded += (s, e) => {
             var window = Window.GetWindow(this);
             if (window != null)
             {
-                window.Deactivated += (ws, we) => { if (_isOpen) Close(); };
+                window.Deactivated += (ws, we) => { Hide(); };
             }
         };
+
+        ThemeListBox.ItemsSource = BuiltInThemes.All;
+        var currentTheme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
+        ThemeListBox.SelectedItem = currentTheme ?? BuiltInThemes.KeroDark;
+
+        DataContext = AppSettings.Instance;
     }
 
     public void Toggle()
     {
-        if (_isOpen) Close();
-        else Open();
+        if (Visibility == Visibility.Visible) Hide();
+        else Show();
     }
 
-    public void Open()
+    public void Show()
     {
-        if (_isOpen) return;
-        _isOpen = true;
-        OverlayPopup.IsOpen = true;
+        Visibility = Visibility.Visible;
         
-        var anim = new DoubleAnimation(320, 0, TimeSpan.FromMilliseconds(200))
+        var anim = new DoubleAnimation(320, 0, new Duration(TimeSpan.FromMilliseconds(250)))
         {
-            EasingFunction = new QuarticEase { EasingMode = EasingMode.EaseOut }
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
-        SlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, anim);
+        SlideTransform.BeginAnimation(TranslateTransform.XProperty, anim);
     }
 
-    public void Close()
+    public void Hide()
     {
-        if (!_isOpen) return;
-        _isOpen = false;
-        
-        var anim = new DoubleAnimation(0, 320, TimeSpan.FromMilliseconds(200))
+        var anim = new DoubleAnimation(0, 320, new Duration(TimeSpan.FromMilliseconds(200)))
         {
-            EasingFunction = new QuarticEase { EasingMode = EasingMode.EaseIn }
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
         };
-        anim.Completed += (s, e) => OverlayPopup.IsOpen = false;
-        SlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, anim);
+        anim.Completed += (s, e) => Visibility = Visibility.Collapsed;
+        SlideTransform.BeginAnimation(TranslateTransform.XProperty, anim);
     }
 
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();
 
-    private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e) => Close();
+    private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e) => Hide();
 
     private void ThemeListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
