@@ -25,4 +25,26 @@ public partial class MainWindow : Window
     {
         _workspace.SelectedProject?.NewTab();
     }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        foreach (var project in _workspace.Projects)
+            foreach (var tab in project.Tabs)
+                DisposePane(tab.Root);
+    }
+
+    private static void DisposePane(PaneNode node)
+    {
+        switch (node)
+        {
+            case LeafPane leaf:
+                leaf.Dispose();
+                break;
+            case SplitPane split:
+                DisposePane(split.First);
+                DisposePane(split.Second);
+                break;
+        }
+    }
 }
