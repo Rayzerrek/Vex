@@ -8,8 +8,8 @@
   #term { height: 100%; padding: 2px 0 0 6px; box-sizing: border-box; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #3D4354; border-radius: 5px; border: 2px solid #1F1F24; }
-  ::-webkit-scrollbar-thumb:hover { background: #5a6075; }
+  ::-webkit-scrollbar-thumb { background: #3D4354; border-radius: 5px; border: 2px solid #1F1F24; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #8E8E96; border: 0px solid transparent; background-clip: padding-box; }
   ::-webkit-scrollbar-corner { background: transparent; }
 </style>
 </head>
@@ -76,6 +76,11 @@
   term.onResize(function (size) { send({ type: 'resize', cols: size.cols, rows: size.rows }); });
 
   var reportSize = function () {
+    var rect = document.getElementById('term').getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      requestAnimationFrame(reportSize);
+      return;
+    }
     fit.fit();
     send({ type: 'size', cols: term.cols, rows: term.rows });
   };
