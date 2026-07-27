@@ -12,6 +12,26 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = _workspace;
+        PreviewKeyDown += MainWindow_PreviewKeyDown;
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.P && (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) == System.Windows.Input.ModifierKeys.Control)
+        {
+            ShowCommandPalette();
+            e.Handled = true;
+        }
+    }
+
+    private void ShowCommandPalette()
+    {
+        var items = PaletteProvider.GetItems(_workspace, action => 
+        {
+            if (action == "NewProject") NewProject_Click(this, new RoutedEventArgs());
+            else if (action == "Settings") Settings_Click(this, new RoutedEventArgs());
+        });
+        PaletteOverlay.Show(items);
     }
 
     private void NewProject_Click(object sender, RoutedEventArgs e)
@@ -19,6 +39,11 @@ public partial class MainWindow : Window
         var dialog = new OpenFolderDialog { Title = "Choose a project directory" };
         if (dialog.ShowDialog(this) == true)
             _workspace.NewProject(dialog.FolderName);
+    }
+
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsOverlay.Toggle();
     }
 
     private void NewTab_Click(object sender, RoutedEventArgs e)
