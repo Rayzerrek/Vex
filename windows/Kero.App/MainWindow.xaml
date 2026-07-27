@@ -125,6 +125,7 @@
                                 <Setter Property="Padding" Value="10,6"/>
                                 <Setter Property="BorderThickness" Value="0,0,1,0"/>
                                 <Setter Property="BorderBrush" Value="{StaticResource KeroBorder}"/>
+                                <Setter Property="Foreground" Value="{StaticResource KeroTextDim}"/>
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListBoxItem">
@@ -138,6 +139,7 @@
                                                 <Trigger Property="IsSelected" Value="True">
                                                     <Setter Property="Background" Value="{StaticResource KeroHover}" TargetName="chrome"/>
                                                     <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
+                                                    <Setter Property="Foreground" Value="{StaticResource KeroText}"/>
                                                 </Trigger>
                                                 <Trigger Property="IsMouseOver" Value="True">
                                                     <Setter Property="Background" Value="{StaticResource KeroSurface}" TargetName="chrome"/>
@@ -158,6 +160,9 @@
                                     <TextBox x:Name="TitleEditBox" Text="{Binding Title}" MaxWidth="180"
                                              Visibility="Collapsed"
                                              VerticalAlignment="Center"
+                                             Foreground="{StaticResource KeroText}"
+                                             Background="{StaticResource KeroSurface}"
+                                             BorderBrush="{StaticResource KeroBorder}"
                                              KeyDown="TitleEditBox_KeyDown"
                                              LostFocus="TitleEditBox_LostFocus"/>
                                     <Button Style="{StaticResource GhostButton}" Padding="4,0"
