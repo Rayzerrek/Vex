@@ -16,8 +16,7 @@ public sealed class Project : ObservableObject
     {
         _name = name;
         WorkingDirectory = workingDirectory;
-        var tab = new WorkspaceTab("Terminal 1", workingDirectory);
-        Tabs.Add(tab);
+        var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
     }
 
@@ -41,9 +40,16 @@ public sealed class Project : ObservableObject
 
     public WorkspaceTab NewTab()
     {
-        var tab = new WorkspaceTab($"Terminal {Tabs.Count + 1}", WorkingDirectory);
-        Tabs.Add(tab);
+        var tab = CreateTab($"Terminal {Tabs.Count + 1}");
         SelectedTab = tab;
+        return tab;
+    }
+
+    private WorkspaceTab CreateTab(string title)
+    {
+        var tab = new WorkspaceTab(title, WorkingDirectory);
+        tab.NewTabRequested += () => NewTab();
+        Tabs.Add(tab);
         return tab;
     }
 
@@ -52,6 +58,7 @@ public sealed class Project : ObservableObject
         var index = Tabs.IndexOf(tab);
         if (!Tabs.Remove(tab))
             return;
+        tab.Dispose();
         if (SelectedTab == tab)
             SelectedTab = Tabs.Count > 0 ? Tabs[Math.Max(0, index - 1)] : null;
     }
