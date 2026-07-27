@@ -122,7 +122,7 @@
                         </ListBox.ItemsPanel>
                         <ListBox.ItemContainerStyle>
                             <Style TargetType="ListBoxItem">
-                                <Setter Property="Padding" Value="10,6"/>
+                                <Setter Property="Padding" Value="16,10"/>
                                 <Setter Property="BorderThickness" Value="0,0,1,0"/>
                                 <Setter Property="BorderBrush" Value="{StaticResource KeroBorder}"/>
                                 <Setter Property="Foreground" Value="{StaticResource KeroTextDim}"/>
@@ -155,10 +155,10 @@
                                 <StackPanel Orientation="Horizontal" Background="Transparent"
                                             MouseDown="TabHeader_MouseDown">
                                     <TextBlock x:Name="TitleBlock" Text="{Binding Title}" MaxWidth="180"
-                                               TextTrimming="CharacterEllipsis"
+                                               TextTrimming="CharacterEllipsis" FontSize="15"
                                                VerticalAlignment="Center"/>
                                     <TextBox x:Name="TitleEditBox" Text="{Binding Title}" MaxWidth="180"
-                                             Visibility="Collapsed"
+                                             Visibility="Collapsed" FontSize="15"
                                              VerticalAlignment="Center"
                                              Foreground="{StaticResource KeroText}"
                                              Background="{StaticResource KeroSurface}"
