@@ -72,6 +72,7 @@ public sealed class Project : ObservableObject
     {
         var tab = new WorkspaceTab(title, WorkingDirectory);
         tab.NewTabRequested += () => NewTab();
+        tab.TabClosedRequested += t => CloseTab(t);
         Tabs.Add(tab);
         return tab;
     }
