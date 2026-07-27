@@ -20,23 +20,30 @@ public partial class CommandPalette : UserControl
     public void Show(IEnumerable<PaletteItem> items)
     {
         _allItems = items.ToList();
-        Visibility = Visibility.Visible;
+        OverlayPopup.IsOpen = true;
         SearchBox.Text = "";
         UpdateFilter();
-        SearchBox.Focus();
+        
+        // Use Dispatcher to focus after the popup opens
+        Dispatcher.BeginInvoke(() =>
+        {
+            SearchBox.Focus();
+        }, System.Windows.Threading.DispatcherPriority.Input);
     }
 
     public void Hide()
     {
-        Visibility = Visibility.Collapsed;
+        OverlayPopup.IsOpen = false;
     }
 
-    private void UserControl_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (Visibility == Visibility.Visible)
-        {
-            SearchBox.Focus();
-        }
+        Hide();
+    }
+
+    private void Border_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)

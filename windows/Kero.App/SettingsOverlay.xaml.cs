@@ -29,9 +29,9 @@ public partial class SettingsOverlay : UserControl
     {
         if (_isOpen) return;
         _isOpen = true;
-        Visibility = Visibility.Visible;
+        OverlayPopup.IsOpen = true;
         
-        var anim = new DoubleAnimation(0, TimeSpan.FromMilliseconds(200))
+        var anim = new DoubleAnimation(320, 0, TimeSpan.FromMilliseconds(200))
         {
             EasingFunction = new QuarticEase { EasingMode = EasingMode.EaseOut }
         };
@@ -43,11 +43,11 @@ public partial class SettingsOverlay : UserControl
         if (!_isOpen) return;
         _isOpen = false;
         
-        var anim = new DoubleAnimation(320, TimeSpan.FromMilliseconds(200))
+        var anim = new DoubleAnimation(0, 320, TimeSpan.FromMilliseconds(200))
         {
             EasingFunction = new QuarticEase { EasingMode = EasingMode.EaseIn }
         };
-        anim.Completed += (s, e) => Visibility = Visibility.Collapsed;
+        anim.Completed += (s, e) => OverlayPopup.IsOpen = false;
         SlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, anim);
     }
 
