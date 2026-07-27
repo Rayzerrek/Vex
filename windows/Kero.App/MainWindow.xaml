@@ -30,7 +30,7 @@
         </DataTemplate>
     </Window.Resources>
 
-    <Grid>
+    <Grid x:Name="MainGrid">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="240" MinWidth="180"/>
             <ColumnDefinition Width="*"/>
@@ -187,7 +187,11 @@
                             Content="{Binding SelectedProject.SelectedTab.Root}"/>
         </Grid>
         
-        <local:CommandPalette x:Name="PaletteOverlay" Grid.ColumnSpan="2" />
-        <local:SettingsOverlay x:Name="SettingsOverlay" Grid.ColumnSpan="2"/>
+        <Popup x:Name="PalettePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True">
+            <local:CommandPalette x:Name="PaletteOverlay" Width="{Binding ActualWidth, ElementName=MainGrid}" Height="{Binding ActualHeight, ElementName=MainGrid}"/>
+        </Popup>
+        <Popup x:Name="SettingsPopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True">
+            <local:SettingsOverlay x:Name="SettingsOverlay" Width="{Binding ActualWidth, ElementName=MainGrid}" Height="{Binding ActualHeight, ElementName=MainGrid}"/>
+        </Popup>
     </Grid>
 </Window>
