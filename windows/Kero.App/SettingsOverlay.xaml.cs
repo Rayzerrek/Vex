@@ -9,8 +9,6 @@ namespace Kero.App;
 
 public partial class SettingsOverlay : UserControl
 {
-    private bool _isOpen;
-
     public SettingsOverlay()
     {
         InitializeComponent();
