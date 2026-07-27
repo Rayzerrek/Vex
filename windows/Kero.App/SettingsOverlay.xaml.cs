@@ -17,6 +17,14 @@ public partial class SettingsOverlay : UserControl
         
         ThemeListBox.ItemsSource = BuiltInThemes.All.Select(t => t.Name).ToList();
         ThemeListBox.SelectedItem = AppSettings.Instance.ThemeName;
+        
+        Loaded += (s, e) => {
+            var window = Window.GetWindow(this);
+            if (window != null)
+            {
+                window.Deactivated += (ws, we) => { if (_isOpen) Close(); };
+            }
+        };
     }
 
     public void Toggle()

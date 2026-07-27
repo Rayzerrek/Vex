@@ -31,7 +31,7 @@
                     <Border Grid.Row="0" BorderBrush="{StaticResource KeroBorder}" BorderThickness="0,0,0,1" Padding="16,12">
                         <DockPanel>
                             <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Click="CloseButton_Click" ToolTip="Close Settings">×</Button>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Click="CloseButton_Click" ToolTip="Close Settings" Width="24" Height="24" Padding="0">×</Button>
                         </DockPanel>
                     </Border>
 
@@ -81,7 +81,15 @@
                                       BorderBrush="{StaticResource KeroBorder}"
                                       BorderThickness="1"
                                       Padding="8,6"
-                                      Margin="0,0,0,24"/>
+                                      Margin="0,0,0,24">
+                                <ComboBox.ItemContainerStyle>
+                                    <Style TargetType="ComboBoxItem">
+                                        <Setter Property="Background" Value="{StaticResource KeroSurface}"/>
+                                        <Setter Property="Foreground" Value="{StaticResource KeroText}"/>
+                                        <Setter Property="BorderThickness" Value="0"/>
+                                    </Style>
+                                </ComboBox.ItemContainerStyle>
+                            </ComboBox>
 
                             <!-- Font Size -->
                             <TextBlock Text="Font Size" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
