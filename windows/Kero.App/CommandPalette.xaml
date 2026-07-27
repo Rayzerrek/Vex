@@ -1,8 +1,7 @@
 <UserControl x:Class="Kero.App.CommandPalette"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:m="clr-namespace:Kero.App.Model"
-             IsVisibleChanged="UserControl_IsVisibleChanged">
+             xmlns:m="clr-namespace:Kero.App.Model">
     <Popup x:Name="OverlayPopup" AllowsTransparency="True" Placement="Center"
            PlacementTarget="{Binding RelativeSource={RelativeSource AncestorType=Window}}"
            Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=Window}}" 
