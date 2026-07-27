@@ -15,6 +15,12 @@
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
             <Setter Property="Padding" Value="4"/>
+            <Style.Resources>
+                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="{StaticResource KeroHoverColor}" />
+                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="{StaticResource KeroTextColor}" />
+                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="{StaticResource KeroSurfaceColor}" />
+                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="{StaticResource KeroTextColor}" />
+            </Style.Resources>
         </Style>
         <Style TargetType="TreeViewItem">
             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
@@ -22,5 +28,5 @@
         </Style>
     </UserControl.Resources>
     
-    <TreeView ItemsSource="{Binding TreeRoots}" Background="Transparent" BorderThickness="0" />
+    <TreeView ItemsSource="{Binding TreeRoots}" Background="Transparent" BorderThickness="0" MouseDown="TreeView_MouseDown" />
 </UserControl>
