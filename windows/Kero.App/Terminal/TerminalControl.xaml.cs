@@ -146,6 +146,7 @@ public sealed partial class TerminalControl : UserControl, IDisposable
                     "splitRight" => TerminalCommand.SplitRight,
                     "splitDown" => TerminalCommand.SplitDown,
                     "newTab" => TerminalCommand.NewTab,
+                    "closePane" => TerminalCommand.ClosePane,
                     _ => (TerminalCommand?)null,
                 };
                 if (command is { } requested)
