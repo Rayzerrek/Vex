@@ -170,7 +170,9 @@ public sealed partial class TerminalControl : UserControl, IDisposable
             var session = new TerminalSession();
             session.OutputReceived += OnSessionOutput;
             session.Exited += OnSessionExited;
-            session.Start(_workingDirectory, columns, rows);
+            
+            var shellArg = AppSettings.Instance.Shell == "Nushell" ? "nu.exe" : TerminalSession.DefaultShell();
+            session.Start(_workingDirectory, columns, rows, shellArg);
             _session = session;
         }
         else
