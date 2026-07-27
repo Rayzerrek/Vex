@@ -40,7 +40,14 @@ public sealed class TerminalSession : IDisposable
     /// </summary>
     public static string DefaultShell()
     {
-        return "nu.exe";
+        var pwsh = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "PowerShell", "7", "pwsh.exe");
+        if (File.Exists(pwsh))
+            return pwsh;
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "WindowsPowerShell", "v1.0", "powershell.exe");
     }
 
     public void Start(string workingDirectory, short columns, short rows, string? shell = null, string? arguments = null)
