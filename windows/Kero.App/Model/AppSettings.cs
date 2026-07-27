@@ -19,10 +19,10 @@ public class AppSettings : ObservableObject
         set { if (Set(ref _themeName, value)) Save(); }
     }
 
-    public string[] AvailableFonts { get; } = new[] 
-    { 
-        "Cascadia Mono", "Cascadia Code", "Consolas", "Courier New", "Fira Code", "JetBrains Mono", "Hack", "Source Code Pro", "Ubuntu Mono", "MesloLGS NF" 
-    };
+    public string[] AvailableFonts { get; } = System.Windows.Media.Fonts.SystemFontFamilies
+        .Select(f => f.Source)
+        .OrderBy(f => f)
+        .ToArray();
 
     private string _fontFamily = "Cascadia Mono";
     public string FontFamily
