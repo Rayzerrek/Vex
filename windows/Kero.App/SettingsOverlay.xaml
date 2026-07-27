@@ -29,10 +29,14 @@
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" BorderBrush="{StaticResource KeroBorder}" BorderThickness="0,0,0,1" Padding="16,12">
-                        <DockPanel>
-                            <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Click="CloseButton_Click" ToolTip="Close Settings" Width="24" Height="24" Padding="0">×</Button>
-                        </DockPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Settings" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Click="CloseButton_Click" ToolTip="Close Settings" Width="24" Height="24" Padding="0">×</Button>
+                        </Grid>
                     </Border>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
