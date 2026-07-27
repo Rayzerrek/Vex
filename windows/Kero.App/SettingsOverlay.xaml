@@ -74,13 +74,14 @@
 
                             <!-- Font Family -->
                             <TextBlock Text="Font Family" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
-                            <TextBox Text="{Binding FontFamily, UpdateSourceTrigger=PropertyChanged}" 
-                                     Background="{StaticResource KeroBackground}" 
-                                     Foreground="{StaticResource KeroText}"
-                                     BorderBrush="{StaticResource KeroBorder}"
-                                     BorderThickness="1"
-                                     Padding="8,6"
-                                     Margin="0,0,0,24"/>
+                            <ComboBox ItemsSource="{Binding AvailableFonts}" 
+                                      SelectedItem="{Binding FontFamily, UpdateSourceTrigger=PropertyChanged}" 
+                                      Background="{StaticResource KeroBackground}" 
+                                      Foreground="{StaticResource KeroText}"
+                                      BorderBrush="{StaticResource KeroBorder}"
+                                      BorderThickness="1"
+                                      Padding="8,6"
+                                      Margin="0,0,0,24"/>
 
                             <!-- Font Size -->
                             <TextBlock Text="Font Size" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
