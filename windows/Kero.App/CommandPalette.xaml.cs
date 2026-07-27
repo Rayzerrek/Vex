@@ -28,6 +28,7 @@ public partial class CommandPalette : UserControl
     {
         _allItems = items.ToList();
         Visibility = Visibility.Visible;
+        if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = true;
         SearchBox.Text = "";
         UpdateFilter();
         
@@ -41,6 +42,7 @@ public partial class CommandPalette : UserControl
     public void Hide()
     {
         Visibility = Visibility.Collapsed;
+        if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = false;
     }
 
     private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e)
