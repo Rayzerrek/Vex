@@ -12,12 +12,35 @@ public sealed class Project : ObservableObject
     private string _name;
     private WorkspaceTab? _selectedTab;
 
+    private FileTreeNode? _root;
+
     public Project(string name, string workingDirectory)
     {
         _name = name;
         WorkingDirectory = workingDirectory;
         var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
+        RefreshFileTree();
+    }
+
+    public FileTreeNode Root
+    {
+        get => _root!;
+        private set
+        {
+            if (Set(ref _root, value))
+            {
+                OnPropertyChanged(nameof(TreeRoots));
+            }
+        }
+    }
+
+    public FileTreeNode[] TreeRoots => new[] { Root };
+
+    public void RefreshFileTree()
+    {
+        Root = new FileTreeNode(WorkingDirectory, true, Name);
+        Root.IsExpanded = true;
     }
 
     public Guid Id { get; } = Guid.NewGuid();

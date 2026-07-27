@@ -44,13 +44,17 @@
                     <DockPanel>
                         <TextBlock Text="kero" FontWeight="SemiBold" FontSize="15"
                                    VerticalAlignment="Center"/>
-                        <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
-                                ToolTip="New Project" Click="NewProject_Click">＋</Button>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">⚙</Button>
+                            <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">＋</Button>
+                        </StackPanel>
                     </DockPanel>
                 </Border>
-                <ListBox ItemsSource="{Binding Projects}"
-                         SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
-                         Background="Transparent" BorderThickness="0" Padding="6,0">
+                <DockPanel>
+                    <ListBox DockPanel.Dock="Top" ItemsSource="{Binding Projects}"
+                             SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
+                             Background="Transparent" BorderThickness="0" Padding="6,0"
+                             MaxHeight="250">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Padding" Value="8,6"/>
@@ -85,6 +89,11 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+                
+                <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource KeroBorder}" Margin="12,4"/>
+                
+                <local:FileTreeView DataContext="{Binding SelectedProject}"/>
+                </DockPanel>
             </DockPanel>
         </Border>
 
@@ -135,5 +144,8 @@
             <ContentControl Grid.Row="1"
                             Content="{Binding SelectedProject.SelectedTab.Root}"/>
         </Grid>
+        
+        <local:CommandPalette x:Name="PaletteOverlay" Grid.ColumnSpan="2" />
+        <local:SettingsOverlay x:Name="SettingsOverlay" Grid.ColumnSpan="2"/>
     </Grid>
 </Window>
