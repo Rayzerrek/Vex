@@ -35,6 +35,19 @@
   term.loadAddon(fit);
   term.open(document.getElementById('term'));
 
+  // Workspace shortcuts. Keystrokes live inside the WebView2, so they are
+  // captured here (before xterm sees them) and forwarded to the app.
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey && e.shiftKey && !e.altKey) {
+      var command = { ArrowRight: 'splitRight', ArrowDown: 'splitDown', KeyT: 'newTab' }[e.code];
+      if (command) {
+        e.preventDefault();
+        e.stopPropagation();
+        send({ type: 'command', name: command });
+      }
+    }
+  }, true);
+
   term.onData(function (d) { send({ type: 'input', data: toBase64(d) }); });
   term.onBinary(function (d) {
     var bytes = new Uint8Array(d.length);

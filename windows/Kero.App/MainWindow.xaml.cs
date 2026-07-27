@@ -26,6 +26,29 @@ public partial class MainWindow : Window
         _workspace.SelectedProject?.NewTab();
     }
 
+    private void SplitRight_Click(object sender, RoutedEventArgs e)
+    {
+        _workspace.SelectedProject?.SelectedTab?.Split(System.Windows.Controls.Orientation.Horizontal);
+    }
+
+    private void SplitDown_Click(object sender, RoutedEventArgs e)
+    {
+        _workspace.SelectedProject?.SelectedTab?.Split(System.Windows.Controls.Orientation.Vertical);
+    }
+
+    private void TabHeader_Select(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WorkspaceTab tab } && _workspace.SelectedProject is { } project)
+            project.SelectedTab = tab;
+    }
+
+    private void CloseTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WorkspaceTab tab } && _workspace.SelectedProject is { } project)
+            project.CloseTab(tab);
+        e.Handled = true;
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);

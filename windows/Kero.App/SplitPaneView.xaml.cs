@@ -41,8 +41,12 @@ public partial class SplitPaneView : UserControl
         if (Pane is not { } pane)
             return;
 
-        var first = new ContentPresenter { Content = pane.First };
-        var second = new ContentPresenter { Content = pane.Second };
+        // Bound, not fixed: a later split rewrites SplitPane.First/Second in
+        // place and the presenters pick up the new subtree by themselves.
+        var first = new ContentPresenter();
+        first.SetBinding(ContentProperty, new Binding(nameof(SplitPane.First)) { Source = pane });
+        var second = new ContentPresenter();
+        second.SetBinding(ContentProperty, new Binding(nameof(SplitPane.Second)) { Source = pane });
         var splitterBrush = (Brush)FindResource("KeroBorder");
         var splitter = new GridSplitter { Background = splitterBrush };
 
