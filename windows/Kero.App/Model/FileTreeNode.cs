@@ -48,7 +48,7 @@ public class FileTreeNode : ObservableObject
         }
     }
 
-    public void PopulateChildren()
+    public async void PopulateChildren()
     {
         if (!IsDirectory) return;
         
@@ -57,19 +57,23 @@ public class FileTreeNode : ObservableObject
 
         try
         {
-            var dirInfo = new DirectoryInfo(FullPath);
-            if (!dirInfo.Exists) return;
+            var nodes = await System.Threading.Tasks.Task.Run(() =>
+            {
+                var dirInfo = new DirectoryInfo(FullPath);
+                if (!dirInfo.Exists) return new System.Collections.Generic.List<FileTreeNode>();
 
-            var entries = dirInfo.GetFileSystemInfos();
-            var nodes = entries
-                .Where(e => !e.Name.StartsWith(".") && 
-                            e.Name != "bin" && 
-                            e.Name != "obj" && 
-                            e.Name != "node_modules" &&
-                            e.Name != ".git")
-                .OrderByDescending(e => (e.Attributes & FileAttributes.Directory) == FileAttributes.Directory)
-                .ThenBy(e => e.Name)
-                .Select(e => new FileTreeNode(e.FullName, (e.Attributes & FileAttributes.Directory) == FileAttributes.Directory));
+                var entries = dirInfo.GetFileSystemInfos();
+                return entries
+                    .Where(e => !e.Name.StartsWith(".") && 
+                                e.Name != "bin" && 
+                                e.Name != "obj" && 
+                                e.Name != "node_modules" &&
+                                e.Name != ".git")
+                    .OrderByDescending(e => (e.Attributes & FileAttributes.Directory) == FileAttributes.Directory)
+                    .ThenBy(e => e.Name)
+                    .Select(e => new FileTreeNode(e.FullName, (e.Attributes & FileAttributes.Directory) == FileAttributes.Directory))
+                    .ToList();
+            });
 
             foreach (var node in nodes)
             {
