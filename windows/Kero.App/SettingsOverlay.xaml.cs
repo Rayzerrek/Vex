@@ -39,6 +39,7 @@ public partial class SettingsOverlay : UserControl
     public void Show()
     {
         Visibility = Visibility.Visible;
+        if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = true;
         
         var anim = new DoubleAnimation(320, 0, new Duration(TimeSpan.FromMilliseconds(250)))
         {
@@ -53,7 +54,10 @@ public partial class SettingsOverlay : UserControl
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
         };
-        anim.Completed += (s, e) => Visibility = Visibility.Collapsed;
+        anim.Completed += (s, e) => {
+            Visibility = Visibility.Collapsed;
+            if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = false;
+        };
         SlideTransform.BeginAnimation(TranslateTransform.XProperty, anim);
     }
 
