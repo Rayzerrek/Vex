@@ -45,6 +45,7 @@
                                  BorderThickness="1" 
                                  BorderBrush="{StaticResource KeroBorder}"
                                  SelectionChanged="ThemeListBox_SelectionChanged"
+                                 DisplayMemberPath="Name"
                                  Margin="0,0,0,24">
                             <ListBox.ItemContainerStyle>
                                 <Style TargetType="ListBoxItem">
