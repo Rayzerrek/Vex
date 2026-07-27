@@ -61,7 +61,7 @@
                                                 <ControlTemplate.Triggers>
                                                     <Trigger Property="IsSelected" Value="True">
                                                         <Setter TargetName="chrome" Property="Background" Value="{StaticResource KeroAccent}"/>
-                                                        <Setter TargetName="chrome" Property="TextElement.Foreground" Value="#17171A"/>
+                                                        <Setter Property="Foreground" Value="#17171A"/>
                                                     </Trigger>
                                                     <Trigger Property="IsMouseOver" Value="True">
                                                         <Setter TargetName="chrome" Property="Background" Value="{StaticResource KeroHover}"/>
@@ -76,41 +76,17 @@
 
                         <!-- Shell -->
                         <TextBlock Text="Shell" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
-                        <ComboBox ItemsSource="{Binding AvailableShells}" 
+                        <ComboBox Style="{StaticResource DarkComboBox}"
+                                  ItemsSource="{Binding AvailableShells}" 
                                   SelectedItem="{Binding Shell, UpdateSourceTrigger=PropertyChanged}" 
-                                  Background="{StaticResource KeroBackground}" 
-                                  Foreground="{StaticResource KeroText}"
-                                  BorderBrush="{StaticResource KeroBorder}"
-                                  BorderThickness="1"
-                                  Padding="8,6"
-                                  Margin="0,0,0,24">
-                            <ComboBox.ItemContainerStyle>
-                                <Style TargetType="ComboBoxItem">
-                                    <Setter Property="Background" Value="{StaticResource KeroSurface}"/>
-                                    <Setter Property="Foreground" Value="{StaticResource KeroText}"/>
-                                    <Setter Property="BorderThickness" Value="0"/>
-                                </Style>
-                            </ComboBox.ItemContainerStyle>
-                        </ComboBox>
+                                  Margin="0,0,0,24" ItemContainerStyle="{StaticResource DarkComboBoxItem}"/>
 
                         <!-- Font Family -->
                         <TextBlock Text="Font Family" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
-                        <ComboBox ItemsSource="{Binding AvailableFonts}" 
+                        <ComboBox Style="{StaticResource DarkComboBox}"
+                                  ItemsSource="{Binding AvailableFonts}" 
                                   SelectedItem="{Binding FontFamily, UpdateSourceTrigger=PropertyChanged}" 
-                                  Background="{StaticResource KeroBackground}" 
-                                  Foreground="{StaticResource KeroText}"
-                                  BorderBrush="{StaticResource KeroBorder}"
-                                  BorderThickness="1"
-                                  Padding="8,6"
-                                  Margin="0,0,0,24">
-                            <ComboBox.ItemContainerStyle>
-                                <Style TargetType="ComboBoxItem">
-                                    <Setter Property="Background" Value="{StaticResource KeroSurface}"/>
-                                    <Setter Property="Foreground" Value="{StaticResource KeroText}"/>
-                                    <Setter Property="BorderThickness" Value="0"/>
-                                </Style>
-                            </ComboBox.ItemContainerStyle>
-                        </ComboBox>
+                                  Margin="0,0,0,24" ItemContainerStyle="{StaticResource DarkComboBoxItem}"/>
 
                         <!-- Font Size -->
                         <TextBlock Text="Font Size" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
