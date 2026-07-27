@@ -127,6 +127,7 @@ public sealed partial class TerminalControl : UserControl, IDisposable
                 ApplySettings();
                 FlushPendingOutput();
                 break;
+            case "resize":
             case "size":
                 var columns = (short)root.GetProperty("cols").GetInt32();
                 var rows = (short)root.GetProperty("rows").GetInt32();
@@ -163,6 +164,9 @@ public sealed partial class TerminalControl : UserControl, IDisposable
     {
         if (_session is null)
         {
+            // Ignore tiny initial sizes during WPF layout to prevent shell formatting bugs (e.g. nushell spamming newlines)
+            if (columns < 10 || rows < 2) return;
+
             var session = new TerminalSession();
             session.OutputReceived += OnSessionOutput;
             session.Exited += OnSessionExited;
