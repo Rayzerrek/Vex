@@ -153,7 +153,7 @@
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal" Background="Transparent"
-                                            MouseLeftButtonDown="TabHeader_MouseDown">
+                                            MouseDown="TabHeader_MouseDown">
                                     <TextBlock x:Name="TitleBlock" Text="{Binding Title}" MaxWidth="180"
                                                TextTrimming="CharacterEllipsis"
                                                VerticalAlignment="Center"/>
