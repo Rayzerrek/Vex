@@ -1,41 +1,15 @@
-# Release artifacts produced by scripts/release.ts
-/build/
-
-# Bun / node deps
-/node_modules/
-
-# Rust build output for the Alacritty backend's bridge. Cargo.lock IS tracked:
-# the Xcode build phase passes --locked so a build is reproducible.
-/Vendor/alacritty-bridge/target/
-
-# macOS
-.DS_Store
-
-## User settings
-xcuserdata/
-/Config/Local.xcconfig
-
-## Obj-C/Swift specific
-*.hmap
-
-## App packaging
-*.ipa
-*.dSYM.zip
-*.dSYM
-
-## Playgrounds
-timeline.xctimeline
-playground.xcworkspace
-
-.claude/worktrees
-
-# .NET (Windows port)
+# Windows build output
+/publish/
 **/bin/
 **/obj/
 
-# Windows build output
-/publish/
-windows/**/bin/
-windows/**/obj/
-Vendor/XtermSharp/bin/
-Vendor/XtermSharp/obj/
+# Editor
+.vs/
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent worktrees
+.claude/worktrees
