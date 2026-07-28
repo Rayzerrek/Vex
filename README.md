@@ -1,46 +1,44 @@
 # Kero for Windows
 
-> **Windows port of [egoist/kero](https://github.com/egoist/kero).**
-> The Windows app lives in [`windows/`](windows) — see
-> [`docs/PORTING.md`](docs/PORTING.md) for the analysis of the upstream
-> codebase, the porting strategy, and build instructions. The original macOS
-> sources are kept in the tree as the reference implementation.
->
-> ```sh
-> dotnet build windows/Kero.sln
-> dotnet run --project windows/Kero.App
-> ```
+A Windows port of [egoist/kero](https://github.com/egoist/kero) — a native terminal workspace.
 
----
+This project reimplements Kero on a Windows-native stack (WPF + ConPTY) inspired by the original macOS app.
 
-# Kero
+## Requirements
 
-A native terminal workspace for macOS.
+- Windows 10 1809 or later (required for ConPTY)
+- [.NET SDK](https://dotnet.microsoft.com/download)
+- WebView2 runtime (pre-installed on Windows 10/11)
 
-![preview](https://kero.sh/kero-screenshot.png)
-
-## Features
-
-- Swift + libghostty by default, with an optional Alacritty backend
-- Native design
-- Split panes
-- Git intergration
-- Group by projects
-- File tree
-
-## Download
-
-https://kero.sh
-
-Or with Homebrew:
+## Build and run
 
 ```sh
-brew install egoist/tap/kero
+dotnet build windows/Kero.slnx
+dotnet run --project windows/Kero.App
 ```
 
-## Contributing
+## Layout
 
-[CONTRIBUTING.md](CONTRIBUTING.md)
+```
+windows/
+  Kero.slnx
+  Kero.App/        WPF shell: sidebar, tabs, split panes, file tree, git panel, editor
+  Kero.Terminal/   ConPTY interop and session management
+```
+
+## Stack
+
+| Concern | Implementation |
+|---|---|
+| UI framework | WPF on .NET |
+| PTY | ConPTY |
+| Terminal emulation | XtermSharp (vendored) with a native WPF renderer |
+| Git integration | git CLI, porcelain v2 |
+| Default shell | pwsh.exe, fallback to powershell.exe |
+
+## Credits
+
+Based on [egoist/kero](https://github.com/egoist/kero) by [@egoist](https://github.com/egoist).
 
 ## License
 
