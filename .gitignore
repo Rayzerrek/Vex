@@ -32,3 +32,10 @@ playground.xcworkspace
 # .NET (Windows port)
 **/bin/
 **/obj/
+
+# Windows build output
+/publish/
+windows/**/bin/
+windows/**/obj/
+Vendor/XtermSharp/bin/
+Vendor/XtermSharp/obj/
