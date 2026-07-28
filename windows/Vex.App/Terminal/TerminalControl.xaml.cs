@@ -232,7 +232,6 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
             {
                 "Nushell" => "nu.exe",
                 "PowerShell" => TerminalSession.PowerShell(),
-                "Command Prompt" => TerminalSession.DefaultShell(),
                 _ => TerminalSession.DefaultShell()
             };
             session.Start(_workingDirectory, columns, rows, shellArg);
