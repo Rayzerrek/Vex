@@ -1,8 +1,8 @@
-# Kero for Windows
+# Vex for Windows
 
-A Windows port of [egoist/kero](https://github.com/egoist/kero) — a native terminal workspace.
+A Windows port of [egoist/Vex](https://github.com/egoist/Vex) — a native terminal workspace.
 
-This project reimplements Kero on a Windows-native stack (WPF + ConPTY) inspired by the original macOS app.
+This project reimplements Vex on a Windows-native stack (WPF + ConPTY) inspired by the original macOS app.
 
 ## Requirements
 
@@ -13,17 +13,17 @@ This project reimplements Kero on a Windows-native stack (WPF + ConPTY) inspired
 ## Build and run
 
 ```sh
-dotnet build windows/Kero.slnx
-dotnet run --project windows/Kero.App
+dotnet build windows/Vex.slnx
+dotnet run --project windows/Vex.App
 ```
 
 ## Layout
 
 ```
 windows/
-  Kero.slnx
-  Kero.App/        WPF shell: sidebar, tabs, split panes, file tree, git panel, editor
-  Kero.Terminal/   ConPTY interop and session management
+  Vex.slnx
+  Vex.App/        WPF shell: sidebar, tabs, split panes, file tree, git panel, editor
+  Vex.Terminal/   ConPTY interop and session management
 ```
 
 ## Stack
@@ -38,7 +38,7 @@ windows/
 
 ## Credits
 
-Based on [egoist/kero](https://github.com/egoist/kero) by [@egoist](https://github.com/egoist).
+Based on [egoist/Vex](https://github.com/egoist/Vex) by [@egoist](https://github.com/egoist).
 
 ## License
 
