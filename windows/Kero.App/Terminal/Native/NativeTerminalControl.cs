@@ -352,7 +352,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             return;
 
         var y = row * _cellHeight;
-        var runAttr = line[0].Attribute;
+        var runAttr = line.Length > 0 ? line[0].Attribute : CharData.DefaultAttr;
         var runStart = 0;
         var text = new StringBuilder();
 
