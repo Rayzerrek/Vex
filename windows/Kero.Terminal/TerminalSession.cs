@@ -40,6 +40,14 @@ public sealed class TerminalSession : IDisposable
     /// </summary>
     public static string DefaultShell()
     {
+        var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        var cmd = Path.Combine(system32, "cmd.exe");
+        if (File.Exists(cmd)) return cmd;
+        return "cmd.exe";
+    }
+
+    public static string PowerShell()
+    {
         var pwsh = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             "PowerShell", "7", "pwsh.exe");
@@ -61,6 +69,7 @@ public sealed class TerminalSession : IDisposable
         var sa = new NativeMethods.SECURITY_ATTRIBUTES
         {
             nLength = Marshal.SizeOf<NativeMethods.SECURITY_ATTRIBUTES>(),
+            bInheritHandle = true,
         };
 
         // Our end of each pipe stays with us; the other end goes to ConPTY.
@@ -72,6 +81,10 @@ public sealed class TerminalSession : IDisposable
             NativeMethods.CloseHandle(inputOurSide);
             throw new Win32Exception(Marshal.GetLastWin32Error());
         }
+
+        // Ensure our side of the pipes is NOT inherited by child processes.
+        NativeMethods.SetHandleInformation(inputOurSide, NativeMethods.HANDLE_FLAG_INHERIT, 0);
+        NativeMethods.SetHandleInformation(outputOurSide, NativeMethods.HANDLE_FLAG_INHERIT, 0);
 
         var size = new NativeMethods.COORD(columns, rows);
         var hr = NativeMethods.CreatePseudoConsole(size, inputPtySide, outputPtySide, 0, out _pseudoConsole);
@@ -90,7 +103,11 @@ public sealed class TerminalSession : IDisposable
         _ptyInput = new FileStream(new SafeFileHandle(inputOurSide, ownsHandle: true), FileAccess.Write, BufferSize, isAsync: false);
         _ptyOutput = new FileStream(new SafeFileHandle(outputOurSide, ownsHandle: true), FileAccess.Read, BufferSize, isAsync: false);
 
-        var commandLine = shell is null ? DefaultShell() : $"\"{shell}\"" + (arguments is null ? "" : $" {arguments}");
+        var shellExe = shell is null ? DefaultShell() : shell;
+        var commandLine = shellExe.StartsWith("\"") ? shellExe : $"\"{shellExe}\"";
+        if (!string.IsNullOrEmpty(arguments))
+            commandLine += $" {arguments}";
+            
         SpawnChild(commandLine, workingDirectory);
 
         StartReaderLoop();
@@ -130,6 +147,13 @@ public sealed class TerminalSession : IDisposable
 
     private void SpawnChild(string commandLine, string workingDirectory)
     {
+        if (string.IsNullOrWhiteSpace(workingDirectory) || !Directory.Exists(workingDirectory))
+        {
+            workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!Directory.Exists(workingDirectory))
+                workingDirectory = AppDomain.CurrentDomain.BaseDirectory;
+        }
+
         var attributeListSize = IntPtr.Zero;
         NativeMethods.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeListSize);
         var attributeList = Marshal.AllocHGlobal(attributeListSize);
@@ -153,12 +177,11 @@ public sealed class TerminalSession : IDisposable
                 StartupInfo = new NativeMethods.STARTUPINFO
                 {
                     cb = Marshal.SizeOf<NativeMethods.STARTUPINFOEX>(),
-                    // STARTF_USESTDHANDLES with all handles left null stops the
-                    // child from inheriting the parent's console. Without this a
-                    // parent that owns a console (e.g. `dotnet run`) makes the
-                    // child join that console and silently ignore the
-                    // pseudoconsole attribute.
+                    // STARTF_USESTDHANDLES stops the child from inheriting or attaching to the parent's console window.
                     dwFlags = NativeMethods.STARTF_USESTDHANDLES,
+                    hStdInput = IntPtr.Zero,
+                    hStdOutput = IntPtr.Zero,
+                    hStdError = IntPtr.Zero,
                 },
                 lpAttributeList = attributeList,
             };
@@ -170,7 +193,7 @@ public sealed class TerminalSession : IDisposable
                     mutableCommandLine,
                     IntPtr.Zero,
                     IntPtr.Zero,
-                    bInheritHandles: false,
+                    bInheritHandles: true,
                     NativeMethods.EXTENDED_STARTUPINFO_PRESENT,
                     IntPtr.Zero,
                     workingDirectory,
