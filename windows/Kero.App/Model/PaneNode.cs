@@ -19,7 +19,7 @@ public abstract class PaneNode : ObservableObject
 public sealed class LeafPane : PaneNode, IDisposable
 {
     private readonly string _workingDirectory;
-    private TerminalControl? _view;
+    private ITerminalView? _view;
     private string _title = "Terminal";
     private bool _isFocused;
 
@@ -53,9 +53,9 @@ public sealed class LeafPane : PaneNode, IDisposable
         set => Set(ref _isFocused, value);
     }
 
-    public TerminalControl View => _view ??= CreateView();
+    public ITerminalView View => _view ??= CreateView();
 
-    private TerminalControl CreateView()
+    private ITerminalView CreateView()
     {
         var view = new TerminalControl(_workingDirectory);
         view.TitleChanged += title =>
