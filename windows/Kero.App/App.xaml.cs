@@ -1,6 +1,5 @@
-using System.Configuration;
-using System.Data;
 using System.Windows;
+using Kero.App.Model;
 
 namespace Kero.App;
 
@@ -12,6 +11,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        OneDarkHighlighting.Register();
 
         // Required for ported TUI applications (vim, agy, pi, etc.) to
         // output VT sequences properly under ConPTY.
