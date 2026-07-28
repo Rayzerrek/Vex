@@ -11,5 +11,7 @@
 .DS_Store
 Thumbs.db
 
-# Agent worktrees
+# Agent worktrees & local skills
 .claude/worktrees
+.agents/
+
