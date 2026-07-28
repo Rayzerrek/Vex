@@ -1,0 +1,180 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OneDark-Python" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment"      foreground="#5C6370" fontStyle="italic"/>
+  <Color name="String"       foreground="#98C379"/>
+  <Color name="Number"       foreground="#D19A66"/>
+  <Color name="Keyword"      foreground="#C678DD"/>
+  <Color name="StorageType"  foreground="#E06C75"/>
+  <Color name="Decorator"    foreground="#61AFEF"/>
+  <Color name="Type"         foreground="#E5C07B"/>
+  <Color name="Builtin"      foreground="#56B6C2"/>
+
+  <RuleSet>
+    <!-- Docstring triple double -->
+    <Span color="String" multiline="true">
+      <Begin>"""</Begin>
+      <End>"""</End>
+    </Span>
+
+    <!-- Docstring triple single -->
+    <Span color="String" multiline="true">
+      <Begin>'''</Begin>
+      <End>'''</End>
+    </Span>
+
+    <!-- Line comment -->
+    <Span color="Comment">
+      <Begin>\#</Begin>
+    </Span>
+
+    <!-- F-string -->
+    <Span color="String">
+      <Begin>[fF]"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+    <Span color="String">
+      <Begin>[fF]'</Begin>
+      <End>'</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Raw string -->
+    <Span color="String">
+      <Begin>[rRbBuU]?"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+    <Span color="String">
+      <Begin>[rRbBuU]?'</Begin>
+      <End>'</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Decorator -->
+    <Rule color="Decorator">@[A-Za-z_][A-Za-z0-9_.]*</Rule>
+
+    <!-- Numbers -->
+    <Rule color="Number">\b(0x[\da-fA-F_]+|0b[01_]+|0o[0-7_]+|\d[\d_]*\.?[\d_]*([eE][+-]?[\d_]+)?[jJ]?)\b</Rule>
+
+    <!-- Storage / declaration keywords -->
+    <Keywords color="StorageType">
+      <Word>def</Word>
+      <Word>class</Word>
+      <Word>lambda</Word>
+      <Word>import</Word>
+      <Word>from</Word>
+      <Word>as</Word>
+      <Word>global</Word>
+      <Word>nonlocal</Word>
+      <Word>del</Word>
+    </Keywords>
+
+    <!-- Control flow -->
+    <Keywords color="Keyword">
+      <Word>if</Word>
+      <Word>elif</Word>
+      <Word>else</Word>
+      <Word>for</Word>
+      <Word>while</Word>
+      <Word>break</Word>
+      <Word>continue</Word>
+      <Word>pass</Word>
+      <Word>return</Word>
+      <Word>yield</Word>
+      <Word>raise</Word>
+      <Word>try</Word>
+      <Word>except</Word>
+      <Word>finally</Word>
+      <Word>with</Word>
+      <Word>match</Word>
+      <Word>case</Word>
+      <Word>async</Word>
+      <Word>await</Word>
+      <Word>assert</Word>
+    </Keywords>
+
+    <!-- Operators as keywords -->
+    <Keywords color="Keyword">
+      <Word>and</Word>
+      <Word>or</Word>
+      <Word>not</Word>
+      <Word>in</Word>
+      <Word>is</Word>
+    </Keywords>
+
+    <!-- Literals -->
+    <Keywords color="Number">
+      <Word>True</Word>
+      <Word>False</Word>
+      <Word>None</Word>
+      <Word>self</Word>
+      <Word>cls</Word>
+    </Keywords>
+
+    <!-- Built-in functions -->
+    <Keywords color="Builtin">
+      <Word>print</Word>
+      <Word>len</Word>
+      <Word>range</Word>
+      <Word>enumerate</Word>
+      <Word>zip</Word>
+      <Word>map</Word>
+      <Word>filter</Word>
+      <Word>list</Word>
+      <Word>dict</Word>
+      <Word>set</Word>
+      <Word>tuple</Word>
+      <Word>str</Word>
+      <Word>int</Word>
+      <Word>float</Word>
+      <Word>bool</Word>
+      <Word>type</Word>
+      <Word>isinstance</Word>
+      <Word>issubclass</Word>
+      <Word>super</Word>
+      <Word>property</Word>
+      <Word>staticmethod</Word>
+      <Word>classmethod</Word>
+      <Word>open</Word>
+      <Word>input</Word>
+      <Word>repr</Word>
+      <Word>hash</Word>
+      <Word>id</Word>
+      <Word>iter</Word>
+      <Word>next</Word>
+      <Word>sorted</Word>
+      <Word>reversed</Word>
+      <Word>sum</Word>
+      <Word>min</Word>
+      <Word>max</Word>
+      <Word>abs</Word>
+      <Word>round</Word>
+      <Word>any</Word>
+      <Word>all</Word>
+    </Keywords>
+
+    <!-- Built-in exceptions / types -->
+    <Keywords color="Type">
+      <Word>Exception</Word>
+      <Word>ValueError</Word>
+      <Word>TypeError</Word>
+      <Word>KeyError</Word>
+      <Word>IndexError</Word>
+      <Word>AttributeError</Word>
+      <Word>RuntimeError</Word>
+      <Word>StopIteration</Word>
+      <Word>NotImplementedError</Word>
+      <Word>OSError</Word>
+      <Word>IOError</Word>
+    </Keywords>
+  </RuleSet>
+</SyntaxDefinition>
