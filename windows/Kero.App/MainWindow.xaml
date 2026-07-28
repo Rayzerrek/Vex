@@ -10,7 +10,22 @@
     <Window.Resources>
         <!-- Recursive pane tree: a leaf hosts a terminal, a split hosts two
              children with a draggable splitter. -->
-        <DataTemplate DataType="{x:Type m:LeafPane}">
+        <DataTemplate DataType="{x:Type m:TerminalPane}">
+            <Border Background="{StaticResource KeroSurface}" BorderBrush="{StaticResource KeroBorder}"
+                    BorderThickness="1" Margin="2">
+                <ContentPresenter Content="{Binding View}"/>
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFocused}" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource KeroAccent}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+            </Border>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type m:EditorPane}">
             <Border Background="{StaticResource KeroSurface}" BorderBrush="{StaticResource KeroBorder}"
                     BorderThickness="1" Margin="2">
                 <ContentPresenter Content="{Binding View}"/>
