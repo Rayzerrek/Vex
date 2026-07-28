@@ -57,7 +57,11 @@ public sealed class LeafPane : PaneNode, IDisposable
 
     private ITerminalView CreateView()
     {
-        var view = new TerminalControl(_workingDirectory);
+        // Picked at pane creation; switching the setting does not rebuild
+        // live terminals, matching how shell changes apply to new sessions.
+        var view = AppSettings.Instance.TerminalBackend == "xterm.js"
+            ? new TerminalControl(_workingDirectory)
+            : (ITerminalView)new Terminal.Native.NativeTerminalControl(_workingDirectory);
         view.TitleChanged += title =>
         {
             if (!string.IsNullOrWhiteSpace(title))

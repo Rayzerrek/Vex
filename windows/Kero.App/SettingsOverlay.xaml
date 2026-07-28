@@ -74,6 +74,13 @@
                             </ListBox.ItemContainerStyle>
                         </ListBox>
 
+                        <!-- Terminal backend -->
+                        <TextBlock Text="Terminal Backend" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
+                        <ComboBox Style="{StaticResource DarkComboBox}"
+                                  ItemsSource="{Binding AvailableTerminalBackends}"
+                                  SelectedItem="{Binding TerminalBackend, UpdateSourceTrigger=PropertyChanged}"
+                                  Margin="0,0,0,24" ItemContainerStyle="{StaticResource DarkComboBoxItem}"/>
+
                         <!-- Shell -->
                         <TextBlock Text="Shell" Foreground="{StaticResource KeroTextDim}" Margin="0,0,0,8"/>
                         <ComboBox Style="{StaticResource DarkComboBox}"

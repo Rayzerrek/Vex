@@ -54,6 +54,19 @@ public class AppSettings : ObservableObject
         set { if (Set(ref _shell, value)) Save(); }
     }
 
+    public string[] AvailableTerminalBackends { get; } = { "Native", "xterm.js" };
+
+    private string _terminalBackend = "Native";
+    /// <summary>
+    /// Terminal rendering backend: the native WPF renderer (XtermSharp core)
+    /// or xterm.js hosted in WebView2. Applies to panes created afterwards.
+    /// </summary>
+    public string TerminalBackend
+    {
+        get => _terminalBackend;
+        set { if (Set(ref _terminalBackend, value)) Save(); }
+    }
+
     private static AppSettings Load()
     {
         try
