@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="Kero.App/Kero.App.csproj" />
   <Project Path="Kero.Terminal/Kero.Terminal.csproj" />
+  <Project Path="../Vendor/XtermSharp/XtermSharp.csproj" />
 </Solution>
