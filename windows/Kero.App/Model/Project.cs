@@ -98,6 +98,17 @@ public sealed class Project : ObservableObject
         return tab;
     }
 
+    public void OpenFile(string filePath)
+    {
+        var fileName = System.IO.Path.GetFileName(filePath);
+        var editorPane = new EditorPane(filePath);
+        var tab = new WorkspaceTab(fileName, WorkingDirectory, editorPane, hasCustomTitle: false);
+        tab.NewTabRequested += () => NewTab();
+        tab.TabClosedRequested += t => CloseTab(t);
+        Tabs.Add(tab);
+        SelectedTab = tab;
+    }
+
     public void CloseTab(WorkspaceTab tab)
     {
         var index = Tabs.IndexOf(tab);
