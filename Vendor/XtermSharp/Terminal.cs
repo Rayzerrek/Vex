@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -19,8 +19,6 @@ namespace XtermSharp {
 		BufferLine blankLine;
 
 		// modes
-		bool insertMode;
-		bool bracketedPasteMode;
 
 		// saved modes
 		bool savedMarginMode;
@@ -29,10 +27,8 @@ namespace XtermSharp {
 		bool savedReverseWraparound;
 
 		// unsorted
-		bool applicationKeypad, applicationCursor;
 		bool cursorHidden;
 		Dictionary<byte, string> charset;
-		int gcharset;
 		int gLevel;
 		int refreshStart = Int32.MaxValue;
 		int refreshEnd = -1;
@@ -1143,17 +1139,13 @@ namespace XtermSharp {
 			cursorHidden = false;
 
 			// modes
-			applicationKeypad = false;
-			applicationCursor = false;
 			OriginMode = false;
 			MarginMode = false;
 			InsertMode = false;
 			Wraparound = true;
-			bracketedPasteMode = false;
 
 			// charset
 			charset = null;
-			gcharset = 0;
 			gLevel = 0;
 
 			CurAttr = CharData.DefaultAttr;

@@ -92,7 +92,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             {
                 value.IsFocused = true;
                 if (!HasCustomTitle)
-                    Title = value.Title;
+                    Title = value.Title + (value.IsDirty ? "*" : "");
             }
         }
     }
@@ -143,8 +143,9 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     private void OnLeafPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(LeafPane.Title) && _activeLeaf is { } active && ReferenceEquals(sender, active) && !HasCustomTitle)
-            Title = active.Title;
+        if ((e.PropertyName == nameof(LeafPane.Title) || e.PropertyName == nameof(LeafPane.IsDirty)) 
+            && _activeLeaf is { } active && ReferenceEquals(sender, active) && !HasCustomTitle)
+            Title = active.Title + (active.IsDirty ? "*" : "");
     }
 
     private LeafPane? FirstLeaf() => Root switch
