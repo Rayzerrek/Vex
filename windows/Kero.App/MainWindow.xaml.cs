@@ -14,16 +14,79 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _workspace;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+        StateChanged += MainWindow_StateChanged;
+        UpdateLayoutForWindowState();
     }
 
+    private void MainWindow_StateChanged(object? sender, EventArgs e)
+    {
+        UpdateLayoutForWindowState();
+    }
+
+    private void UpdateLayoutForWindowState()
+    {
+        if (MaximizeButtonIcon != null && MaximizeButton != null)
+        {
+            if (WindowState == WindowState.Maximized)
+            {
+                MaximizeButtonIcon.Text = "\uE923";
+                MaximizeButton.ToolTip = "Restore";
+                MainGrid.Margin = new Thickness(6);
+            }
+            else
+            {
+                MaximizeButtonIcon.Text = "\uE922";
+                MaximizeButton.ToolTip = "Maximize";
+                MainGrid.Margin = new Thickness(0);
+            }
+        }
+    }
+
+    private void MinimizeWindow_Click(object sender, RoutedEventArgs e)
+    {
+        SystemCommands.MinimizeWindow(this);
+    }
+
+    private void MaximizeWindow_Click(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+            SystemCommands.RestoreWindow(this);
+        else
+            SystemCommands.MaximizeWindow(this);
+    }
+
+    private void CloseWindow_Click(object sender, RoutedEventArgs e)
+    {
+        SystemCommands.CloseWindow(this);
+    }
 
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key == System.Windows.Input.Key.P && (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) == System.Windows.Input.ModifierKeys.Control)
+        var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
+        var modifiers = System.Windows.Input.Keyboard.Modifiers;
+
+        if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.P)
         {
             ShowCommandPalette();
             e.Handled = true;
         }
+        else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.S)
+        {
+            if (SaveCurrentFile())
+            {
+                e.Handled = true;
+            }
+        }
+    }
+
+    private bool SaveCurrentFile()
+    {
+        if (_workspace.SelectedProject?.SelectedTab?.ActiveLeaf is EditorPane editorPane)
+        {
+            editorPane.Save();
+            return true;
+        }
+        return false;
     }
 
     private void ShowCommandPalette()

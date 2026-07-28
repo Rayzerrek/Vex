@@ -623,7 +623,7 @@ namespace XtermSharp {
 					break;
 				case ParserAction.OscPut:
 					for (var j = i; ; j++) {
-						if (j > len || (data [j] < 0x20) || (data [j] > 0x7f && data [j] < 0x9f)) {
+						if (j >= len || (data [j] < 0x20) || (data [j] > 0x7f && data [j] < 0x9f)) {
 							var block = new byte [j - (i+1)];
 							for (int k = i+1; k < j; k++)
 								block [k-i-1] = data [k];
