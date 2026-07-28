@@ -18,6 +18,8 @@ namespace Kero.App.Terminal;
 public sealed partial class TerminalControl : UserControl, ITerminalView
 {
     private const string VirtualHost = "kero.terminal";
+    private static readonly object WebViewEnvironmentLock = new();
+    private static Task<CoreWebView2Environment>? _sharedWebViewEnvironmentTask;
 
     private readonly string _workingDirectory;
     private readonly List<byte[]> _pendingOutput = new();
@@ -35,6 +37,7 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
         _workingDirectory = workingDirectory;
         InitializeComponent();
         Loaded += OnLoaded;
+        SizeChanged += (_, _) => TryStartSessionFromControlSize();
         WebView.GotFocus += (_, _) => FocusGained?.Invoke();
         WebView.GotKeyboardFocus += (_, _) => FocusGained?.Invoke();
         AppSettings.Instance.PropertyChanged += OnSettingsChanged;
@@ -91,10 +94,7 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
         try
         {
             WebView.DefaultBackgroundColor = System.Drawing.Color.Transparent;
-            var userDataFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Kero", "WebView2");
-            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
+            var environment = await GetSharedWebViewEnvironmentAsync();
             await WebView.EnsureCoreWebView2Async(environment);
 
             var assetsFolder = Path.Combine(AppContext.BaseDirectory, "Assets", "terminal");
@@ -125,6 +125,7 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
             case "ready":
                 _rendererReady = true;
                 ApplySettings();
+                TryStartSessionFromControlSize();
                 FlushPendingOutput();
                 break;
             case "resize":
@@ -157,6 +158,62 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
     }
 
     /// <summary>
+    /// New tabs used to wait for xterm.js to report its geometry before the
+    /// shell could start. If WebView2 startup stalls, that can delay (or
+    /// prevent) shell launch. Start from the control size as a fallback, then
+    /// let later xterm resize events correct the final geometry.
+    /// </summary>
+    private void TryStartSessionFromControlSize()
+    {
+        if (_session is not null)
+            return;
+        if (!TryEstimateGridSize(out var columns, out var rows))
+            return;
+        OnRendererSize(columns, rows);
+    }
+
+    private bool TryEstimateGridSize(out short columns, out short rows)
+    {
+        columns = 0;
+        rows = 0;
+        if (ActualWidth <= 0 || ActualHeight <= 0)
+            return false;
+
+        // index.html adds 6px left and 2px top padding.
+        var width = Math.Max(0, ActualWidth - 6);
+        var height = Math.Max(0, ActualHeight - 2);
+        var fontSize = Math.Max(8, AppSettings.Instance.FontSize);
+        // xterm's fallback metrics are close to these ratios for monospace fonts.
+        var cellWidth = Math.Max(6.0, fontSize * 0.62);
+        var cellHeight = Math.Max(10.0, fontSize * 1.35);
+
+        var cols = (int)Math.Floor(width / cellWidth);
+        var r = (int)Math.Floor(height / cellHeight);
+        if (cols <= 0 || r <= 0)
+            return false;
+
+        columns = (short)Math.Clamp(cols, short.MinValue, short.MaxValue);
+        rows = (short)Math.Clamp(r, short.MinValue, short.MaxValue);
+        return true;
+    }
+
+    private static Task<CoreWebView2Environment> GetSharedWebViewEnvironmentAsync()
+    {
+        lock (WebViewEnvironmentLock)
+        {
+            if (_sharedWebViewEnvironmentTask is null)
+            {
+                var userDataFolder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Kero", "WebView2");
+                _sharedWebViewEnvironmentTask = CoreWebView2Environment.CreateAsync(
+                    userDataFolder: userDataFolder);
+            }
+            return _sharedWebViewEnvironmentTask;
+        }
+    }
+
+    /// <summary>
     /// The first renderer size arrives right after page load, so the session
     /// is spawned with real geometry instead of a guessed 80x24.
     /// </summary>
@@ -171,7 +228,13 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
             session.OutputReceived += OnSessionOutput;
             session.Exited += OnSessionExited;
             
-            var shellArg = AppSettings.Instance.Shell == "Nushell" ? "nu.exe" : TerminalSession.DefaultShell();
+            var shellArg = AppSettings.Instance.Shell switch
+            {
+                "Nushell" => "nu.exe",
+                "PowerShell" => TerminalSession.PowerShell(),
+                "Command Prompt" => TerminalSession.DefaultShell(),
+                _ => TerminalSession.DefaultShell()
+            };
             session.Start(_workingDirectory, columns, rows, shellArg);
             _session = session;
         }
