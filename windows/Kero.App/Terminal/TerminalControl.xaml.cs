@@ -15,7 +15,7 @@ namespace Kero.App.Terminal;
 /// only ever reparented by WPF, so PTY state and scrollback survive tab and
 /// split-layout changes — same contract as upstream's surfaces.
 /// </summary>
-public sealed partial class TerminalControl : UserControl, IDisposable
+public sealed partial class TerminalControl : UserControl, ITerminalView
 {
     private const string VirtualHost = "kero.terminal";
 
