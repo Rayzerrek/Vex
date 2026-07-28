@@ -29,7 +29,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private readonly DispatcherTimer _blinkTimer;
 
     private TerminalSession? _session;
-    private TerminalPalette _palette;
+    private TerminalPalette _palette = new(BuiltInThemes.KeroDark);
     private FontFamily _fontFamily = new("Cascadia Mono");
     private double _fontSize = 13;
     private double _cellWidth = 8;
@@ -166,6 +166,9 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         _rows = rows;
         EnsureRowVisuals();
         _terminal.Resize(cols, rows);
+        // After resize, snap viewport to bottom so shells like nushell
+        // don't appear scrolled up due to buffer reflow.
+        _terminal.Buffer.YDisp = _terminal.Buffer.YBase;
         _needsFullRedraw = true;
         RedrawAll();
 
@@ -282,7 +285,16 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 return;
 
             _viewportMoved = false;
-            _terminal.Feed(combined);
+            try
+            {
+                _terminal.Feed(combined);
+            }
+            catch (Exception)
+            {
+                // XtermSharp may throw on malformed or unsupported VT
+                // sequences. Swallow and schedule a full redraw.
+                _needsFullRedraw = true;
+            }
             FlushRedraw();
         });
     }
@@ -306,27 +318,37 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private void FlushRedraw()
     {
-        _terminal.GetUpdateRange(out var startY, out var endY);
-        _terminal.ClearUpdateRange();
-
-        var buffer = _terminal.Buffer;
-        var userScrolled = buffer.YDisp != buffer.YBase;
-
-        if (_needsFullRedraw || _viewportMoved || userScrolled || endY - startY > _rows / 2)
+        try
         {
-            RedrawAll();
-        }
-        else if (endY >= startY)
-        {
-            for (var row = Math.Max(0, startY); row <= Math.Min(_rows - 1, endY); row++)
-                RedrawRow(row);
-        }
-        _needsFullRedraw = false;
-        _viewportMoved = false;
+            _terminal.GetUpdateRange(out var startY, out var endY);
+            _terminal.ClearUpdateRange();
 
-        DrawSelection();
-        DrawCaret();
-        InvalidateVisual(); // background
+            var buffer = _terminal.Buffer;
+            var userScrolled = buffer.YDisp != buffer.YBase;
+
+            if (_needsFullRedraw || _viewportMoved || userScrolled || endY - startY > _rows / 2)
+            {
+                RedrawAll();
+            }
+            else if (endY >= startY)
+            {
+                for (var row = Math.Max(0, startY); row <= Math.Min(_rows - 1, endY); row++)
+                    RedrawRow(row);
+            }
+            _needsFullRedraw = false;
+            _viewportMoved = false;
+
+            DrawSelection();
+            DrawCaret();
+            InvalidateVisual(); // background
+        }
+        catch (Exception)
+        {
+            // Guard against XtermSharp internal state issues (e.g. buffer
+            // reflow during alternate-screen apps like nvim). Schedule a
+            // full redraw on the next pump cycle.
+            _needsFullRedraw = true;
+        }
     }
 
     private void RedrawAll()

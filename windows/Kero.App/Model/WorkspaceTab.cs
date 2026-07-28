@@ -130,12 +130,9 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         var fresh = new EditorPane(path);
         AttachLeafEvents(fresh);
 
-        Root = ReplaceNode(Root, target, fresh);
+        Root = ReplaceNode(Root, target, new SplitPane(Orientation.Horizontal, target, fresh));
         ActiveLeaf = fresh;
-
-        target.PropertyChanged -= OnLeafPropertyChanged;
-        target.ProcessExited -= OnLeafExited;
-        target.Dispose();
+        fresh.Focus();
     }
 
     private void OnLeafExited(LeafPane leaf)
