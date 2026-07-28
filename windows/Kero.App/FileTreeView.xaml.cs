@@ -15,8 +15,7 @@ public partial class FileTreeView : UserControl
         {
             if (!selectedNode.IsDirectory && DataContext is Model.Project project)
             {
-                var tab = project.SelectedTab ?? project.NewTab();
-                tab.OpenFile(selectedNode.FullPath);
+                project.OpenFile(selectedNode.FullPath);
                 e.Handled = true;
             }
         }

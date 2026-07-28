@@ -121,20 +121,6 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         return leaf;
     }
 
-    public void OpenFile(string path)
-    {
-        var target = ActiveLeaf ?? FirstLeaf();
-        if (target is null)
-            return;
-
-        var fresh = new EditorPane(path);
-        AttachLeafEvents(fresh);
-
-        Root = ReplaceNode(Root, target, new SplitPane(Orientation.Horizontal, target, fresh));
-        ActiveLeaf = fresh;
-        fresh.Focus();
-    }
-
     private void OnLeafExited(LeafPane leaf)
     {
         if (ReferenceEquals(Root, leaf))
