@@ -23,6 +23,27 @@ public sealed class Project : ObservableObject
         RefreshFileTree();
     }
 
+    internal Project(ProjectSnapshot snapshot)
+    {
+        _name = snapshot.Name;
+        WorkingDirectory = snapshot.WorkingDirectory;
+        
+        foreach (var tabSnapshot in snapshot.Tabs)
+        {
+            var tab = new WorkspaceTab(tabSnapshot.Title, WorkingDirectory, SessionStore.RestoreNode(tabSnapshot.Root), tabSnapshot.HasCustomTitle);
+            tab.NewTabRequested += () => NewTab();
+            tab.TabClosedRequested += t => CloseTab(t);
+            Tabs.Add(tab);
+        }
+
+        if (snapshot.SelectedTabIndex.HasValue && snapshot.SelectedTabIndex.Value >= 0 && snapshot.SelectedTabIndex.Value < Tabs.Count)
+            _selectedTab = Tabs[snapshot.SelectedTabIndex.Value];
+        else if (Tabs.Count > 0)
+            _selectedTab = Tabs[0];
+
+        RefreshFileTree();
+    }
+
     public FileTreeNode Root
     {
         get => _root!;
