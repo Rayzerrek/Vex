@@ -1,45 +1,64 @@
-# Vex for Windows
+# Vex
 
-A Windows port of [egoist/Vex](https://github.com/egoist/Vex) — a native terminal workspace.
+> Note: This repository is an opinionated Windows-native fork/port of [egoist/kero](https://github.com/egoist/kero) — a native terminal workspace.
 
-This project reimplements Vex on a Windows-native stack (WPF + ConPTY) inspired by the original macOS app.
+---
+
+## Overview
+
+Vex reimplements the workspace experience of original Kero on a native Windows stack. Built with WPF and Windows ConPTY, it brings low-latency terminal sessions, tabbed multi-project management, split views, a file tree, and an editor into a desktop workspace.
+
+---
+
+## Features
+
+- ConPTY Terminal Sessions: Native Windows Pseudoconsole integration supporting PowerShell Core (`pwsh.exe`) and PowerShell (`powershell.exe`).
+- Split Panes & Tabs: Split active panes vertically or horizontally, rename tabs, and navigate between sessions.
+- Multi-Project Sidebar: Workspace management for switching between multiple open project folders.
+- File Tree Explorer: Browse project directories and open files directly within workspace panes.
+- Built-in Code Editor: Edit source files with syntax highlighting and file saving (`Ctrl+S`).
+- Command Palette: Quick action overlay accessible via `Ctrl+P`.
+- Settings Overlay: Configure shell defaults and workspace preferences.
+- Workspace Session Persistence: Automatically saves and restores projects, tabs, and layout state on restart.
+
+---
+
+## Architecture & Project Structure
+
+```text
+windows/
+  Vex.slnx              Visual Studio Solution File
+  Vex.App/              WPF Shell: sidebar, tabs, split views, file tree, editor, command palette
+  Vex.Terminal/         ConPTY interop and process lifecycle management
+Vendor/
+  XtermSharp/           Vendored xterm terminal emulation library with WPF rendering
+```
+
+### Technical Stack
+
+| Area | Solution / Technology |
+|---|---|
+| UI Framework | WPF on .NET 8 |
+| PTY Layer | Windows ConPTY (`kernel32.dll` APIs) |
+| Terminal Renderer | XtermSharp (vendored) + WPF Native DrawingContext |
+| Default Shell | `pwsh.exe` (PowerShell Core) with fallback to `powershell.exe` |
+
+---
 
 ## Requirements
 
-- Windows 10 1809 or later (required for ConPTY)
-- [.NET SDK](https://dotnet.microsoft.com/download)
-- WebView2 runtime (pre-installed on Windows 10/11)
+- Operating System: Windows 10 (Build 1809 or later, required for ConPTY) or Windows 11.
+- SDK: .NET 8.0 SDK or higher.
+- Runtime: WebView2 Runtime (pre-installed on Windows 10/11).
 
-## Build and run
+---
 
-```sh
+## Build and Run
+
+```powershell
+# Build the solution
 dotnet build windows/Vex.slnx
+
+# Run the desktop application
 dotnet run --project windows/Vex.App
 ```
-
-## Layout
-
-```
-windows/
-  Vex.slnx
-  Vex.App/        WPF shell: sidebar, tabs, split panes, file tree, git panel, editor
-  Vex.Terminal/   ConPTY interop and session management
-```
-
-## Stack
-
-| Concern | Implementation |
-|---|---|
-| UI framework | WPF on .NET |
-| PTY | ConPTY |
-| Terminal emulation | XtermSharp (vendored) with a native WPF renderer |
-| Git integration | git CLI, porcelain v2 |
-| Default shell | pwsh.exe, fallback to powershell.exe |
-
-## Credits
-
-Based on [egoist/Vex](https://github.com/egoist/Vex) by [@egoist](https://github.com/egoist).
-
-## License
-
-GPLv3
