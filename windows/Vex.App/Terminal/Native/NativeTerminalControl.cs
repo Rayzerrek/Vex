@@ -246,7 +246,6 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         {
             "Nushell" => "nu.exe",
             "PowerShell" => TerminalSession.PowerShell(),
-            "Command Prompt" => TerminalSession.DefaultShell(),
             _ => TerminalSession.DefaultShell()
         };
         session.Start(_workingDirectory, (short)_cols, (short)_rows, shell);
