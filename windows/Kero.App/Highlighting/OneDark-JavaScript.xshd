@@ -1,0 +1,160 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OneDark-JavaScript" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment"      foreground="#5C6370" fontStyle="italic"/>
+  <Color name="String"       foreground="#98C379"/>
+  <Color name="Number"       foreground="#D19A66"/>
+  <Color name="Keyword"      foreground="#C678DD"/>
+  <Color name="StorageType"  foreground="#E06C75"/>
+  <Color name="Function"     foreground="#61AFEF"/>
+  <Color name="Type"         foreground="#E5C07B"/>
+  <Color name="Operator"     foreground="#56B6C2"/>
+  <Color name="Regex"        foreground="#56B6C2"/>
+  <Color name="Template"     foreground="#98C379"/>
+  <Color name="Punctuation"  foreground="#ABB2BF"/>
+
+  <RuleSet>
+    <!-- Block comment -->
+    <Span color="Comment" multiline="true">
+      <Begin>/\*</Begin>
+      <End>\*/</End>
+    </Span>
+
+    <!-- Line comment -->
+    <Span color="Comment">
+      <Begin>//</Begin>
+    </Span>
+
+    <!-- Template literal -->
+    <Span color="Template" multiline="false">
+      <Begin>`</Begin>
+      <End>`</End>
+      <RuleSet>
+        <Span color="Function" multiline="true">
+          <Begin>\$\{</Begin>
+          <End>\}</End>
+        </Span>
+        <Rule color="Template">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Double-quoted string -->
+    <Span color="String">
+      <Begin>"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Single-quoted string -->
+    <Span color="String">
+      <Begin>'</Begin>
+      <End>'</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Regex literal (very rough approximation) -->
+    <Rule color="Number">\b(0x[\da-fA-F]+|0b[01]+|0o[0-7]+|\d+\.?\d*([eE][+-]?\d+)?)\b</Rule>
+
+    <!-- Storage type keywords -->
+    <Keywords color="StorageType">
+      <Word>var</Word>
+      <Word>let</Word>
+      <Word>const</Word>
+      <Word>function</Word>
+      <Word>class</Word>
+      <Word>extends</Word>
+      <Word>import</Word>
+      <Word>export</Word>
+      <Word>from</Word>
+      <Word>default</Word>
+      <Word>new</Word>
+      <Word>delete</Word>
+      <Word>typeof</Word>
+      <Word>instanceof</Word>
+      <Word>void</Word>
+      <Word>in</Word>
+      <Word>of</Word>
+      <Word>async</Word>
+      <Word>await</Word>
+      <Word>static</Word>
+      <Word>get</Word>
+      <Word>set</Word>
+      <Word>yield</Word>
+      <Word>super</Word>
+    </Keywords>
+
+    <!-- Control flow keywords -->
+    <Keywords color="Keyword">
+      <Word>if</Word>
+      <Word>else</Word>
+      <Word>for</Word>
+      <Word>while</Word>
+      <Word>do</Word>
+      <Word>switch</Word>
+      <Word>case</Word>
+      <Word>break</Word>
+      <Word>continue</Word>
+      <Word>return</Word>
+      <Word>throw</Word>
+      <Word>try</Word>
+      <Word>catch</Word>
+      <Word>finally</Word>
+      <Word>with</Word>
+      <Word>debugger</Word>
+    </Keywords>
+
+    <!-- Built-in values / literals -->
+    <Keywords color="Number">
+      <Word>true</Word>
+      <Word>false</Word>
+      <Word>null</Word>
+      <Word>undefined</Word>
+      <Word>NaN</Word>
+      <Word>Infinity</Word>
+      <Word>this</Word>
+      <Word>arguments</Word>
+    </Keywords>
+
+    <!-- TypeScript-specific keywords (harmless for plain JS) -->
+    <Keywords color="Keyword">
+      <Word>type</Word>
+      <Word>interface</Word>
+      <Word>enum</Word>
+      <Word>namespace</Word>
+      <Word>module</Word>
+      <Word>declare</Word>
+      <Word>abstract</Word>
+      <Word>implements</Word>
+      <Word>readonly</Word>
+      <Word>as</Word>
+      <Word>keyof</Word>
+      <Word>infer</Word>
+      <Word>never</Word>
+      <Word>unknown</Word>
+      <Word>any</Word>
+    </Keywords>
+
+    <!-- TypeScript built-in types -->
+    <Keywords color="Type">
+      <Word>string</Word>
+      <Word>number</Word>
+      <Word>boolean</Word>
+      <Word>object</Word>
+      <Word>symbol</Word>
+      <Word>bigint</Word>
+      <Word>Array</Word>
+      <Word>Promise</Word>
+      <Word>Map</Word>
+      <Word>Set</Word>
+      <Word>Record</Word>
+      <Word>Partial</Word>
+      <Word>Required</Word>
+      <Word>Readonly</Word>
+      <Word>Pick</Word>
+      <Word>Omit</Word>
+    </Keywords>
+  </RuleSet>
+</SyntaxDefinition>

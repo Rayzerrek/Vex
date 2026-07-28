@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
@@ -12,6 +12,11 @@
          virtual host for the WebView2 at runtime. -->
     <None Remove="Assets\**\*" />
     <None Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One Dark syntax-highlighting definitions for AvalonEdit. -->
+    <EmbeddedResource Include="Highlighting\*.xshd" />
   </ItemGroup>
 
   <PropertyGroup>
