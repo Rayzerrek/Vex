@@ -335,11 +335,11 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             var buffer = _terminal.Buffer;
             var userScrolled = buffer.YDisp != buffer.YBase;
 
-            if (_needsFullRedraw || _viewportMoved || userScrolled || endY - startY > _rows / 2)
+            if (_needsFullRedraw || _viewportMoved || userScrolled || startY > endY || endY - startY > _rows / 2)
             {
                 RedrawAll();
             }
-            else if (endY >= startY)
+            else
             {
                 for (var row = Math.Max(0, startY); row <= Math.Min(_rows - 1, endY); row++)
                     RedrawRow(row);
