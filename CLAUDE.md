@@ -1,13 +1,13 @@
 # CLAUDE.md
 
-Kero for Windows is a WPF terminal workspace: ConPTY sessions, split panes, a file tree, a git panel, and an editor.
+Vex for Windows is a WPF terminal workspace: ConPTY sessions, split panes, a file tree, a git panel, and an editor.
 The Windows app lives in `windows/`.
 
 ## Build
 
 ```sh
-dotnet build windows/Kero.slnx
-dotnet run --project windows/Kero.App
+dotnet build windows/Vex.slnx
+dotnet run --project windows/Vex.App
 ```
 
 ## Verify
