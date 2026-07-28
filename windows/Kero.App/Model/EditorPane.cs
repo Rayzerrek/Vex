@@ -119,29 +119,6 @@ public sealed class EditorPane : LeafPane
     private static IHighlightingDefinition? ResolveHighlighting(string filePath)
     {
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
-
-        // AvalonEdit built-in definitions are resolved by extension.
-        var builtin = HighlightingManager.Instance.GetDefinitionByExtension(ext);
-        if (builtin != null)
-            return builtin;
-
-        // Map common extensions AvalonEdit doesn't know about to
-        // similar built-in definitions.
-        return ext switch
-        {
-            ".ts" or ".tsx" or ".mts" or ".cts" => HighlightingManager.Instance.GetDefinition("JavaScript"),
-            ".jsx" or ".mjs" or ".cjs" => HighlightingManager.Instance.GetDefinition("JavaScript"),
-            ".go" => HighlightingManager.Instance.GetDefinition("C++"),
-            ".rs" => HighlightingManager.Instance.GetDefinition("C++"),
-            ".swift" => HighlightingManager.Instance.GetDefinition("C++"),
-            ".kt" or ".kts" => HighlightingManager.Instance.GetDefinition("Java"),
-            ".json" or ".jsonc" => HighlightingManager.Instance.GetDefinition("JavaScript"),
-            ".yml" or ".yaml" => HighlightingManager.Instance.GetDefinition("XML"),
-            ".md" or ".markdown" => HighlightingManager.Instance.GetDefinition("HTML"),
-            ".toml" => HighlightingManager.Instance.GetDefinition("XML"),
-            ".sh" or ".bash" or ".zsh" or ".nu" => HighlightingManager.Instance.GetDefinition("C++"),
-            ".dockerfile" or ".containerfile" => HighlightingManager.Instance.GetDefinition("C++"),
-            _ => null,
-        };
+        return OneDarkHighlighting.ForExtension(ext);
     }
 }

@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OneDark-XML" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment"      foreground="#5C6370" fontStyle="italic"/>
+  <Color name="Tag"          foreground="#E06C75"/>
+  <Color name="Attribute"    foreground="#D19A66"/>
+  <Color name="AttributeValue" foreground="#98C379"/>
+  <Color name="Entity"       foreground="#56B6C2"/>
+  <Color name="CDATA"        foreground="#5C6370"/>
+  <Color name="Doctype"      foreground="#5C6370"/>
+
+  <RuleSet>
+    <!-- XML comment -->
+    <Span color="Comment" multiline="true">
+      <Begin>&lt;!--</Begin>
+      <End>--&gt;</End>
+    </Span>
+
+    <!-- CDATA section -->
+    <Span color="CDATA" multiline="true">
+      <Begin>&lt;!\[CDATA\[</Begin>
+      <End>\]\]&gt;</End>
+    </Span>
+
+    <!-- DOCTYPE -->
+    <Span color="Doctype">
+      <Begin>&lt;!</Begin>
+      <End>&gt;</End>
+    </Span>
+
+    <!-- Processing instruction -->
+    <Span color="Doctype">
+      <Begin>&lt;\?</Begin>
+      <End>\?&gt;</End>
+    </Span>
+
+    <!-- Tags with attributes -->
+    <Span color="Tag" multiline="true">
+      <Begin>&lt;/?</Begin>
+      <End>/?&gt;</End>
+      <RuleSet>
+        <!-- Attribute value double-quoted -->
+        <Span color="AttributeValue">
+          <Begin>"</Begin>
+          <End>"</End>
+          <RuleSet>
+            <Rule color="Entity">&amp;[a-zA-Z]+;|&amp;\#\d+;|&amp;\#x[\da-fA-F]+;</Rule>
+          </RuleSet>
+        </Span>
+        <!-- Attribute value single-quoted -->
+        <Span color="AttributeValue">
+          <Begin>'</Begin>
+          <End>'</End>
+          <RuleSet>
+            <Rule color="Entity">&amp;[a-zA-Z]+;|&amp;\#\d+;|&amp;\#x[\da-fA-F]+;</Rule>
+          </RuleSet>
+        </Span>
+        <!-- Attribute names -->
+        <Rule color="Attribute">[A-Za-z_:][A-Za-z0-9_:.-]*\s*(?==)</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Entities in text -->
+    <Rule color="Entity">&amp;[a-zA-Z]+;|&amp;\#\d+;|&amp;\#x[\da-fA-F]+;</Rule>
+  </RuleSet>
+</SyntaxDefinition>
