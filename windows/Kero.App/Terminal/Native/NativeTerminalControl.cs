@@ -159,7 +159,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
         var cols = Math.Max(2, (int)(ActualWidth / _cellWidth));
         var rows = Math.Max(1, (int)(ActualHeight / _cellHeight));
-        if (cols == _cols && rows == _rows)
+        if (cols == _cols && rows == _rows && _session is not null)
             return;
 
         _cols = cols;
@@ -236,10 +236,19 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private void StartSession()
     {
+        if (_session is not null)
+            return;
+
         var session = new TerminalSession();
         session.OutputReceived += OnSessionOutput;
         session.Exited += OnSessionExited;
-        var shell = AppSettings.Instance.Shell == "Nushell" ? "nu.exe" : TerminalSession.DefaultShell();
+        var shell = AppSettings.Instance.Shell switch
+        {
+            "Nushell" => "nu.exe",
+            "PowerShell" => TerminalSession.PowerShell(),
+            "Command Prompt" => TerminalSession.DefaultShell(),
+            _ => TerminalSession.DefaultShell()
+        };
         session.Start(_workingDirectory, (short)_cols, (short)_rows, shell);
         _session = session;
     }

@@ -45,9 +45,9 @@ public class AppSettings : ObservableObject
         set { if (Set(ref _cursorBlink, value)) Save(); }
     }
 
-    public string[] AvailableShells { get; } = { "Nushell", "PowerShell" };
+    public string[] AvailableShells { get; } = { "Command Prompt", "PowerShell", "Nushell" };
 
-    private string _shell = "Nushell";
+    private string _shell = "Command Prompt";
     public string Shell
     {
         get => _shell;

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Diagnostics;
 using NStack;
@@ -326,7 +326,7 @@ namespace XtermSharp {
 				var line = lines [lineIndex];
 
 				return line.TranslateToString (trimRight, startCol, endCol);
-			} catch ( Exception ex)
+			} catch (Exception)
 			{
 				return ustring.Empty;
 			}

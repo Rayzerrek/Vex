@@ -16,12 +16,19 @@ public abstract class LeafPane : PaneNode, IDisposable
 {
     private string _title = "Pane";
     private bool _isFocused;
+    private bool _isDirty;
     private object? _view;
 
     public string Title
     {
         get => _title;
         set => Set(ref _title, value);
+    }
+
+    public bool IsDirty
+    {
+        get => _isDirty;
+        set => Set(ref _isDirty, value);
     }
 
     public bool IsFocused
