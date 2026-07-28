@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <ProjectReference Include="..\Kero.Terminal\Kero.Terminal.csproj" />
     <ProjectReference Include="..\..\Vendor\XtermSharp\XtermSharp.csproj" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
