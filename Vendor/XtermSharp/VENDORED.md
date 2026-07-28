@@ -18,5 +18,9 @@ the core for Windows if the renderer needs it.
   `InputHandlers/InputHandler.cs`: NStack's `System.Rune` is ambiguous with
   `System.Text.Rune` on modern .NET (upstream targets netstandard2.0 where
   the latter does not exist).
+- `Terminal.Report` is gated behind a new `Terminal.DebugLogging` flag
+  (default off): shells routinely emit sequences the core does not know
+  (OSC 133 shell integration, proprietary extensions) and the unconditional
+  `Console.WriteLine` spammed the host's output on every prompt redraw.
 
 Import: `master` as of 2025 (check `git log` upstream before refreshing).

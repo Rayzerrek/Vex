@@ -1122,8 +1122,14 @@ namespace XtermSharp {
 		/// <summary>
 		/// Reports a message to the system log
 		/// </summary>
+		// Windows port: unknown-sequence reports (OSC 133 shell integration,
+		// proprietary extensions) are routine, not errors; opt in via DebugLogging.
+		public static bool DebugLogging { get; set; }
+
 		void Report (string prefix, string text, object [] args)
 		{
+			if (!DebugLogging)
+				return;
 			Console.WriteLine ($"{prefix}: {text}");
 			for (int i = 0; i < args.Length; i++)
 				Console.WriteLine ("    {0}: {1}", i, args [i]);
