@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Vex.App/Vex.App.csproj" />
+  <Project Path="Vex.Terminal/Vex.Terminal.csproj" />
+  <Project Path="../Vendor/XtermSharp/XtermSharp.csproj" />
+</Solution>
