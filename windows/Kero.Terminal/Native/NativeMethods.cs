@@ -11,7 +11,14 @@ internal static class NativeMethods
     internal const int PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016;
     internal const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     internal const int STARTF_USESTDHANDLES = 0x00000100;
+    internal const uint CREATE_NO_WINDOW = 0x08000000;
+    internal const uint CREATE_NEW_CONSOLE = 0x00000010;
+    internal const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+    internal const uint HANDLE_FLAG_INHERIT = 0x00000001;
     internal const uint INFINITE = 0xFFFFFFFF;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct COORD
@@ -138,4 +145,7 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool FreeConsole();
 }
