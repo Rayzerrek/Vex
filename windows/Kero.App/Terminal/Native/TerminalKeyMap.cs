@@ -27,7 +27,7 @@ public static class TerminalKeyMap
         switch (key)
         {
             case Key.Return: // same value as Key.Enter
-                return mod > 1 ? Csi(mod, "~", 13) : EscapeSequences.CmdRet;
+                return EscapeSequences.CmdRet;
             case Key.Back:
                 return EscapeSequences.CmdDel;
             case Key.Escape:
