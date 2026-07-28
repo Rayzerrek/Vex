@@ -76,12 +76,12 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         var fresh = NewLeaf();
         Root = ReplaceNode(Root, target, new SplitPane(orientation, target, fresh));
         ActiveLeaf = fresh;
-        fresh.View.FocusTerminal();
+        fresh.Focus();
     }
 
     private LeafPane NewLeaf()
     {
-        var leaf = new LeafPane(WorkingDirectory);
+        var leaf = new TerminalPane(WorkingDirectory);
         leaf.FocusRequested += () => ActiveLeaf = leaf;
         leaf.SplitRequested += orientation =>
         {
@@ -92,6 +92,31 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         leaf.PropertyChanged += OnLeafPropertyChanged;
         leaf.ProcessExited += OnLeafExited;
         return leaf;
+    }
+
+    public void OpenFile(string path)
+    {
+        var target = ActiveLeaf ?? FirstLeaf();
+        if (target is null)
+            return;
+
+        var fresh = new EditorPane(path);
+        fresh.FocusRequested += () => ActiveLeaf = fresh;
+        fresh.SplitRequested += orientation =>
+        {
+            ActiveLeaf = fresh;
+            Split(orientation);
+        };
+        fresh.NewTabRequested += () => NewTabRequested?.Invoke();
+        fresh.PropertyChanged += OnLeafPropertyChanged;
+        fresh.ProcessExited += OnLeafExited;
+
+        Root = ReplaceNode(Root, target, fresh);
+        ActiveLeaf = fresh;
+
+        target.PropertyChanged -= OnLeafPropertyChanged;
+        target.ProcessExited -= OnLeafExited;
+        target.Dispose();
     }
 
     private void OnLeafExited(LeafPane leaf)
@@ -106,7 +131,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         if (ReferenceEquals(ActiveLeaf, leaf))
         {
             ActiveLeaf = FirstLeaf();
-            ActiveLeaf?.View.FocusTerminal();
+            ActiveLeaf?.Focus();
         }
 
         leaf.PropertyChanged -= OnLeafPropertyChanged;
