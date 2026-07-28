@@ -17,6 +17,11 @@ public static class PaletteProvider
             }, "Terminal");
             yield return new PaletteItem("Split Right", "Split current tab horizontally", () => workspace.SelectedProject.SelectedTab.Split(System.Windows.Controls.Orientation.Horizontal), "Terminal");
             yield return new PaletteItem("Split Down", "Split current tab vertically", () => workspace.SelectedProject.SelectedTab.Split(System.Windows.Controls.Orientation.Vertical), "Terminal");
+
+            if (workspace.SelectedProject.SelectedTab.ActiveLeaf is EditorPane editorPane)
+            {
+                yield return new PaletteItem("Save File", "Save current open file", () => editorPane.Save(), "Editor");
+            }
         }
 
         yield return new PaletteItem("New Project", "Open a new project directory", () => uiAction("NewProject"), "Workspace");
