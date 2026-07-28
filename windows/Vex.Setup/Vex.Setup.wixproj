@@ -1,0 +1,10 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputName>VexSetup</OutputName>
+    <OutputType>Package</OutputType>
+    <Cultures>en-US</Cultures>
+    <InstallerPlatform>x64</InstallerPlatform>
+  </PropertyGroup>
+
+
+</Project>
