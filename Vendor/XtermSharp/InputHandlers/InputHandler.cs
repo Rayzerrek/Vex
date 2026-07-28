@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using NStack;
@@ -749,33 +749,35 @@ namespace XtermSharp {
 					// reset bg
 					bg = CharData.DefaultAttr & 0x1ff;
 				} else if (p == 38) {
-					// fg color 256
-					if (pars [i + 1] == 2) {
-						i += 2;
-						fg = terminal.MatchColor (
-							pars [i] & 0xff,
-							pars [i + 1] & 0xff,
-							pars [i + 2] & 0xff);
-						if (fg == -1)
-							fg = 0x1ff;
-						i += 2;
-					} else if (pars [i + 1] == 5) {
+					// fg color 256 / 24-bit
+					if (i + 1 < l && pars [i + 1] == 2) {
+						if (i + 4 < l) {
+							fg = terminal.MatchColor (
+								pars [i + 2] & 0xff,
+								pars [i + 3] & 0xff,
+								pars [i + 4] & 0xff);
+							if (fg == -1)
+								fg = 0x1ff;
+							i += 4;
+						}
+					} else if (i + 2 < l && pars [i + 1] == 5) {
 						i += 2;
 						p = pars [i] & 0xff;
 						fg = p;
 					}
 				} else if (p == 48) {
-					// bg color 256
-					if (pars [i + 1] == 2) {
-						i += 2;
-						bg = terminal.MatchColor (
-							pars [i] & 0xff,
-							pars [i + 1] & 0xff,
-							pars [i + 2] & 0xff);
-						if (bg == -1)
-							bg = 0x1ff;
-						i += 2;
-					} else if (pars [i + 1] == 5) {
+					// bg color 256 / 24-bit
+					if (i + 1 < l && pars [i + 1] == 2) {
+						if (i + 4 < l) {
+							bg = terminal.MatchColor (
+								pars [i + 2] & 0xff,
+								pars [i + 3] & 0xff,
+								pars [i + 4] & 0xff);
+							if (bg == -1)
+								bg = 0x1ff;
+							i += 4;
+						}
+					} else if (i + 2 < l && pars [i + 1] == 5) {
 						i += 2;
 						p = pars [i] & 0xff;
 						bg = p;

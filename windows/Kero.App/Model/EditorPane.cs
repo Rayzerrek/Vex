@@ -12,7 +12,7 @@ public sealed class EditorPane : LeafPane
 {
     private string _filePath;
     private string _content;
-    private readonly string _originalContent;
+    private string _originalContent;
 
     public EditorPane(string filePath)
     {
@@ -40,6 +40,23 @@ public sealed class EditorPane : LeafPane
     {
         get => _content;
         set => Set(ref _content, value);
+    }
+
+    public void Save()
+    {
+        if (string.IsNullOrEmpty(_filePath))
+            return;
+
+        try
+        {
+            File.WriteAllText(_filePath, _content);
+            _originalContent = _content;
+            IsDirty = false;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to save file: {ex.Message}", "Error Saving File", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     protected override object CreateView()
@@ -71,9 +88,15 @@ public sealed class EditorPane : LeafPane
         editor.PreviewKeyDown += (_, e) =>
         {
             var key = e.Key == Key.System ? e.SystemKey : e.Key;
-            if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.W)
+            var modifiers = Keyboard.Modifiers;
+            if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.W)
             {
                 RequestClose();
+                e.Handled = true;
+            }
+            else if (modifiers == ModifierKeys.Control && key == Key.S)
+            {
+                Save();
                 e.Handled = true;
             }
         };
