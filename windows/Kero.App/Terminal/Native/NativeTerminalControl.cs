@@ -658,7 +658,15 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         // Applications that capture the mouse get their events instead of
         // selection (Shift above overrides, as in xterm).
         if (_terminal.MouseMode != MouseMode.Off)
+        {
+            var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+            var alt = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
+            var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            var cb = _terminal.EncodeMouseButton(0, release: false, shift: shift, meta: alt, control: ctrl);
+            _terminal.SendEvent(cb, col, row);
+            e.Handled = true;
             return;
+        }
 
         _selection.StartSelection(row, col);
         CaptureMouse();
@@ -667,6 +675,16 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        if (_terminal.MouseMode != MouseMode.Off && e.LeftButton == MouseButtonState.Pressed)
+        {
+            var (col, row) = CellFromPoint(e.GetPosition(this));
+            var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+            var alt = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
+            var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            var cb = _terminal.EncodeMouseButton(0, release: false, shift: shift, meta: alt, control: ctrl);
+            _terminal.SendMouseMotion(cb, col, row);
+            return;
+        }
         if (IsMouseCaptured && e.LeftButton == MouseButtonState.Pressed && _selection.Active)
         {
             var (col, row) = CellFromPoint(e.GetPosition(this));
@@ -677,6 +695,16 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonUp(e);
+        if (_terminal.MouseMode != MouseMode.Off)
+        {
+            var (col, row) = CellFromPoint(e.GetPosition(this));
+            var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+            var alt = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
+            var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            var cb = _terminal.EncodeMouseButton(0, release: true, shift: shift, meta: alt, control: ctrl);
+            _terminal.SendEvent(cb, col, row);
+            e.Handled = true;
+        }
         if (IsMouseCaptured)
             ReleaseMouseCapture();
     }
@@ -684,6 +712,17 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseRightButtonDown(e);
+        if (_terminal.MouseMode != MouseMode.Off)
+        {
+            var (col, row) = CellFromPoint(e.GetPosition(this));
+            var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+            var alt = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
+            var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            var cb = _terminal.EncodeMouseButton(2, release: false, shift: shift, meta: alt, control: ctrl);
+            _terminal.SendEvent(cb, col, row);
+            e.Handled = true;
+            return;
+        }
         PasteClipboard();
         e.Handled = true;
     }
@@ -691,6 +730,15 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
+        if (_terminal.MouseMode != MouseMode.Off)
+        {
+            var (col, row) = CellFromPoint(e.GetPosition(this));
+            var button = e.Delta > 0 ? 4 : 5;
+            var cb = _terminal.EncodeMouseButton(button, release: false, shift: false, meta: false, control: false);
+            _terminal.SendEvent(cb, col, row);
+            e.Handled = true;
+            return;
+        }
         if (_terminal.Buffers.IsAlternateBuffer)
             return; // viewport scrollback does not exist on the alt screen
         var lines = Math.Max(1, SystemParameters.WheelScrollLines) * (e.Delta / 120);
