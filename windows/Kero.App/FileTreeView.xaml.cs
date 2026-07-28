@@ -9,6 +9,19 @@ public partial class FileTreeView : UserControl
         InitializeComponent();
     }
 
+    private void TreeView_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is TreeView treeView && treeView.SelectedItem is Model.FileTreeNode selectedNode)
+        {
+            if (!selectedNode.IsDirectory && DataContext is Model.Project project)
+            {
+                var tab = project.SelectedTab ?? project.NewTab();
+                tab.OpenFile(selectedNode.FullPath);
+                e.Handled = true;
+            }
+        }
+    }
+
     private void TreeView_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (e.OriginalSource is System.Windows.Controls.Border or System.Windows.Controls.ScrollViewer)
