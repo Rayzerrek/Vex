@@ -1,0 +1,105 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OneDark-Shell" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment"      foreground="#5C6370" fontStyle="italic"/>
+  <Color name="String"       foreground="#98C379"/>
+  <Color name="Number"       foreground="#D19A66"/>
+  <Color name="Keyword"      foreground="#C678DD"/>
+  <Color name="Variable"     foreground="#E06C75"/>
+  <Color name="Builtin"      foreground="#61AFEF"/>
+  <Color name="Operator"     foreground="#56B6C2"/>
+
+  <RuleSet>
+    <!-- Line comment -->
+    <Span color="Comment">
+      <Begin>\#</Begin>
+    </Span>
+
+
+
+    <!-- Double-quoted string (with variable expansion inside) -->
+    <Span color="String">
+      <Begin>"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="Variable">\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}]+\}|\$\([^)]+\)</Rule>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Single-quoted string (literal, no expansion) -->
+    <Span color="String">
+      <Begin>'</Begin>
+      <End>'</End>
+    </Span>
+
+    <!-- Variable expansion outside strings -->
+    <Rule color="Variable">\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}]+\}|\$[0-9@#?!*]</Rule>
+
+    <!-- Numbers -->
+    <Rule color="Number">\b\d+\b</Rule>
+
+    <!-- Built-in commands -->
+    <Keywords color="Builtin">
+      <Word>echo</Word>
+      <Word>printf</Word>
+      <Word>read</Word>
+      <Word>export</Word>
+      <Word>source</Word>
+      <Word>exec</Word>
+      <Word>eval</Word>
+      <Word>cd</Word>
+      <Word>pwd</Word>
+      <Word>ls</Word>
+      <Word>mkdir</Word>
+      <Word>rm</Word>
+      <Word>cp</Word>
+      <Word>mv</Word>
+      <Word>touch</Word>
+      <Word>cat</Word>
+      <Word>grep</Word>
+      <Word>sed</Word>
+      <Word>awk</Word>
+      <Word>sort</Word>
+      <Word>uniq</Word>
+      <Word>head</Word>
+      <Word>tail</Word>
+      <Word>find</Word>
+      <Word>xargs</Word>
+      <Word>curl</Word>
+      <Word>wget</Word>
+      <Word>chmod</Word>
+      <Word>chown</Word>
+      <Word>kill</Word>
+      <Word>ps</Word>
+      <Word>env</Word>
+      <Word>set</Word>
+      <Word>unset</Word>
+    </Keywords>
+
+    <!-- Control flow -->
+    <Keywords color="Keyword">
+      <Word>if</Word>
+      <Word>then</Word>
+      <Word>else</Word>
+      <Word>elif</Word>
+      <Word>fi</Word>
+      <Word>for</Word>
+      <Word>while</Word>
+      <Word>until</Word>
+      <Word>do</Word>
+      <Word>done</Word>
+      <Word>case</Word>
+      <Word>esac</Word>
+      <Word>in</Word>
+      <Word>function</Word>
+      <Word>return</Word>
+      <Word>exit</Word>
+      <Word>break</Word>
+      <Word>continue</Word>
+      <Word>local</Word>
+      <Word>declare</Word>
+      <Word>typeset</Word>
+      <Word>readonly</Word>
+    </Keywords>
+  </RuleSet>
+</SyntaxDefinition>
