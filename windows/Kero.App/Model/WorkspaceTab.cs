@@ -23,6 +23,41 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         _activeLeaf.IsFocused = true;
     }
 
+    internal WorkspaceTab(string title, string workingDirectory, PaneNode root, bool hasCustomTitle)
+    {
+        _title = title;
+        WorkingDirectory = workingDirectory;
+        HasCustomTitle = hasCustomTitle;
+        _root = root;
+        
+        foreach (var leaf in Leaves(_root))
+        {
+            AttachLeafEvents(leaf);
+            if (leaf.IsFocused)
+                _activeLeaf = leaf;
+        }
+
+        if (_activeLeaf == null)
+        {
+            _activeLeaf = FirstLeaf();
+            if (_activeLeaf != null)
+                _activeLeaf.IsFocused = true;
+        }
+    }
+
+    private void AttachLeafEvents(LeafPane leaf)
+    {
+        leaf.FocusRequested += () => ActiveLeaf = leaf;
+        leaf.SplitRequested += orientation =>
+        {
+            ActiveLeaf = leaf;
+            Split(orientation);
+        };
+        leaf.NewTabRequested += () => NewTabRequested?.Invoke();
+        leaf.PropertyChanged += OnLeafPropertyChanged;
+        leaf.ProcessExited += OnLeafExited;
+    }
+
     public Guid Id { get; } = Guid.NewGuid();
 
     /// <summary>Directory new panes in this tab start in.</summary>
@@ -82,15 +117,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     private LeafPane NewLeaf()
     {
         var leaf = new TerminalPane(WorkingDirectory);
-        leaf.FocusRequested += () => ActiveLeaf = leaf;
-        leaf.SplitRequested += orientation =>
-        {
-            ActiveLeaf = leaf;
-            Split(orientation);
-        };
-        leaf.NewTabRequested += () => NewTabRequested?.Invoke();
-        leaf.PropertyChanged += OnLeafPropertyChanged;
-        leaf.ProcessExited += OnLeafExited;
+        AttachLeafEvents(leaf);
         return leaf;
     }
 
@@ -101,15 +128,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             return;
 
         var fresh = new EditorPane(path);
-        fresh.FocusRequested += () => ActiveLeaf = fresh;
-        fresh.SplitRequested += orientation =>
-        {
-            ActiveLeaf = fresh;
-            Split(orientation);
-        };
-        fresh.NewTabRequested += () => NewTabRequested?.Invoke();
-        fresh.PropertyChanged += OnLeafPropertyChanged;
-        fresh.ProcessExited += OnLeafExited;
+        AttachLeafEvents(fresh);
 
         Root = ReplaceNode(Root, target, fresh);
         ActiveLeaf = fresh;
