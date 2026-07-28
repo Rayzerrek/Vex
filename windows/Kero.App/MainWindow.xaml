@@ -7,6 +7,13 @@
         Background="{StaticResource KeroBackground}"
         Foreground="{StaticResource KeroText}"
         FontFamily="Segoe UI" FontSize="13">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="40"
+                      CornerRadius="0"
+                      GlassFrameThickness="0"
+                      ResizeBorderThickness="6"
+                      UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
     <Window.Resources>
         <!-- Recursive pane tree: a leaf hosts a terminal, a split hosts two
              children with a draggable splitter. -->
@@ -55,11 +62,11 @@
         <Border Grid.Column="0" Background="{StaticResource KeroBackground}"
                 BorderBrush="{StaticResource KeroBorder}" BorderThickness="0,0,1,0">
             <DockPanel>
-                <Border DockPanel.Dock="Top" Padding="12,10">
+                <Border DockPanel.Dock="Top" Height="40" Padding="12,0" Background="{StaticResource KeroBackground}">
                     <DockPanel>
                         <TextBlock Text="kero" FontWeight="SemiBold" FontSize="15"
-                                   VerticalAlignment="Center"/>
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                   VerticalAlignment="Center" Foreground="{StaticResource KeroText}"/>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                             <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">⚙</Button>
                             <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">＋</Button>
                         </StackPanel>
@@ -122,84 +129,108 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0" BorderBrush="{StaticResource KeroBorder}" BorderThickness="0,0,0,1">
+            <Border Grid.Row="0" Height="40" Background="{StaticResource KeroBackground}" BorderBrush="{StaticResource KeroBorder}" BorderThickness="0,0,0,1">
                 <DockPanel>
-                    <ListBox DockPanel.Dock="Left"
-                             ItemsSource="{Binding SelectedProject.Tabs}"
-                             SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
-                             Background="Transparent" BorderThickness="0"
-                             ScrollViewer.HorizontalScrollBarVisibility="Hidden"
-                             ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                        <ListBox.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <StackPanel Orientation="Horizontal"/>
-                            </ItemsPanelTemplate>
-                        </ListBox.ItemsPanel>
-                        <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                                <Setter Property="Padding" Value="16,10"/>
-                                <Setter Property="BorderThickness" Value="0,0,1,0"/>
-                                <Setter Property="BorderBrush" Value="{StaticResource KeroBorder}"/>
-                                <Setter Property="Foreground" Value="{StaticResource KeroTextDim}"/>
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="ListBoxItem">
-                                            <Border x:Name="chrome" Background="Transparent"
-                                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                                    Padding="{TemplateBinding Padding}">
-                                                <ContentPresenter/>
-                                            </Border>
-                                            <ControlTemplate.Triggers>
-                                                <Trigger Property="IsSelected" Value="True">
-                                                    <Setter Property="Background" Value="{StaticResource KeroHover}" TargetName="chrome"/>
-                                                    <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
-                                                    <Setter Property="Foreground" Value="{StaticResource KeroText}"/>
-                                                </Trigger>
-                                                <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter Property="Background" Value="{StaticResource KeroSurface}" TargetName="chrome"/>
-                                                </Trigger>
-                                            </ControlTemplate.Triggers>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                        </ListBox.ItemContainerStyle>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Orientation="Horizontal" Background="Transparent"
-                                            MouseDown="TabHeader_MouseDown">
-                                    <StackPanel.ContextMenu>
-                                        <ContextMenu Style="{StaticResource DarkContextMenu}">
-                                            <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+→" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
-                                            <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+↓" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
-                                        </ContextMenu>
-                                    </StackPanel.ContextMenu>
-                                    <TextBlock x:Name="TitleBlock" Text="{Binding Title}" MaxWidth="180"
-                                               TextTrimming="CharacterEllipsis" FontSize="15"
-                                               VerticalAlignment="Center"/>
-                                    <TextBox x:Name="TitleEditBox" Text="{Binding Title}" MaxWidth="180"
-                                             Visibility="Collapsed" FontSize="15"
-                                             VerticalAlignment="Center"
-                                             Foreground="{StaticResource KeroText}"
-                                             Background="{StaticResource KeroSurface}"
-                                             BorderBrush="{StaticResource KeroBorder}"
-                                             KeyDown="TitleEditBox_KeyDown"
-                                             LostFocus="TitleEditBox_LostFocus"/>
-                                    <Button Style="{StaticResource GhostButton}" Padding="4,0"
-                                            Margin="6,0,0,0" ToolTip="Close Tab"
-                                            Click="CloseTab_Click">×</Button>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)"
-                            Click="NewTab_Click">＋</Button>
+                    <!-- Window Caption / Control Buttons (Min, Max, Close) -->
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button Style="{StaticResource WindowControlButton}" ToolTip="Minimize" Click="MinimizeWindow_Click">
+                            <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                        </Button>
+                        <Button x:Name="MaximizeButton" Style="{StaticResource WindowControlButton}" ToolTip="Maximize" Click="MaximizeWindow_Click">
+                            <TextBlock x:Name="MaximizeButtonIcon" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                        </Button>
+                        <Button Style="{StaticResource WindowCloseButton}" ToolTip="Close" Click="CloseWindow_Click">
+                            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Split buttons -->
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
                         <Button Style="{StaticResource GhostButton}" ToolTip="Split Right (Ctrl+Shift+→)"
                                 Click="SplitRight_Click">Split →</Button>
                         <Button Style="{StaticResource GhostButton}" ToolTip="Split Down (Ctrl+Shift+↓)"
                                 Click="SplitDown_Click">Split ↓</Button>
+                    </StackPanel>
+
+                    <!-- Tabs container docked to Left -->
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                        <ListBox WindowChrome.IsHitTestVisibleInChrome="True"
+                                 ItemsSource="{Binding SelectedProject.Tabs}"
+                                 SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
+                                 Background="Transparent" BorderThickness="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                                 ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+                                    <Setter Property="Padding" Value="14,0"/>
+                                    <Setter Property="Height" Value="40"/>
+                                    <Setter Property="BorderThickness" Value="0,0,1,0"/>
+                                    <Setter Property="BorderBrush" Value="{StaticResource KeroBorder}"/>
+                                    <Setter Property="Foreground" Value="{StaticResource KeroTextDim}"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListBoxItem">
+                                                <Border x:Name="chrome" Background="Transparent"
+                                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                                        Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter Property="Background" Value="{StaticResource KeroHover}" TargetName="chrome"/>
+                                                        <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
+                                                        <Setter Property="Foreground" Value="{StaticResource KeroText}"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Background" Value="{StaticResource KeroSurface}" TargetName="chrome"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Background="Transparent"
+                                                MouseDown="TabHeader_MouseDown">
+                                        <StackPanel.ContextMenu>
+                                            <ContextMenu Style="{StaticResource DarkContextMenu}">
+                                                <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+→" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
+                                                <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+↓" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
+                                            </ContextMenu>
+                                        </StackPanel.ContextMenu>
+                                        <TextBlock x:Name="TitleBlock" Text="{Binding Title}" MaxWidth="180"
+                                                   TextTrimming="CharacterEllipsis" FontSize="14"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBox x:Name="TitleEditBox" Text="{Binding Title}" MaxWidth="180"
+                                                 Visibility="Collapsed" FontSize="14"
+                                                 VerticalAlignment="Center"
+                                                 Foreground="{StaticResource KeroText}"
+                                                 Background="{StaticResource KeroSurface}"
+                                                 BorderBrush="{StaticResource KeroBorder}"
+                                                 KeyDown="TitleEditBox_KeyDown"
+                                                 LostFocus="TitleEditBox_LostFocus"/>
+                                        <Button Style="{StaticResource GhostButton}" Padding="4,0"
+                                                Margin="6,0,0,0" ToolTip="Close Tab"
+                                                Click="CloseTab_Click">×
+                                        </Button>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <!-- New Tab button -->
+                        <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)"
+                                VerticalAlignment="Center" Margin="6,0,0,0" Width="26" Height="26"
+                                Padding="0" FontSize="12" Click="NewTab_Click">＋</Button>
                     </StackPanel>
                 </DockPanel>
             </Border>
