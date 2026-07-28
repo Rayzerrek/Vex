@@ -493,7 +493,6 @@ namespace XtermSharp {
 
 		internal void EmitA11yTab (object p)
 		{
-			throw new NotImplementedException ();
 		}
 
 		internal void SetgLevel (int v)
@@ -512,8 +511,6 @@ namespace XtermSharp {
 
 		internal void EmitScroll (int v)
 		{
-			return;
-			throw new NotImplementedException ();
 		}
 
 		internal void SetgCharset (byte v, Dictionary<byte, string> charset)
@@ -678,7 +675,22 @@ namespace XtermSharp {
 
 		public int MatchColor (int r1, int g1, int b1)
 		{
-			throw new NotImplementedException ();
+			int bestMatch = 16;
+			int minDiff = int.MaxValue;
+			for (int i = 0; i < Color.DefaultAnsiColors.Count; i++)
+			{
+				var c = Color.DefaultAnsiColors[i];
+				int dr = c.Red - r1;
+				int dg = c.Green - g1;
+				int db = c.Blue - b1;
+				int diff = dr * dr + dg * dg + db * db;
+				if (diff < minDiff)
+				{
+					minDiff = diff;
+					bestMatch = i;
+				}
+			}
+			return bestMatch;
 		}
 
 		internal void EmitData (string txt)
