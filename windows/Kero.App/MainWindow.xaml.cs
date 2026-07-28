@@ -6,14 +6,16 @@ namespace Kero.App;
 
 public partial class MainWindow : Window
 {
-    private readonly Workspace _workspace = new();
+    private readonly Workspace _workspace;
 
     public MainWindow()
     {
+        _workspace = SessionStore.Load();
         InitializeComponent();
         DataContext = _workspace;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
     }
+
 
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
@@ -166,6 +168,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        SessionStore.Save(_workspace);
         base.OnClosed(e);
         foreach (var project in _workspace.Projects)
             foreach (var tab in project.Tabs)
