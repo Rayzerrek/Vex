@@ -1,4 +1,4 @@
-﻿//
+//
 // This could use an audit for the use of Rune when dealing with "code" values,
 // in particular in Execute code paths
 //
@@ -654,9 +654,8 @@ namespace XtermSharp {
 							int c = -1;
 							if (OscHandlers.TryGetValue (identifier, out var ohandlers)) {
 								c = ohandlers.Count - 1;
-								for (; c >= 0; c--) {
+								if (c >= 0) {
 									ohandlers [c] (content);
-									break;
 								}
 							}
 							if (c < 0)

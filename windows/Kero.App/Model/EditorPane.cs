@@ -12,6 +12,7 @@ public sealed class EditorPane : LeafPane
 {
     private string _filePath;
     private string _content;
+    private readonly string _originalContent;
 
     public EditorPane(string filePath)
     {
@@ -26,6 +27,7 @@ public sealed class EditorPane : LeafPane
         {
             _content = "";
         }
+        _originalContent = _content;
     }
 
     public string FilePath
@@ -79,6 +81,7 @@ public sealed class EditorPane : LeafPane
         editor.TextChanged += (_, _) =>
         {
             _content = editor.Text;
+            IsDirty = _content != _originalContent;
         };
 
         return editor;
