@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
+    <ProjectReference Include="..\Vex.Terminal\Vex.Terminal.csproj" />
+    <ProjectReference Include="..\..\Vendor\XtermSharp\XtermSharp.csproj" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Ship the xterm.js bundle as plain files; the app maps them to a
+         virtual host for the WebView2 at runtime. -->
+    <None Remove="Assets\**\*" />
+    <None Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One Dark syntax-highlighting definitions for AvalonEdit. -->
+    <EmbeddedResource Include="Highlighting\*.xshd" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+</Project>
