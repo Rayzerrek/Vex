@@ -1,0 +1,116 @@
+<UserControl x:Class="Vex.App.SettingsOverlay"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             Visibility="Collapsed">
+    <Grid>
+        <!-- Backdrop -->
+        <Border Background="#80000000" MouseDown="Backdrop_MouseDown" />
+
+        <!-- Overlay Panel -->
+        <Border Background="{StaticResource VexSurface}" 
+                BorderBrush="{StaticResource VexBorder}" 
+                BorderThickness="1,0,0,0" 
+                Width="320" 
+                HorizontalAlignment="Right">
+            <Border.RenderTransform>
+                <TranslateTransform x:Name="SlideTransform" X="320"/>
+            </Border.RenderTransform>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,0,1" Padding="16,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Settings" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Style="{StaticResource GhostButton}" Click="CloseButton_Click" ToolTip="Close Settings" Width="24" Height="24" Padding="0">×</Button>
+                    </Grid>
+                </Border>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16,16,16,0">
+                        <!-- Theme -->
+                        <TextBlock Text="Theme" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,8"/>
+                        <ListBox x:Name="ThemeListBox" 
+                                 Background="Transparent" 
+                                 BorderThickness="1" 
+                                 BorderBrush="{StaticResource VexBorder}"
+                                 SelectionChanged="ThemeListBox_SelectionChanged"
+                                 DisplayMemberPath="Name"
+                                 Margin="0,0,0,24">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="10,6"/>
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListBoxItem">
+                                                <Border x:Name="chrome" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter TargetName="chrome" Property="Background" Value="{StaticResource VexAccent}"/>
+                                                        <Setter Property="Foreground" Value="#17171A"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="chrome" Property="Background" Value="{StaticResource VexHover}"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                        </ListBox>
+
+                        <!-- Terminal backend -->
+                        <TextBlock Text="Terminal Backend" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,8"/>
+                        <ComboBox Style="{StaticResource DarkComboBox}"
+                                  ItemsSource="{Binding AvailableTerminalBackends}"
+                                  SelectedItem="{Binding TerminalBackend, UpdateSourceTrigger=PropertyChanged}"
+                                  Margin="0,0,0,24" ItemContainerStyle="{StaticResource DarkComboBoxItem}"/>
+
+                        <!-- Shell -->
+                        <TextBlock Text="Shell" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,8"/>
+                        <ComboBox Style="{StaticResource DarkComboBox}"
+                                  ItemsSource="{Binding AvailableShells}" 
+                                  SelectedItem="{Binding Shell, UpdateSourceTrigger=PropertyChanged}" 
+                                  Margin="0,0,0,24" ItemContainerStyle="{StaticResource DarkComboBoxItem}"/>
+
+                        <!-- Font Family -->
+                        <TextBlock Text="Font Family" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,8"/>
+                        <ComboBox Style="{StaticResource DarkComboBox}"
+                                  ItemsSource="{Binding AvailableFonts}" 
+                                  SelectedItem="{Binding FontFamily, UpdateSourceTrigger=PropertyChanged}" 
+                                  Margin="0,0,0,24" ItemContainerStyle="{StaticResource DarkComboBoxItem}"/>
+
+                        <!-- Font Size -->
+                        <TextBlock Text="Font Size" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,8"/>
+                        <DockPanel Margin="0,0,0,24">
+                            <TextBlock Text="{Binding FontSize}" DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center" Width="24" TextAlignment="Right"/>
+                            <Slider Minimum="10" Maximum="24" Value="{Binding FontSize, UpdateSourceTrigger=PropertyChanged}" 
+                                    IsSnapToTickEnabled="True" TickFrequency="1" VerticalAlignment="Center"/>
+                        </DockPanel>
+
+                        <!-- Cursor Blink -->
+                        <CheckBox Content="Cursor Blink" 
+                                  IsChecked="{Binding CursorBlink}" 
+                                  Foreground="{StaticResource VexText}"
+                                  Margin="0,0,0,24"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
