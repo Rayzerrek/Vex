@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Kero.Terminal\Kero.Terminal.csproj" />
+    <ProjectReference Include="..\..\Vendor\XtermSharp\XtermSharp.csproj" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
