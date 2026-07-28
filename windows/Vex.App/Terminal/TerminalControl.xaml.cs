@@ -176,7 +176,7 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
     {
         columns = 0;
         rows = 0;
-        if (ActualWidth <= 0 || ActualHeight <= 0)
+        if (!IsLoaded || ActualWidth < 150 || ActualHeight < 80)
             return false;
 
         // index.html adds 6px left and 2px top padding.
@@ -222,7 +222,7 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
         if (_session is null)
         {
             // Ignore tiny initial sizes during WPF layout to prevent shell formatting bugs (e.g. nushell spamming newlines)
-            if (columns < 10 || rows < 2) return;
+            if (columns < 20 || rows < 5) return;
 
             var session = new TerminalSession();
             session.OutputReceived += OnSessionOutput;

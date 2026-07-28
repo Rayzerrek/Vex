@@ -54,6 +54,10 @@
   // Workspace shortcuts. Keystrokes live inside the WebView2, so they are
   // captured here (before xterm sees them) and forwarded to the app.
   window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey) {
+      if (e.code === 'Home') { e.preventDefault(); e.stopPropagation(); term.scrollToTop(); return; }
+      if (e.code === 'End') { e.preventDefault(); e.stopPropagation(); term.scrollToBottom(); return; }
+    }
     if (e.ctrlKey && e.shiftKey && !e.altKey) {
       var command = { ArrowRight: 'splitRight', ArrowDown: 'splitDown', KeyT: 'newTab', KeyW: 'closePane' }[e.code];
       if (command) {
@@ -107,8 +111,8 @@
     }
   });
 
+  reportSize();
   send({ type: 'ready' });
-  setTimeout(reportSize, 50);
 })();
 </script>
 </body>

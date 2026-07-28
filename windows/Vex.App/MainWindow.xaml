@@ -282,7 +282,8 @@
                         <!-- New Tab button -->
                         <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)"
                                 VerticalAlignment="Center" Margin="6,0,0,0" Width="26" Height="26"
-                                Padding="0" FontSize="12" Click="NewTab_Click">＋</Button>
+                                Padding="0" FontSize="12" Click="NewTab_Click"
+                                IsEnabled="{Binding SelectedProject.CanCreateTab}">＋</Button>
                     </StackPanel>
                 </DockPanel>
             </Border>
