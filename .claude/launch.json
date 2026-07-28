@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "windows",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "windows/Kero.App"],
+      "port": 0
+    }
+  ]
+}
