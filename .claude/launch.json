@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "web",
-      "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "--cwd", "web", "dev"],
-      "port": 3000
+      "name": "windows",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "windows/Kero.App"],
+      "port": 0
     }
   ]
 }
