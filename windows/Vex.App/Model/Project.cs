@@ -9,15 +9,19 @@ namespace Vex.App.Model;
 /// </summary>
 public sealed class Project : ObservableObject
 {
+    public const int MaxTabs = 7;
     private string _name;
     private WorkspaceTab? _selectedTab;
 
     private FileTreeNode? _root;
 
+    public bool CanCreateTab => Tabs.Count < MaxTabs;
+
     public Project(string name, string workingDirectory)
     {
         _name = name;
         WorkingDirectory = workingDirectory;
+        Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
         var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
         RefreshFileTree();
@@ -27,7 +31,8 @@ public sealed class Project : ObservableObject
     {
         _name = snapshot.Name;
         WorkingDirectory = snapshot.WorkingDirectory;
-        
+        Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
+
         foreach (var tabSnapshot in snapshot.Tabs)
         {
             var tab = new WorkspaceTab(tabSnapshot.Title, WorkingDirectory, SessionStore.RestoreNode(tabSnapshot.Root), tabSnapshot.HasCustomTitle);
@@ -82,15 +87,22 @@ public sealed class Project : ObservableObject
         set => Set(ref _selectedTab, value);
     }
 
-    public WorkspaceTab NewTab()
+    public WorkspaceTab? NewTab()
     {
+        if (!CanCreateTab)
+            return null;
+
         var tab = CreateTab($"Terminal {Tabs.Count + 1}");
-        SelectedTab = tab;
+        if (tab != null)
+            SelectedTab = tab;
         return tab;
     }
 
-    private WorkspaceTab CreateTab(string title)
+    private WorkspaceTab? CreateTab(string title)
     {
+        if (!CanCreateTab)
+            return null;
+
         var tab = new WorkspaceTab(title, WorkingDirectory);
         tab.NewTabRequested += () => NewTab();
         tab.TabClosedRequested += t => CloseTab(t);
@@ -100,6 +112,16 @@ public sealed class Project : ObservableObject
 
     public void OpenFile(string filePath)
     {
+        var existingTab = Tabs.FirstOrDefault(t => t.ActiveLeaf is EditorPane ep && ep.FilePath == filePath);
+        if (existingTab != null)
+        {
+            SelectedTab = existingTab;
+            return;
+        }
+
+        if (!CanCreateTab)
+            return;
+
         var fileName = System.IO.Path.GetFileName(filePath);
         var editorPane = new EditorPane(filePath);
         var tab = new WorkspaceTab(fileName, WorkingDirectory, editorPane, hasCustomTitle: false);

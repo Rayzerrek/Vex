@@ -154,7 +154,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private void RecalculateGridSize()
     {
-        if (ActualWidth <= 0 || ActualHeight <= 0)
+        if (!IsLoaded || ActualWidth < 150 || ActualHeight < 80)
             return;
 
         var cols = Math.Max(2, (int)(ActualWidth / _cellWidth));
@@ -174,11 +174,13 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
         if (_session is null)
         {
-            // Same contract as the WebView2 backend: spawn the shell only once
-            // the layout settles at a sane geometry, so prompt redraw logic in
-            // shells (nushell) does not thrash on startup sizes.
-            if (cols >= 10 && rows >= 2)
+            // Spawn the shell only once the layout settles at a sane geometry
+            // so prompt redraw logic in shells does not thrash on startup sizes.
+            if (cols >= 20 && rows >= 5)
+            {
                 StartSession();
+                _terminal.Buffer.YDisp = 0;
+            }
         }
         else
         {
@@ -595,6 +597,39 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         }
 
         _selection.Active = false;
+
+        // Viewport scroll keybindings (normal buffer only — alt screen has no scrollback).
+        if (!_terminal.Buffers.IsAlternateBuffer)
+        {
+            if (mods == ModifierKeys.Control && key == Key.Home)
+            {
+                _terminal.ScrollLines(-_terminal.Buffer.YDisp);
+                FlushRedraw();
+                e.Handled = true;
+                return;
+            }
+            if (mods == ModifierKeys.Control && key == Key.End)
+            {
+                _terminal.ScrollLines(_terminal.Buffer.YBase - _terminal.Buffer.YDisp);
+                FlushRedraw();
+                e.Handled = true;
+                return;
+            }
+            if (mods == ModifierKeys.Shift && key == Key.PageUp)
+            {
+                _terminal.ScrollLines(-_rows);
+                FlushRedraw();
+                e.Handled = true;
+                return;
+            }
+            if (mods == ModifierKeys.Shift && key == Key.PageDown)
+            {
+                _terminal.ScrollLines(_rows);
+                FlushRedraw();
+                e.Handled = true;
+                return;
+            }
+        }
 
         if (TerminalKeyMap.Map(key, mods, _terminal.ApplicationCursor) is { } bytes)
         {
