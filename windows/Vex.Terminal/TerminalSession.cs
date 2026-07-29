@@ -25,7 +25,7 @@ public sealed class TerminalSession : IDisposable
     private bool _disposed;
 
     /// <summary>Raw bytes produced by the child process, as read from the PTY.</summary>
-    public event Action<byte[]>? OutputReceived;
+    public event Action<ArraySegment<byte>>? OutputReceived;
 
     /// <summary>Raised once, with the process exit code, when the child exits.</summary>
     public event Action<int>? Exited;
@@ -114,13 +114,13 @@ public sealed class TerminalSession : IDisposable
         StartExitWaiter();
     }
 
-    public void Write(byte[] data)
+    public void Write(ReadOnlySpan<byte> data)
     {
         if (_ptyInput is null || _disposed)
             return;
         try
         {
-            _ptyInput.Write(data, 0, data.Length);
+            _ptyInput.Write(data);
             _ptyInput.Flush();
         }
         catch (IOException)
@@ -216,17 +216,22 @@ public sealed class TerminalSession : IDisposable
     {
         var reader = new Thread(() =>
         {
-            var buffer = new byte[BufferSize];
             try
             {
                 while (true)
                 {
+                    var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(BufferSize);
                     var read = _ptyOutput!.Read(buffer, 0, buffer.Length);
                     if (read <= 0)
+                    {
+                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
                         break;
-                    var chunk = new byte[read];
-                    Array.Copy(buffer, chunk, read);
-                    OutputReceived?.Invoke(chunk);
+                    }
+                    var handler = OutputReceived;
+                    if (handler != null)
+                        handler.Invoke(new ArraySegment<byte>(buffer, 0, read));
+                    else
+                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
                 }
             }
             catch (IOException)
