@@ -68,6 +68,18 @@
     }
   }, true);
 
+  window.addEventListener('mousedown', function (e) {
+    if (e.button === 0) {
+      send({ type: 'focus' });
+    } else if (e.button === 2) {
+      send({ type: 'paste' });
+    }
+  }, true);
+
+  window.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+  });
+
   term.onData(function (d) { send({ type: 'input', data: toBase64(d) }); });
   term.onBinary(function (d) {
     var bytes = new Uint8Array(d.length);

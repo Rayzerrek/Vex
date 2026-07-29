@@ -27,6 +27,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private readonly DrawingVisual _caretVisual = new();
     private readonly List<DrawingVisual> _rowVisuals = new();
     private readonly DispatcherTimer _blinkTimer;
+    private readonly StringBuilder _runBuilder = new();
 
     private TerminalSession? _session;
     private TerminalPalette _palette = new(BuiltInThemes.VexDark);
@@ -42,7 +43,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private bool _disposed;
 
     private readonly object _outputLock = new();
-    private readonly List<byte[]> _pendingOutput = new();
+    private readonly List<ArraySegment<byte>> _pendingOutput = new();
     private bool _pumpScheduled;
 
     private bool _caretBlinkVisible = true;
@@ -254,7 +255,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         _session = session;
     }
 
-    private void OnSessionOutput(byte[] chunk)
+    private void OnSessionOutput(ArraySegment<byte> chunk)
     {
         lock (_outputLock)
         {
@@ -265,39 +266,30 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             _pumpScheduled = true;
         }
 
-        _ = Dispatcher.BeginInvoke(() =>
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
         {
-            byte[] combined;
+            List<ArraySegment<byte>> toProcess;
             lock (_outputLock)
             {
                 _pumpScheduled = false;
-                if (_pendingOutput.Count == 0)
-                    return;
-                if (_pendingOutput.Count == 1)
-                {
-                    combined = _pendingOutput[0];
-                }
-                else
-                {
-                    var total = _pendingOutput.Sum(c => c.Length);
-                    combined = new byte[total];
-                    var offset = 0;
-                    foreach (var c in _pendingOutput)
-                    {
-                        System.Buffer.BlockCopy(c, 0, combined, offset, c.Length);
-                        offset += c.Length;
-                    }
-                }
+                toProcess = _pendingOutput.ToList();
                 _pendingOutput.Clear();
             }
 
             if (_disposed)
+            {
+                foreach (var c in toProcess) System.Buffers.ArrayPool<byte>.Shared.Return(c.Array!);
                 return;
+            }
 
             _viewportMoved = false;
             try
             {
-                _terminal.Feed(combined);
+                foreach (var c in toProcess)
+                {
+                    _terminal.Feed(c.Array!, c.Count);
+                    System.Buffers.ArrayPool<byte>.Shared.Return(c.Array!);
+                }
             }
             catch (Exception)
             {
@@ -386,17 +378,17 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         var y = row * _cellHeight;
         var runAttr = line.Length > 0 ? line[0].Attribute : CharData.DefaultAttr;
         var runStart = 0;
-        var text = new StringBuilder();
+        _runBuilder.Clear();
 
         for (var col = 0; col < _cols; col++)
         {
             var cell = col < line.Length ? line[col] : CharData.Null;
-            if (cell.Attribute != runAttr && text.Length > 0)
+            if (cell.Attribute != runAttr && _runBuilder.Length > 0)
             {
-                FlushRun(dc, text, runAttr, runStart, y);
+                FlushRun(dc, _runBuilder, runAttr, runStart, y);
                 runStart = col;
                 runAttr = cell.Attribute;
-                text.Clear();
+                _runBuilder.Clear();
             }
             else if (cell.Attribute != runAttr)
             {
@@ -407,15 +399,15 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             if (cell.Width == 0 && cell.Code == 0)
                 continue; // trailing half of a wide glyph
             if (cell.Code == 0)
-                text.Append(' ');
+                _runBuilder.Append(' ');
             else if (cell.Code < 0x10000)
-                text.Append((char)cell.Code);
+                _runBuilder.Append((char)cell.Code);
             else
-                text.Append(cell.Rune.ToString());
+                _runBuilder.Append(cell.Rune.ToString());
         }
 
-        if (text.Length > 0)
-            FlushRun(dc, text, runAttr, runStart, y);
+        if (_runBuilder.Length > 0)
+            FlushRun(dc, _runBuilder, runAttr, runStart, y);
 
         void FlushRun(DrawingContext context, StringBuilder runText, int attr, int startCol, double rowY)
         {
