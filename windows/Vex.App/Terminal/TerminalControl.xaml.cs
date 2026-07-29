@@ -22,7 +22,8 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
     private static Task<CoreWebView2Environment>? _sharedWebViewEnvironmentTask;
 
     private readonly string _workingDirectory;
-    private readonly List<byte[]> _pendingOutput = new();
+    private List<ArraySegment<byte>> _pendingOutput = new();
+    private List<ArraySegment<byte>> _processingOutput = new();
     private TerminalSession? _session;
     private bool _rendererReady;
     private bool _disposed;
@@ -142,6 +143,16 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
             case "title":
                 TitleChanged?.Invoke(root.GetProperty("title").GetString() ?? "");
                 break;
+            case "focus":
+                FocusGained?.Invoke();
+                break;
+            case "paste":
+                if (_session != null && Clipboard.ContainsText())
+                {
+                    var text = Clipboard.GetText().Replace("\r\n", "\r").Replace("\n", "\r");
+                    _session.Write(System.Text.Encoding.UTF8.GetBytes(text));
+                }
+                break;
             case "command":
                 var command = root.GetProperty("name").GetString() switch
                 {
@@ -246,7 +257,7 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
     private readonly object _outputLock = new();
     private bool _outputPending;
     
-    private void OnSessionOutput(byte[] chunk)
+    private void OnSessionOutput(ArraySegment<byte> chunk)
     {
         // Raised on the PTY reader thread; the WebView2 lives on the UI thread.
         lock (_outputLock)
@@ -258,14 +269,15 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
             _outputPending = true;
         }
 
-        _ = Dispatcher.BeginInvoke(() =>
+        _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Render, () =>
         {
-            List<byte[]> toProcess;
+            List<ArraySegment<byte>> toProcess;
             lock (_outputLock)
             {
                 _outputPending = false;
-                toProcess = _pendingOutput.ToList();
-                _pendingOutput.Clear();
+                toProcess = _pendingOutput;
+                _pendingOutput = _processingOutput;
+                _processingOutput = toProcess;
             }
 
             if (!_rendererReady)
@@ -275,21 +287,25 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
                 {
                     _pendingOutput.InsertRange(0, toProcess);
                 }
+                toProcess.Clear();
                 return;
             }
 
             if (toProcess.Count > 0)
             {
                 // Combine all chunks into a single byte array to reduce IPC overhead
-                int totalLength = toProcess.Sum(c => c.Length);
-                byte[] combined = new byte[totalLength];
+                int totalLength = toProcess.Sum(c => c.Count);
+                byte[] combined = System.Buffers.ArrayPool<byte>.Shared.Rent(totalLength);
                 int offset = 0;
                 foreach (var c in toProcess)
                 {
-                    Buffer.BlockCopy(c, 0, combined, offset, c.Length);
-                    offset += c.Length;
+                    Buffer.BlockCopy(c.Array!, c.Offset, combined, offset, c.Count);
+                    offset += c.Count;
+                    System.Buffers.ArrayPool<byte>.Shared.Return(c.Array!);
                 }
-                PostOutput(combined);
+                PostOutput(combined, totalLength);
+                System.Buffers.ArrayPool<byte>.Shared.Return(combined);
+                toProcess.Clear();
             }
         });
     }
@@ -299,39 +315,44 @@ public sealed partial class TerminalControl : UserControl, ITerminalView
         _ = Dispatcher.BeginInvoke(() =>
         {
             var notice = System.Text.Encoding.UTF8.GetBytes($"\r\n\x1b[2m[process exited with code {exitCode}]\x1b[m\r\n");
-            PostOutput(notice);
+            PostOutput(notice, notice.Length);
             ProcessExited?.Invoke(exitCode);
         });
     }
 
     private void FlushPendingOutput()
     {
-        List<byte[]> toProcess;
+        List<ArraySegment<byte>> toProcess;
         lock (_outputLock)
         {
-            toProcess = _pendingOutput.ToList();
-            _pendingOutput.Clear();
+            toProcess = _pendingOutput;
+            _pendingOutput = _processingOutput;
+            _processingOutput = toProcess;
         }
         
         if (toProcess.Count > 0)
         {
-            int totalLength = toProcess.Sum(c => c.Length);
-            byte[] combined = new byte[totalLength];
+            int totalLength = toProcess.Sum(c => c.Count);
+            byte[] combined = System.Buffers.ArrayPool<byte>.Shared.Rent(totalLength);
             int offset = 0;
             foreach (var c in toProcess)
             {
-                Buffer.BlockCopy(c, 0, combined, offset, c.Length);
-                offset += c.Length;
+                Buffer.BlockCopy(c.Array!, c.Offset, combined, offset, c.Count);
+                offset += c.Count;
+                System.Buffers.ArrayPool<byte>.Shared.Return(c.Array!);
             }
-            PostOutput(combined);
+            PostOutput(combined, totalLength);
+            System.Buffers.ArrayPool<byte>.Shared.Return(combined);
+            toProcess.Clear();
         }
     }
 
-    private void PostOutput(byte[] chunk)
+    private void PostOutput(byte[] chunk, int length)
     {
         if (_disposed || WebView.CoreWebView2 is null)
             return;
-        var payload = JsonSerializer.Serialize(new { type = "output", data = Convert.ToBase64String(chunk) });
+        var base64 = Convert.ToBase64String(chunk, 0, length);
+        var payload = $"{{\"type\":\"output\",\"data\":\"{base64}\"}}";
         WebView.CoreWebView2.PostWebMessageAsJson(payload);
     }
 
