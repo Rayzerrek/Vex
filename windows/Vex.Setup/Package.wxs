@@ -26,7 +26,17 @@
       <Directory Id="ApplicationProgramsFolder" Name="Vex" />
     </StandardDirectory>
 
-    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="e3f4a5b6-c7d8-49e0-f1a2-b3c4d5e6f7a8" Bitness="always64">
+        <Shortcut Id="ApplicationDesktopShortcut"
+                  Name="Vex"
+                  Description="Vex Terminal Workspace"
+                  Target="[INSTALLFOLDER]Vex.App.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon" />
+        <RegistryValue Root="HKCU" Key="Software\Vex" Name="desktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
 
     <DirectoryRef Id="ApplicationProgramsFolder">
       <Component Id="ApplicationShortcut" Guid="7b8e5c1d-2a4f-4d6b-9e8a-1c3f5a7b9d1e" Bitness="always64">
@@ -41,17 +51,7 @@
       </Component>
     </DirectoryRef>
 
-    <DirectoryRef Id="DesktopFolder">
-      <Component Id="DesktopShortcut" Guid="e3f4a5b6-c7d8-49e0-f1a2-b3c4d5e6f7a8" Bitness="always64">
-        <Shortcut Id="ApplicationDesktopShortcut"
-                  Name="Vex"
-                  Description="Vex Terminal Workspace"
-                  Target="[INSTALLFOLDER]Vex.App.exe"
-                  WorkingDirectory="INSTALLFOLDER"
-                  Icon="AppIcon" />
-        <RegistryValue Root="HKCU" Key="Software\Vex" Name="desktopShortcut" Type="integer" Value="1" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
+
   </Package>
 
   <Fragment>
