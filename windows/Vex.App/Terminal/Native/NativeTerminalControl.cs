@@ -153,6 +153,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private void RebuildFontMetrics()
     {
         var typeface = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        var probe = new FormattedText("M", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            typeface, _fontSize, Brushes.White, _pixelsPerDip);
+        _baselineY = probe.Baseline;
+
         if (typeface.TryGetGlyphTypeface(out var glyph))
         {
             var em = _fontSize;
@@ -160,15 +164,11 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             var advance = map.TryGetValue('M', out var mGlyph) ? glyph.AdvanceWidths[mGlyph] : glyph.AdvanceWidths[0];
             _cellWidth = Math.Max(1, advance * em);
             _cellHeight = Math.Max(1, Math.Ceiling(em * _fontFamily.LineSpacing));
-            _baselineY = glyph.Baseline * em;
         }
         else
         {
-            var probe = new FormattedText("M", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                typeface, _fontSize, Brushes.White, _pixelsPerDip);
             _cellWidth = Math.Max(1, probe.WidthIncludingTrailingWhitespace);
             _cellHeight = Math.Max(1, Math.Ceiling(probe.Height));
-            _baselineY = probe.Baseline;
         }
 
         RecalculateGridSize();
@@ -464,6 +464,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         {
             _palette.Resolve(attr, out var fg, out var bg, out var flags);
             var x = startCol * _cellWidth;
+
+            // ClearType needs a solid background in the same DrawingVisual to blend correctly.
+            // If background is transparent (default), it causes weird color fringing.
+            bg ??= _palette.Background;
 
             if (bg is not null)
                 context.DrawRectangle(bg, null, new Rect(x, rowY, runText.Length * _cellWidth, _cellHeight));
