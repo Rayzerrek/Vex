@@ -15,6 +15,7 @@ public sealed class TerminalPalette
 {
     private readonly Brush[] _ansi = new Brush[256];
     private readonly Dictionary<int, Brush> _dimCache = new();
+    private readonly Dictionary<int, Brush> _trueColorCache = new();
 
     public Brush Foreground { get; }
     public Brush Background { get; }
@@ -63,6 +64,22 @@ public sealed class TerminalPalette
         return brush;
     }
 
+    private bool TryResolveTrueColor(int index, out Brush? brush)
+    {
+        if (_trueColorCache.TryGetValue(index, out brush))
+            return true;
+
+        if (XtermSharp.Renderer.TryGetTrueColor(index, out var color))
+        {
+            brush = Freeze(Color.FromRgb(color.Red, color.Green, color.Blue));
+            _trueColorCache[index] = brush;
+            return true;
+        }
+
+        brush = null;
+        return false;
+    }
+
     /// <summary>
     /// Splits a packed attribute into render-ready brushes. A null background
     /// means "default": the row already paints the theme background, so
@@ -88,6 +105,7 @@ public sealed class TerminalPalette
         {
             XtermSharp.Renderer.DefaultColor => null,
             XtermSharp.Renderer.InvertedDefaultColor => Foreground,
+            _ when TryResolveTrueColor(bg, out var brush) => brush,
             _ => _ansi[bg],
         };
 
@@ -103,6 +121,7 @@ public sealed class TerminalPalette
         {
             XtermSharp.Renderer.DefaultColor => Foreground,
             XtermSharp.Renderer.InvertedDefaultColor => Background,
+            _ when TryResolveTrueColor(fg, out var brush) => brush,
             _ => _ansi[fg],
         };
 
