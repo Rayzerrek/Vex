@@ -13,9 +13,8 @@ namespace Vex.App.Terminal.Native;
 /// <summary>
 /// The native terminal surface: XtermSharp emulates the VT stream and this
 /// control renders the grid directly in WPF (one DrawingVisual per row,
-/// redrawn only when the emulator marks it dirty). No WebView2, no IPC —
-/// the fast counterpart of <see cref="TerminalControl"/>, in the spirit of
-/// upstream's Alacritty backend.
+/// redrawn only when the emulator marks it dirty). No browser bridge, no IPC —
+/// the app's fast path in the spirit of upstream's Alacritty backend.
 /// </summary>
 public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 {
@@ -36,6 +35,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private double _cellWidth = 8;
     private double _cellHeight = 16;
     private double _pixelsPerDip = 1.0;
+    private Typeface _normalTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+    private Typeface _boldTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+    private Typeface _italicTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
+    private Typeface _boldItalicTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
     private int _cols;
     private int _rows;
     private bool _viewportMoved;
@@ -43,7 +46,8 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private bool _disposed;
 
     private readonly object _outputLock = new();
-    private readonly List<ArraySegment<byte>> _pendingOutput = new();
+    private List<ArraySegment<byte>> _pendingOutput = new();
+    private List<ArraySegment<byte>> _processingOutput = new();
     private bool _pumpScheduled;
 
     private bool _caretBlinkVisible = true;
@@ -103,7 +107,8 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         ApplySettings();
         RebuildFontMetrics();
         _needsFullRedraw = true;
-        RedrawAll();
+        InvalidateVisual();
+        FlushRedraw();
     }
 
     private void ApplySettings()
@@ -112,6 +117,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == settings.ThemeName) ?? BuiltInThemes.VexDark;
         _palette = new TerminalPalette(theme);
         _fontFamily = new FontFamily(settings.FontFamily);
+        _normalTypeface = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        _boldTypeface = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+        _italicTypeface = new Typeface(_fontFamily, FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
+        _boldItalicTypeface = new Typeface(_fontFamily, FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
         _fontSize = settings.FontSize;
         _terminal.Options.CursorBlink = settings.CursorBlink;
         UpdateBlinkTimer();
@@ -261,24 +270,40 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         {
             if (_pendingOutput.Count < 10000)
                 _pendingOutput.Add(chunk);
+            else if (chunk.Array is { } droppedBuffer)
+                System.Buffers.ArrayPool<byte>.Shared.Return(droppedBuffer);
             if (_pumpScheduled)
                 return;
             _pumpScheduled = true;
         }
 
+        ScheduleOutputPump();
+    }
+
+    private void ScheduleOutputPump()
+    {
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
         {
             List<ArraySegment<byte>> toProcess;
             lock (_outputLock)
             {
-                _pumpScheduled = false;
-                toProcess = _pendingOutput.ToList();
-                _pendingOutput.Clear();
+                toProcess = _pendingOutput;
+                _pendingOutput = _processingOutput;
+                _processingOutput = toProcess;
             }
 
             if (_disposed)
             {
-                foreach (var c in toProcess) System.Buffers.ArrayPool<byte>.Shared.Return(c.Array!);
+                foreach (var c in toProcess)
+                {
+                    if (c.Array is { } buffer)
+                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                }
+                toProcess.Clear();
+                lock (_outputLock)
+                {
+                    _pumpScheduled = false;
+                }
                 return;
             }
 
@@ -287,8 +312,11 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             {
                 foreach (var c in toProcess)
                 {
-                    _terminal.Feed(c.Array!, c.Count);
-                    System.Buffers.ArrayPool<byte>.Shared.Return(c.Array!);
+                    if (c.Array is { } buffer)
+                    {
+                        _terminal.Feed(buffer, c.Count);
+                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                    }
                 }
             }
             catch (Exception)
@@ -297,7 +325,19 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 // sequences. Swallow and schedule a full redraw.
                 _needsFullRedraw = true;
             }
+            toProcess.Clear();
             FlushRedraw();
+
+            var scheduleAgain = false;
+            lock (_outputLock)
+            {
+                if (_pendingOutput.Count > 0)
+                    scheduleAgain = true;
+                else
+                    _pumpScheduled = false;
+            }
+            if (scheduleAgain)
+                ScheduleOutputPump();
         });
     }
 
@@ -342,7 +382,6 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
             DrawSelection();
             DrawCaret();
-            InvalidateVisual(); // background
         }
         catch (Exception)
         {
@@ -422,19 +461,33 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             if (content.Length == 0 || fg is null)
                 return;
 
-            var style = flags.HasFlag(FLAGS.ITALIC) ? FontStyles.Italic : FontStyles.Normal;
-            var weight = flags.HasFlag(FLAGS.BOLD) ? FontWeights.Bold : FontWeights.Normal;
-            var face = new Typeface(_fontFamily, style, weight, FontStretches.Normal);
+            var face = ResolveTypeface(flags);
             var formatted = new FormattedText(content, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                 face, _fontSize, fg, _pixelsPerDip);
             context.DrawText(formatted, new Point(x, rowY));
 
-            var pen = new Pen(fg, Math.Max(1, _fontSize / 14));
-            if (flags.HasFlag(FLAGS.UNDERLINE))
-                context.DrawLine(pen, new Point(x, rowY + _cellHeight - pen.Thickness), new Point(x + formatted.Width, rowY + _cellHeight - pen.Thickness));
-            if (flags.HasFlag(FLAGS.CrossedOut))
-                context.DrawLine(pen, new Point(x, rowY + _cellHeight / 2), new Point(x + formatted.Width, rowY + _cellHeight / 2));
+            if (flags.HasFlag(FLAGS.UNDERLINE) || flags.HasFlag(FLAGS.CrossedOut))
+            {
+                var pen = new Pen(fg, Math.Max(1, _fontSize / 14));
+                if (flags.HasFlag(FLAGS.UNDERLINE))
+                    context.DrawLine(pen, new Point(x, rowY + _cellHeight - pen.Thickness), new Point(x + formatted.Width, rowY + _cellHeight - pen.Thickness));
+                if (flags.HasFlag(FLAGS.CrossedOut))
+                    context.DrawLine(pen, new Point(x, rowY + _cellHeight / 2), new Point(x + formatted.Width, rowY + _cellHeight / 2));
+            }
         }
+    }
+
+    private Typeface ResolveTypeface(FLAGS flags)
+    {
+        var bold = flags.HasFlag(FLAGS.BOLD);
+        var italic = flags.HasFlag(FLAGS.ITALIC);
+        return (bold, italic) switch
+        {
+            (true, true) => _boldItalicTypeface,
+            (true, false) => _boldTypeface,
+            (false, true) => _italicTypeface,
+            _ => _normalTypeface,
+        };
     }
 
     private void DrawCaret()
@@ -478,8 +531,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                     {
                         var text = cell.Code < 0x10000 ? ((char)cell.Code).ToString() : cell.Rune.ToString();
                         var formatted = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                            new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
-                            _fontSize, _palette.Background, _pixelsPerDip);
+                            _normalTypeface, _fontSize, _palette.Background, _pixelsPerDip);
                         dc.DrawText(formatted, new Point(x, y));
                     }
                 }
@@ -549,7 +601,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var mods = Keyboard.Modifiers;
 
-        // Workspace shortcuts, mirroring the WebView2 backend's keydown hook.
+        // Workspace shortcuts are handled before terminal key translation.
         if (mods == (ModifierKeys.Control | ModifierKeys.Shift))
         {
             var command = key switch
