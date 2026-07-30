@@ -45,6 +45,12 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private bool _needsFullRedraw = true;
     private bool _disposed;
 
+    private GlyphTypeface? _normalGlyph;
+    private GlyphTypeface? _boldGlyph;
+    private GlyphTypeface? _italicGlyph;
+    private GlyphTypeface? _boldItalicGlyph;
+    private double _baselineY;
+
     private readonly object _outputLock = new();
     private List<ArraySegment<byte>> _pendingOutput = new();
     private List<ArraySegment<byte>> _processingOutput = new();
@@ -121,6 +127,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         _boldTypeface = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
         _italicTypeface = new Typeface(_fontFamily, FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
         _boldItalicTypeface = new Typeface(_fontFamily, FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
+        _normalTypeface.TryGetGlyphTypeface(out _normalGlyph);
+        _boldTypeface.TryGetGlyphTypeface(out _boldGlyph);
+        _italicTypeface.TryGetGlyphTypeface(out _italicGlyph);
+        _boldItalicTypeface.TryGetGlyphTypeface(out _boldItalicGlyph);
         _fontSize = settings.FontSize;
         _terminal.Options.CursorBlink = settings.CursorBlink;
         UpdateBlinkTimer();
@@ -150,6 +160,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             var advance = map.TryGetValue('M', out var mGlyph) ? glyph.AdvanceWidths[mGlyph] : glyph.AdvanceWidths[0];
             _cellWidth = Math.Max(1, advance * em);
             _cellHeight = Math.Max(1, Math.Ceiling(em * _fontFamily.LineSpacing));
+            _baselineY = glyph.Baseline * em;
         }
         else
         {
@@ -157,6 +168,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 typeface, _fontSize, Brushes.White, _pixelsPerDip);
             _cellWidth = Math.Max(1, probe.WidthIncludingTrailingWhitespace);
             _cellHeight = Math.Max(1, Math.Ceiling(probe.Height));
+            _baselineY = probe.Baseline;
         }
 
         RecalculateGridSize();
@@ -462,17 +474,66 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 return;
 
             var face = ResolveTypeface(flags);
-            var formatted = new FormattedText(content, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                face, _fontSize, fg, _pixelsPerDip);
-            context.DrawText(formatted, new Point(x, rowY));
+            var glyphFace = ResolveGlyphTypeface(flags);
+
+            bool canUseGlyphRun = glyphFace != null;
+            ushort[]? glyphIndices = null;
+            double[]? advanceWidths = null;
+
+            if (canUseGlyphRun)
+            {
+                glyphIndices = new ushort[content.Length];
+                advanceWidths = new double[content.Length];
+                var map = glyphFace!.CharacterToGlyphMap;
+
+                for (int i = 0; i < content.Length; i++)
+                {
+                    if (map.TryGetValue(content[i], out var glyphIndex))
+                    {
+                        glyphIndices[i] = glyphIndex;
+                        advanceWidths[i] = _cellWidth;
+                    }
+                    else
+                    {
+                        canUseGlyphRun = false;
+                        break;
+                    }
+                }
+            }
+
+            double runWidth = 0;
+            if (canUseGlyphRun)
+            {
+#pragma warning disable CS0618
+                var glyphRun = new GlyphRun(
+                    glyphFace!,
+                    0,
+                    false,
+                    _fontSize,
+                    (float)_pixelsPerDip,
+                    glyphIndices!,
+                    new Point(x, rowY + _baselineY),
+                    advanceWidths!,
+                    null, null, null, null, null, null);
+#pragma warning restore CS0618
+                context.DrawGlyphRun(fg, glyphRun);
+                runWidth = content.Length * _cellWidth;
+            }
+            else
+            {
+                var formatted = new FormattedText(content, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                    face, _fontSize, fg, _pixelsPerDip);
+                context.DrawText(formatted, new Point(x, rowY));
+                runWidth = formatted.Width;
+            }
 
             if (flags.HasFlag(FLAGS.UNDERLINE) || flags.HasFlag(FLAGS.CrossedOut))
             {
                 var pen = new Pen(fg, Math.Max(1, _fontSize / 14));
                 if (flags.HasFlag(FLAGS.UNDERLINE))
-                    context.DrawLine(pen, new Point(x, rowY + _cellHeight - pen.Thickness), new Point(x + formatted.Width, rowY + _cellHeight - pen.Thickness));
+                    context.DrawLine(pen, new Point(x, rowY + _cellHeight - pen.Thickness), new Point(x + runWidth, rowY + _cellHeight - pen.Thickness));
                 if (flags.HasFlag(FLAGS.CrossedOut))
-                    context.DrawLine(pen, new Point(x, rowY + _cellHeight / 2), new Point(x + formatted.Width, rowY + _cellHeight / 2));
+                    context.DrawLine(pen, new Point(x, rowY + _cellHeight / 2), new Point(x + runWidth, rowY + _cellHeight / 2));
             }
         }
     }
@@ -487,6 +548,19 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             (true, false) => _boldTypeface,
             (false, true) => _italicTypeface,
             _ => _normalTypeface,
+        };
+    }
+
+    private GlyphTypeface? ResolveGlyphTypeface(FLAGS flags)
+    {
+        var bold = flags.HasFlag(FLAGS.BOLD);
+        var italic = flags.HasFlag(FLAGS.ITALIC);
+        return (bold, italic) switch
+        {
+            (true, true) => _boldItalicGlyph,
+            (true, false) => _boldGlyph,
+            (false, true) => _italicGlyph,
+            _ => _normalGlyph,
         };
     }
 
