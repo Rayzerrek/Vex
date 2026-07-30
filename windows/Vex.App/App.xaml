@@ -4,7 +4,7 @@
              ShutdownMode="OnMainWindowClose"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-        <!-- Calm dark palette; the terminal area itself is themed by xterm.js. -->
+        <!-- Calm dark palette; the terminal surface applies its own theme. -->
         <Color x:Key="VexBackgroundColor">#FF17171A</Color>
         <Color x:Key="VexSurfaceColor">#FF1F1F24</Color>
         <Color x:Key="VexHoverColor">#FF2A2A31</Color>

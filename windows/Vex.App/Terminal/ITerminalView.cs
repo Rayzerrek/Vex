@@ -1,10 +1,9 @@
 namespace Vex.App.Terminal;
 
 /// <summary>
-/// One terminal surface regardless of the rendering backend. Implemented by
-/// <see cref="TerminalControl"/> (xterm.js in WebView2) and
-/// <see cref="Native.NativeTerminalControl"/> (XtermSharp + WPF renderer);
-/// panes program against this so the backend is swappable from settings.
+/// Terminal pane surface contract. The pane model depends on this so future
+/// native renderers can replace the current WPF surface without changing
+/// workspace/session lifetime.
 /// </summary>
 public interface ITerminalView : IDisposable
 {

@@ -10,7 +10,7 @@ namespace Vex.Terminal;
 /// One long-lived terminal process attached to a Windows Pseudo Console,
 /// rendered elsewhere — the analogue of upstream's <c>TerminalSession</c>.
 /// The raw VT byte stream is exposed through <see cref="OutputReceived"/>;
-/// turning it into pixels is the view's business (xterm.js in Vex.App).
+/// turning it into pixels is the view's business.
 /// </summary>
 public sealed class TerminalSession : IDisposable
 {
@@ -107,7 +107,7 @@ public sealed class TerminalSession : IDisposable
         var commandLine = shellExe.StartsWith("\"") ? shellExe : $"\"{shellExe}\"";
         if (!string.IsNullOrEmpty(arguments))
             commandLine += $" {arguments}";
-            
+
         SpawnChild(commandLine, workingDirectory);
 
         StartReaderLoop();
