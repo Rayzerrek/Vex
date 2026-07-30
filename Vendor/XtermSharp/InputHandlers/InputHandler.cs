@@ -752,10 +752,12 @@ namespace XtermSharp {
 					// fg color 256 / 24-bit
 					if (i + 1 < l && pars [i + 1] == 2) {
 						if (i + 4 < l) {
-							fg = terminal.MatchColor (
-								pars [i + 2] & 0xff,
-								pars [i + 3] & 0xff,
-								pars [i + 4] & 0xff);
+							var red = pars [i + 2] & 0xff;
+							var green = pars [i + 3] & 0xff;
+							var blue = pars [i + 4] & 0xff;
+							fg = Renderer.RegisterTrueColor ((byte)red, (byte)green, (byte)blue);
+							if (fg == -1)
+								fg = terminal.MatchColor (red, green, blue);
 							if (fg == -1)
 								fg = 0x1ff;
 							i += 4;
@@ -769,10 +771,12 @@ namespace XtermSharp {
 					// bg color 256 / 24-bit
 					if (i + 1 < l && pars [i + 1] == 2) {
 						if (i + 4 < l) {
-							bg = terminal.MatchColor (
-								pars [i + 2] & 0xff,
-								pars [i + 3] & 0xff,
-								pars [i + 4] & 0xff);
+							var red = pars [i + 2] & 0xff;
+							var green = pars [i + 3] & 0xff;
+							var blue = pars [i + 4] & 0xff;
+							bg = Renderer.RegisterTrueColor ((byte)red, (byte)green, (byte)blue);
+							if (bg == -1)
+								bg = terminal.MatchColor (red, green, blue);
 							if (bg == -1)
 								bg = 0x1ff;
 							i += 4;
