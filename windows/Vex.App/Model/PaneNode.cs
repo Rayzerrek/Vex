@@ -77,9 +77,7 @@ public sealed class TerminalPane : LeafPane
 
     protected override object CreateView()
     {
-        var view = AppSettings.Instance.TerminalBackend == "xterm.js"
-            ? new TerminalControl(_workingDirectory)
-            : (ITerminalView)new Terminal.Native.NativeTerminalControl(_workingDirectory);
+        var view = new Terminal.Native.NativeTerminalControl(_workingDirectory);
         view.TitleChanged += title =>
         {
             if (!string.IsNullOrWhiteSpace(title))
