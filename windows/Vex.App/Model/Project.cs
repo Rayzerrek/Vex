@@ -9,7 +9,7 @@ namespace Vex.App.Model;
 /// </summary>
 public sealed class Project : ObservableObject
 {
-    public const int MaxTabs = 7;
+    public const int MaxTabs = 30;
     private string _name;
     private WorkspaceTab? _selectedTab;
 
