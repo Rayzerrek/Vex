@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using Vex.App.Model;
 using Microsoft.Win32;
 
@@ -116,16 +117,6 @@ public partial class MainWindow : Window
         _workspace.SelectedProject?.NewTab();
     }
 
-    private void SplitRight_Click(object sender, RoutedEventArgs e)
-    {
-        _workspace.SelectedProject?.SelectedTab?.Split(System.Windows.Controls.Orientation.Horizontal);
-    }
-
-    private void SplitDown_Click(object sender, RoutedEventArgs e)
-    {
-        _workspace.SelectedProject?.SelectedTab?.Split(System.Windows.Controls.Orientation.Vertical);
-    }
-
     private void TabSplitRight_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: WorkspaceTab tab })
@@ -153,9 +144,8 @@ public partial class MainWindow : Window
 
             if (e.ClickCount == 2 && e.ChangedButton == System.Windows.Input.MouseButton.Left)
             {
-                var panel = (System.Windows.Controls.StackPanel)sender;
-                var textBlock = (System.Windows.Controls.TextBlock)panel.FindName("TitleBlock");
-                var textBox = (System.Windows.Controls.TextBox)panel.FindName("TitleEditBox");
+                var textBlock = (TextBlock)((Grid)sender).FindName("TitleBlock");
+                var textBox = (TextBox)((Grid)sender).FindName("TitleEditBox");
                 if (textBlock != null && textBox != null)
                 {
                     textBlock.Visibility = Visibility.Collapsed;
@@ -190,8 +180,8 @@ public partial class MainWindow : Window
     {
         if (sender is System.Windows.Controls.TextBox textBox && textBox.DataContext is WorkspaceTab tab)
         {
-            var panel = (System.Windows.Controls.StackPanel)textBox.Parent;
-            var textBlock = (System.Windows.Controls.TextBlock)panel.FindName("TitleBlock");
+            var panel = (Grid)textBox.Parent;
+            var textBlock = (TextBlock)panel.FindName("TitleBlock");
             if (textBlock != null)
             {
                 var newTitle = textBox.Text.Trim();
@@ -211,8 +201,8 @@ public partial class MainWindow : Window
     {
         if (sender is System.Windows.Controls.TextBox textBox && textBox.DataContext is WorkspaceTab tab)
         {
-            var panel = (System.Windows.Controls.StackPanel)textBox.Parent;
-            var textBlock = (System.Windows.Controls.TextBlock)panel.FindName("TitleBlock");
+            var panel = (Grid)textBox.Parent;
+            var textBlock = (TextBlock)panel.FindName("TitleBlock");
             if (textBlock != null)
             {
                 textBox.Text = tab.Title; // revert
@@ -259,7 +249,6 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        SessionStore.Save(_workspace);
         base.OnClosed(e);
         foreach (var project in _workspace.Projects)
             foreach (var tab in project.Tabs)

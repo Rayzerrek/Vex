@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows.Threading;
 
 namespace Vex.App.Model;
 
@@ -24,28 +25,6 @@ public sealed class Project : ObservableObject
         Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
         var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
-        RefreshFileTree();
-    }
-
-    internal Project(ProjectSnapshot snapshot)
-    {
-        _name = snapshot.Name;
-        WorkingDirectory = snapshot.WorkingDirectory;
-        Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
-
-        foreach (var tabSnapshot in snapshot.Tabs)
-        {
-            var tab = new WorkspaceTab(tabSnapshot.Title, WorkingDirectory, SessionStore.RestoreNode(tabSnapshot.Root), tabSnapshot.HasCustomTitle);
-            tab.NewTabRequested += () => NewTab();
-            tab.TabClosedRequested += t => CloseTab(t);
-            Tabs.Add(tab);
-        }
-
-        if (snapshot.SelectedTabIndex.HasValue && snapshot.SelectedTabIndex.Value >= 0 && snapshot.SelectedTabIndex.Value < Tabs.Count)
-            _selectedTab = Tabs[snapshot.SelectedTabIndex.Value];
-        else if (Tabs.Count > 0)
-            _selectedTab = Tabs[0];
-
         RefreshFileTree();
     }
 
@@ -84,7 +63,16 @@ public sealed class Project : ObservableObject
     public WorkspaceTab? SelectedTab
     {
         get => _selectedTab;
-        set => Set(ref _selectedTab, value);
+        set
+        {
+            if (Set(ref _selectedTab, value))
+            {
+                // A new window/tab should be ready to type into immediately;
+                // focus its active pane once it's rendered.
+                if (value is not null)
+                    Dispatcher.CurrentDispatcher.BeginInvoke(() => value.ActiveLeaf?.Focus());
+            }
+        }
     }
 
     public WorkspaceTab? NewTab()
@@ -136,11 +124,16 @@ public sealed class Project : ObservableObject
         var index = Tabs.IndexOf(tab);
         if (index < 0) return;
 
+        // Always keep at least one tab (Ghostty behaviour): the last tab
+        // cannot be closed, it just stays.
+        if (Tabs.Count <= 1)
+            return;
+
         bool wasSelected = (SelectedTab == tab);
         WorkspaceTab? nextTab = null;
 
         if (wasSelected)
-            nextTab = Tabs.Count > 1 ? Tabs[Math.Max(0, index - 1)] : null;
+            nextTab = Tabs[Math.Max(0, index - 1)];
 
         Tabs.Remove(tab);
         tab.Dispose();
