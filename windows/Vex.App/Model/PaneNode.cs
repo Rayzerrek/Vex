@@ -1,4 +1,5 @@
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Vex.App.Terminal;
 
 namespace Vex.App.Model;
@@ -72,7 +73,14 @@ public sealed class TerminalPane : LeafPane
     public override void Focus()
     {
         if (View is ITerminalView tv)
-            tv.FocusTerminal();
+        {
+            if (View is System.Windows.FrameworkElement { IsLoaded: true })
+                tv.FocusTerminal();
+            else
+                // The view may not be in the tree yet (e.g. a brand-new tab);
+                // focus once it is loaded so typing works immediately.
+                Dispatcher.CurrentDispatcher.BeginInvoke(tv.FocusTerminal);
+        }
     }
 
     protected override object CreateView()
