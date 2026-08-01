@@ -368,6 +368,9 @@ namespace XtermSharp {
 				buffer.X--;
 		}
 
+		/// <summary>
+		/// Runs the terminal with scrolling enabled.
+		/// </summary>
 		internal void Scroll (bool isWrapped = false)
 		{
 			var buffer = Buffer;
