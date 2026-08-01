@@ -1189,6 +1189,32 @@ namespace XtermSharp {
 			terminal.UpdateRange (buffer.Y);
 		}
 
+		// Reconstructs a UTF-8 rune from its first byte plus the continuation
+		// bytes read from the ring buffer, mirroring System.Rune.DecodeRune's
+		// fast path but without allocating a byte array per character.
+		int DecodeRune (byte first, int length)
+		{
+			uint v = first;
+			switch (length) {
+			case 2:
+				v = (v & 0x1f) << 6;
+				v |= (uint)(readingBuffer.GetNext () & 0x3f);
+				break;
+			case 3:
+				v = (v & 0x0f) << 12;
+				v |= (uint)(readingBuffer.GetNext () & 0x3f) << 6;
+				v |= (uint)(readingBuffer.GetNext () & 0x3f);
+				break;
+			default:
+				v = (v & 0x07) << 18;
+				v |= (uint)(readingBuffer.GetNext () & 0x3f) << 12;
+				v |= (uint)(readingBuffer.GetNext () & 0x3f) << 6;
+				v |= (uint)(readingBuffer.GetNext () & 0x3f);
+				break;
+			}
+			return (int)v;
+		}
+
 		void PrintStateReset()
 		{
 			readingBuffer.Reset ();
@@ -1221,14 +1247,8 @@ namespace XtermSharp {
 				} else if (n == 1) {
 					code = bufferValue;
 				} else {
-					var bytesRemaining = readingBuffer.BytesLeft ();
 					if (readingBuffer.BytesLeft () >= (n - 1)) {
-						var x = new byte [n];
-						x [0] = bufferValue;
-						for (int j = 1; j < n; j++)
-							x [j] = readingBuffer.GetNext ();
-
-						(var r, var size) = Rune.DecodeRune (x);
+						var r = DecodeRune (bufferValue, n);
 						code = (int)(uint)r;
 					} else {
 						readingBuffer.Putback (bufferValue);

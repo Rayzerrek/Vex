@@ -15,7 +15,7 @@ public sealed class TerminalPalette
 {
     private readonly Brush[] _ansi = new Brush[256];
     private readonly Dictionary<int, Brush> _dimCache = new();
-    private readonly Dictionary<int, Brush> _trueColorCache = new();
+    private readonly Brush[] _trueColorBrushes = new Brush[Renderer.TrueColorEnd - Renderer.TrueColorStart + 1];
 
     public Brush Foreground { get; }
     public Brush Background { get; }
@@ -66,14 +66,16 @@ public sealed class TerminalPalette
 
     private bool TryResolveTrueColor(int index, out Brush? brush)
     {
-        if (_trueColorCache.TryGetValue(index, out brush))
-            return true;
-
-        if (XtermSharp.Renderer.TryGetTrueColor(index, out var color))
+        var slot = index - Renderer.TrueColorStart;
+        if ((uint)slot < (uint)_trueColorBrushes.Length)
         {
-            brush = Freeze(Color.FromRgb(color.Red, color.Green, color.Blue));
-            _trueColorCache[index] = brush;
-            return true;
+            brush = _trueColorBrushes[slot];
+            if (brush is null && XtermSharp.Renderer.TryGetTrueColor(index, out var color))
+            {
+                brush = Freeze(Color.FromRgb(color.Red, color.Green, color.Blue));
+                _trueColorBrushes[slot] = brush;
+            }
+            return brush is not null;
         }
 
         brush = null;
@@ -105,8 +107,9 @@ public sealed class TerminalPalette
         {
             XtermSharp.Renderer.DefaultColor => null,
             XtermSharp.Renderer.InvertedDefaultColor => Foreground,
+            _ when bg < XtermSharp.Renderer.TrueColorStart => _ansi[bg],
             _ when TryResolveTrueColor(bg, out var brush) => brush,
-            _ => _ansi[bg],
+            _ => null,
         };
 
         if (flags.HasFlag(FLAGS.INVISIBLE))
@@ -121,8 +124,9 @@ public sealed class TerminalPalette
         {
             XtermSharp.Renderer.DefaultColor => Foreground,
             XtermSharp.Renderer.InvertedDefaultColor => Background,
+            _ when fg < XtermSharp.Renderer.TrueColorStart => _ansi[fg],
             _ when TryResolveTrueColor(fg, out var brush) => brush,
-            _ => _ansi[fg],
+            _ => null,
         };
 
         if (flags.HasFlag(FLAGS.DIM) && foreground is SolidColorBrush solid)
