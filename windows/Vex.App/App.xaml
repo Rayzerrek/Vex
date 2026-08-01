@@ -12,6 +12,10 @@
         <Color x:Key="VexTextColor">#FFE4E4E7</Color>
         <Color x:Key="VexTextDimColor">#FF8E8E96</Color>
         <Color x:Key="VexAccentColor">#FF6E9EFF</Color>
+        <!-- Translucent tab strip so terminal content shows through. -->
+        <Color x:Key="VexTabStripColor">#7317171A</Color>
+        <Color x:Key="VexTabSelectedColor">#26FFFFFF</Color>
+        <Color x:Key="VexTabHoverColor">#14FFFFFF</Color>
 
         <SolidColorBrush x:Key="VexBackground" Color="{StaticResource VexBackgroundColor}"/>
         <SolidColorBrush x:Key="VexSurface" Color="{StaticResource VexSurfaceColor}"/>
@@ -20,6 +24,9 @@
         <SolidColorBrush x:Key="VexText" Color="{StaticResource VexTextColor}"/>
         <SolidColorBrush x:Key="VexTextDim" Color="{StaticResource VexTextDimColor}"/>
         <SolidColorBrush x:Key="VexAccent" Color="{StaticResource VexAccentColor}"/>
+        <SolidColorBrush x:Key="VexTabStrip" Color="{StaticResource VexTabStripColor}"/>
+        <SolidColorBrush x:Key="VexTabSelected" Color="{StaticResource VexTabSelectedColor}"/>
+        <SolidColorBrush x:Key="VexTabHover" Color="{StaticResource VexTabHoverColor}"/>
 
         <Style TargetType="Button" x:Key="GhostButton">
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
