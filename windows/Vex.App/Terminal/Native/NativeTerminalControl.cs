@@ -27,7 +27,11 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private readonly List<DrawingVisual> _rowVisuals = new();
     private readonly DispatcherTimer _blinkTimer;
     private readonly StringBuilder _runBuilder = new();
+    private readonly StringBuilder _trimmedRun = new();
 
+    // Per-row run caches: one glyph-index array per row, sized to the row
+    // width, reused across redraws.  A row can have at most (cols+1)/2 runs
+    // (alternating background runs), so the text-run pool is sized to that.
     private TerminalSession? _session;
     private TerminalPalette _palette = new(BuiltInThemes.VexDark);
     private FontFamily _fontFamily = new("Cascadia Mono");
@@ -55,6 +59,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private List<ArraySegment<byte>> _pendingOutput = new();
     private List<ArraySegment<byte>> _processingOutput = new();
     private bool _pumpScheduled;
+    private bool _pumpRunning;
 
     private bool _caretBlinkVisible = true;
 
@@ -294,63 +299,85 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private void ScheduleOutputPump()
     {
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
+        // Defer to the next idle frame (below Render priority) and coalesce
+        // all chunks that arrive during that frame into a single feed batch.
+        // This bounds emulation cost to one pass per rendered frame and keeps
+        // typing/scroll responsive even under heavy output.
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
-            List<ArraySegment<byte>> toProcess;
-            lock (_outputLock)
-            {
-                toProcess = _pendingOutput;
-                _pendingOutput = _processingOutput;
-                _processingOutput = toProcess;
-            }
-
-            if (_disposed)
-            {
-                foreach (var c in toProcess)
-                {
-                    if (c.Array is { } buffer)
-                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-                }
-                toProcess.Clear();
-                lock (_outputLock)
-                {
-                    _pumpScheduled = false;
-                }
-                return;
-            }
-
-            _viewportMoved = false;
+            if (_pumpRunning)
+                return; // a pump is already draining; it will re-queue if needed
+            _pumpRunning = true;
             try
             {
-                foreach (var c in toProcess)
-                {
-                    if (c.Array is { } buffer)
-                    {
-                        _terminal.Feed(buffer, c.Count);
-                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-                    }
-                }
+                PumpOutput();
+            }
+            finally
+            {
+                _pumpRunning = false;
+            }
+        });
+    }
+
+    private void PumpOutput()
+    {
+        List<ArraySegment<byte>> toProcess;
+        lock (_outputLock)
+        {
+            toProcess = _pendingOutput;
+            _pendingOutput = _processingOutput;
+            _processingOutput = toProcess;
+        }
+
+        if (_disposed)
+        {
+            foreach (var c in toProcess)
+            {
+                if (c.Array is { } buffer)
+                    System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+            }
+            toProcess.Clear();
+            lock (_outputLock)
+            {
+                _pumpScheduled = false;
+            }
+            return;
+        }
+
+        _viewportMoved = false;
+        foreach (var c in toProcess)
+        {
+            if (c.Array is not { } buffer)
+                continue;
+            try
+            {
+                _terminal.Feed(buffer, c.Count);
             }
             catch (Exception)
             {
                 // XtermSharp may throw on malformed or unsupported VT
-                // sequences. Swallow and schedule a full redraw.
+                // sequences. Keep draining the batch so every pooled buffer
+                // is returned and schedule a full redraw.
                 _needsFullRedraw = true;
             }
-            toProcess.Clear();
-            FlushRedraw();
-
-            var scheduleAgain = false;
-            lock (_outputLock)
+            finally
             {
-                if (_pendingOutput.Count > 0)
-                    scheduleAgain = true;
-                else
-                    _pumpScheduled = false;
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
             }
-            if (scheduleAgain)
-                ScheduleOutputPump();
-        });
+        }
+        toProcess.Clear();
+        FlushRedraw();
+
+        var scheduleAgain = false;
+        lock (_outputLock)
+        {
+            if (_pendingOutput.Count > 0)
+                scheduleAgain = true;
+            else
+                _pumpScheduled = false;
+        }
+        if (scheduleAgain)
+            ScheduleOutputPump();
     }
 
     private void OnSessionExited(int exitCode)
@@ -430,13 +457,15 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         var runAttr = line.Length > 0 ? line[0].Attribute : CharData.DefaultAttr;
         var runStart = 0;
         _runBuilder.Clear();
+        EnsureTextRunCapacity(Math.Max(1, _cols));
+        var textRuns = 0;
 
         for (var col = 0; col < _cols; col++)
         {
             var cell = col < line.Length ? line[col] : CharData.Null;
             if (cell.Attribute != runAttr && _runBuilder.Length > 0)
             {
-                FlushRun(dc, _runBuilder, runAttr, runStart, y);
+                textRuns = FlushRun(dc, _runBuilder, runAttr, runStart, y, textRuns);
                 runStart = col;
                 runAttr = cell.Attribute;
                 _runBuilder.Clear();
@@ -458,9 +487,25 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         }
 
         if (_runBuilder.Length > 0)
-            FlushRun(dc, _runBuilder, runAttr, runStart, y);
+            textRuns = FlushRun(dc, _runBuilder, runAttr, runStart, y, textRuns);
 
-        void FlushRun(DrawingContext context, StringBuilder runText, int attr, int startCol, double rowY)
+        // Draw underlines for runs that have text; the pooled glyph arrays
+        // index into the textRuns we recorded.
+        for (var i = 0; i < textRuns; i++)
+        {
+            ref readonly var run = ref _textRuns[i];
+            if (run.Attr == 0 || !run.HasDecoration) continue;
+            var runX = run.StartCol * _cellWidth;
+            var runWidth = run.Length * _cellWidth;
+            var pen = _decorationPen;
+            var rowY = y;
+            if (run.Underline)
+                dc.DrawLine(pen, new Point(runX, rowY + _cellHeight - pen.Thickness), new Point(runX + runWidth, rowY + _cellHeight - pen.Thickness));
+            if (run.CrossedOut)
+                dc.DrawLine(pen, new Point(runX, rowY + _cellHeight / 2), new Point(runX + runWidth, rowY + _cellHeight / 2));
+        }
+
+        int FlushRun(DrawingContext context, StringBuilder runText, int attr, int startCol, double rowY, int textRunIndex)
         {
             _palette.Resolve(attr, out var fg, out var bg, out var flags);
             var x = startCol * _cellWidth;
@@ -473,24 +518,30 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 context.DrawRectangle(bg, null, new Rect(x, rowY, runText.Length * _cellWidth, _cellHeight));
 
             // Trailing whitespace carries no ink; skip the text pass for it.
-            var content = runText.ToString().TrimEnd();
-            if (content.Length == 0 || fg is null)
-                return;
+            _trimmedRun.Clear();
+            var contentEnd = runText.Length;
+            while (contentEnd > 0 && runText[contentEnd - 1] == ' ')
+                contentEnd--;
+            if (contentEnd == 0 || fg is null)
+                return textRunIndex;
+            _trimmedRun.Append(runText, 0, contentEnd);
 
             var face = ResolveTypeface(flags);
             var glyphFace = ResolveGlyphTypeface(flags);
+            var content = _trimmedRun.ToString();
 
             bool canUseGlyphRun = glyphFace != null;
-            ushort[]? glyphIndices = null;
-            double[]? advanceWidths = null;
+            var contentLength = content.Length;
+            // GlyphRun uses the collection lengths as the glyph count. The
+            // row-sized pools cannot be passed directly: stale entries after
+            // this run would be rendered as extra characters.
+            var glyphIndices = new ushort[contentLength];
+            var advanceWidths = new double[contentLength];
 
             if (canUseGlyphRun)
             {
-                glyphIndices = new ushort[content.Length];
-                advanceWidths = new double[content.Length];
                 var map = glyphFace!.CharacterToGlyphMap;
-
-                for (int i = 0; i < content.Length; i++)
+                for (var i = 0; i < contentLength; i++)
                 {
                     if (map.TryGetValue(content[i], out var glyphIndex))
                     {
@@ -508,20 +559,18 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             double runWidth = 0;
             if (canUseGlyphRun)
             {
-#pragma warning disable CS0618
                 var glyphRun = new GlyphRun(
                     glyphFace!,
                     0,
                     false,
                     _fontSize,
                     (float)_pixelsPerDip,
-                    glyphIndices!,
+                    glyphIndices,
                     new Point(x, rowY + _baselineY),
-                    advanceWidths!,
+                    advanceWidths,
                     null, null, null, null, null, null);
-#pragma warning restore CS0618
                 context.DrawGlyphRun(fg, glyphRun);
-                runWidth = content.Length * _cellWidth;
+                runWidth = contentLength * _cellWidth;
             }
             else
             {
@@ -531,16 +580,37 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 runWidth = formatted.Width;
             }
 
-            if (flags.HasFlag(FLAGS.UNDERLINE) || flags.HasFlag(FLAGS.CrossedOut))
-            {
-                var pen = new Pen(fg, Math.Max(1, _fontSize / 14));
-                if (flags.HasFlag(FLAGS.UNDERLINE))
-                    context.DrawLine(pen, new Point(x, rowY + _cellHeight - pen.Thickness), new Point(x + runWidth, rowY + _cellHeight - pen.Thickness));
-                if (flags.HasFlag(FLAGS.CrossedOut))
-                    context.DrawLine(pen, new Point(x, rowY + _cellHeight / 2), new Point(x + runWidth, rowY + _cellHeight / 2));
-            }
+            // Record run metadata for the decoration pass after all runs.
+            ref var run = ref _textRuns[textRunIndex];
+            run.StartCol = startCol;
+            run.Length = runText.Length;
+            run.Attr = attr;
+            run.HasDecoration = flags.HasFlag(FLAGS.UNDERLINE) || flags.HasFlag(FLAGS.CrossedOut);
+            run.Underline = flags.HasFlag(FLAGS.UNDERLINE);
+            run.CrossedOut = flags.HasFlag(FLAGS.CrossedOut);
+            return textRunIndex + 1;
         }
     }
+
+    private void EnsureTextRunCapacity(int required)
+    {
+        if (_textRuns.Length >= required)
+            return;
+        Array.Resize(ref _textRuns, required);
+    }
+
+    private struct TextRun
+    {
+        public int StartCol;
+        public int Length;
+        public bool HasDecoration;
+        public bool Underline;
+        public bool CrossedOut;
+        public int Attr;
+    }
+
+    private TextRun[] _textRuns = Array.Empty<TextRun>();
+    private readonly Pen _decorationPen = new Pen(Brushes.Transparent, 0);
 
     private Typeface ResolveTypeface(FLAGS flags)
     {
@@ -605,12 +675,23 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 {
                     var line = buffer.Lines[lineIndex];
                     var cell = col < line.Length ? line[col] : CharData.Null;
-                    if (cell.Code > 0 && cell.Width > 0)
+                    if (cell.Code > 0 && cell.Width > 0 && _normalGlyph is { } glyphFace &&
+                        glyphFace.CharacterToGlyphMap.TryGetValue(cell.Code < 0x10000 ? (char)cell.Code : (char)cell.Rune, out var glyphIndex))
                     {
-                        var text = cell.Code < 0x10000 ? ((char)cell.Code).ToString() : cell.Rune.ToString();
-                        var formatted = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                            _normalTypeface, _fontSize, _palette.Background, _pixelsPerDip);
-                        dc.DrawText(formatted, new Point(x, y));
+                        // Block cursor: draw the cell glyph with the palette's
+                        // background color via a pooled single-glyph run, no
+                        // FormattedText allocation per caret blink.
+                        var glyphRun = new GlyphRun(
+                            glyphFace,
+                            0,
+                            false,
+                            _fontSize,
+                            (float)_pixelsPerDip,
+                            new[] { glyphIndex },
+                            new Point(x, y + _baselineY),
+                            new[] { _cellWidth },
+                            null, null, null, null, null, null);
+                        dc.DrawGlyphRun(_palette.Background, glyphRun);
                     }
                 }
                 break;
