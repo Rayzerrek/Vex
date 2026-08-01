@@ -91,6 +91,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             if (value is not null)
             {
                 value.IsFocused = true;
+                value.Focus();
                 if (!HasCustomTitle)
                     Title = value.Title + (value.IsDirty ? "*" : "");
             }
