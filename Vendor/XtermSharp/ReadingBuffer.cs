@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 
 namespace XtermSharp {
 	/// <summary>
@@ -11,7 +10,7 @@ namespace XtermSharp {
 	/// given the new buffer to read from.
 	///
 	/// the `hasNext` describes whether there is more data left on the buffer, and `bytesLeft`
-	/// returnes the number of bytes left.   The `getNext` method fetches either the next
+	/// returnes the number of bytes left.  The `getNext` method fetches either the next
 	/// value from the putback buffer, or when it is empty, it returns it from the buffer that
 	/// was passed during prepare.
 	///
@@ -19,7 +18,14 @@ namespace XtermSharp {
 	/// that is surfaced via reset
 	/// </remarks>
 	class ReadingBuffer {
-		byte[] putbackBuffer = new byte [0];
+		// Putback bytes are stored in a fixed ring instead of a freshly
+		// allocated array per Putback call: a multi-byte rune split across two
+		// terminal feeds hits Putback on almost every Print run and the old
+		// copy-per-byte path burned allocations on the parse hot path.
+		readonly byte [] putbackBuffer = new byte [16];
+		int putbackStart;
+		int putbackCount;
+
 		unsafe byte* buffer;
 		int bufferStart;
 		int totalCount;
@@ -31,7 +37,7 @@ namespace XtermSharp {
 			bufferStart = start;
 
 			index = 0;
-			totalCount = putbackBuffer.Length + length;
+			totalCount = putbackCount + length;
 		}
 
 		public int BytesLeft ()
@@ -47,12 +53,12 @@ namespace XtermSharp {
 		unsafe public byte GetNext ()
 		{
 			byte val;
-			if (index < putbackBuffer.Length) {
+			if (index < putbackCount) {
 				// grab from putback buffer
-				val = putbackBuffer [index];
+				val = putbackBuffer [(putbackStart + index) % putbackBuffer.Length];
 			} else {
 				// grab from the prepared buffer
-				val = buffer [bufferStart + (index - putbackBuffer.Length)];
+				val = buffer [bufferStart + (index - putbackCount)];
 			}
 
 			index++;
@@ -65,33 +71,52 @@ namespace XtermSharp {
 		public void Putback (byte code)
 		{
 			var left = BytesLeft ();
-			byte [] newPutback = new byte[left + 1];
-			newPutback [0] = code;
-
-			for (int i = 0; i < left; i++) {
-				newPutback [i + 1] = GetNext ();
+			// Roll the ring so the new byte lands first, then the previously
+			// put-back bytes, then whatever remains of the prepared buffer.
+			if (left + 1 > putbackBuffer.Length) {
+				// Overflow is degenerate (a single rune is at most 4 bytes);
+				// degrade to a temporary array rather than truncating data.
+				var overflow = new byte [left + 1];
+				overflow [0] = code;
+				for (int i = 0; i < left; i++)
+					overflow [i + 1] = GetNext ();
+				Array.Copy (overflow, putbackBuffer, putbackBuffer.Length);
+				putbackStart = 0;
+				putbackCount = putbackBuffer.Length;
+				return;
 			}
 
-			putbackBuffer = newPutback;
+			// Rotate existing putback bytes forward to make room at the head.
+			var newStart = (putbackStart + putbackBuffer.Length - 1) % putbackBuffer.Length;
+			for (int i = putbackCount - 1; i >= 0; i--) {
+				var from = (putbackStart + i) % putbackBuffer.Length;
+				var to = (newStart + i + 1) % putbackBuffer.Length;
+				putbackBuffer [to] = putbackBuffer [from];
+			}
+			putbackBuffer [newStart] = code;
+			putbackStart = newStart;
+			putbackCount = Math.Min (putbackCount + 1, putbackBuffer.Length);
 		}
 
 		unsafe public void Done ()
 		{
-			if (index < putbackBuffer.Length) {
-				byte [] newPutback = new byte [putbackBuffer.Length - index];
-				Array.Copy (putbackBuffer, index, newPutback, 0, newPutback.Length);
-				putbackBuffer = newPutback;
-			} else {
-				putbackBuffer = new byte [0];
+			// Consumed putback bytes are dropped by advancing the ring head.
+			var consumed = Math.Min (index, putbackCount);
+			if (consumed > 0) {
+				putbackStart = (putbackStart + consumed) % putbackBuffer.Length;
+				putbackCount -= consumed;
 			}
+			index = 0;
 
 			buffer = null;
 		}
 
 		public void Reset ()
 		{
-			putbackBuffer = new byte [0];
+			putbackStart = 0;
+			putbackCount = 0;
 			index = 0;
+			unsafe { buffer = null; }
 		}
 	}
 }

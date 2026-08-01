@@ -1,4 +1,5 @@
 ﻿using System;
+
 namespace XtermSharp {
 	/// <summary>
 	/// Represents a circular list; a list with a maximum size that wraps around when push is called overriding values at the start of the list.
@@ -191,22 +192,37 @@ namespace XtermSharp {
 				throw new ArgumentException ("Start argument is out of range");
 			if (start + offset < 0)
 				throw new ArgumentException ("Can not shift elements in list beyond index 0");
+
+			var arrayLength = array.Length;
 			if (offset > 0) {
-				for (var i = count - 1; i >= 0; i--) {
-					this [start + i + offset] = this [start + i];
+				// Copy forward from the end so the destination slots are still pristine when read.
+				var dst = start + count + offset;
+				var src = start + count;
+				for (var i = count; i > 0; i--) {
+					var di = startIndex + --dst;
+					if (di >= arrayLength) di -= arrayLength;
+					var si = startIndex + --src;
+					if (si >= arrayLength) si -= arrayLength;
+					array [di] = array [si];
 				}
+
 				var expandListBy = (start + count + offset) - length;
 				if (expandListBy > 0) {
 					length += expandListBy;
-					while (length > array.Length) {
+					while (length > arrayLength) {
 						length--;
 						startIndex++;
 						Trimmed.Invoke (1);
 					}
 				}
 			} else {
-				for (var i = 0; i < count; i++) {
-					this [start + i + offset] = this [start + i];
+				var src = start;
+				while (count-- != 0) {
+					var si = startIndex + src++;
+					if (si >= arrayLength) si -= arrayLength;
+					var di = si + offset;
+					if (di < 0) di += arrayLength;
+					array [di] = array [si];
 				}
 			}
 		}
