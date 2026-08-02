@@ -126,12 +126,12 @@
                                                ToolTip="{Binding WorkingDirectory}"/>
                                 </StackPanel>
                                 <Button x:Name="RemoveBtn" Grid.Column="1"
-                                        Style="{StaticResource GhostButton}" Padding="4,0"
-                                        Margin="4,0,0,0" ToolTip="Remove Project"
+                                        Style="{StaticResource CloseButton}"
+                                        Margin="4,0,2,0" ToolTip="Remove Project"
                                         Click="RemoveProject_Click"
-                                        Visibility="Hidden" Opacity="0"
-                                        Foreground="{StaticResource VexTextDim}">
-                                    <TextBlock Text="×" FontSize="14"/>
+                                        Visibility="Hidden" Opacity="0">
+                                    <TextBlock Text="×" FontSize="15"
+                                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
                                 </Button>
                                 <Grid.Style>
                                     <Style TargetType="Grid">
@@ -269,7 +269,7 @@
                                          BorderBrush="{StaticResource VexBorder}"
                                          KeyDown="TitleEditBox_KeyDown"
                                          LostFocus="TitleEditBox_LostFocus"/>
-                                <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource GhostButton}" Padding="3,0"
+                                <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource CloseButton}"
                                         Margin="4,0,2,0" ToolTip="Close Tab"
                                         Click="CloseTab_Click"
                                         Opacity="0"
@@ -277,7 +277,7 @@
                                     <Button.RenderTransform>
                                         <ScaleTransform x:Name="CloseScale" ScaleX="0.6" ScaleY="0.6"/>
                                     </Button.RenderTransform>
-                                    <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="8"
+                                    <TextBlock Text="×" FontSize="15"
                                                VerticalAlignment="Center" HorizontalAlignment="Center"/>
                                 </Button>
                                 <Grid.Triggers>
