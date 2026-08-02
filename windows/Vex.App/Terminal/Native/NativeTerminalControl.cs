@@ -63,6 +63,20 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private bool _caretBlinkVisible = true;
 
+    // Cached caret draw state: the overlay is only reopened when the caret's
+    // position, visibility, style or blink phase changed. The cell beneath the
+    // cursor is repainted by the row pass, so a stationary caret needs no
+    // overlay work on pumps that do not touch its row.
+    private bool _caretCacheValid;
+    private bool _caretCacheShouldDraw;
+    private int _caretCacheRow;
+    private int _caretCacheCol;
+    private int _caretCacheStyle;
+    private readonly ushort[] _caretGlyphIndex = new ushort[1];
+    private readonly double[] _caretAdvanceWidths = new double[1];
+
+    private void InvalidateCaretCache() => _caretCacheValid = false;
+
     public event Action<string>? TitleChanged;
     public event Action<int>? ProcessExited;
     public event Action? FocusGained;
@@ -406,15 +420,24 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
             var buffer = _terminal.Buffer;
             var userScrolled = buffer.YDisp != buffer.YBase;
+            var hasUpdate = startY <= endY;
 
-            if (_needsFullRedraw || _viewportMoved || userScrolled || startY > endY || endY - startY > _rows / 2)
+            // An empty update range means the batch only moved the cursor or
+            // produced no cell writes; redrawing every row then would run the
+            // whole run-analysis pass for nothing on each such pump. Scrolls
+            // are covered separately via _viewportMoved.
+            if (_needsFullRedraw || _viewportMoved || userScrolled ||
+                (hasUpdate && endY - startY > _rows / 2))
             {
                 RedrawAll();
             }
-            else
+            else if (hasUpdate)
             {
                 for (var row = Math.Max(0, startY); row <= Math.Min(_rows - 1, endY); row++)
                     RedrawRow(row);
+                // The cells under the block cursor were just repainted, so the
+                // cursor overlay must redraw even if it did not move.
+                InvalidateCaretCache();
             }
             _needsFullRedraw = false;
             _viewportMoved = false;
@@ -433,6 +456,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private void RedrawAll()
     {
+        // A full redraw repaints every cell, including the one under the
+        // block cursor, so the caret overlay must redraw with it (also covers
+        // font metrics/DPI/resize changes that move the caret geometry).
+        InvalidateCaretCache();
         for (var row = 0; row < _rowVisuals.Count; row++)
             RedrawRow(row);
     }
@@ -528,10 +555,9 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
             var face = ResolveTypeface(flags);
             var glyphFace = ResolveGlyphTypeface(flags);
-            var content = _trimmedRun.ToString();
 
             bool canUseGlyphRun = glyphFace != null;
-            var contentLength = content.Length;
+            var contentLength = _trimmedRun.Length;
             // GlyphRun uses the collection lengths as the glyph count. The
             // row-sized pools cannot be passed directly: stale entries after
             // this run would be rendered as extra characters.
@@ -543,7 +569,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 var map = glyphFace!.CharacterToGlyphMap;
                 for (var i = 0; i < contentLength; i++)
                 {
-                    if (map.TryGetValue(content[i], out var glyphIndex))
+                    if (map.TryGetValue(_trimmedRun[i], out var glyphIndex))
                     {
                         glyphIndices[i] = glyphIndex;
                         advanceWidths[i] = _cellWidth;
@@ -574,7 +600,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             }
             else
             {
-                var formatted = new FormattedText(content, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                var formatted = new FormattedText(_trimmedRun.ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                     face, _fontSize, fg, _pixelsPerDip);
                 context.DrawText(formatted, new Point(x, rowY));
                 runWidth = formatted.Width;
@@ -640,18 +666,30 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private void DrawCaret()
     {
-        using var dc = _caretVisual.RenderOpen();
-        if (_terminal.CursorHidden || _session is null)
-            return;
-
         var buffer = _terminal.Buffer;
-        var row = buffer.Y + buffer.YBase - buffer.YDisp;
-        if (row < 0 || row >= _rows)
-            return;
-        var col = Math.Min(buffer.X, _cols - 1);
-
+        var hidden = _session is null || _terminal.CursorHidden;
+        var row = hidden ? -1 : buffer.Y + buffer.YBase - buffer.YDisp;
+        var col = hidden ? -1 : Math.Min(buffer.X, _cols - 1);
         var blinkOn = !_terminal.Options.CursorBlink || !IsKeyboardFocused || _caretBlinkVisible;
-        if (!blinkOn)
+        var style = (int)_terminal.Options.CursorStyle;
+        // A cursor above the viewport (scrolled-up scrollback) is hidden.
+        var shouldDraw = !hidden && blinkOn && row >= 0 && row < _rows;
+
+        if (_caretCacheValid &&
+            _caretCacheShouldDraw == shouldDraw &&
+            _caretCacheRow == row &&
+            _caretCacheCol == col &&
+            _caretCacheStyle == style)
+            return;
+
+        _caretCacheValid = true;
+        _caretCacheShouldDraw = shouldDraw;
+        _caretCacheRow = row;
+        _caretCacheCol = col;
+        _caretCacheStyle = style;
+
+        using var dc = _caretVisual.RenderOpen();
+        if (!shouldDraw)
             return;
 
         var x = col * _cellWidth;
@@ -679,17 +717,19 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                         glyphFace.CharacterToGlyphMap.TryGetValue(cell.Code < 0x10000 ? (char)cell.Code : (char)cell.Rune, out var glyphIndex))
                     {
                         // Block cursor: draw the cell glyph with the palette's
-                        // background color via a pooled single-glyph run, no
-                        // FormattedText allocation per caret blink.
+                        // background color via a cached single-glyph run, no
+                        // FormattedText or per-blink array allocation.
+                        _caretGlyphIndex[0] = glyphIndex;
+                        _caretAdvanceWidths[0] = _cellWidth;
                         var glyphRun = new GlyphRun(
                             glyphFace,
                             0,
                             false,
                             _fontSize,
                             (float)_pixelsPerDip,
-                            new[] { glyphIndex },
+                            _caretGlyphIndex,
                             new Point(x, y + _baselineY),
-                            new[] { _cellWidth },
+                            _caretAdvanceWidths,
                             null, null, null, null, null, null);
                         dc.DrawGlyphRun(_palette.Background, glyphRun);
                     }
@@ -698,11 +738,24 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         }
     }
 
+    private bool _selectionVisualDrawn;
+
     private void DrawSelection()
     {
-        using var dc = _selectionVisual.RenderOpen();
         if (!_selection.Active)
+        {
+            // Clear the overlay once when the selection deactivates; after
+            // that, pumps with no selection skip the RenderOpen entirely.
+            if (_selectionVisualDrawn)
+            {
+                using var clearDc = _selectionVisual.RenderOpen();
+                _selectionVisualDrawn = false;
+            }
             return;
+        }
+
+        _selectionVisualDrawn = true;
+        using var dc = _selectionVisual.RenderOpen();
 
         var (start, end) = OrderSelection();
         if (start == end)
