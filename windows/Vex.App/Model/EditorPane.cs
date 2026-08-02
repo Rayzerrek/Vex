@@ -12,7 +12,6 @@ public sealed class EditorPane : LeafPane
 {
     private string _filePath;
     private string _content;
-    private string _originalContent;
 
     public EditorPane(string filePath)
     {
@@ -27,7 +26,6 @@ public sealed class EditorPane : LeafPane
         {
             _content = "";
         }
-        _originalContent = _content;
     }
 
     public string FilePath
@@ -49,8 +47,11 @@ public sealed class EditorPane : LeafPane
 
         try
         {
-            File.WriteAllText(_filePath, _content);
-            _originalContent = _content;
+            // Read the live text from the editor instead of the _content
+            // snapshot; it is only copied once per save, not per keystroke.
+            // (editor.Save() would add a UTF-8 BOM with the default encoding.)
+            var text = View is TextEditor editor ? editor.Text : _content;
+            File.WriteAllText(_filePath, text);
             IsDirty = false;
         }
         catch (Exception ex)
@@ -103,8 +104,9 @@ public sealed class EditorPane : LeafPane
 
         editor.TextChanged += (_, _) =>
         {
-            _content = editor.Text;
-            IsDirty = _content != _originalContent;
+            // O(1): AvalonEdit tracks modification against the undo stack, so
+            // no whole-buffer copy or compare per keystroke.
+            IsDirty = editor.IsModified;
         };
 
         return editor;

@@ -14,6 +14,7 @@ public sealed class Project : ObservableObject
     private string _name;
     private WorkspaceTab? _selectedTab;
 
+    private FileTreeNode[] _treeRoots = Array.Empty<FileTreeNode>();
     private FileTreeNode? _root;
 
     public bool CanCreateTab => Tabs.Count < MaxTabs;
@@ -35,12 +36,13 @@ public sealed class Project : ObservableObject
         {
             if (Set(ref _root, value))
             {
+                _treeRoots = new[] { value };
                 OnPropertyChanged(nameof(TreeRoots));
             }
         }
     }
 
-    public FileTreeNode[] TreeRoots => new[] { Root };
+    public FileTreeNode[] TreeRoots => _treeRoots;
 
     public void RefreshFileTree()
     {

@@ -19,7 +19,10 @@ public class AppSettings : ObservableObject
         set { if (Set(ref _themeName, value)) Save(); }
     }
 
-    public string[] AvailableFonts { get; } = System.Windows.Media.Fonts.SystemFontFamilies
+    // Enumerating every system font family takes hundreds of milliseconds, so
+    // it is deferred until the settings overlay actually needs the list.
+    private string[]? _availableFonts;
+    public string[] AvailableFonts => _availableFonts ??= System.Windows.Media.Fonts.SystemFontFamilies
         .Select(f => f.Source)
         .OrderBy(f => f)
         .ToArray();
