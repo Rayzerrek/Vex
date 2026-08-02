@@ -907,7 +907,7 @@ namespace XtermSharp {
 				buffer.Y = p - 1;
 		}
 
-		// 
+		//
 		// CSI Ps b  Repeat the preceding graphic character Ps times (REP).
 		//
 		void RepeatPrecedingCharacter (int [] pars)
@@ -920,7 +920,7 @@ namespace XtermSharp {
 			line.ReplaceCells (buffer.X,
 				  buffer.X + p,
 				      cd);
-			// FIXME: no UpdateRange here?
+			terminal.UpdateRange (buffer.Y);
 		}
 
 		//
@@ -965,6 +965,8 @@ namespace XtermSharp {
 				  buffer.X,
 				  buffer.X + p,
 				new CharData (terminal.EraseAttr ()));
+
+			terminal.UpdateRange (buffer.Y);
 		}
 
 		// 
