@@ -7,7 +7,9 @@
         <HierarchicalDataTemplate DataType="{x:Type m:FileTreeNode}" ItemsSource="{Binding Children}">
             <StackPanel Orientation="Horizontal" Margin="0,2">
                 <TextBlock Text="{Binding Icon}" Margin="0,0,6,0"/>
-                <TextBlock Text="{Binding Name}" Foreground="{StaticResource VexText}"/>
+                <TextBlock Text="{Binding Name}" Foreground="{StaticResource VexText}"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"
+                           MaxWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=TreeView}}"/>
             </StackPanel>
         </HierarchicalDataTemplate>
         <Style TargetType="TreeView">
