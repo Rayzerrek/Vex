@@ -32,6 +32,11 @@ a {
   color: inherit;
 }
 
+:focus-visible {
+  outline: 1px solid #d0e46b;
+  outline-offset: 4px;
+}
+
 button,
 input {
   font: inherit;
