@@ -10,6 +10,25 @@ const eyebrow =
 const textLink =
   "font-mono text-xs text-text no-underline transition-colors duration-150 hover:text-accent focus-visible:text-accent";
 
+const specs = [
+  { term: "platform", detail: "Windows 10 1809+" },
+  { term: "runtime", detail: ".NET 8" },
+  { term: "license", detail: "MIT" }
+];
+
+const downloadOptions = [
+  {
+    href: "https://github.com/Rayzerrek/Vex/releases",
+    title: "windows installer",
+    detail: "latest release from GitHub"
+  },
+  {
+    href: "https://github.com/Rayzerrek/Vex",
+    title: "build from source",
+    detail: "MIT licensed and open to inspection"
+  }
+];
+
 export function HomePage() {
   return (
     <div className="min-h-dvh overflow-hidden bg-background text-text">
@@ -104,26 +123,19 @@ export function HomePage() {
 Vendor/XtermSharp   terminal emulation`}</code>
             </pre>
             <dl className="mt-7 grid grid-cols-3 gap-5 max-narrow:grid-cols-1 max-narrow:gap-0">
-              <div className="border-t border-line pt-3 max-narrow:py-3.5">
-                <dt className="font-mono text-[10px] lowercase tracking-[0.08em] text-faint">
-                  platform
-                </dt>
-                <dd className="mt-2 font-mono text-[11px] text-text">
-                  Windows 10 1809+
-                </dd>
-              </div>
-              <div className="border-t border-line pt-3 max-narrow:py-3.5">
-                <dt className="font-mono text-[10px] lowercase tracking-[0.08em] text-faint">
-                  runtime
-                </dt>
-                <dd className="mt-2 font-mono text-[11px] text-text">.NET 8</dd>
-              </div>
-              <div className="border-t border-line pt-3 max-narrow:py-3.5">
-                <dt className="font-mono text-[10px] lowercase tracking-[0.08em] text-faint">
-                  license
-                </dt>
-                <dd className="mt-2 font-mono text-[11px] text-text">MIT</dd>
-              </div>
+              {specs.map(({ term, detail }) => (
+                <div
+                  className="border-t border-line pt-3 max-narrow:py-3.5"
+                  key={term}
+                >
+                  <dt className="font-mono text-[10px] lowercase tracking-[0.08em] text-faint">
+                    {term}
+                  </dt>
+                  <dd className="mt-2 font-mono text-[11px] text-text">
+                    {detail}
+                  </dd>
+                </div>
+              ))}
             </dl>
           </div>
         </section>
@@ -171,42 +183,27 @@ export function DownloadPage() {
           A native terminal workspace for Windows developers.
         </p>
         <div className="mb-10.5 mt-16 max-w-[720px] border-t border-line">
-          <a
-            className="group flex items-center justify-between gap-5 border-b border-line py-5.5 text-text no-underline"
-            href="https://github.com/Rayzerrek/Vex/releases"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span>
-              <strong className="block font-mono text-[13px] font-normal transition-colors duration-150 group-hover:text-accent group-focus-visible:text-accent">
-                windows installer
-              </strong>
-              <small className="mt-1.75 block text-[13px] text-muted">
-                latest release from GitHub
-              </small>
-            </span>
-            <span className="font-mono text-accent" aria-hidden="true">
-              -&gt;
-            </span>
-          </a>
-          <a
-            className="group flex items-center justify-between gap-5 border-b border-line py-5.5 text-text no-underline"
-            href="https://github.com/Rayzerrek/Vex"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span>
-              <strong className="block font-mono text-[13px] font-normal transition-colors duration-150 group-hover:text-accent group-focus-visible:text-accent">
-                build from source
-              </strong>
-              <small className="mt-1.75 block text-[13px] text-muted">
-                MIT licensed and open to inspection
-              </small>
-            </span>
-            <span className="font-mono text-accent" aria-hidden="true">
-              -&gt;
-            </span>
-          </a>
+          {downloadOptions.map(({ href, title, detail }) => (
+            <a
+              className="group flex items-center justify-between gap-5 border-b border-line py-5.5 text-text no-underline"
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              key={href}
+            >
+              <span>
+                <strong className="block font-mono text-[13px] font-normal transition-colors duration-150 group-hover:text-accent group-focus-visible:text-accent">
+                  {title}
+                </strong>
+                <small className="mt-1.75 block text-[13px] text-muted">
+                  {detail}
+                </small>
+              </span>
+              <span className="font-mono text-accent" aria-hidden="true">
+                -&gt;
+              </span>
+            </a>
+          ))}
         </div>
         <Link className={textLink} to="/">
           back to vex{" "}
