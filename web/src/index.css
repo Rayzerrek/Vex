@@ -1,15 +1,42 @@
 @import "tailwindcss";
 
 @theme {
+  --color-background: #111210;
+  --color-surface: #171815;
+  --color-surface-strong: #1d1f1a;
+  --color-text: #e8e6df;
+  --color-muted: #96978f;
+  --color-faint: #62645e;
+  --color-line: #30322c;
+  --color-accent: #d0e46b;
+  --color-accent-strong: #e1ed91;
+
   --font-sans: "Helvetica Neue", "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --breakpoint-narrow: 680px;
+  --breakpoint-wide: 900px;
+
+  --animate-blink: blink 1.2s steps(1) infinite;
+
+  @keyframes blink {
+    0%,
+    45% {
+      opacity: 1;
+    }
+
+    46%,
+    100% {
+      opacity: 0;
+    }
+  }
 }
 
 :root {
   color-scheme: dark;
   font-family: var(--font-sans);
-  color: #e8e6df;
-  background: #111210;
+  color: var(--color-text);
+  background: var(--color-background);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -33,7 +60,7 @@ a {
 }
 
 :focus-visible {
-  outline: 1px solid #d0e46b;
+  outline: 1px solid var(--color-accent);
   outline-offset: 4px;
 }
 
@@ -45,4 +72,18 @@ input {
 button,
 a {
   -webkit-tap-highlight-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
