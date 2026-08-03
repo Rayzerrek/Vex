@@ -1,4 +1,4 @@
-import { type FormEvent, startTransition, useState } from "react";
+import { type FormEvent, useState } from "react";
 
 type TerminalLine = {
   command: string;
@@ -32,20 +32,18 @@ export function TerminalDemo() {
       return;
     }
 
-    startTransition(() => {
-      if (nextCommand === "clear") {
-        setLines([]);
-      } else {
-        setLines((current) => [
-          ...current,
-          {
-            command: nextCommand,
-            output: commandOutput[nextCommand] ?? "command not found"
-          }
-        ]);
-      }
-      setCommand("");
-    });
+    if (nextCommand === "clear") {
+      setLines([]);
+    } else {
+      setLines((current) => [
+        ...current,
+        {
+          command: nextCommand,
+          output: commandOutput[nextCommand] ?? "command not found"
+        }
+      ]);
+    }
+    setCommand("");
   };
 
   return (
