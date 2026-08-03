@@ -19,4 +19,4 @@ vp build
 ```
 
 Oxlint and Oxfmt configuration lives in `vite.config.ts`. It is based on the
-shared rules in `C:\Users\Ziut\oxrules`.
+shared rules in `~/oxrules`.
