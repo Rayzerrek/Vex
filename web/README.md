@@ -1,24 +1,22 @@
-# Vex web
+# vex web
 
-Marketing and download page for Vex, built with React, Vite, Tailwind CSS,
-and the VitePlus pnpm workflow.
+The Vex landing page is a small React and TypeScript application built with
+Vite+, TanStack Router, and Tailwind CSS.
 
-## Development
+## commands
 
 ```powershell
 cd web
-pnpm install
-pnpm dev
+vp install
+vp dev
 ```
 
-## Checks
+## checks
 
 ```powershell
-pnpm lint
-pnpm format:check
-pnpm exec tsc --noEmit
-pnpm build
+vp check
+vp build
 ```
 
-The Oxlint and Oxfmt settings mirror the shared rules in
-`C:\Users\Ziut\oxrules` at the time this project was created.
+Oxlint and Oxfmt configuration lives in `vite.config.ts`. It is based on the
+shared rules in `C:\Users\Ziut\oxrules`.
