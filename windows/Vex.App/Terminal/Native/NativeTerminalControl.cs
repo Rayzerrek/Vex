@@ -78,6 +78,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private void InvalidateCaretCache() => _caretCacheValid = false;
 
     public event Action<string>? TitleChanged;
+    public event Action<string>? TitleRawChanged;
     public event Action<int>? ProcessExited;
     public event Action? FocusGained;
     public event Action<TerminalCommand>? CommandRequested;
@@ -294,6 +295,9 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         session.Start(_workingDirectory, (short)_cols, (short)_rows, shell);
         _session = session;
     }
+
+    /// <summary>PID of the ConPTY shell process; null before the session starts.</summary>
+    public int? ProcessId => _session?.ProcessId;
 
     private void OnSessionOutput(ArraySegment<byte> chunk)
     {
@@ -1056,7 +1060,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         public override void Send(byte[] data) => _owner.SendToPty(data);
 
         public override void SetTerminalTitle(XtermSharp.Terminal source, string title)
-            => _owner.TitleChanged?.Invoke(title);
+        {
+            _owner.TitleRawChanged?.Invoke(title);
+            _owner.TitleChanged?.Invoke(title);
+        }
     }
 
     // ---- Dispose ------------------------------------------------------------
