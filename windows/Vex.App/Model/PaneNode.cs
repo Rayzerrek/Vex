@@ -41,6 +41,10 @@ public abstract class LeafPane : PaneNode, IDisposable
 
     public object View => _view ??= CreateView();
 
+    /// <summary>The view when it already exists; unlike <see cref="View"/>,
+    /// never forces creation of a pane that was never shown.</summary>
+    protected object? ViewIfCreated => _view;
+
     private AppIcon? _appIcon;
 
     /// <summary>Icon for the app running in this pane (null until resolved).</summary>
@@ -90,7 +94,7 @@ public sealed class TerminalPane : LeafPane
     /// </summary>
     public void RefreshAppIcon(IReadOnlyList<(uint Pid, uint ParentPid, string Name)> entries)
     {
-        if (View is not ITerminalView terminal)
+        if (ViewIfCreated is not ITerminalView terminal)
             return;
         if (terminal.ProcessId is not { } pid)
             return;
@@ -159,7 +163,7 @@ public sealed class TerminalPane : LeafPane
     public override void Dispose()
     {
         AppIconTracker.Unregister(this);
-        if (_titleRawHandler is { } handler && View is Terminal.Native.NativeTerminalControl control)
+        if (_titleRawHandler is { } handler && ViewIfCreated is Terminal.Native.NativeTerminalControl control)
             control.TitleRawChanged -= handler;
         base.Dispose();
     }
