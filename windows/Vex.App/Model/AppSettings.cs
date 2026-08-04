@@ -12,6 +12,13 @@ public class AppSettings : ObservableObject
     private static AppSettings? _instance;
     public static AppSettings Instance => _instance ??= Load();
 
+    private bool _sidebarVisible = true;
+    public bool SidebarVisible
+    {
+        get => _sidebarVisible;
+        set { if (Set(ref _sidebarVisible, value)) Save(); }
+    }
+
     private string _themeName = "Vex Dark";
     public string ThemeName
     {

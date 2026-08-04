@@ -7,7 +7,7 @@
              Visibility="Collapsed">
     <Grid>
         <!-- Backdrop -->
-        <Border Background="#80000000" MouseDown="Backdrop_MouseDown" />
+        <Border x:Name="Backdrop" Background="#80000000" MouseDown="Backdrop_MouseDown" Opacity="0" />
 
         <!-- Overlay Panel -->
         <Border Background="{StaticResource VexSurface}" 
