@@ -104,8 +104,10 @@ public sealed class TerminalPane : LeafPane
         var commandLine = AppIconCatalog.IsShimHost(deepest.Name)
             ? ProcessCommandLine.Get(deepest.Pid)
             : null;
-        if (AppIconCatalog.Resolve(deepest.Name, commandLine, _lastTitle) is { } icon)
-            AppIcon = icon;
+        // Assign null as well as a resolved icon. Otherwise a shell icon (most
+        // often Nushell) survives after a node-hosted app starts but its
+        // command line is temporarily unreadable.
+        AppIcon = AppIconCatalog.Resolve(deepest.Name, commandLine, _lastTitle);
     }
 
     public override void Focus()
@@ -124,7 +126,14 @@ public sealed class TerminalPane : LeafPane
     protected override object CreateView()
     {
         var view = new Terminal.Native.NativeTerminalControl(_workingDirectory);
-        _titleRawHandler = rawTitle => _lastTitle = rawTitle;
+        _titleRawHandler = rawTitle =>
+        {
+            _lastTitle = rawTitle;
+            // OSC titles arrive before the next process-tree poll and are the
+            // only reliable signal for some WSL and Node launchers.
+            if (AppIconCatalog.FromTitle(rawTitle) is { } icon)
+                AppIcon = icon;
+        };
         view.TitleRawChanged += _titleRawHandler;
         view.TitleChanged += title =>
         {

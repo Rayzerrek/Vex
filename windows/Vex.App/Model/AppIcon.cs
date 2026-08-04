@@ -5,9 +5,9 @@ using System.Windows.Media;
 namespace Vex.App.Model;
 
 /// <summary>
-/// A tab icon: either a simple-icons glyph tinted with its brand color or a
-/// rounded letter badge for tools without one (pi, antigravity, ...).
-/// Immutable and cached per key so every pane shares one frozen image.
+/// A tab icon: either a brand glyph tinted with its color or a rounded letter
+/// badge for tools without a brand mark (aider, lazygit, ...). Immutable and
+/// cached per key so every pane shares one frozen image.
 /// </summary>
 public sealed class AppIcon
 {
