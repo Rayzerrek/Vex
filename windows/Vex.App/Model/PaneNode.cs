@@ -84,17 +84,17 @@ public sealed class TerminalPane : LeafPane
     }
 
     /// <summary>
-    /// Re-resolves the tab icon from the current process tree, the shim's
-    /// command line and the last raw OSC title; called by the shared tracker
-    /// timer on the UI thread.
+    /// Re-resolves the tab icon from the shared process snapshot, the shim's
+    /// command line and the last raw OSC title; called by the tracker timer
+    /// on the UI thread.
     /// </summary>
-    public void RefreshAppIcon()
+    public void RefreshAppIcon(IReadOnlyList<(uint Pid, uint ParentPid, string Name)> entries)
     {
         if (View is not ITerminalView terminal)
             return;
         if (terminal.ProcessId is not { } pid)
             return;
-        var process = ProcessTree.DeepestDescendant((uint)pid, AppIconCatalog.ExcludedShells);
+        var process = ProcessTree.DeepestDescendant(entries, (uint)pid, AppIconCatalog.ExcludedShells);
         if (process is not { } deepest)
             return;
         var commandLine = AppIconCatalog.IsShimHost(deepest.Name)
