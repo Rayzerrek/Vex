@@ -54,13 +54,17 @@
 
     <Grid x:Name="MainGrid">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="240" MinWidth="180"/>
+            <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="0"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
         <!-- Left sidebar: projects, like upstream's SidebarView. -->
-        <Border Grid.Column="0" Background="{StaticResource VexBackground}"
-                BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,1,0">
+        <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource VexBackground}"
+                BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,1,0"
+                ClipToBounds="True">
+            <!-- Fixed-width content: the column animates while this grid is
+                 clipped, so the tree never reflows mid-slide. -->
+            <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
             <DockPanel>
                 <Border DockPanel.Dock="Top" Height="40" Padding="12,0" Background="{StaticResource VexBackground}">
                     <DockPanel>
@@ -69,6 +73,9 @@
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                             <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">⚙</Button>
                             <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">＋</Button>
+                            <Button Style="{StaticResource SidebarToggleButton}" ToolTip="Hide Sidebar" Click="HideSidebar_Click">
+                                <Path Data="M 8,2 L 3,7 L 8,12 M 3,7 L 13,7" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                            </Button>
                         </StackPanel>
                     </DockPanel>
                 </Border>
@@ -173,9 +180,10 @@
                 
                 <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource VexBorder}" Margin="12,4"/>
                 
-                <local:FileTreeView DataContext="{Binding SelectedProject}"/>
+                    <local:FileTreeView DataContext="{Binding SelectedProject}"/>
                 </DockPanel>
-            </DockPanel>
+                </DockPanel>
+            </Grid>
         </Border>
 
         <!-- Main column: tab bar on top, terminal fills its own row below it. -->
@@ -194,11 +202,22 @@
                   Panel.ZIndex="100"
                   Background="{StaticResource VexTabStrip}">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="36"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <ListBox WindowChrome.IsHitTestVisibleInChrome="True"
+                <Button x:Name="ShowSidebarButton" Grid.Column="0" Panel.ZIndex="200"
+                        Style="{StaticResource SidebarToggleButton}" ToolTip="Show Sidebar" Click="ShowSidebar_Click"
+                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0"
+                        Opacity="0" IsHitTestVisible="False">
+                    <Button.RenderTransform>
+                        <ScaleTransform x:Name="ShowSidebarScale" ScaleX="1" ScaleY="1"/>
+                    </Button.RenderTransform>
+                    <Path Data="M 5,2 L 10,7 L 5,12 M 10,7 L 0,7" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                </Button>
+
+                <ListBox Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="True"
                          ItemsSource="{Binding SelectedProject.Tabs}"
                          SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
                          Background="Transparent" BorderThickness="0"
@@ -321,7 +340,7 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
-                <Border Grid.Column="1" Background="{StaticResource VexTabStrip}" Padding="4,0">
+                <Border Grid.Column="2" Background="{StaticResource VexTabStrip}" Padding="4,0">
                     <DockPanel>
                         <!-- Window caption buttons: pinned to the top-right corner. -->
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">

@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Diagnostics;
+using System.Windows.Media;
 using Vex.App.Model;
 using Microsoft.Win32;
 
@@ -7,7 +9,15 @@ namespace Vex.App;
 
 public partial class MainWindow : Window
 {
+    private const double SidebarWidth = 240;
+    private const double SidebarAnimDuration = 300;
+
     private readonly Workspace _workspace;
+    private bool _sidebarAnimationInProgress;
+    private Stopwatch? _sidebarAnimationClock;
+    private double _sidebarAnimationFrom;
+    private double _sidebarAnimationTo;
+    private bool _sidebarAnimationFadingOut;
 
     public MainWindow()
     {
@@ -17,6 +27,17 @@ public partial class MainWindow : Window
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         StateChanged += MainWindow_StateChanged;
         UpdateLayoutForWindowState();
+
+        // Restore the persisted sidebar state, collapsed (no animation) when
+        // the user closed it last time.
+        if (!AppSettings.Instance.SidebarVisible)
+        {
+            SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
+            SidebarPanel.Visibility = Visibility.Collapsed;
+            SidebarPanel.Opacity = 0;
+            ShowSidebarButton.Opacity = 1;
+            ShowSidebarButton.IsHitTestVisible = true;
+        }
     }
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)
@@ -110,6 +131,92 @@ public partial class MainWindow : Window
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         SettingsOverlay.Toggle();
+    }
+
+    private void HideSidebar_Click(object sender, RoutedEventArgs e)
+    {
+        if (_sidebarAnimationInProgress)
+            return;
+
+        AppSettings.Instance.SidebarVisible = false;
+        AnimateSidebar(0, fadeOut: true);
+    }
+
+    private void ShowSidebar_Click(object sender, RoutedEventArgs e)
+    {
+        if (_sidebarAnimationInProgress)
+            return;
+
+        AppSettings.Instance.SidebarVisible = true;
+        AnimateSidebar(SidebarWidth, fadeOut: false);
+    }
+
+    private void AnimateSidebar(double target, bool fadeOut = false)
+    {
+        _sidebarAnimationInProgress = true;
+        _sidebarAnimationFrom = SidebarColumn.ActualWidth;
+        _sidebarAnimationTo = target;
+        _sidebarAnimationFadingOut = fadeOut;
+
+        // Prepare the side the animation is moving to so there is no layout
+        // jump on the very first frame.
+        if (fadeOut)
+        {
+            SidebarColumn.Width = new GridLength(SidebarWidth, GridUnitType.Pixel);
+        }
+        else
+        {
+            SidebarPanel.Visibility = Visibility.Visible;
+            ShowSidebarButton.Opacity = 0;
+            ShowSidebarButton.IsHitTestVisible = false;
+        }
+
+        _sidebarAnimationClock = Stopwatch.StartNew();
+        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
+        CompositionTarget.Rendering += SidebarAnimation_Rendering;
+    }
+
+    private void SidebarAnimation_Rendering(object? sender, EventArgs e)
+    {
+        // Smoothstep easing: starts and ends gently instead of lurching.
+        var elapsed = _sidebarAnimationClock?.Elapsed.TotalMilliseconds ?? SidebarAnimDuration;
+        var t = Math.Min(elapsed / SidebarAnimDuration, 1);
+        var eased = t * t * (3 - 2 * t);
+
+        // Width eases smoothly; the reveal button is eased over the same
+        // timeline (fade + slight scale) rather than popping at the end.
+        var width = _sidebarAnimationFrom + ((_sidebarAnimationTo - _sidebarAnimationFrom) * eased);
+        SidebarColumn.Width = new GridLength(width, GridUnitType.Pixel);
+
+        if (_sidebarAnimationFadingOut)
+        {
+            SidebarPanel.Opacity = 1 - eased;
+            ShowSidebarButton.Opacity = eased;
+            ShowSidebarButton.IsHitTestVisible = eased >= 0.75;
+            ShowSidebarScale.ScaleX = 0.7 + (0.3 * eased);
+            ShowSidebarScale.ScaleY = 0.7 + (0.3 * eased);
+        }
+        else
+        {
+            // Fade the content in only once the panel is mostly on screen so
+            // it never flashes over the terminal.
+            var contentOpacity = Math.Clamp((eased - 0.35) / 0.5, 0, 1);
+            SidebarPanel.Opacity = contentOpacity;
+        }
+
+        if (eased < 1)
+            return;
+
+        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
+        SidebarColumn.Width = new GridLength(_sidebarAnimationTo, GridUnitType.Pixel);
+        SidebarPanel.Opacity = 1;
+        _sidebarAnimationClock = null;
+        _sidebarAnimationInProgress = false;
+
+        if (_sidebarAnimationFadingOut)
+        {
+            SidebarPanel.Visibility = Visibility.Collapsed;
+        }
     }
 
     private void NewTab_Click(object sender, RoutedEventArgs e)
@@ -249,6 +356,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
         base.OnClosed(e);
         foreach (var project in _workspace.Projects)
             foreach (var tab in project.Tabs)
