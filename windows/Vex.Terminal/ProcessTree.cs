@@ -16,14 +16,14 @@ public static class ProcessTree
     /// Finds the deepest process under <paramref name="rootPid"/> that is not
     /// in <paramref name="excludedNames"/>, preferring the highest PID on ties.
     /// Returns the process name without extension and its PID, or null when
-    /// the snapshot fails or the root no longer exists.
+    /// the root no longer exists. Callers polling many roots take one
+    /// <see cref="Snapshot"/> and share it across all lookups.
     /// </summary>
-    public static (string Name, uint Pid)? DeepestDescendant(uint rootPid, IReadOnlySet<string> excludedNames)
+    public static (string Name, uint Pid)? DeepestDescendant(
+        IReadOnlyList<(uint Pid, uint ParentPid, string Name)> entries,
+        uint rootPid,
+        IReadOnlySet<string> excludedNames)
     {
-        var entries = Snapshot();
-        if (entries is null)
-            return null;
-
         var children = new Dictionary<uint, List<(string Name, uint Pid)>>();
         string? rootName = null;
         foreach (var e in entries)
@@ -78,7 +78,12 @@ public static class ProcessTree
         return rootName is not null ? (rootName, rootPid) : null;
     }
 
-    private static List<(uint Pid, uint ParentPid, string Name)>? Snapshot()
+    /// <summary>
+    /// One Toolhelp32 snapshot of every process on the system, or null when
+    /// the snapshot fails. Expensive enough that polling callers should take
+    /// it once per cycle, not once per root.
+    /// </summary>
+    public static List<(uint Pid, uint ParentPid, string Name)>? Snapshot()
     {
         var snapshot = NativeMethods.CreateToolhelp32Snapshot(NativeMethods.TH32CS_SNAPPROCESS, 0);
         if (snapshot == IntPtr.Zero)
@@ -92,7 +97,7 @@ public static class ProcessTree
                 dwSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.PROCESSENTRY32>(),
             };
             if (!NativeMethods.Process32FirstW(snapshot, ref entry))
-                return result.Count > 0 ? result : null;
+                return null;
             do
             {
                 // szExeFile carries the extension (and sometimes a full path);
