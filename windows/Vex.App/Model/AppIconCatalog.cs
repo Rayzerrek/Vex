@@ -18,16 +18,17 @@ internal static partial class AppIconCatalog
     /// <summary>Process names that are just the shell, never the tab's app.</summary>
     internal static readonly IReadOnlySet<string> ExcludedShells = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "pwsh", "powershell", "cmd", "nu", "bash", "zsh", "fish", "conhost", "wslhost",
+        "pwsh", "powershell", "cmd", "nu", "bash", "sh", "zsh", "fish", "conhost", "wslhost",
     };
 
     /// <summary>
-    /// Hosts that run other apps (node claude.js, node pi, ...); their own
-    /// name never identifies the app, only their command line does.
+    /// Hosts that run other apps (node claude.js, wsl nvim, ...); their own
+    /// name never identifies the app, only their command line or the OSC
+    /// title does — the process tree cannot see inside a script or a VM.
     /// </summary>
     private static readonly HashSet<string> ShimHosts = new(StringComparer.OrdinalIgnoreCase)
     {
-        "node", "nodejs", "deno",
+        "node", "nodejs", "deno", "wsl",
     };
 
     /// <summary>
@@ -76,6 +77,7 @@ internal static partial class AppIconCatalog
             // Shells themselves (shown when nothing else is running).
             ["fish"] = AppIcon.Glyph("fishshell"),
             ["bash"] = AppIcon.Glyph("gnubash"),
+            ["sh"] = AppIcon.Glyph("gnubash"),
             ["zsh"] = AppIcon.Glyph("zsh"),
             ["nu"] = AppIcon.Glyph("nushell"),
             ["pwsh"] = AppIcon.Badge("P", Color.FromRgb(0x53, 0x91, 0xFE)),
