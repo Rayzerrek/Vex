@@ -257,10 +257,26 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock x:Name="TitleBlock" Grid.Column="0" Text="{Binding Title}"
-                                           TextTrimming="CharacterEllipsis" FontSize="14"
-                                           ToolTip="{Binding Title}"
-                                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Image Width="16" Height="16" Margin="0,0,6,0"
+                                           Source="{Binding ActiveLeaf.AppIcon.Image}"
+                                           VerticalAlignment="Center">
+                                        <Image.Style>
+                                            <Style TargetType="Image">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ActiveLeaf.AppIcon}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Image.Style>
+                                    </Image>
+                                    <TextBlock Text="{Binding Title}"
+                                               TextTrimming="CharacterEllipsis" FontSize="14"
+                                               ToolTip="{Binding Title}"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
                                 <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="2" Text="{Binding Title}"
                                          Visibility="Collapsed" FontSize="14"
                                          VerticalAlignment="Center" HorizontalAlignment="Stretch"
