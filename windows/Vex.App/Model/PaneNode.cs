@@ -1,6 +1,7 @@
 using System.Windows.Controls;
 using System.Windows.Threading;
 using Vex.App.Terminal;
+using Vex.Terminal;
 
 namespace Vex.App.Model;
 
@@ -40,6 +41,15 @@ public abstract class LeafPane : PaneNode, IDisposable
 
     public object View => _view ??= CreateView();
 
+    private AppIcon? _appIcon;
+
+    /// <summary>Icon for the app running in this pane (null until resolved).</summary>
+    public AppIcon? AppIcon
+    {
+        get => _appIcon;
+        set => Set(ref _appIcon, value);
+    }
+
     protected abstract object CreateView();
 
     public event Action? FocusRequested;
@@ -63,11 +73,35 @@ public abstract class LeafPane : PaneNode, IDisposable
 public sealed class TerminalPane : LeafPane
 {
     private readonly string _workingDirectory;
+    private string _lastTitle = "";
+    private Action<string>? _titleRawHandler;
 
     public TerminalPane(string workingDirectory)
     {
         _workingDirectory = workingDirectory;
         Title = "Terminal";
+        AppIconTracker.Register(this);
+    }
+
+    /// <summary>
+    /// Re-resolves the tab icon from the current process tree, the shim's
+    /// command line and the last raw OSC title; called by the shared tracker
+    /// timer on the UI thread.
+    /// </summary>
+    public void RefreshAppIcon()
+    {
+        if (View is not ITerminalView terminal)
+            return;
+        if (terminal.ProcessId is not { } pid)
+            return;
+        var process = ProcessTree.DeepestDescendant((uint)pid, AppIconCatalog.ExcludedShells);
+        if (process is not { } deepest)
+            return;
+        var commandLine = AppIconCatalog.IsShimHost(deepest.Name)
+            ? ProcessCommandLine.Get(deepest.Pid)
+            : null;
+        if (AppIconCatalog.Resolve(deepest.Name, commandLine, _lastTitle) is { } icon)
+            AppIcon = icon;
     }
 
     public override void Focus()
@@ -86,6 +120,8 @@ public sealed class TerminalPane : LeafPane
     protected override object CreateView()
     {
         var view = new Terminal.Native.NativeTerminalControl(_workingDirectory);
+        _titleRawHandler = rawTitle => _lastTitle = rawTitle;
+        view.TitleRawChanged += _titleRawHandler;
         view.TitleChanged += title =>
         {
             if (!string.IsNullOrWhiteSpace(title))
@@ -118,6 +154,14 @@ public sealed class TerminalPane : LeafPane
             }
         };
         return view;
+    }
+
+    public override void Dispose()
+    {
+        AppIconTracker.Unregister(this);
+        if (_titleRawHandler is { } handler && View is Terminal.Native.NativeTerminalControl control)
+            control.TitleRawChanged -= handler;
+        base.Dispose();
     }
 }
 
