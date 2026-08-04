@@ -148,4 +148,71 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern bool FreeConsole();
+
+    // Toolhelp32: process snapshot used to walk the pane's process tree and
+    // identify the app running inside it (nvim, lazygit, claude, ...).
+    internal const uint TH32CS_SNAPPROCESS = 0x00000002;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct PROCESSENTRY32
+    {
+        internal uint dwSize;
+        internal uint cntUsage;
+        internal uint th32ProcessID;
+        internal IntPtr th32DefaultHeapID;
+        internal uint th32ModuleID;
+        internal uint cntThreads;
+        internal uint th32ParentProcessID;
+        internal int pcPriClassBase;
+        internal uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        internal string szExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool Process32FirstW(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool Process32NextW(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+    // Command lines of other processes: node-shimmed CLIs (claude, pi, ...)
+    // are only identifiable by the script they run. The command line lives in
+    // the PEB, so we query its address and read RTL_USER_PROCESS_PARAMETERS.
+    internal const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    internal const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    internal const uint PROCESS_VM_READ = 0x0010;
+    internal const int ProcessBasicInformation = 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct PROCESS_BASIC_INFORMATION
+    {
+        internal IntPtr Reserved1;
+        internal IntPtr PebBaseAddress;
+        internal IntPtr Reserved2a;
+        internal IntPtr Reserved2b;
+        internal IntPtr UniqueProcessId;
+        internal IntPtr Reserved3;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool ReadProcessMemory(
+        IntPtr hProcess,
+        IntPtr lpBaseAddress,
+        [Out] byte[] lpBuffer,
+        int nSize,
+        out int lpNumberOfBytesRead);
+
+    [DllImport("ntdll.dll")]
+    internal static extern int NtQueryInformationProcess(
+        IntPtr hProcess,
+        int processInformationClass,
+        ref PROCESS_BASIC_INFORMATION processInformation,
+        int processInformationLength,
+        out int returnLength);
 }
