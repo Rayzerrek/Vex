@@ -1,4 +1,6 @@
+using System.Threading;
 using System.Windows.Threading;
+using Vex.Terminal;
 
 namespace Vex.App.Model;
 
@@ -11,6 +13,7 @@ public static class AppIconTracker
 {
     private static readonly List<TerminalPane> Panes = new();
     private static DispatcherTimer? _timer;
+    private static int _tickInFlight;
 
     public static void Register(TerminalPane pane)
     {
@@ -38,13 +41,26 @@ public static class AppIconTracker
 
     private static void Tick()
     {
-        // One system-wide process snapshot per tick, shared by every pane;
-        // enumerating processes per pane would multiply the cost by pane count.
-        var entries = Vex.Terminal.ProcessTree.Snapshot();
-        if (entries is null)
+        // The system-wide snapshot is the expensive part of a cycle; run it
+        // off the UI thread so its periodic process enumeration never hitches
+        // typing or rendering. Skip when the previous cycle is still running.
+        if (Interlocked.CompareExchange(ref _tickInFlight, 1, 0) != 0)
             return;
-        // A copy: a pane may unregister mid-tick when its shell exits.
-        foreach (var pane in Panes.ToArray())
-            pane.RefreshAppIcon(entries);
+        _ = Task.Run(() =>
+        {
+            var entries = ProcessTree.Snapshot();
+            return entries is null ? null : ProcessTree.Index.Build(entries);
+        }).ContinueWith(task =>
+        {
+            Interlocked.Exchange(ref _tickInFlight, 0);
+            if (task.IsFaulted)
+                return;
+            var index = task.Result;
+            if (index is null)
+                return;
+            // A copy: a pane may unregister mid-tick when its shell exits.
+            foreach (var pane in Panes.ToArray())
+                pane.RefreshAppIcon(index);
+        }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 }
