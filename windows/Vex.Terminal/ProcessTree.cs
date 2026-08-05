@@ -13,27 +13,57 @@ namespace Vex.Terminal;
 public static class ProcessTree
 {
     /// <summary>
+    /// Process adjacency built once from a snapshot and shared across every
+    /// root lookup. Building it is the O(processes) pass, so rebuilding it per
+    /// pane would multiply each poll cycle's cost by the number of panes.
+    /// </summary>
+    public sealed class Index
+    {
+        internal readonly Dictionary<uint, string> Names;
+        internal readonly Dictionary<uint, List<(string Name, uint Pid)>> Children;
+
+        private Index(
+            Dictionary<uint, string> names,
+            Dictionary<uint, List<(string, uint)>> children)
+        {
+            Names = names;
+            Children = children;
+        }
+
+        public static Index? Build(IReadOnlyList<(uint Pid, uint ParentPid, string Name)> entries)
+        {
+            if (entries.Count == 0)
+                return null;
+            var names = new Dictionary<uint, string>();
+            var children = new Dictionary<uint, List<(string, uint)>>();
+            foreach (var e in entries)
+            {
+                names[e.Pid] = e.Name;
+                if (!children.TryGetValue(e.ParentPid, out var list))
+                    children[e.ParentPid] = list = new List<(string, uint)>();
+                list.Add((e.Name, e.Pid));
+            }
+            return new Index(names, children);
+        }
+    }
+
+    /// <summary>
     /// Finds the deepest process under <paramref name="rootPid"/> that is not
     /// in <paramref name="excludedNames"/>, preferring the highest PID on ties.
     /// Returns the process name without extension and its PID, or null when
     /// the root no longer exists. Callers polling many roots take one
-    /// <see cref="Snapshot"/> and share it across all lookups.
+    /// <see cref="Index"/> built from a shared snapshot and reuse it for
+    /// every root.
     /// </summary>
     public static (string Name, uint Pid)? DeepestDescendant(
-        IReadOnlyList<(uint Pid, uint ParentPid, string Name)> entries,
+        Index index,
         uint rootPid,
         IReadOnlySet<string> excludedNames)
     {
-        var children = new Dictionary<uint, List<(string Name, uint Pid)>>();
+        var children = index.Children;
         string? rootName = null;
-        foreach (var e in entries)
-        {
-            if (e.Pid == rootPid)
-                rootName = e.Name;
-            if (!children.TryGetValue(e.ParentPid, out var list))
-                children[e.ParentPid] = list = new List<(string, uint)>();
-            list.Add((e.Name, e.Pid));
-        }
+        if (index.Names.TryGetValue(rootPid, out var knownRoot))
+            rootName = knownRoot;
 
         // Breadth-first over the tree; each level keeps the best candidate.
         // A bare shell (no children at all) skips the walk and lands on the
