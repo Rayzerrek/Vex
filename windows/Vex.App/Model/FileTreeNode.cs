@@ -21,8 +21,6 @@ public class FileTreeNode : ObservableObject
 
     public ObservableCollection<FileTreeNode> Children { get; } = new();
 
-    public string Icon => IsDirectory ? "📁" : "📄";
-
     public bool IsExpanded
     {
         get => _isExpanded;
