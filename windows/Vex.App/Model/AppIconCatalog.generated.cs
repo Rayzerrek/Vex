@@ -97,15 +97,18 @@ internal static partial class AppIconCatalog
             return null;
         try
         {
+            // Geometry.Parse returns a frozen StreamGeometry: its properties
+            // reject writes, so an artboard remap needs a modifiable clone
+            // (setting Transform on the parsed geometry threw
+            // InvalidOperationException and took the whole icon catalog down
+            // on the first non-24x24 viewBox glyph).
             var geometry = Geometry.Parse(glyph.Path);
-            // Map the glyph's artboard onto the canonical 24x24 box. The group
-            // in BuildGlyphImage then scales 24 -> 16, so an off-origin viewBox
-            // (e.g. antigravity's -2,-1 28 28) stays centred.
             if (glyph.ViewW != 24 || glyph.ViewH != 24 ||
                 glyph.ViewX != 0 || glyph.ViewY != 0)
             {
                 var scaleX = 24.0 / glyph.ViewW;
                 var scaleY = 24.0 / glyph.ViewH;
+                geometry = geometry.Clone();
                 geometry.Transform = new MatrixTransform(scaleX, 0, 0, scaleY,
                     -glyph.ViewX * scaleX, -glyph.ViewY * scaleY);
             }

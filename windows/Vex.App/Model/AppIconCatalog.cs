@@ -275,7 +275,7 @@ internal static partial class AppIconCatalog
     }
 
     /// <summary>Stable color from a name: FNV-1a hash mapped to a pastel hue.</summary>
-    private static Color HashColor(string seed)
+    internal static Color HashColor(string seed)
     {
         var hash = 2166136261u;
         foreach (var ch in seed)

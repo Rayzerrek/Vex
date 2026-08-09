@@ -28,11 +28,21 @@ public sealed class AppIcon
         var key = $"glyph:{slug}";
         if (Cache.TryGetValue(key, out var cached))
             return cached;
-        if (AppIconCatalog.GeometryFor(slug) is not { } resolved)
-            throw new ArgumentException($"Unknown simple-icons slug '{slug}'.", nameof(slug));
-        var icon = new AppIcon(BuildGlyphImage(resolved.Geometry, resolved.Color));
-        Cache[key] = icon;
-        return icon;
+        if (AppIconCatalog.GeometryFor(slug) is { } resolved)
+        {
+            var icon = new AppIcon(BuildGlyphImage(resolved.Geometry, resolved.Color));
+            Cache[key] = icon;
+            return icon;
+        }
+        // A glyph that fails to parse must not poison the icon catalog: the
+        // callers build it through a Lazy, and an exception thrown by a lazy
+        // factory is cached and rethrown on every later access, taking every
+        // icon down with it. Degrade to a letter badge instead.
+        var fallback = Badge(
+            slug.Length > 0 ? char.ToUpperInvariant(slug[0]).ToString() : "?",
+            AppIconCatalog.HashColor(slug));
+        Cache[key] = fallback;
+        return fallback;
     }
 
     internal static AppIcon Badge(string text, Color color)
