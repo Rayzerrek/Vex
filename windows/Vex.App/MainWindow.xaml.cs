@@ -357,6 +357,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         CompositionTarget.Rendering -= SidebarAnimation_Rendering;
+        AppSettings.Instance.Flush(); // persist the debounced settings write
         base.OnClosed(e);
         foreach (var project in _workspace.Projects)
             foreach (var tab in project.Tabs)
