@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Windows.Threading;
 
 namespace Vex.App.Model;
 
@@ -11,6 +12,34 @@ public class AppSettings : ObservableObject
 
     private static AppSettings? _instance;
     public static AppSettings Instance => _instance ??= Load();
+
+    private readonly DispatcherTimer _saveDebounce;
+    private bool _savePending;
+
+    public AppSettings()
+    {
+        // Coalesce disk writes: a font-size drag or theme toggle can fire
+        // dozens of setter changes a second, and each would otherwise hit the
+        // disk synchronously on the UI thread.
+        _saveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+        _saveDebounce.Tick += (_, _) =>
+        {
+            _saveDebounce.Stop();
+            _savePending = false;
+            WriteSettings();
+        };
+    }
+
+    /// <summary>Persists any pending change; called on window close so the
+    /// debounce never swallows the last edit.</summary>
+    public void Flush()
+    {
+        if (!_savePending)
+            return;
+        _saveDebounce.Stop();
+        _savePending = false;
+        WriteSettings();
+    }
 
     private bool _sidebarVisible = true;
     public bool SidebarVisible
@@ -84,6 +113,13 @@ public class AppSettings : ObservableObject
     }
 
     private void Save()
+    {
+        _savePending = true;
+        _saveDebounce.Stop();
+        _saveDebounce.Start();
+    }
+
+    private void WriteSettings()
     {
         try
         {

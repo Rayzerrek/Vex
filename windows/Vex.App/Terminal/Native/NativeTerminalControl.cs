@@ -45,9 +45,24 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private Typeface _boldItalicTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
     private int _cols;
     private int _rows;
-    private bool _viewportMoved;
     private bool _needsFullRedraw = true;
     private bool _disposed;
+
+    // Per-row render caches: the row's last-painted content hash plus the
+    // render version it was painted with. RedrawRow skips the DrawingVisual
+    // pass when both match, so scrolls and redundant full redraws cost only
+    // the hash pass. A version bump (font/DPI/palette change) invalidates
+    // every row at once. The cache entries travel with the visuals in
+    // ApplyScrollShift, keeping shifted rows "clean" across a scroll.
+    private int _renderVersion = 1;
+    private int[] _rowHashes = Array.Empty<int>();
+    private int[] _rowVersions = Array.Empty<int>();
+
+    // Net viewport movement accumulated since the last flush, driven by the
+    // emulator's Scrolled event (which reports YDisp after each scroll).
+    private int _scrollDelta;
+    private long _lastScrollYDisp;
+    private bool _resizeScheduled;
 
     private GlyphTypeface? _normalGlyph;
     private GlyphTypeface? _boldGlyph;
@@ -95,8 +110,20 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             Rows = 24,
             TermName = "xterm-256color",
         });
-        _terminal.Scrolled += (_, _) => _viewportMoved = true;
-        _terminal.Buffers.Activated += (_, _) => _viewportMoved = true;
+        _lastScrollYDisp = _terminal.Buffer.YDisp;
+        _terminal.Scrolled += (_, ydisp) =>
+        {
+            // Accumulate the pump's net viewport movement. The row hash pass
+            // is the correctness net: any row whose cached content no longer
+            // matches (buffer trim/reflow permutes slots independently of
+            // YDisp) is re-rendered, so a mispredicted shift only costs a
+            // redraw, never stale pixels.
+            _scrollDelta += (int)Math.Clamp(ydisp - _lastScrollYDisp, -_rows, _rows);
+            _lastScrollYDisp = ydisp;
+        };
+        // Alt/main buffer switch rewrites every visible line; the snap is
+        // authoritative, so let the next flush repaint the whole surface.
+        _terminal.Buffers.Activated += (_, _) => _needsFullRedraw = true;
 
         _selection = new SelectionService(_terminal);
         _selection.SelectionChanged += () =>
@@ -130,27 +157,98 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        ApplySettings();
-        RebuildFontMetrics();
-        _needsFullRedraw = true;
-        InvalidateVisual();
-        FlushRedraw();
+        // Rebuild only what the changed setting actually affects. Settings
+        // that no pane renders (sidebar, shell) used to trigger a full
+        // palette/typeface rebuild plus a full redraw in every terminal.
+        var settings = AppSettings.Instance;
+        switch (e.PropertyName)
+        {
+            case nameof(AppSettings.ThemeName):
+                var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == settings.ThemeName) ?? BuiltInThemes.VexDark;
+                _palette = PaletteFor(theme);
+                _renderVersion++;
+                _needsFullRedraw = true;
+                InvalidateVisual(); // background brush changed
+                FlushRedraw();
+                break;
+            case nameof(AppSettings.FontFamily):
+                ApplyTypefaces(settings.FontFamily);
+                RebuildFontMetrics();
+                _needsFullRedraw = true;
+                FlushRedraw();
+                break;
+            case nameof(AppSettings.FontSize):
+                _fontSize = settings.FontSize;
+                RebuildFontMetrics();
+                _needsFullRedraw = true;
+                FlushRedraw();
+                break;
+            case nameof(AppSettings.CursorBlink):
+                _terminal.Options.CursorBlink = settings.CursorBlink;
+                UpdateBlinkTimer();
+                DrawCaret();
+                break;
+        }
+    }
+
+    /// <summary>A family's four typeface/glyph pairs, cached per process:
+    /// TryGetGlyphTypeface parses font files, so rebuilding it on every
+    /// settings touch (even sidebar toggles) is wasteful.</summary>
+    private sealed record TypefaceSet(
+        Typeface Normal, Typeface Bold, Typeface Italic, Typeface BoldItalic,
+        GlyphTypeface? NormalGlyph, GlyphTypeface? BoldGlyph, GlyphTypeface? ItalicGlyph, GlyphTypeface? BoldItalicGlyph);
+
+    private static readonly Dictionary<string, TerminalPalette> PaletteCache = new();
+    private static readonly Dictionary<string, TypefaceSet> TypefaceCache = new();
+
+    private static TerminalPalette PaletteFor(TerminalTheme theme)
+    {
+        // All panes share one palette per theme. A TerminalPalette builds 256
+        // frozen brushes, so constructing one per pane per settings change
+        // multiplied every slider tick by the pane count.
+        if (!PaletteCache.TryGetValue(theme.Name, out var palette))
+            PaletteCache[theme.Name] = palette = new TerminalPalette(theme);
+        return palette;
+    }
+
+    private static TypefaceSet TypefacesFor(string familySource)
+    {
+        if (TypefaceCache.TryGetValue(familySource, out var set))
+            return set;
+        var family = new FontFamily(familySource);
+        var normal = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        var bold = new Typeface(family, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+        var italic = new Typeface(family, FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
+        var boldItalic = new Typeface(family, FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
+        normal.TryGetGlyphTypeface(out var normalGlyph);
+        bold.TryGetGlyphTypeface(out var boldGlyph);
+        italic.TryGetGlyphTypeface(out var italicGlyph);
+        boldItalic.TryGetGlyphTypeface(out var boldItalicGlyph);
+        set = new TypefaceSet(normal, bold, italic, boldItalic, normalGlyph, boldGlyph, italicGlyph, boldItalicGlyph);
+        TypefaceCache[familySource] = set;
+        return set;
+    }
+
+    private void ApplyTypefaces(string familySource)
+    {
+        _fontFamily = new FontFamily(familySource);
+        var set = TypefacesFor(familySource);
+        _normalTypeface = set.Normal;
+        _boldTypeface = set.Bold;
+        _italicTypeface = set.Italic;
+        _boldItalicTypeface = set.BoldItalic;
+        _normalGlyph = set.NormalGlyph;
+        _boldGlyph = set.BoldGlyph;
+        _italicGlyph = set.ItalicGlyph;
+        _boldItalicGlyph = set.BoldItalicGlyph;
     }
 
     private void ApplySettings()
     {
         var settings = AppSettings.Instance;
         var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == settings.ThemeName) ?? BuiltInThemes.VexDark;
-        _palette = new TerminalPalette(theme);
-        _fontFamily = new FontFamily(settings.FontFamily);
-        _normalTypeface = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
-        _boldTypeface = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
-        _italicTypeface = new Typeface(_fontFamily, FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
-        _boldItalicTypeface = new Typeface(_fontFamily, FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
-        _normalTypeface.TryGetGlyphTypeface(out _normalGlyph);
-        _boldTypeface.TryGetGlyphTypeface(out _boldGlyph);
-        _italicTypeface.TryGetGlyphTypeface(out _italicGlyph);
-        _boldItalicTypeface.TryGetGlyphTypeface(out _boldItalicGlyph);
+        _palette = PaletteFor(theme);
+        ApplyTypefaces(settings.FontFamily);
         _fontSize = settings.FontSize;
         _terminal.Options.CursorBlink = settings.CursorBlink;
         UpdateBlinkTimer();
@@ -172,6 +270,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private void RebuildFontMetrics()
     {
+        // Cell geometry is part of every row's pixels; any rebuild invalidates
+        // all row caches so the next pass repaints the surface.
+        _renderVersion++;
+
         var typeface = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
         var probe = new FormattedText("M", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
             typeface, _fontSize, Brushes.White, _pixelsPerDip);
@@ -228,6 +330,11 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         {
             _session.Resize((short)cols, (short)rows);
         }
+
+        // The YDisp snap above moves the viewport without a Scrolled event;
+        // re-anchor the delta tracking so the next pump does not shift rows.
+        _scrollDelta = 0;
+        _lastScrollYDisp = _terminal.Buffer.YDisp;
     }
 
     private void EnsureRowVisuals()
@@ -245,6 +352,13 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             // Rows sit between the selection overlay and the caret.
             _children.Insert(_children.Count - 1, visual);
         }
+        if (_rowHashes.Length != _rows)
+        {
+            // Version 0 never matches the current _renderVersion, so the
+            // cells are all repainted on the next pass after a resize.
+            _rowHashes = new int[_rows];
+            _rowVersions = new int[_rows];
+        }
     }
 
     protected override int VisualChildrenCount => _children.Count;
@@ -260,13 +374,26 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     {
         base.OnRenderSizeChanged(sizeInfo);
         _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        RecalculateGridSize();
+        // Coalesce to one pass per rendered frame: while the window edge is
+        // being dragged, size events can fire several times per frame and each
+        // one would resize the emulator (buffer reflow) and the ConPTY session.
+        if (_resizeScheduled)
+            return;
+        _resizeScheduled = true;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
+        {
+            _resizeScheduled = false;
+            RecalculateGridSize();
+        });
     }
 
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
         base.OnDpiChanged(oldDpi, newDpi);
         _pixelsPerDip = newDpi.PixelsPerDip;
+        // Glyph rasterization scales with pixels-per-dip even when the DIP
+        // cell size does not, so the cached row pixels are stale.
+        _renderVersion++;
         _needsFullRedraw = true;
         RedrawAll();
     }
@@ -362,7 +489,6 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             return;
         }
 
-        _viewportMoved = false;
         foreach (var c in toProcess)
         {
             if (c.Array is not { } buffer)
@@ -423,28 +549,57 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             _terminal.ClearUpdateRange();
 
             var buffer = _terminal.Buffer;
-            var userScrolled = buffer.YDisp != buffer.YBase;
             var hasUpdate = startY <= endY;
 
-            // An empty update range means the batch only moved the cursor or
-            // produced no cell writes; redrawing every row then would run the
-            // whole run-analysis pass for nothing on each such pump. Scrolls
-            // are covered separately via _viewportMoved.
-            if (_needsFullRedraw || _viewportMoved || userScrolled ||
-                (hasUpdate && endY - startY > _rows / 2))
+            if (_needsFullRedraw)
             {
                 RedrawAll();
             }
-            else if (hasUpdate)
+            else
             {
-                for (var row = Math.Max(0, startY); row <= Math.Min(_rows - 1, endY); row++)
-                    RedrawRow(row);
-                // The cells under the block cursor were just repainted, so the
-                // cursor overlay must redraw even if it did not move.
-                InvalidateCaretCache();
+                // The viewport moved this pump (auto-scroll, wheel, PgUp/Dn):
+                // slide the existing row visuals with it and repaint only the
+                // rows the scroll revealed. Each row's content hash is the
+                // safety net: any row whose pixels would be stale (buffer
+                // trim/reflow permutes slots independently of YDisp) fails
+                // the identity check and is re-rendered by the pass below.
+                if (_scrollDelta != 0 && Math.Abs(_scrollDelta) < _rows)
+                    ApplyScrollShift(_scrollDelta);
+
+                // An empty update range means the batch only moved the cursor
+                // or produced no cell writes; redrawing every row then would
+                // run the whole run-analysis pass for nothing on each such
+                // pump. Scrolls are covered separately via ApplyScrollShift.
+                if (hasUpdate)
+                {
+                    // The emulator's update range is expressed in cursor/region
+                    // coordinates; it maps onto viewport rows only when both
+                    // planes coincide: viewport at the bottom, full-screen
+                    // scroll region, cursor inside the region. Any other state
+                    // (scrolled up, margins, dropped cursor) can point the marks
+                    // at the wrong rows, so fall back to the identity pass —
+                    // unchanged rows skip, so this is a hash scan, not a
+                    // repaint.
+                    if (buffer.YDisp != buffer.YBase || buffer.ScrollTop != 0 ||
+                        buffer.ScrollBottom != _rows - 1 || buffer.Y < 0 || buffer.Y > buffer.ScrollBottom)
+                    {
+                        RedrawAll();
+                    }
+                    else
+                    {
+                        var start = Math.Max(0, startY);
+                        var end = Math.Min(_rows - 1, endY);
+                        for (var row = start; row <= end; row++)
+                            RedrawRow(row);
+                    }
+                    // The cells under the block cursor were just repainted, so
+                    // the cursor overlay must redraw even if it did not move.
+                    InvalidateCaretCache();
+                }
             }
             _needsFullRedraw = false;
-            _viewportMoved = false;
+            _scrollDelta = 0;
+            _lastScrollYDisp = buffer.YDisp;
 
             DrawSelection();
             DrawCaret();
@@ -455,6 +610,47 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             // reflow during alternate-screen apps like nvim). Schedule a
             // full redraw on the next pump cycle.
             _needsFullRedraw = true;
+        }
+    }
+
+    /// <summary>
+    /// Slides the per-row visuals by the viewport's net movement: rows keep
+    /// showing the same buffer lines, so only the rows the scroll revealed
+    /// need a fresh render. Cache entries travel with the visuals; the
+    /// identity check re-renders anything this mispredicts.
+    /// </summary>
+    private void ApplyScrollShift(int delta)
+    {
+        if (delta < 0)
+        {
+            // Scrolled up |delta| lines: text moves down, new rows at the top.
+            var d = -delta;
+            for (var r = _rows - 1; r >= d; r--)
+            {
+                _rowVisuals[r] = _rowVisuals[r - d];
+                _rowHashes[r] = _rowHashes[r - d];
+                _rowVersions[r] = _rowVersions[r - d];
+            }
+            for (var r = 0; r < d; r++)
+            {
+                _rowVersions[r] = 0;
+                RedrawRow(r);
+            }
+        }
+        else
+        {
+            // Scrolled down delta lines: text moves up, new rows at the bottom.
+            for (var r = 0; r < _rows - delta; r++)
+            {
+                _rowVisuals[r] = _rowVisuals[r + delta];
+                _rowHashes[r] = _rowHashes[r + delta];
+                _rowVersions[r] = _rowVersions[r + delta];
+            }
+            for (var r = _rows - delta; r < _rows; r++)
+            {
+                _rowVersions[r] = 0;
+                RedrawRow(r);
+            }
         }
     }
 
@@ -473,16 +669,32 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         if (row < 0 || row >= _rowVisuals.Count)
             return;
 
-        var visual = _rowVisuals[row];
-        using var dc = visual.RenderOpen();
-
         var buffer = _terminal.Buffer;
         var lineIndex = buffer.YDisp + row;
         if (lineIndex < 0 || lineIndex >= buffer.Lines.Length)
+        {
+            _rowVersions[row] = 0;
             return;
+        }
         var line = buffer.Lines[lineIndex];
         if (line is null)
+        {
+            _rowVersions[row] = 0;
             return;
+        }
+
+        // Skip the re-render when this row's cells are unchanged since it was
+        // last drawn — the common case after a scroll-shift, a viewport move
+        // with no cell writes, or a redundant full redraw. The hash covers
+        // every input the run pass reads (including the null-cell boundary
+        // beyond the line's length), so a match means identical pixels.
+        if (_rowVersions[row] == _renderVersion && _rowHashes[row] == RowHash(line))
+            return;
+        _rowVersions[row] = _renderVersion;
+        _rowHashes[row] = RowHash(line);
+
+        var visual = _rowVisuals[row];
+        using var dc = visual.RenderOpen();
 
         var y = row * _cellHeight;
         var runAttr = line.Length > 0 ? line[0].Attribute : CharData.DefaultAttr;
@@ -641,6 +853,25 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private TextRun[] _textRuns = Array.Empty<TextRun>();
     private readonly Pen _decorationPen = new Pen(Brushes.Transparent, 0);
+
+    /// <summary>
+    /// FNV-1a over the cells RedrawRow renders: (Code, Width, Attribute) per
+    /// column, mirroring the render loop's cell selection so equal hashes
+    /// guarantee equal pixels for the current metrics.
+    /// </summary>
+    private int RowHash(BufferLine line)
+    {
+        ulong hash = 14695981039346656037;
+        var length = line.Length;
+        for (var col = 0; col < _cols; col++)
+        {
+            var cell = col < length ? line[col] : CharData.Null;
+            hash = (hash ^ (ulong)(uint)cell.Code) * 1099511628211;
+            hash = (hash ^ (ulong)(uint)cell.Width) * 1099511628211;
+            hash = (hash ^ (ulong)(uint)cell.Attribute) * 1099511628211;
+        }
+        return (int)(hash ^ (hash >> 32));
+    }
 
     private Typeface ResolveTypeface(FLAGS flags)
     {
