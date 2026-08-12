@@ -240,6 +240,24 @@ public partial class MainWindow : Window
             tab.Split(System.Windows.Controls.Orientation.Horizontal);
     }
 
+    private void PaneSplitRight_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: LeafPane leaf })
+            leaf.Split(System.Windows.Controls.Orientation.Horizontal);
+    }
+
+    private void PaneSplitDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: LeafPane leaf })
+            leaf.Split(System.Windows.Controls.Orientation.Vertical);
+    }
+
+    private void PaneClose_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: LeafPane leaf })
+            leaf.Close();
+    }
+
     private void TabSplitDown_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: WorkspaceTab tab })

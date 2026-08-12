@@ -16,6 +16,7 @@
         <!-- Translucent chrome overlays so the acrylic backdrop shows through. -->
         <Color x:Key="VexSidebarColor">#300A1420</Color>
         <Color x:Key="VexTabStripColor">#400A1420</Color>
+        <Color x:Key="VexPaneTitleBarColor">#1EFFFFFF</Color>
         <Color x:Key="VexTabSelectedColor">#2EFFFFFF</Color>
         <Color x:Key="VexTabHoverColor">#1EFFFFFF</Color>
 
@@ -30,6 +31,7 @@
         <SolidColorBrush x:Key="VexTextDim" Color="{StaticResource VexTextDimColor}"/>
         <SolidColorBrush x:Key="VexAccent" Color="{StaticResource VexAccentColor}"/>
         <SolidColorBrush x:Key="VexSidebar" Color="{StaticResource VexSidebarColor}"/>
+        <SolidColorBrush x:Key="VexPaneTitleBar" Color="{StaticResource VexPaneTitleBarColor}"/>
         <SolidColorBrush x:Key="VexTabStrip" Color="{StaticResource VexTabStripColor}"/>
         <SolidColorBrush x:Key="VexTabSelected" Color="{StaticResource VexTabSelectedColor}"/>
         <SolidColorBrush x:Key="VexTabHover" Color="{StaticResource VexTabHoverColor}"/>
@@ -84,6 +86,32 @@
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="chrome" Property="Background" Value="#3A465E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="Button" x:Key="PaneTitleButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Margin" Value="1,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="chrome" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{StaticResource VexHover}"/>
+                                <Setter Property="Foreground" Value="{StaticResource VexText}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
