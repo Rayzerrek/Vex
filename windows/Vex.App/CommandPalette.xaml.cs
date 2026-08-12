@@ -75,6 +75,8 @@ public partial class CommandPalette : UserControl
                 .ToList();
         }
 
+        EmptyHint.Visibility = ResultList.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
         if (ResultList.Items.Count > 0)
         {
             ResultList.SelectedIndex = 0;

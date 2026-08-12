@@ -374,6 +374,39 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style TargetType="CheckBox" x:Key="DarkCheckBox">
+            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{StaticResource VexBorder}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <Grid Width="16" Height="16" VerticalAlignment="Center">
+                                <Border x:Name="box" Background="{StaticResource VexSurface}"
+                                        BorderBrush="{StaticResource VexBorder}" BorderThickness="1" CornerRadius="3"/>
+                                <Path x:Name="check" Data="M 3,8 L 6.5,11.5 L 13,4"
+                                      Stroke="{StaticResource VexText}" StrokeThickness="1.6"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Visibility="Collapsed"/>
+                            </Grid>
+                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource VexAccent}"/>
+                                <Setter TargetName="check" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource VexAccent}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="ContextMenu" x:Key="DarkContextMenu">
             <Setter Property="Background" Value="{StaticResource VexSurface}"/>
             <Setter Property="Foreground" Value="{StaticResource VexText}"/>
