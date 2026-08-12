@@ -321,25 +321,13 @@
                     ClipToBounds="True">
                 <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
                     <DockPanel>
-                        <!-- Sidebar header with search and new project -->
+                        <!-- Sidebar header with settings and new project -->
                         <Border DockPanel.Dock="Top" Padding="10,8,10,6">
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                                     <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">⚙</Button>
                                     <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">＋</Button>
                                 </StackPanel>
-                                <Grid>
-                                    <TextBlock x:Name="ProjectFilterHint" Text="Search projects…"
-                                               Foreground="{StaticResource VexTextDim}" FontSize="12"
-                                               Margin="8,0,0,0" VerticalAlignment="Center"
-                                               IsHitTestVisible="False"/>
-                                    <TextBox x:Name="ProjectFilterBox" Height="26" VerticalContentAlignment="Center"
-                                             Background="{StaticResource VexSurface}"
-                                             Foreground="{StaticResource VexText}"
-                                             BorderBrush="{StaticResource VexBorder}"
-                                             BorderThickness="1" Padding="8,0"
-                                             TextChanged="ProjectFilterBox_TextChanged"/>
-                                </Grid>
                             </DockPanel>
                         </Border>
 
@@ -352,7 +340,7 @@
                         </Border>
 
                         <!-- Projects ListBox -->
-                        <ListBox x:Name="ProjectListBox" DockPanel.Dock="Top" ItemsSource="{Binding Projects}"
+                        <ListBox DockPanel.Dock="Top" ItemsSource="{Binding Projects}"
                                  SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
                                  Background="Transparent" BorderThickness="0" Padding="6,0"
                                  MaxHeight="240"
@@ -451,17 +439,18 @@
                         <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource VexBorder}" Margin="12,4"/>
 
                         <!-- Section label: files -->
-                        <Border DockPanel.Dock="Top" Padding="12,2,8,2">
-                            <DockPanel>
+                        <Border DockPanel.Dock="Top" Padding="12,6,8,2">
+                            <DockPanel LastChildFill="False">
                                 <TextBlock Text="FILES" FontSize="10" FontWeight="SemiBold"
-                                           Foreground="{StaticResource VexTextDim}"/>
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <Button Style="{StaticResource GhostButton}" ToolTip="Refresh File Tree" Click="RefreshFileTree_Click" Padding="0" Width="22" Height="22" FontSize="12">
-                                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                    </Button>
-                                </StackPanel>
+                                           Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"/>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}" ToolTip="Refresh File Tree" Click="RefreshFileTree_Click" Padding="2" Width="22" Height="22" FontSize="11">
+                                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                </Button>
                             </DockPanel>
                         </Border>
+
+                        <local:FileSearchView x:Name="FileSearch" DockPanel.Dock="Top"
+                                              FileOpenRequested="FileSearch_FileOpenRequested"/>
 
                         <local:FileTreeView DataContext="{Binding SelectedProject}"/>
                     </DockPanel>
