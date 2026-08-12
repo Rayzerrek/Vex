@@ -49,10 +49,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     // Per-row render caches: the row's last-painted content hash plus the
     // render version it was painted with. RedrawRow skips the DrawingVisual
-    // pass when both match, so scrolls and redundant full redraws cost only
-    // the hash pass. A version bump (font/DPI/palette change) invalidates
-    // every row at once. The cache entries travel with the visuals in
-    // ApplyScrollShift, keeping shifted rows "clean" across a scroll.
+    // pass when both match, so redundant full redraws cost only the hash
+    // pass. A version bump (font/DPI/palette change) invalidates every row
+    // at once. The cache is index-aligned with _rowVisuals: rows are never
+    // shifted, only re-rendered in place.
     private int _renderVersion = 1;
     private int[] _rowHashes = Array.Empty<int>();
     private int[] _rowVersions = Array.Empty<int>();
@@ -112,11 +112,9 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         _lastScrollYDisp = _terminal.Buffer.YDisp;
         _terminal.Scrolled += (_, ydisp) =>
         {
-            // Accumulate the pump's net viewport movement. The row hash pass
-            // is the correctness net: any row whose cached content no longer
-            // matches (buffer trim/reflow permutes slots independently of
-            // YDisp) is re-rendered, so a mispredicted shift only costs a
-            // redraw, never stale pixels.
+            // Accumulate the pump's net viewport movement. The next flush
+            // repaints the whole surface when it is non-zero, so the row
+            // hash pass below never leaves stale pixels.
             _scrollDelta += (int)Math.Clamp(ydisp - _lastScrollYDisp, -_rows, _rows);
             _lastScrollYDisp = ydisp;
         };
@@ -557,19 +555,18 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             else
             {
                 // The viewport moved this pump (auto-scroll, wheel, PgUp/Dn):
-                // slide the existing row visuals with it and repaint only the
-                // rows the scroll revealed. Each row's content hash is the
-                // safety net: any row whose pixels would be stale (buffer
-                // trim/reflow permutes slots independently of YDisp) fails
-                // the identity check and is re-rendered by the pass below.
-                if (_scrollDelta != 0 && Math.Abs(_scrollDelta) < _rows)
-                    ApplyScrollShift(_scrollDelta);
-
+                // every visible row now maps to a different buffer line, so
+                // repaint the whole surface. RedrawRow's hash check turns
+                // unchanged rows into a cheap scan rather than a repaint.
+                if (_scrollDelta != 0)
+                {
+                    RedrawAll();
+                }
                 // An empty update range means the batch only moved the cursor
                 // or produced no cell writes; redrawing every row then would
                 // run the whole run-analysis pass for nothing on each such
-                // pump. Scrolls are covered separately via ApplyScrollShift.
-                if (hasUpdate)
+                // pump. Scrolls are covered by the full redraw above.
+                else if (hasUpdate)
                 {
                     // The emulator's update range is expressed in cursor/region
                     // coordinates; it maps onto viewport rows only when both
@@ -609,47 +606,6 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             // reflow during alternate-screen apps like nvim). Schedule a
             // full redraw on the next pump cycle.
             _needsFullRedraw = true;
-        }
-    }
-
-    /// <summary>
-    /// Slides the per-row visuals by the viewport's net movement: rows keep
-    /// showing the same buffer lines, so only the rows the scroll revealed
-    /// need a fresh render. Cache entries travel with the visuals; the
-    /// identity check re-renders anything this mispredicts.
-    /// </summary>
-    private void ApplyScrollShift(int delta)
-    {
-        if (delta < 0)
-        {
-            // Scrolled up |delta| lines: text moves down, new rows at the top.
-            var d = -delta;
-            for (var r = _rows - 1; r >= d; r--)
-            {
-                _rowVisuals[r] = _rowVisuals[r - d];
-                _rowHashes[r] = _rowHashes[r - d];
-                _rowVersions[r] = _rowVersions[r - d];
-            }
-            for (var r = 0; r < d; r++)
-            {
-                _rowVersions[r] = 0;
-                RedrawRow(r);
-            }
-        }
-        else
-        {
-            // Scrolled down delta lines: text moves up, new rows at the bottom.
-            for (var r = 0; r < _rows - delta; r++)
-            {
-                _rowVisuals[r] = _rowVisuals[r + delta];
-                _rowHashes[r] = _rowHashes[r + delta];
-                _rowVersions[r] = _rowVersions[r + delta];
-            }
-            for (var r = _rows - delta; r < _rows; r++)
-            {
-                _rowVersions[r] = 0;
-                RedrawRow(r);
-            }
         }
     }
 
