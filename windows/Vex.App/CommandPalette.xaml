@@ -24,25 +24,38 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
                 
-                <TextBox x:Name="SearchBox"
-                         Grid.Row="0"
-                         Background="Transparent"
-                         Foreground="{StaticResource VexText}"
-                         BorderThickness="0"
-                         FontSize="18"
-                         Padding="12,12"
-                         TextChanged="SearchBox_TextChanged"
-                         PreviewKeyDown="SearchBox_PreviewKeyDown" />
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Path Grid.Column="0" Data="M 9,9 L 13,13 M 10,5.5 A 4.5,4.5 0 1 1 1,5.5 A 4.5,4.5 0 1 1 10,5.5"
+                          Stroke="{StaticResource VexTextDim}" StrokeThickness="1.4"
+                          Width="14" Height="14" Margin="12,0,0,0" VerticalAlignment="Center" Stretch="Uniform"/>
+                    <TextBox x:Name="SearchBox"
+                             Grid.Column="1"
+                             Background="Transparent"
+                             Foreground="{StaticResource VexText}"
+                             BorderThickness="0"
+                             FontSize="18"
+                             Padding="10,12"
+                             TextChanged="SearchBox_TextChanged"
+                             PreviewKeyDown="SearchBox_PreviewKeyDown" />
+                </Grid>
                 
                 <Border Grid.Row="1" Height="1" Background="{StaticResource VexBorder}" />
                 
-                <ListBox x:Name="ResultList"
-                         Grid.Row="2"
-                         Background="Transparent"
-                         BorderThickness="0"
-                         Padding="0,4"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                         MouseDoubleClick="ResultList_MouseDoubleClick">
+                <Grid Grid.Row="2">
+                    <TextBlock x:Name="EmptyHint" Text="No matching commands" 
+                               Foreground="{StaticResource VexTextDim}" FontSize="13"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="Collapsed"/>
+                    <ListBox x:Name="ResultList"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             Padding="0,4"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             MouseDoubleClick="ResultList_MouseDoubleClick">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Style.Setters>
@@ -77,6 +90,7 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+                </Grid>
             </Grid>
         </Border>
     </Grid>
