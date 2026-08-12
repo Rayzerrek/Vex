@@ -22,7 +22,6 @@ public partial class MainWindow : Window
     private const double SidebarAnimDuration = 300;
 
     private readonly Workspace _workspace;
-    private bool _sidebarAnimationInProgress;
     private Stopwatch? _sidebarAnimationClock;
     private double _sidebarAnimationFrom;
     private double _sidebarAnimationTo;
@@ -59,6 +58,20 @@ public partial class MainWindow : Window
             SidebarPanel.Visibility = Visibility.Collapsed;
             SidebarPanel.Opacity = 0;
         }
+
+        // Sidebar visibility is a single source of truth: any change (toolbar
+        // button, keyboard, or the settings toggle) animates the panel.
+        AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
+    }
+
+    private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(AppSettings.SidebarVisible))
+            return;
+
+        AnimateSidebar(
+            AppSettings.Instance.SidebarVisible ? SidebarWidth : 0,
+            fadeOut: !AppSettings.Instance.SidebarVisible);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -126,7 +139,12 @@ public partial class MainWindow : Window
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
         var modifiers = System.Windows.Input.Keyboard.Modifiers;
 
-        if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.P)
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.P)
+        {
+            SettingsOverlay.Toggle();
+            e.Handled = true;
+        }
+        else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.P)
         {
             ShowCommandPalette();
             e.Handled = true;
@@ -183,34 +201,16 @@ public partial class MainWindow : Window
     }
 
     private void HideSidebar_Click(object sender, RoutedEventArgs e)
-    {
-        if (_sidebarAnimationInProgress)
-            return;
-
-        AppSettings.Instance.SidebarVisible = false;
-        AnimateSidebar(0, fadeOut: true);
-    }
+        => AppSettings.Instance.SidebarVisible = false;
 
     private void ShowSidebar_Click(object sender, RoutedEventArgs e)
-    {
-        if (_sidebarAnimationInProgress)
-            return;
-
-        AppSettings.Instance.SidebarVisible = true;
-        AnimateSidebar(SidebarWidth, fadeOut: false);
-    }
+        => AppSettings.Instance.SidebarVisible = true;
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
-    {
-        if (AppSettings.Instance.SidebarVisible)
-            HideSidebar_Click(sender, e);
-        else
-            ShowSidebar_Click(sender, e);
-    }
+        => AppSettings.Instance.SidebarVisible = !AppSettings.Instance.SidebarVisible;
 
     private void AnimateSidebar(double target, bool fadeOut = false)
     {
-        _sidebarAnimationInProgress = true;
         _sidebarAnimationFrom = SidebarColumn.ActualWidth;
         _sidebarAnimationTo = target;
         _sidebarAnimationFadingOut = fadeOut;
@@ -262,7 +262,6 @@ public partial class MainWindow : Window
         SidebarColumn.Width = new GridLength(_sidebarAnimationTo, GridUnitType.Pixel);
         SidebarPanel.Opacity = 1;
         _sidebarAnimationClock = null;
-        _sidebarAnimationInProgress = false;
 
         if (_sidebarAnimationFadingOut)
         {
