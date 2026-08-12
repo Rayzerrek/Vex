@@ -323,22 +323,41 @@
                     ClipToBounds="True">
                 <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
                     <DockPanel>
-                        <!-- Sidebar header with settings and new project -->
-                        <Border DockPanel.Dock="Top" Height="36" Padding="12,0" Background="Transparent">
+                        <!-- Sidebar header with search and new project -->
+                        <Border DockPanel.Dock="Top" Padding="10,8,10,6">
                             <DockPanel>
-                                <TextBlock Text="Projects" FontWeight="SemiBold" FontSize="13"
-                                           VerticalAlignment="Center" Foreground="{StaticResource VexTextDim}"/>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                                     <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">⚙</Button>
                                     <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">＋</Button>
                                 </StackPanel>
+                                <Grid>
+                                    <TextBlock x:Name="ProjectFilterHint" Text="Search projects…"
+                                               Foreground="{StaticResource VexTextDim}" FontSize="12"
+                                               Margin="8,0,0,0" VerticalAlignment="Center"
+                                               IsHitTestVisible="False"/>
+                                    <TextBox x:Name="ProjectFilterBox" Height="26" VerticalContentAlignment="Center"
+                                             Background="{StaticResource VexSurface}"
+                                             Foreground="{StaticResource VexText}"
+                                             BorderBrush="{StaticResource VexBorder}"
+                                             BorderThickness="1" Padding="8,0"
+                                             TextChanged="ProjectFilterBox_TextChanged"/>
+                                </Grid>
                             </DockPanel>
                         </Border>
+
+                        <!-- Section label: projects -->
+                        <Border DockPanel.Dock="Top" Padding="12,4,8,2">
+                            <DockPanel>
+                                <TextBlock Text="PROJECTS" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="{StaticResource VexTextDim}"/>
+                            </DockPanel>
+                        </Border>
+
                         <!-- Projects ListBox -->
-                        <ListBox DockPanel.Dock="Top" ItemsSource="{Binding Projects}"
+                        <ListBox x:Name="ProjectListBox" DockPanel.Dock="Top" ItemsSource="{Binding Projects}"
                                  SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
                                  Background="Transparent" BorderThickness="0" Padding="6,0"
-                                 MaxHeight="250"
+                                 MaxHeight="240"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                             <ListBox.ItemContainerStyle>
                                 <Style TargetType="ListBoxItem">
@@ -354,8 +373,6 @@
                                                 <ControlTemplate.Triggers>
                                                     <Trigger Property="IsSelected" Value="True">
                                                         <Setter Property="Background" Value="{StaticResource VexHover}" TargetName="chrome"/>
-                                                        <Setter Property="BorderThickness" Value="2,0,0,0" TargetName="chrome"/>
-                                                        <Setter Property="BorderBrush" Value="{StaticResource VexAccent}" TargetName="chrome"/>
                                                         <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
                                                     </Trigger>
                                                     <Trigger Property="IsMouseOver" Value="True">
@@ -434,6 +451,19 @@
                         </ListBox>
 
                         <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource VexBorder}" Margin="12,4"/>
+
+                        <!-- Section label: files -->
+                        <Border DockPanel.Dock="Top" Padding="12,2,8,2">
+                            <DockPanel>
+                                <TextBlock Text="FILES" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="{StaticResource VexTextDim}"/>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource GhostButton}" ToolTip="Refresh File Tree" Click="RefreshFileTree_Click" Padding="4,2" Width="22" Height="22">
+                                        <Path Data="M 12,4 A 8,8 0 0 1 4,12 M 4,4 A 8,8 0 0 0 12,12 M 12,1 L 12,7 M 4,9 L 4,15" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.2" Width="12" Height="12" Stretch="Uniform"/>
+                                    </Button>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
 
                         <local:FileTreeView DataContext="{Binding SelectedProject}"/>
                     </DockPanel>

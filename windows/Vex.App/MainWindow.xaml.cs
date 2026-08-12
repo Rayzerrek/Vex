@@ -160,6 +160,44 @@ public partial class MainWindow : Window
             _workspace.NewProject(dialog.FolderName);
     }
 
+    private void RefreshFileTree_Click(object sender, RoutedEventArgs e)
+    {
+        _workspace.SelectedProject?.RefreshFileTree();
+    }
+
+    private void ProjectFilterBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        // The hint only shows while the box is empty.
+        ProjectFilterHint.Visibility = string.IsNullOrEmpty(ProjectFilterBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        // Filter the projects ListBox by name/path. The ListBox binds to the
+        // full collection; swap the view source's filter instead of mutating
+        // the underlying collection.
+        if (ProjectListBox is not { } listBox)
+            return;
+
+        var filter = ProjectFilterBox.Text?.Trim();
+        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(listBox.ItemsSource);
+        if (view == null)
+            return;
+        if (string.IsNullOrEmpty(filter))
+        {
+            view.Filter = null;
+        }
+        else
+        {
+            view.Filter = item =>
+            {
+                if (item is not Model.Project project)
+                    return true;
+                return project.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    || project.WorkingDirectory.Contains(filter, StringComparison.OrdinalIgnoreCase);
+            };
+        }
+    }
+
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         SettingsOverlay.Toggle();
