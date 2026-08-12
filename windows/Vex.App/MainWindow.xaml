@@ -18,7 +18,7 @@
         <!-- Recursive pane tree: a leaf hosts a terminal, a split hosts two
              children with a draggable splitter. -->
         <DataTemplate DataType="{x:Type m:TerminalPane}">
-            <Border Background="{StaticResource VexSurface}" BorderBrush="{StaticResource VexBorder}"
+            <Border Background="Transparent" BorderBrush="{StaticResource VexBorder}"
                     BorderThickness="1" Margin="3" CornerRadius="9">
                 <Grid local:RoundedClip.Radius="8">
                     <Grid.RowDefinitions>

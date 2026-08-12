@@ -7,7 +7,7 @@
         <!-- Deep blue gradient palette inspired by browser chrome; the
              terminal surface still applies its own theme. -->
         <Color x:Key="VexBackgroundColor">#FF0A1420</Color>
-        <Color x:Key="VexSurfaceColor">#FF0F1E2E</Color>
+        <Color x:Key="VexSurfaceColor">#E60F1E2E</Color>
         <Color x:Key="VexHoverColor">#FF1A2D42</Color>
         <Color x:Key="VexBorderColor">#FF1E3A4F</Color>
         <Color x:Key="VexTextColor">#FFE8F0F8</Color>
