@@ -456,8 +456,8 @@
                                 <TextBlock Text="FILES" FontSize="10" FontWeight="SemiBold"
                                            Foreground="{StaticResource VexTextDim}"/>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <Button Style="{StaticResource GhostButton}" ToolTip="Refresh File Tree" Click="RefreshFileTree_Click" Padding="4,2" Width="22" Height="22">
-                                        <Path Data="M 12,4 A 8,8 0 0 1 4,12 M 4,4 A 8,8 0 0 0 12,12 M 12,1 L 12,7 M 4,9 L 4,15" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.2" Width="12" Height="12" Stretch="Uniform"/>
+                                    <Button Style="{StaticResource GhostButton}" ToolTip="Refresh File Tree" Click="RefreshFileTree_Click" Padding="0" Width="22" Height="22" FontSize="12">
+                                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                                     </Button>
                                 </StackPanel>
                             </DockPanel>
