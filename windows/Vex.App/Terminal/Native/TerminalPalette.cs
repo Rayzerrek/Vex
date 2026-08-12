@@ -25,7 +25,9 @@ public sealed class TerminalPalette
     public TerminalPalette(TerminalTheme theme)
     {
         Foreground = Freeze(Parse(theme.Foreground));
-        Background = Freeze(Parse(theme.Background));
+        // Slightly translucent so the acrylic window backdrop reads through
+        // the terminal surface while glyphs stay on a mostly-solid fill.
+        Background = Freeze(Parse(theme.Background, alpha: 0xE6));
         Cursor = Freeze(Parse(theme.Cursor));
         Selection = Freeze(Parse(theme.SelectionBackground, alpha: 0xA0));
 
