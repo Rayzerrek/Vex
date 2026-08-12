@@ -38,7 +38,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # 4. Copy generated MSI to publish folder and Desktop
 $MsiSource = Join-Path $ScriptDir "Vex.Setup\bin\Release\VexSetup.msi"
-$DesktopTarget = "C:\Users\kacpe\Desktop\Vex.msi"
+$DesktopTarget = "C:\Users\Ziut\Desktop\Vex.msi"
 
 if (Test-Path $MsiSource) {
     $MsiTarget = Join-Path $InstallerOutputDir "Vex.msi"
