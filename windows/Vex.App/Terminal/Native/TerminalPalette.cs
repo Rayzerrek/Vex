@@ -25,10 +25,11 @@ public sealed class TerminalPalette
     public TerminalPalette(TerminalTheme theme)
     {
         Foreground = Freeze(Parse(theme.Foreground));
-        // Opaque so the surface is one uniform color from the first row to the
-        // bottom edge: a translucent fill let the darker window show through
-        // the partial bottom row as a visible strip.
-        Background = Freeze(Parse(theme.Background));
+        // Translucent so the window's acrylic backdrop shows through for a
+        // frosted surface. The base fill covers the whole control uniformly
+        // and text runs draw straight on top, so there is no double-darkening
+        // where cells re-fill the default background.
+        Background = Freeze(Parse(theme.Background, alpha: 0xE6));
         Cursor = Freeze(Parse(theme.Cursor));
         Selection = Freeze(Parse(theme.SelectionBackground, alpha: 0xA0));
 
