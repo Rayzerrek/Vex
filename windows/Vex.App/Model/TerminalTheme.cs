@@ -32,11 +32,11 @@ public static class BuiltInThemes
     public static readonly TerminalTheme VexDark = new()
     {
         Name = "Vex Dark",
-        Background = "#1F1F24",
+        Background = "#282C34",
         Foreground = "#E4E4E7",
         Cursor = "#E4E4E7",
         SelectionBackground = "#3D4354",
-        Black = "#1F1F24",
+        Black = "#282C34",
         Red = "#FF5A5A",
         Green = "#5AF05A",
         Yellow = "#F0D25A",

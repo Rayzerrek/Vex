@@ -188,6 +188,7 @@ public sealed class SplitPane : PaneNode
 {
     private PaneNode _first;
     private PaneNode _second;
+    private double _ratio = 0.5;
 
     public SplitPane(Orientation orientation, PaneNode first, PaneNode second)
     {
@@ -197,6 +198,15 @@ public sealed class SplitPane : PaneNode
     }
 
     public Orientation Orientation { get; }
+
+    /// <summary>Divider position as a fraction (0..1) of the split's cross
+    /// size. Persisted so a restored session keeps its layout; clamped to
+    /// avoid a divider dragged flush against an edge.</summary>
+    public double Ratio
+    {
+        get => _ratio;
+        set => _ratio = Math.Clamp(value, 0.1, 0.9);
+    }
 
     public PaneNode First
     {
