@@ -90,6 +90,30 @@ public partial class MainWindow : Window
         SystemCommands.CloseWindow(this);
     }
 
+    // Dragging the empty tab-bar strip moves the window, mirroring how the
+    // caption area behaves — the ListBox swallows clicks, so this region
+    // provides the remaining grab space.
+    private bool _tabBarDragging;
+
+    private void TabBarDrag_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _tabBarDragging = true;
+    }
+
+    private void TabBarDrag_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _tabBarDragging = false;
+    }
+
+    private void TabBarDrag_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_tabBarDragging && e.LeftButton == System.Windows.Input.MouseButtonState.Pressed)
+        {
+            _tabBarDragging = false;
+            DragMove();
+        }
+    }
+
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;

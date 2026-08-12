@@ -136,8 +136,9 @@
               Background="{StaticResource VexTabStrip}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
@@ -149,8 +150,8 @@
                       StrokeThickness="1.2" Width="13" Height="13" Stretch="Uniform" Fill="Transparent"/>
             </Button>
 
-            <!-- Tabs: equal-width capsules filling the available space -->
-            <ListBox Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="True"
+            <!-- Tabs: natural width, left-aligned from the toggle -->
+            <ListBox Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="False"
                      ItemsSource="{Binding SelectedProject.Tabs}"
                      SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
                      Background="Transparent" BorderThickness="0"
@@ -158,17 +159,18 @@
                      ScrollViewer.VerticalScrollBarVisibility="Disabled">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <UniformGrid Rows="1"/>
+                        <StackPanel Orientation="Horizontal"/>
                     </ItemsPanelTemplate>
                 </ListBox.ItemsPanel>
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem">
                         <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
                         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                        <Setter Property="Padding" Value="14,0"/>
+                        <Setter Property="Padding" Value="12,0"/>
                         <Setter Property="Margin" Value="2,4"/>
                         <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
-                        <Setter Property="MaxWidth" Value="240"/>
+                        <Setter Property="MaxWidth" Value="220"/>
+                        <Setter Property="MinWidth" Value="100"/>
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ListBoxItem">
@@ -286,8 +288,15 @@
                         Click="NewTab_Click">＋</Button>
             </StackPanel>
 
+            <!-- Drag region: empty stretch between tabs and caption buttons -->
+            <Border Grid.Column="3" WindowChrome.IsHitTestVisibleInChrome="False"
+                    MouseLeftButtonDown="TabBarDrag_MouseLeftButtonDown"
+                    MouseLeftButtonUp="TabBarDrag_MouseLeftButtonUp"
+                    MouseMove="TabBarDrag_MouseMove"
+                    Background="Transparent"/>
+
             <!-- Windows caption buttons: pinned to the top-right corner -->
-            <StackPanel Grid.Column="3" Orientation="Horizontal">
+            <StackPanel Grid.Column="4" Orientation="Horizontal">
                 <Button Style="{StaticResource WindowControlButton}" ToolTip="Minimize" Click="MinimizeWindow_Click">
                     <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
                 </Button>
