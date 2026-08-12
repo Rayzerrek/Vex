@@ -225,32 +225,26 @@
                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <UniformGrid Rows="1"/>
+                            <StackPanel Orientation="Horizontal"/>
                         </ItemsPanelTemplate>
                     </ListBox.ItemsPanel>
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                            <Setter Property="Padding" Value="14,0"/>
-                            <Setter Property="Height" Value="40"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                            <Setter Property="Padding" Value="12,0"/>
+                            <Setter Property="Height" Value="34"/>
+                            <Setter Property="Margin" Value="3,3"/>
                             <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
-                                        <Grid Background="Transparent">
-                                            <Border x:Name="chrome" Background="Transparent"
-                                                    BorderThickness="0,0,0,2"
-                                                    BorderBrush="Transparent"
-                                                    Padding="{TemplateBinding Padding}">
-                                                <ContentPresenter VerticalAlignment="Center"/>
-                                            </Border>
-                                            <Border x:Name="fill" Background="Transparent" CornerRadius="6" Margin="4,5,4,6" IsHitTestVisible="False"/>
-                                        </Grid>
+                                        <Border x:Name="fill" Background="Transparent" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter VerticalAlignment="Center"/>
+                                        </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsSelected" Value="True">
                                                 <Setter Property="Background" Value="{StaticResource VexTabSelected}" TargetName="fill"/>
-                                                <Setter Property="BorderBrush" Value="{StaticResource VexAccent}" TargetName="chrome"/>
                                                 <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
                                                 <Setter Property="Foreground" Value="{StaticResource VexText}"/>
                                             </Trigger>
@@ -277,6 +271,8 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <!-- Terminal glyph: the app is always a terminal session. -->
+                                    <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform"/>
                                     <Image Width="16" Height="16" Margin="0,0,6,0"
                                            Source="{Binding ActiveLeaf.AppIcon.Image}"
                                            VerticalAlignment="Center">
@@ -291,8 +287,8 @@
                                             </Style>
                                         </Image.Style>
                                     </Image>
-                                    <TextBlock Text="{Binding Title}"
-                                               TextTrimming="CharacterEllipsis" FontSize="14"
+                                    <TextBlock x:Name="TitleBlock" Text="{Binding Title}"
+                                               TextTrimming="CharacterEllipsis" FontSize="13"
                                                ToolTip="{Binding Title}"
                                                VerticalAlignment="Center"/>
                                 </StackPanel>
