@@ -118,6 +118,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         _workingDirectory = workingDirectory;
         Focusable = true;
         Cursor = Cursors.IBeam;
+        // Grayscale antialiasing so glyphs blend against the translucent
+        // surface; ClearType subpixel AA fringes when a run has no solid
+        // background behind it.
+        TextOptions.SetTextRenderingMode(this, TextRenderingMode.Grayscale);
 
         _terminal = new XtermSharp.Terminal(new DelegateBridge(this), new TerminalOptions
         {
@@ -733,10 +737,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             _palette.Resolve(attr, out var fg, out var bg, out var flags);
             var x = startCol * _cellWidth;
 
-            // ClearType needs a solid background in the same DrawingVisual to blend correctly.
-            // If background is transparent (default), it causes weird color fringing.
-            bg ??= _palette.Background;
-
+            // Only paint cells that carry their own background color. The
+            // default background is already filled by the control's base
+            // layer, so re-filling here would darken text rows against the
+            // frosted surface and expose a visible band.
             if (bg is not null)
                 context.DrawRectangle(bg, null, new Rect(x, rowY, runText.Length * _cellWidth, _cellHeight));
 
