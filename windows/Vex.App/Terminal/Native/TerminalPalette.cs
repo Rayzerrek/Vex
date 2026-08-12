@@ -104,6 +104,17 @@ public sealed class TerminalPalette
             if (bg == XtermSharp.Renderer.DefaultColor)
                 bg = XtermSharp.Renderer.InvertedDefaultColor;
         }
+        // Classic xterm convention: BOLD bumps the base 16 ANSI colors to
+        // their bright variants (0-7 -> 8-15). Shells like nushell rely on
+        // this for their default prompt/status colors, so without the shift
+        // bold output renders in the dark variants and looks wrong.
+        if (flags.HasFlag(FLAGS.BOLD))
+        {
+            if (fg < 8)
+                fg += 8;
+            if (bg < 8)
+                bg += 8;
+        }
 
         background = bg switch
         {

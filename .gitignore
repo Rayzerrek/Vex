@@ -14,5 +14,6 @@ Thumbs.db
 # Agent worktrees & local skills
 .claude/worktrees
 .agents/
+.commandcode/
 
 windows/publish/
