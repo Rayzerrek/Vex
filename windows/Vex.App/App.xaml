@@ -4,26 +4,32 @@
              ShutdownMode="OnMainWindowClose"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-        <!-- Calm dark palette; the terminal surface applies its own theme. -->
-        <Color x:Key="VexBackgroundColor">#FF17171A</Color>
-        <Color x:Key="VexSurfaceColor">#FF1F1F24</Color>
-        <Color x:Key="VexHoverColor">#FF2A2A31</Color>
-        <Color x:Key="VexBorderColor">#FF2C2C33</Color>
-        <Color x:Key="VexTextColor">#FFE4E4E7</Color>
-        <Color x:Key="VexTextDimColor">#FF8E8E96</Color>
-        <Color x:Key="VexAccentColor">#FF6E9EFF</Color>
-        <!-- Translucent tab strip so terminal content shows through. -->
-        <Color x:Key="VexTabStripColor">#7317171A</Color>
-        <Color x:Key="VexTabSelectedColor">#26FFFFFF</Color>
-        <Color x:Key="VexTabHoverColor">#14FFFFFF</Color>
+        <!-- Deep blue gradient palette inspired by browser chrome; the
+             terminal surface still applies its own theme. -->
+        <Color x:Key="VexBackgroundColor">#FF0A1420</Color>
+        <Color x:Key="VexSurfaceColor">#FF0F1E2E</Color>
+        <Color x:Key="VexHoverColor">#FF1A2D42</Color>
+        <Color x:Key="VexBorderColor">#FF1E3A4F</Color>
+        <Color x:Key="VexTextColor">#FFE8F0F8</Color>
+        <Color x:Key="VexTextDimColor">#FF7A8FA8</Color>
+        <Color x:Key="VexAccentColor">#FF5B9BD5</Color>
+        <!-- Translucent chrome overlays so the acrylic backdrop shows through. -->
+        <Color x:Key="VexSidebarColor">#300A1420</Color>
+        <Color x:Key="VexTabStripColor">#400A1420</Color>
+        <Color x:Key="VexTabSelectedColor">#2EFFFFFF</Color>
+        <Color x:Key="VexTabHoverColor">#1EFFFFFF</Color>
 
-        <SolidColorBrush x:Key="VexBackground" Color="{StaticResource VexBackgroundColor}"/>
+        <LinearGradientBrush x:Key="VexBackground" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#FF0A1420" Offset="0"/>
+            <GradientStop Color="#FF0D2B3A" Offset="1"/>
+        </LinearGradientBrush>
         <SolidColorBrush x:Key="VexSurface" Color="{StaticResource VexSurfaceColor}"/>
         <SolidColorBrush x:Key="VexHover" Color="{StaticResource VexHoverColor}"/>
         <SolidColorBrush x:Key="VexBorder" Color="{StaticResource VexBorderColor}"/>
         <SolidColorBrush x:Key="VexText" Color="{StaticResource VexTextColor}"/>
         <SolidColorBrush x:Key="VexTextDim" Color="{StaticResource VexTextDimColor}"/>
         <SolidColorBrush x:Key="VexAccent" Color="{StaticResource VexAccentColor}"/>
+        <SolidColorBrush x:Key="VexSidebar" Color="{StaticResource VexSidebarColor}"/>
         <SolidColorBrush x:Key="VexTabStrip" Color="{StaticResource VexTabStripColor}"/>
         <SolidColorBrush x:Key="VexTabSelected" Color="{StaticResource VexTabSelectedColor}"/>
         <SolidColorBrush x:Key="VexTabHover" Color="{StaticResource VexTabHoverColor}"/>
