@@ -288,12 +288,10 @@
                         Click="NewTab_Click">＋</Button>
             </StackPanel>
 
-            <!-- Drag region: empty stretch between tabs and caption buttons -->
-            <Border Grid.Column="3" WindowChrome.IsHitTestVisibleInChrome="False"
-                    MouseLeftButtonDown="TabBarDrag_MouseLeftButtonDown"
-                    MouseLeftButtonUp="TabBarDrag_MouseLeftButtonUp"
-                    MouseMove="TabBarDrag_MouseMove"
-                    Background="Transparent"/>
+            <!-- Drag region: empty stretch between tabs and caption buttons.
+                 Hit-testing is off, so the WindowChrome caption (top 40px)
+                 handles dragging here natively. -->
+            <Border Grid.Column="3" WindowChrome.IsHitTestVisibleInChrome="False" Background="Transparent"/>
 
             <!-- Windows caption buttons: pinned to the top-right corner -->
             <StackPanel Grid.Column="4" Orientation="Horizontal">
