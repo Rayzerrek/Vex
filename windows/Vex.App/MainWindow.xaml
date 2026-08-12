@@ -134,19 +134,21 @@
               Panel.ZIndex="100"
               Background="{StaticResource VexTabStrip}">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="135"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- macOS style colored dots window controls and Deck button (Toggle Sidebar) -->
-            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-                <Button Style="{StaticResource MacCloseButton}" Click="CloseWindow_Click" ToolTip="Close App"/>
-                <Button Style="{StaticResource MacMinimizeButton}" Click="MinimizeWindow_Click" ToolTip="Minimize"/>
-                <Button Style="{StaticResource MacMaximizeButton}" Click="MaximizeWindow_Click" ToolTip="Maximize"/>
-                <Button Style="{StaticResource DeckButton}" Margin="12,0,0,0" Click="SidebarToggle_Click" ToolTip="Toggle Sidebar"/>
-            </StackPanel>
+            <!-- Sidebar toggle (Deck button) -->
+            <Button Grid.Column="0" Style="{StaticResource DeckButton}"
+                    Margin="8,0,4,0" Click="SidebarToggle_Click" ToolTip="Toggle Sidebar">
+                <Path Data="M 1,4 A 1,1 0 0 1 2,3 H 9 A 1,1 0 0 1 10,4 V 11 A 1,1 0 0 1 9,12 H 2 A 1,1 0 0 1 1,11 Z M 3.5,1 H 11 A 1,1 0 0 1 12,2 V 9" 
+                      Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" 
+                      StrokeThickness="1.2" Width="13" Height="13" Stretch="Uniform" Fill="Transparent"/>
+            </Button>
 
+            <!-- Tabs: equal-width capsules filling the available space -->
             <ListBox Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="True"
                      ItemsSource="{Binding SelectedProject.Tabs}"
                      SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
@@ -155,21 +157,21 @@
                      ScrollViewer.VerticalScrollBarVisibility="Disabled">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <StackPanel Orientation="Horizontal"/>
+                        <UniformGrid Rows="1"/>
                     </ItemsPanelTemplate>
                 </ListBox.ItemsPanel>
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem">
                         <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
-                        <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                        <Setter Property="Padding" Value="12,0"/>
-                        <Setter Property="Height" Value="34"/>
-                        <Setter Property="Margin" Value="3,3"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Padding" Value="14,0"/>
+                        <Setter Property="Margin" Value="2,4"/>
                         <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+                        <Setter Property="MaxWidth" Value="240"/>
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ListBoxItem">
-                                    <Border x:Name="fill" Background="Transparent" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                                    <Border x:Name="fill" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
                                         <ContentPresenter VerticalAlignment="Center"/>
                                     </Border>
                                     <ControlTemplate.Triggers>
@@ -201,8 +203,6 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <!-- Terminal glyph: the app is always a terminal session. -->
-                                <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform"/>
                                 <Image Width="16" Height="16" Margin="0,0,6,0"
                                        Source="{Binding ActiveLeaf.AppIcon.Image}"
                                        VerticalAlignment="Center">
@@ -217,6 +217,19 @@
                                         </Style>
                                     </Image.Style>
                                 </Image>
+                                <!-- Terminal glyph shown when no app icon is available -->
+                                <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform">
+                                    <Path.Style>
+                                        <Style TargetType="Path">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ActiveLeaf.AppIcon}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Path.Style>
+                                </Path>
                                 <TextBlock x:Name="TitleBlock" Text="{Binding Title}"
                                            TextTrimming="CharacterEllipsis" FontSize="13"
                                            ToolTip="{Binding Title}"
@@ -231,7 +244,7 @@
                                      KeyDown="TitleEditBox_KeyDown"
                                      LostFocus="TitleEditBox_LostFocus"/>
                             <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource CloseButton}"
-                                    Margin="4,0,2,0" ToolTip="Close Tab"
+                                    Margin="4,0,0,0" ToolTip="Close Tab"
                                     Click="CloseTab_Click"
                                     Opacity="0"
                                     RenderTransformOrigin="0.5,0.5">
@@ -266,11 +279,23 @@
                 </ListBox.ItemTemplate>
             </ListBox>
 
-            <!-- Right side controls: Settings, New Project, New Tab -->
-            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0" WindowChrome.IsHitTestVisibleInChrome="True">
-                <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click" Margin="0,0,4,0">⚙</Button>
-                <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click" Margin="0,0,4,0">＋</Button>
-                <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)" Width="26" Height="26" Padding="0" FontSize="12" Click="NewTab_Click">＋</Button>
+            <!-- New Tab button -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True">
+                <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)" Width="30" Height="30" Padding="0" FontSize="16"
+                        Click="NewTab_Click">＋</Button>
+            </StackPanel>
+
+            <!-- Windows caption buttons: pinned to the top-right corner -->
+            <StackPanel Grid.Column="3" Orientation="Horizontal">
+                <Button Style="{StaticResource WindowControlButton}" ToolTip="Minimize" Click="MinimizeWindow_Click">
+                    <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                </Button>
+                <Button x:Name="MaximizeButton" Style="{StaticResource WindowControlButton}" ToolTip="Maximize" Click="MaximizeWindow_Click">
+                    <TextBlock x:Name="MaximizeButtonIcon" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                </Button>
+                <Button Style="{StaticResource WindowCloseButton}" ToolTip="Close" Click="CloseWindow_Click">
+                    <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                </Button>
             </StackPanel>
         </Grid>
 
@@ -287,6 +312,17 @@
                     ClipToBounds="True">
                 <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
                     <DockPanel>
+                        <!-- Sidebar header with settings and new project -->
+                        <Border DockPanel.Dock="Top" Height="36" Padding="12,0" Background="Transparent">
+                            <DockPanel>
+                                <TextBlock Text="Projects" FontWeight="SemiBold" FontSize="13"
+                                           VerticalAlignment="Center" Foreground="{StaticResource VexTextDim}"/>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">⚙</Button>
+                                    <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">＋</Button>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
                         <!-- Projects ListBox -->
                         <ListBox DockPanel.Dock="Top" ItemsSource="{Binding Projects}"
                                  SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
