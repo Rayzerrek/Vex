@@ -4,25 +4,29 @@
              ShutdownMode="OnMainWindowClose"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-        <!-- Deep blue gradient palette inspired by browser chrome; the
-             terminal surface still applies its own theme. -->
-        <Color x:Key="VexBackgroundColor">#FF0A1420</Color>
-        <Color x:Key="VexSurfaceColor">#E60F1E2E</Color>
-        <Color x:Key="VexHoverColor">#FF1A2D42</Color>
-        <Color x:Key="VexBorderColor">#FF1E3A4F</Color>
-        <Color x:Key="VexTextColor">#FFE8F0F8</Color>
-        <Color x:Key="VexTextDimColor">#FF7A8FA8</Color>
-        <Color x:Key="VexAccentColor">#FF5B9BD5</Color>
+        <!-- Neutral graphite palette, matching the terminal's #1F1F24 surface;
+             the terminal surface still applies its own theme. -->
+        <Color x:Key="VexBackgroundColor">#FF0E1013</Color>
+        <Color x:Key="VexSurfaceColor">#E6191B20</Color>
+        <Color x:Key="VexHoverColor">#FF21262C</Color>
+        <Color x:Key="VexBorderColor">#FF2A3037</Color>
+        <Color x:Key="VexTextColor">#FFE6E8EB</Color>
+        <Color x:Key="VexTextDimColor">#FF868D96</Color>
+        <Color x:Key="VexAccentColor">#FF8B939E</Color>
+        <!-- Neutral outline for the active pane; focus reads as a highlight,
+             not a saturated frame. -->
+        <Color x:Key="VexFocusBorderColor">#FF4C555F</Color>
         <!-- Translucent chrome overlays so the acrylic backdrop shows through. -->
-        <Color x:Key="VexSidebarColor">#300A1420</Color>
-        <Color x:Key="VexTabStripColor">#400A1420</Color>
+        <Color x:Key="VexSidebarColor">#30111317</Color>
+        <Color x:Key="VexTabStripColor">#40111317</Color>
         <Color x:Key="VexPaneTitleBarColor">#1EFFFFFF</Color>
+        <Color x:Key="VexPaneTitleBarFocusedColor">#30FFFFFF</Color>
         <Color x:Key="VexTabSelectedColor">#2EFFFFFF</Color>
         <Color x:Key="VexTabHoverColor">#1EFFFFFF</Color>
 
         <LinearGradientBrush x:Key="VexBackground" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#FF0A1420" Offset="0"/>
-            <GradientStop Color="#FF0D2B3A" Offset="1"/>
+            <GradientStop Color="#FF0E1013" Offset="0"/>
+            <GradientStop Color="#FF15171B" Offset="1"/>
         </LinearGradientBrush>
         <SolidColorBrush x:Key="VexSurface" Color="{StaticResource VexSurfaceColor}"/>
         <SolidColorBrush x:Key="VexHover" Color="{StaticResource VexHoverColor}"/>
@@ -30,31 +34,72 @@
         <SolidColorBrush x:Key="VexText" Color="{StaticResource VexTextColor}"/>
         <SolidColorBrush x:Key="VexTextDim" Color="{StaticResource VexTextDimColor}"/>
         <SolidColorBrush x:Key="VexAccent" Color="{StaticResource VexAccentColor}"/>
+        <SolidColorBrush x:Key="VexFocusBorder" Color="{StaticResource VexFocusBorderColor}"/>
         <SolidColorBrush x:Key="VexSidebar" Color="{StaticResource VexSidebarColor}"/>
         <SolidColorBrush x:Key="VexPaneTitleBar" Color="{StaticResource VexPaneTitleBarColor}"/>
+        <SolidColorBrush x:Key="VexPaneTitleBarFocused" Color="{StaticResource VexPaneTitleBarFocusedColor}"/>
         <SolidColorBrush x:Key="VexTabStrip" Color="{StaticResource VexTabStripColor}"/>
-        <SolidColorBrush x:Key="VexTabSelected" Color="{StaticResource VexTabSelectedColor}"/>
+        <LinearGradientBrush x:Key="VexTabSelected" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#334C7BB5" Offset="0"/>
+            <GradientStop Color="#338A6BB5" Offset="1"/>
+        </LinearGradientBrush>
         <SolidColorBrush x:Key="VexTabHover" Color="{StaticResource VexTabHoverColor}"/>
 
+        <!-- Accent ramp: muted blue and violet used sparingly for highlights
+             and gradients over the neutral graphite chrome. -->
+        <Color x:Key="VexAccentBlueColor">#FF4C7BB5</Color>
+        <Color x:Key="VexAccentPurpleColor">#FF8A6BB5</Color>
+        <SolidColorBrush x:Key="VexAccentBlue" Color="{StaticResource VexAccentBlueColor}"/>
+        <SolidColorBrush x:Key="VexAccentPurple" Color="{StaticResource VexAccentPurpleColor}"/>
+        <LinearGradientBrush x:Key="VexAccentGradient" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#664C7BB5" Offset="0"/>
+            <GradientStop Color="#668A6BB5" Offset="1"/>
+        </LinearGradientBrush>
+
+        <!-- Shared hover treatment: a soft fill fades in/out over ~0.12s with
+             the same easing on every button so the chrome feels consistent.
+             Accent (blue→violet) is reserved for selection and the Deck
+             toggle; plain buttons hover neutral. -->
         <Style TargetType="Button" x:Key="GhostButton">
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Padding" Value="8,5"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="chrome" Background="{TemplateBinding Background}"
-                                CornerRadius="4" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="hoverFill" Background="{StaticResource VexHover}" CornerRadius="4" Opacity="0"/>
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{StaticResource VexHover}"/>
                                 <Setter Property="Foreground" Value="{StaticResource VexText}"/>
                             </Trigger>
+                            <EventTrigger RoutedEvent="MouseEnter">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="MouseLeave">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -67,8 +112,8 @@
             <Setter Property="Padding" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Margin" Value="4,0,-8,0"/>
-            <Setter Property="Background" Value="#141F2638"/>
-            <Setter Property="BorderBrush" Value="#263A465C"/>
+            <Setter Property="Background" Value="#14181A1F"/>
+            <Setter Property="BorderBrush" Value="#2630373E"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -76,17 +121,37 @@
                         <Border x:Name="chrome" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="6">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Grid>
+                                <Border x:Name="hoverFill" Background="{StaticResource VexAccentGradient}" CornerRadius="5" Opacity="0"/>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="chrome" Property="Background" Value="#2632475F"/>
-                                <Setter TargetName="chrome" Property="BorderBrush" Value="{StaticResource VexAccent}"/>
+                                <Setter TargetName="chrome" Property="BorderBrush" Value="{StaticResource VexAccentBlue}"/>
                                 <Setter Property="Foreground" Value="{StaticResource VexText}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="chrome" Property="Background" Value="#3A465E"/>
+                                <Setter TargetName="chrome" Property="Background" Value="#3D444B"/>
                             </Trigger>
+                            <EventTrigger RoutedEvent="MouseEnter">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="MouseLeave">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -99,20 +164,38 @@
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
-            <Setter Property="Width" Value="24"/>
-            <Setter Property="Height" Value="20"/>
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="24"/>
             <Setter Property="Margin" Value="1,0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="chrome" Background="{TemplateBinding Background}" CornerRadius="4">
+                        <Grid>
+                            <Border x:Name="hoverFill" Background="{StaticResource VexHover}" CornerRadius="4" Opacity="0"/>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{StaticResource VexHover}"/>
                                 <Setter Property="Foreground" Value="{StaticResource VexText}"/>
                             </Trigger>
+                            <EventTrigger RoutedEvent="MouseEnter">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="MouseLeave">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -183,17 +266,32 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="chrome" Background="{TemplateBinding Background}">
+                        <Grid>
+                            <Border x:Name="hoverFill" Background="{StaticResource VexHover}" Opacity="0"/>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{StaticResource VexHover}"/>
                                 <Setter Property="Foreground" Value="{StaticResource VexText}"/>
                             </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="#FF3A3A42"/>
-                            </Trigger>
+                            <EventTrigger RoutedEvent="MouseEnter">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="MouseLeave">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -204,18 +302,36 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="chrome" Background="{TemplateBinding Background}">
+                        <Grid>
+                            <Border x:Name="hoverFill" Background="#E81123" Opacity="0"/>
+                            <Border x:Name="pressFill" Background="#F1707A" Opacity="0"/>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#E81123"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="#F1707A"/>
-                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                                <Setter TargetName="pressFill" Property="Opacity" Value="1"/>
                             </Trigger>
+                            <EventTrigger RoutedEvent="MouseEnter">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="MouseLeave">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="hoverFill" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
