@@ -27,7 +27,6 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private readonly List<DrawingVisual> _rowVisuals = new();
     private readonly DispatcherTimer _blinkTimer;
     private readonly StringBuilder _runBuilder = new();
-    private readonly StringBuilder _trimmedRun = new();
 
     // Per-row run caches: one glyph-index array per row, sized to the row
     // width, reused across redraws.  A row can have at most (cols+1)/2 runs
@@ -761,31 +760,42 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 context.DrawRectangle(bg, null, new Rect(x, rowY, runText.Length * _cellWidth, _cellHeight));
 
             // Trailing whitespace carries no ink; skip the text pass for it.
-            _trimmedRun.Clear();
             var contentEnd = runText.Length;
             while (contentEnd > 0 && runText[contentEnd - 1] == ' ')
                 contentEnd--;
             if (contentEnd == 0 || fg is null)
                 return textRunIndex;
-            _trimmedRun.Append(runText, 0, contentEnd);
 
             var face = ResolveTypeface(flags);
             var glyphFace = ResolveGlyphTypeface(flags);
+            // When BOLD is requested but the family has no bold face (glyph
+            // resolution fell back to the regular face), emulate bold by
+            // double-drawing the run with a 1px horizontal offset. Note: a
+            // null glyphFace (FormattedText fallback) also needs this, so the
+            // check is "did we NOT get a real bold face".
+            var syntheticBold = flags.HasFlag(FLAGS.BOLD) && !ReferenceEquals(glyphFace, _boldGlyph);
 
             bool canUseGlyphRun = glyphFace != null;
-            var contentLength = _trimmedRun.Length;
+            var contentLength = contentEnd;
             // GlyphRun uses the collection lengths as the glyph count. The
-            // row-sized pools cannot be passed directly: stale entries after
-            // this run would be rendered as extra characters.
+            // row-sized pools cannot be passed directly: WPF's retained-mode
+            // DrawingContext keeps a reference to the glyph/advance arrays
+            // until the render thread consumes the visual, so reusing them
+            // across runs corrupts already-queued runs (stale characters,
+            // jumbled glyphs). Per-run arrays are required.
             var glyphIndices = new ushort[contentLength];
             var advanceWidths = new double[contentLength];
+            // Read the trimmed run directly from the run builder; no
+            // per-run copy, so the map loop and FormattedText below index
+            // runText up to contentEnd.
+            var trimmedText = runText;
 
             if (canUseGlyphRun)
             {
                 var map = glyphFace!.CharacterToGlyphMap;
                 for (var i = 0; i < contentLength; i++)
                 {
-                    if (map.TryGetValue(_trimmedRun[i], out var glyphIndex))
+                    if (map.TryGetValue(trimmedText[i], out var glyphIndex))
                     {
                         glyphIndices[i] = glyphIndex;
                         advanceWidths[i] = _cellWidth;
@@ -812,16 +822,33 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                     advanceWidths,
                     null, null, null, null, null, null);
                 context.DrawGlyphRun(fg, glyphRun);
+                if (syntheticBold)
+                {
+                    // Second pass offset by ~1px (fractional for subpixel
+                    // crispness), the classic cheap fake-bold.
+                    var boldRun = new GlyphRun(
+                        glyphFace!,
+                        0,
+                        false,
+                        _fontSize,
+                        (float)_pixelsPerDip,
+                        glyphIndices,
+                        new Point(x + Math.Max(1, _pixelsPerDip), rowY + _baselineY),
+                        advanceWidths,
+                        null, null, null, null, null, null);
+                    context.DrawGlyphRun(fg, boldRun);
+                }
                 runWidth = contentLength * _cellWidth;
             }
             else
             {
-                var formatted = new FormattedText(_trimmedRun.ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                // Read only the trimmed portion: StringBuilder.ToString(start,
+                // length) avoids copying the trailing-whitespace tail.
+                var formatted = new FormattedText(trimmedText.ToString(0, contentLength), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                     face, _fontSize, fg, _pixelsPerDip);
                 context.DrawText(formatted, new Point(x, rowY));
                 runWidth = formatted.Width;
             }
-
             // Record run metadata for the decoration pass after all runs.
             ref var run = ref _textRuns[textRunIndex];
             run.StartCol = startCol;
@@ -890,13 +917,18 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     {
         var bold = flags.HasFlag(FLAGS.BOLD);
         var italic = flags.HasFlag(FLAGS.ITALIC);
-        return (bold, italic) switch
+        if (bold && _boldGlyph is { } boldFace)
         {
-            (true, true) => _boldItalicGlyph,
-            (true, false) => _boldGlyph,
-            (false, true) => _italicGlyph,
-            _ => _normalGlyph,
-        };
+            // Bold falls back to the regular face when the family lacks a
+            // bold face (Cascadia Mono has one, but user-chosen families may
+            // not); the caller then emulates bold via a thicker pen.
+            if (!italic)
+                return boldFace;
+            return _boldItalicGlyph ?? boldFace;
+        }
+        if (italic)
+            return _italicGlyph;
+        return _normalGlyph;
     }
 
     private void DrawCaret()
