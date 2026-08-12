@@ -5,8 +5,10 @@ namespace Vex.App.Model;
 
 /// <summary>
 /// A project groups tabs and appears as one row in the left sidebar, exactly
-/// like upstream's <c>Project</c>. The working directory anchors new
-/// terminals, the file tree, and the git panel.
+/// like upstream's <c>Project</c>. Each tab is a "deck" — a split layout of
+/// terminal panes — so splitting always happens inside a tab, never between
+/// tabs. The working directory anchors new terminals, the file tree, and the
+/// git panel.
 /// </summary>
 public sealed class Project : ObservableObject
 {
@@ -15,7 +17,7 @@ public sealed class Project : ObservableObject
     private WorkspaceTab? _selectedTab;
 
     private FileTreeNode[] _treeRoots = Array.Empty<FileTreeNode>();
-    private FileTreeNode? _root;
+    private FileTreeNode? _rootTree;
 
     public bool CanCreateTab => Tabs.Count < MaxTabs;
 
@@ -29,12 +31,29 @@ public sealed class Project : ObservableObject
         RefreshFileTree();
     }
 
+    /// <summary>Restores a project from a saved session; tabs are wired up
+    /// like freshly created ones.</summary>
+    internal Project(string name, string workingDirectory, IEnumerable<WorkspaceTab> tabs)
+    {
+        _name = name;
+        WorkingDirectory = workingDirectory;
+        Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
+        foreach (var tab in tabs)
+        {
+            tab.NewTabRequested += () => NewTab();
+            tab.TabClosedRequested += t => CloseTab(t);
+            Tabs.Add(tab);
+        }
+        _selectedTab = Tabs.FirstOrDefault();
+        RefreshFileTree();
+    }
+
     public FileTreeNode Root
     {
-        get => _root!;
+        get => _rootTree!;
         private set
         {
-            if (Set(ref _root, value))
+            if (Set(ref _rootTree, value))
             {
                 _treeRoots = new[] { value };
                 OnPropertyChanged(nameof(TreeRoots));
