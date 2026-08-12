@@ -24,8 +24,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private readonly VisualCollection _children;
     private readonly DrawingVisual _selectionVisual = new();
     private readonly DrawingVisual _caretVisual = new();
+    private readonly DrawingVisual _scrollbarVisual = new();
     private readonly List<DrawingVisual> _rowVisuals = new();
     private readonly DispatcherTimer _blinkTimer;
+    private readonly DispatcherTimer _scrollbarAnimTimer;
     private readonly StringBuilder _runBuilder = new();
 
     // Per-row run caches: one glyph-index array per row, sized to the row
@@ -76,6 +78,20 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private bool _pumpRunning;
 
     private bool _caretBlinkVisible = true;
+
+    // Scrollbar overlay state. The bar hugs the right edge: thin at rest,
+    // widening on hover/drag (animated by _scrollbarAnimTimer). It only draws
+    // while the buffer has scrollback above the viewport.
+    private const double ScrollbarThinWidth = 6;
+    private const double ScrollbarWideWidth = 12;
+    private const double ScrollbarHitWidth = 16;
+    private double _scrollbarWidth = ScrollbarThinWidth;
+    private double _scrollbarTargetWidth = ScrollbarThinWidth;
+    private bool _scrollbarHovered;
+    private bool _scrollbarDragging;
+    private double _scrollbarDragOffset;
+    private Brush _scrollbarThumbBrush = Brushes.Gray;
+    private Brush _scrollbarThumbHoverBrush = Brushes.LightGray;
 
     // Cached caret draw state: the overlay is only reopened when the caret's
     // position, visibility, style or blink phase changed. The cell beneath the
@@ -132,6 +148,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         _children = new VisualCollection(this)
         {
             _selectionVisual,
+            _scrollbarVisual,
             _caretVisual,
         };
 
@@ -141,6 +158,9 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             _caretBlinkVisible = !_caretBlinkVisible;
             DrawCaret();
         };
+
+        _scrollbarAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(15) };
+        _scrollbarAnimTimer.Tick += (_, _) => AnimateScrollbarWidth();
 
         ApplySettings();
         AppSettings.Instance.PropertyChanged += OnSettingsChanged;
@@ -163,6 +183,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             case nameof(AppSettings.ThemeName):
                 var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == settings.ThemeName) ?? BuiltInThemes.VexDark;
                 _palette = PaletteFor(theme);
+                RebuildScrollbarBrushes();
                 _renderVersion++;
                 _needsFullRedraw = true;
                 InvalidateVisual(); // background brush changed
@@ -245,6 +266,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         var settings = AppSettings.Instance;
         var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == settings.ThemeName) ?? BuiltInThemes.VexDark;
         _palette = PaletteFor(theme);
+        RebuildScrollbarBrushes();
         ApplyTypefaces(settings.FontFamily);
         _fontSize = settings.FontSize;
         _terminal.Options.CursorBlink = settings.CursorBlink;
@@ -346,8 +368,9 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         {
             var visual = new DrawingVisual();
             _rowVisuals.Add(visual);
-            // Rows sit between the selection overlay and the caret.
-            _children.Insert(_children.Count - 1, visual);
+            // Rows sit between the selection overlay and the scrollbar; the
+            // caret stays on top. The scrollbar is the second-to-last child.
+            _children.Insert(_children.Count - 2, visual);
         }
         if (_rowHashes.Length != _rows)
         {
@@ -599,6 +622,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
             DrawSelection();
             DrawCaret();
+            DrawScrollbar();
         }
         catch (Exception)
         {
@@ -617,6 +641,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         InvalidateCaretCache();
         for (var row = 0; row < _rowVisuals.Count; row++)
             RedrawRow(row);
+        DrawScrollbar();
     }
 
     private void RedrawRow(int row)
@@ -1010,6 +1035,102 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         return (start, end);
     }
 
+    // ---- Scrollbar --------------------------------------------------------
+
+    private static Brush FrozenBrush(System.Windows.Media.Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    private void RebuildScrollbarBrushes()
+    {
+        var fg = ((SolidColorBrush)_palette.Foreground).Color;
+        _scrollbarThumbBrush = FrozenBrush(System.Windows.Media.Color.FromArgb(0x50, fg.R, fg.G, fg.B));
+        _scrollbarThumbHoverBrush = FrozenBrush(System.Windows.Media.Color.FromArgb(0xA0, fg.R, fg.G, fg.B));
+    }
+
+    /// <summary>True while there is scrollback above the viewport to scroll into.</summary>
+    private bool IsScrollbarVisible()
+        => !_terminal.Buffers.IsAlternateBuffer && _terminal.Buffer.YBase > 0;
+
+    private bool IsOverScrollbar(Point point)
+        => IsScrollbarVisible() && point.X >= ActualWidth - ScrollbarHitWidth;
+
+    /// <summary>
+    /// Thumb geometry. The scrollable extent is the scrollback above the
+    /// viewport plus the viewport itself; YDisp (0..YBase) maps linearly onto
+    /// the thumb's travel along the track.
+    /// </summary>
+    private bool TryGetScrollbarGeometry(out double thumbY, out double thumbH, out double travel)
+    {
+        thumbY = thumbH = travel = 0;
+        if (!IsScrollbarVisible())
+            return false;
+
+        var total = _terminal.Buffer.YBase + _rows;
+        var trackHeight = ActualHeight;
+        thumbH = Math.Min(trackHeight, Math.Max(24, trackHeight * _rows / Math.Max(1, total)));
+        travel = Math.Max(0, trackHeight - thumbH);
+        thumbY = travel * _terminal.Buffer.YDisp / _terminal.Buffer.YBase;
+        return true;
+    }
+
+    private void DrawScrollbar()
+    {
+        using var dc = _scrollbarVisual.RenderOpen();
+        if (!TryGetScrollbarGeometry(out var thumbY, out var thumbH, out _))
+            return;
+
+        var brush = _scrollbarHovered || _scrollbarDragging ? _scrollbarThumbHoverBrush : _scrollbarThumbBrush;
+        var x = ActualWidth - _scrollbarWidth;
+        var radius = _scrollbarWidth / 2;
+        dc.DrawRoundedRectangle(brush, null, new Rect(x, thumbY, _scrollbarWidth, thumbH), radius, radius);
+    }
+
+    private void SetScrollbarHovered(bool hovered)
+    {
+        if (_scrollbarHovered == hovered)
+            return;
+        _scrollbarHovered = hovered;
+        Cursor = hovered ? Cursors.Arrow : Cursors.IBeam;
+        _scrollbarTargetWidth = hovered || _scrollbarDragging ? ScrollbarWideWidth : ScrollbarThinWidth;
+        if (Math.Abs(_scrollbarTargetWidth - _scrollbarWidth) < 0.2)
+            DrawScrollbar();
+        else if (!_scrollbarAnimTimer.IsEnabled)
+            _scrollbarAnimTimer.Start();
+    }
+
+    private void AnimateScrollbarWidth()
+    {
+        var delta = _scrollbarTargetWidth - _scrollbarWidth;
+        if (Math.Abs(delta) < 0.2)
+        {
+            _scrollbarWidth = _scrollbarTargetWidth;
+            _scrollbarAnimTimer.Stop();
+            DrawScrollbar();
+            return;
+        }
+        _scrollbarWidth += delta * 0.3;
+        DrawScrollbar();
+    }
+
+    private void DragScrollbarThumb(Point pos)
+    {
+        if (!TryGetScrollbarGeometry(out _, out var thumbH, out var travel) || travel <= 0)
+            return;
+        var buffer = _terminal.Buffer;
+        var desired = Math.Clamp(pos.Y - _scrollbarDragOffset, 0, travel);
+        var ydisp = (int)Math.Round(desired * buffer.YBase / travel);
+        var delta = ydisp - buffer.YDisp;
+        if (delta != 0)
+        {
+            _terminal.ScrollLines(delta);
+            FlushRedraw();
+        }
+    }
+
     // ---- Input ------------------------------------------------------------
 
     protected override void OnGotKeyboardFocus(KeyboardFocusChangedEventArgs e)
@@ -1154,7 +1275,30 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         if (_session is null)
             return;
 
-        var (col, row) = CellFromPoint(e.GetPosition(this));
+        var pos = e.GetPosition(this);
+
+        // The scrollbar overlays the right edge; clicks there scroll instead
+        // of selecting or forwarding to the app's mouse mode.
+        if (IsOverScrollbar(pos) && TryGetScrollbarGeometry(out var thumbY, out var thumbH, out _))
+        {
+            if (pos.Y >= thumbY && pos.Y <= thumbY + thumbH)
+            {
+                _scrollbarDragging = true;
+                _scrollbarDragOffset = pos.Y - thumbY;
+                _scrollbarWidth = _scrollbarTargetWidth = ScrollbarWideWidth;
+                CaptureMouse();
+                DrawScrollbar();
+            }
+            else
+            {
+                _terminal.ScrollLines(pos.Y < thumbY ? -_rows : _rows);
+                FlushRedraw();
+            }
+            e.Handled = true;
+            return;
+        }
+
+        var (col, row) = CellFromPoint(pos);
 
         if (e.ClickCount == 2)
         {
@@ -1188,9 +1332,21 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+
+        var pos = e.GetPosition(this);
+
+        if (_scrollbarDragging)
+        {
+            DragScrollbarThumb(pos);
+            e.Handled = true;
+            return;
+        }
+
+        SetScrollbarHovered(IsOverScrollbar(pos));
+
         if (_terminal.MouseMode != MouseMode.Off && e.LeftButton == MouseButtonState.Pressed)
         {
-            var (col, row) = CellFromPoint(e.GetPosition(this));
+            var (col, row) = CellFromPoint(pos);
             var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
             var alt = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
             var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
@@ -1200,7 +1356,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         }
         if (IsMouseCaptured && e.LeftButton == MouseButtonState.Pressed && _selection.Active)
         {
-            var (col, row) = CellFromPoint(e.GetPosition(this));
+            var (col, row) = CellFromPoint(pos);
             _selection.DragExtend(row, col);
         }
     }
@@ -1208,6 +1364,18 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonUp(e);
+
+        if (_scrollbarDragging)
+        {
+            _scrollbarDragging = false;
+            if (IsMouseCaptured)
+                ReleaseMouseCapture();
+            SetScrollbarHovered(IsOverScrollbar(e.GetPosition(this)));
+            DrawScrollbar();
+            e.Handled = true;
+            return;
+        }
+
         if (_terminal.MouseMode != MouseMode.Off)
         {
             var (col, row) = CellFromPoint(e.GetPosition(this));
@@ -1238,6 +1406,12 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         }
         PasteClipboard();
         e.Handled = true;
+    }
+
+    protected override void OnMouseLeave(MouseEventArgs e)
+    {
+        base.OnMouseLeave(e);
+        SetScrollbarHovered(false);
     }
 
     protected override void OnMouseWheel(MouseWheelEventArgs e)
@@ -1293,6 +1467,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             return;
         _disposed = true;
         _blinkTimer.Stop();
+        _scrollbarAnimTimer.Stop();
         AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
         _session?.Dispose();
     }
