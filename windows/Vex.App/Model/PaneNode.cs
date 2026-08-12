@@ -66,6 +66,11 @@ public abstract class LeafPane : PaneNode, IDisposable
     protected void RequestNewTab() => NewTabRequested?.Invoke();
     protected void RequestClose() => ProcessExited?.Invoke(this);
 
+    /// <summary>Pane title-bar actions; the owning tab re-raises the same
+    /// events the keyboard shortcuts use.</summary>
+    public void Split(Orientation orientation) => RequestSplit(orientation);
+    public void Close() => RequestClose();
+
     public abstract void Focus();
 
     public virtual void Dispose()
