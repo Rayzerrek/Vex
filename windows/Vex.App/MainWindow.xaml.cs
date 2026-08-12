@@ -35,8 +35,6 @@ public partial class MainWindow : Window
             SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
             SidebarPanel.Visibility = Visibility.Collapsed;
             SidebarPanel.Opacity = 0;
-            ShowSidebarButton.Opacity = 1;
-            ShowSidebarButton.IsHitTestVisible = true;
         }
     }
 
@@ -57,20 +55,13 @@ public partial class MainWindow : Window
 
     private void UpdateLayoutForWindowState()
     {
-        if (MaximizeButtonIcon != null && MaximizeButton != null)
+        if (WindowState == WindowState.Maximized)
         {
-            if (WindowState == WindowState.Maximized)
-            {
-                MaximizeButtonIcon.Text = "\uE923";
-                MaximizeButton.ToolTip = "Restore";
-                MainGrid.Margin = new Thickness(6);
-            }
-            else
-            {
-                MaximizeButtonIcon.Text = "\uE922";
-                MaximizeButton.ToolTip = "Maximize";
-                MainGrid.Margin = new Thickness(0);
-            }
+            MainGrid.Margin = new Thickness(6);
+        }
+        else
+        {
+            MainGrid.Margin = new Thickness(0);
         }
     }
 
@@ -161,6 +152,14 @@ public partial class MainWindow : Window
         AnimateSidebar(SidebarWidth, fadeOut: false);
     }
 
+    private void SidebarToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (AppSettings.Instance.SidebarVisible)
+            HideSidebar_Click(sender, e);
+        else
+            ShowSidebar_Click(sender, e);
+    }
+
     private void AnimateSidebar(double target, bool fadeOut = false)
     {
         _sidebarAnimationInProgress = true;
@@ -177,8 +176,6 @@ public partial class MainWindow : Window
         else
         {
             SidebarPanel.Visibility = Visibility.Visible;
-            ShowSidebarButton.Opacity = 0;
-            ShowSidebarButton.IsHitTestVisible = false;
         }
 
         _sidebarAnimationClock = Stopwatch.StartNew();
@@ -201,10 +198,6 @@ public partial class MainWindow : Window
         if (_sidebarAnimationFadingOut)
         {
             SidebarPanel.Opacity = 1 - eased;
-            ShowSidebarButton.Opacity = eased;
-            ShowSidebarButton.IsHitTestVisible = eased >= 0.75;
-            ShowSidebarScale.ScaleX = 0.7 + (0.3 * eased);
-            ShowSidebarScale.ScaleY = 0.7 + (0.3 * eased);
         }
         else
         {

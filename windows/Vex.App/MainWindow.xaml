@@ -124,311 +124,278 @@
     </Window.Resources>
 
     <Grid x:Name="MainGrid">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="0"/>
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
 
-        <!-- Left sidebar: projects, like upstream's SidebarView. -->
-        <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource VexSidebar}"
-                BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,1,0"
-                ClipToBounds="True">
-            <!-- Fixed-width content: the column animates while this grid is
-                 clipped, so the tree never reflows mid-slide. -->
-            <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
-            <DockPanel>
-                <Border DockPanel.Dock="Top" Height="40" Padding="12,0" Background="Transparent">
-                    <DockPanel>
-                        <TextBlock Text="" FontWeight="SemiBold" FontSize="15"
-                                   VerticalAlignment="Center" Foreground="{StaticResource VexText}"/>
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">⚙</Button>
-                            <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">＋</Button>
-                            <Button Style="{StaticResource SidebarToggleButton}" ToolTip="Hide Sidebar" Click="HideSidebar_Click">
-                                <Path Data="M 8,2 L 3,7 L 8,12 M 3,7 L 13,7" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+        <!-- Tab bar across the top of the window -->
+        <Grid Grid.Row="0" x:Name="TabBarGrid"
+              Panel.ZIndex="100"
+              Background="{StaticResource VexTabStrip}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="135"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- macOS style colored dots window controls and Deck button (Toggle Sidebar) -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                <Button Style="{StaticResource MacCloseButton}" Click="CloseWindow_Click" ToolTip="Close App"/>
+                <Button Style="{StaticResource MacMinimizeButton}" Click="MinimizeWindow_Click" ToolTip="Minimize"/>
+                <Button Style="{StaticResource MacMaximizeButton}" Click="MaximizeWindow_Click" ToolTip="Maximize"/>
+                <Button Style="{StaticResource DeckButton}" Margin="12,0,0,0" Click="SidebarToggle_Click" ToolTip="Toggle Sidebar"/>
+            </StackPanel>
+
+            <ListBox Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="True"
+                     ItemsSource="{Binding SelectedProject.Tabs}"
+                     SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
+                     Background="Transparent" BorderThickness="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                        <Setter Property="Padding" Value="12,0"/>
+                        <Setter Property="Height" Value="34"/>
+                        <Setter Property="Margin" Value="3,3"/>
+                        <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="fill" Background="Transparent" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource VexTabSelected}" TargetName="fill"/>
+                                            <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
+                                            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource VexTabHover}" TargetName="fill"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Background="Transparent" MouseDown="TabHeader_MouseDown">
+                            <Grid.ContextMenu>
+                                <ContextMenu Style="{StaticResource DarkContextMenu}">
+                                    <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+→" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
+                                    <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+↓" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
+                                </ContextMenu>
+                            </Grid.ContextMenu>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <!-- Terminal glyph: the app is always a terminal session. -->
+                                <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform"/>
+                                <Image Width="16" Height="16" Margin="0,0,6,0"
+                                       Source="{Binding ActiveLeaf.AppIcon.Image}"
+                                       VerticalAlignment="Center">
+                                    <Image.Style>
+                                        <Style TargetType="Image">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ActiveLeaf.AppIcon}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Image.Style>
+                                </Image>
+                                <TextBlock x:Name="TitleBlock" Text="{Binding Title}"
+                                           TextTrimming="CharacterEllipsis" FontSize="13"
+                                           ToolTip="{Binding Title}"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="2" Text="{Binding Title}"
+                                     Visibility="Collapsed" FontSize="14"
+                                     VerticalAlignment="Center" HorizontalAlignment="Stretch"
+                                     Foreground="{StaticResource VexText}"
+                                     Background="{StaticResource VexSurface}"
+                                     BorderBrush="{StaticResource VexBorder}"
+                                     KeyDown="TitleEditBox_KeyDown"
+                                     LostFocus="TitleEditBox_LostFocus"/>
+                            <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource CloseButton}"
+                                    Margin="4,0,2,0" ToolTip="Close Tab"
+                                    Click="CloseTab_Click"
+                                    Opacity="0"
+                                    RenderTransformOrigin="0.5,0.5">
+                                <Button.RenderTransform>
+                                    <ScaleTransform x:Name="CloseScale" ScaleX="0.6" ScaleY="0.6"/>
+                                </Button.RenderTransform>
+                                <TextBlock Text="×" FontSize="15"
+                                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
                             </Button>
-                        </StackPanel>
-                    </DockPanel>
-                </Border>
-                <DockPanel>
-                    <ListBox DockPanel.Dock="Top" ItemsSource="{Binding Projects}"
-                             SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
-                             Background="Transparent" BorderThickness="0" Padding="6,0"
-                             MaxHeight="250"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
-                            <Setter Property="Padding" Value="8,6"/>
-                            <Setter Property="Margin" Value="0,1"/>
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="6">
-                                            <ContentPresenter/>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="{StaticResource VexHover}" TargetName="chrome"/>
-                                                <Setter Property="BorderThickness" Value="2,0,0,0" TargetName="chrome"/>
-                                                <Setter Property="BorderBrush" Value="{StaticResource VexAccent}" TargetName="chrome"/>
-                                                <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
-                                            </Trigger>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter Property="Background" Value="{StaticResource VexSurface}" TargetName="chrome"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </ListBox.ItemContainerStyle>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Grid>
-                                <Grid.ContextMenu>
-                                    <ContextMenu Style="{StaticResource DarkContextMenu}">
-                                        <MenuItem Header="Remove Project" Style="{StaticResource DarkMenuItem}" Click="RemoveProject_Click"/>
-                                    </ContextMenu>
-                                </Grid.ContextMenu>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Name}" Foreground="{StaticResource VexText}"
-                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/>
-                                    <TextBlock Text="{Binding WorkingDirectory}" FontSize="11"
-                                               Foreground="{StaticResource VexTextDim}"
-                                               TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding WorkingDirectory}"/>
-                                </StackPanel>
-                                <Button x:Name="RemoveBtn" Grid.Column="1"
-                                        Style="{StaticResource CloseButton}"
-                                        Margin="4,0,2,0" ToolTip="Remove Project"
-                                        Click="RemoveProject_Click"
-                                        Visibility="Hidden" Opacity="0">
-                                    <TextBlock Text="×" FontSize="15"
-                                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                </Button>
-                                <Grid.Style>
-                                    <Style TargetType="Grid">
-                                        <Style.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter Property="Background" Value="Transparent"/>
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Grid.Style>
-                                <Grid.Triggers>
-                                    <EventTrigger RoutedEvent="Grid.MouseEnter">
-                                        <BeginStoryboard>
-                                            <Storyboard>
-                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RemoveBtn" Storyboard.TargetProperty="Visibility">
-                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{x:Static Visibility.Visible}"/>
-                                                </ObjectAnimationUsingKeyFrames>
-                                                <DoubleAnimation Storyboard.TargetName="RemoveBtn" Storyboard.TargetProperty="Opacity"
-                                                                 To="1" Duration="0:0:0.15"/>
-                                            </Storyboard>
-                                        </BeginStoryboard>
-                                    </EventTrigger>
-                                    <EventTrigger RoutedEvent="Grid.MouseLeave">
-                                        <BeginStoryboard>
-                                            <Storyboard>
-                                                <DoubleAnimation Storyboard.TargetName="RemoveBtn" Storyboard.TargetProperty="Opacity"
-                                                                 To="0" Duration="0:0:0.1"/>
-                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RemoveBtn" Storyboard.TargetProperty="Visibility" BeginTime="0:0:0.1">
-                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{x:Static Visibility.Hidden}"/>
-                                                </ObjectAnimationUsingKeyFrames>
-                                            </Storyboard>
-                                        </BeginStoryboard>
-                                    </EventTrigger>
-                                </Grid.Triggers>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-                
-                <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource VexBorder}" Margin="12,4"/>
-                
-                    <local:FileTreeView DataContext="{Binding SelectedProject}"/>
-                </DockPanel>
-                </DockPanel>
-            </Grid>
-        </Border>
+                            <Grid.Triggers>
+                                <EventTrigger RoutedEvent="Grid.MouseEnter">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                                <EventTrigger RoutedEvent="Grid.MouseLeave">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.1"/>
+                                            <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="0.6" Duration="0:0:0.1"/>
+                                            <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="0.6" Duration="0:0:0.1"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                            </Grid.Triggers>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
 
-        <!-- Main column: tab bar on top, terminal fills its own row below it. -->
-        <Grid Grid.Column="1">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="40"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
+            <!-- Right side controls: Settings, New Project, New Tab -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0" WindowChrome.IsHitTestVisibleInChrome="True">
+                <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click" Margin="0,0,4,0">⚙</Button>
+                <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click" Margin="0,0,4,0">＋</Button>
+                <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)" Width="26" Height="26" Padding="0" FontSize="12" Click="NewTab_Click">＋</Button>
+            </StackPanel>
+        </Grid>
 
-            <!-- Terminal content lives only in its own row, below the tab bar. -->
-            <ContentControl Grid.Row="1"
-                            Content="{Binding SelectedProject.SelectedTab.Root}"/>
+        <!-- Lower content panel containing Sidebar and active WorkspaceTab content -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="0"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-            <!-- Tabs: equal-width, stretch to fill the bar (Ghostty style). -->
-            <Grid Grid.Row="0" x:Name="TabBarGrid"
-                  Panel.ZIndex="100"
-                  Background="{StaticResource VexTabStrip}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="36"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <Button x:Name="ShowSidebarButton" Grid.Column="0" Panel.ZIndex="200"
-                        Style="{StaticResource SidebarToggleButton}" ToolTip="Show Sidebar" Click="ShowSidebar_Click"
-                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0"
-                        Opacity="0" IsHitTestVisible="False">
-                    <Button.RenderTransform>
-                        <ScaleTransform x:Name="ShowSidebarScale" ScaleX="1" ScaleY="1"/>
-                    </Button.RenderTransform>
-                    <Path Data="M 5,2 L 10,7 L 5,12 M 10,7 L 0,7" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
-                </Button>
-
-                <ListBox Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="True"
-                         ItemsSource="{Binding SelectedProject.Tabs}"
-                         SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
-                         Background="Transparent" BorderThickness="0"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                         ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                    <ListBox.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal"/>
-                        </ItemsPanelTemplate>
-                    </ListBox.ItemsPanel>
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
-                            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
-                            <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                            <Setter Property="Padding" Value="12,0"/>
-                            <Setter Property="Height" Value="34"/>
-                            <Setter Property="Margin" Value="3,3"/>
-                            <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="fill" Background="Transparent" CornerRadius="10" Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter VerticalAlignment="Center"/>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="{StaticResource VexTabSelected}" TargetName="fill"/>
-                                                <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
-                                                <Setter Property="Foreground" Value="{StaticResource VexText}"/>
-                                            </Trigger>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter Property="Background" Value="{StaticResource VexTabHover}" TargetName="fill"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </ListBox.ItemContainerStyle>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Background="Transparent" MouseDown="TabHeader_MouseDown">
-                                <Grid.ContextMenu>
-                                    <ContextMenu Style="{StaticResource DarkContextMenu}">
-                                        <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+→" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
-                                        <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+↓" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
-                                    </ContextMenu>
-                                </Grid.ContextMenu>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <!-- Terminal glyph: the app is always a terminal session. -->
-                                    <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform"/>
-                                    <Image Width="16" Height="16" Margin="0,0,6,0"
-                                           Source="{Binding ActiveLeaf.AppIcon.Image}"
-                                           VerticalAlignment="Center">
-                                        <Image.Style>
-                                            <Style TargetType="Image">
-                                                <Setter Property="Visibility" Value="Visible"/>
+            <!-- Left sidebar -->
+            <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource VexSidebar}"
+                    BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,1,0"
+                    ClipToBounds="True">
+                <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
+                    <DockPanel>
+                        <!-- Projects ListBox -->
+                        <ListBox DockPanel.Dock="Top" ItemsSource="{Binding Projects}"
+                                 SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
+                                 Background="Transparent" BorderThickness="0" Padding="6,0"
+                                 MaxHeight="250"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="8,6"/>
+                                    <Setter Property="Margin" Value="0,1"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListBoxItem">
+                                                <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="6">
+                                                    <ContentPresenter/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter Property="Background" Value="{StaticResource VexHover}" TargetName="chrome"/>
+                                                        <Setter Property="BorderThickness" Value="2,0,0,0" TargetName="chrome"/>
+                                                        <Setter Property="BorderBrush" Value="{StaticResource VexAccent}" TargetName="chrome"/>
+                                                        <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Background" Value="{StaticResource VexSurface}" TargetName="chrome"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ContextMenu>
+                                            <ContextMenu Style="{StaticResource DarkContextMenu}">
+                                                <MenuItem Header="Remove Project" Style="{StaticResource DarkMenuItem}" Click="RemoveProject_Click"/>
+                                            </ContextMenu>
+                                        </Grid.ContextMenu>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}" Foreground="{StaticResource VexText}"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/>
+                                            <TextBlock Text="{Binding WorkingDirectory}" FontSize="11"
+                                                       Foreground="{StaticResource VexTextDim}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding WorkingDirectory}"/>
+                                        </StackPanel>
+                                        <Button x:Name="RemoveBtn" Grid.Column="1"
+                                                Style="{StaticResource CloseButton}"
+                                                Margin="4,0,2,0" ToolTip="Remove Project"
+                                                Click="RemoveProject_Click"
+                                                Visibility="Hidden" Opacity="0">
+                                            <TextBlock Text="×" FontSize="15"
+                                                       VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                        </Button>
+                                        <Grid.Style>
+                                            <Style TargetType="Grid">
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding ActiveLeaf.AppIcon}" Value="{x:Null}">
-                                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                                    </DataTrigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Background" Value="Transparent"/>
+                                                    </Trigger>
                                                 </Style.Triggers>
                                             </Style>
-                                        </Image.Style>
-                                    </Image>
-                                    <TextBlock x:Name="TitleBlock" Text="{Binding Title}"
-                                               TextTrimming="CharacterEllipsis" FontSize="13"
-                                               ToolTip="{Binding Title}"
-                                               VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="2" Text="{Binding Title}"
-                                         Visibility="Collapsed" FontSize="14"
-                                         VerticalAlignment="Center" HorizontalAlignment="Stretch"
-                                         Foreground="{StaticResource VexText}"
-                                         Background="{StaticResource VexSurface}"
-                                         BorderBrush="{StaticResource VexBorder}"
-                                         KeyDown="TitleEditBox_KeyDown"
-                                         LostFocus="TitleEditBox_LostFocus"/>
-                                <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource CloseButton}"
-                                        Margin="4,0,2,0" ToolTip="Close Tab"
-                                        Click="CloseTab_Click"
-                                        Opacity="0"
-                                        RenderTransformOrigin="0.5,0.5">
-                                    <Button.RenderTransform>
-                                        <ScaleTransform x:Name="CloseScale" ScaleX="0.6" ScaleY="0.6"/>
-                                    </Button.RenderTransform>
-                                    <TextBlock Text="×" FontSize="15"
-                                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                </Button>
-                                <Grid.Triggers>
-                                    <EventTrigger RoutedEvent="Grid.MouseEnter">
-                                        <BeginStoryboard>
-                                            <Storyboard>
-                                                <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
-                                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.12"/>
-                                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.12"/>
-                                            </Storyboard>
-                                        </BeginStoryboard>
-                                    </EventTrigger>
-                                    <EventTrigger RoutedEvent="Grid.MouseLeave">
-                                        <BeginStoryboard>
-                                            <Storyboard>
-                                                <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.1"/>
-                                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="0.6" Duration="0:0:0.1"/>
-                                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="0.6" Duration="0:0:0.1"/>
-                                            </Storyboard>
-                                        </BeginStoryboard>
-                                    </EventTrigger>
-                                </Grid.Triggers>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                                        </Grid.Style>
+                                        <Grid.Triggers>
+                                            <EventTrigger RoutedEvent="Grid.MouseEnter">
+                                                <BeginStoryboard>
+                                                    <Storyboard>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RemoveBtn" Storyboard.TargetProperty="Visibility">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{x:Static Visibility.Visible}"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                        <DoubleAnimation Storyboard.TargetName="RemoveBtn" Storyboard.TargetProperty="Opacity"
+                                                                         To="1" Duration="0:0:0.15"/>
+                                                    </Storyboard>
+                                                </BeginStoryboard>
+                                            </EventTrigger>
+                                            <EventTrigger RoutedEvent="Grid.MouseLeave">
+                                                <BeginStoryboard>
+                                                    <Storyboard>
+                                                        <DoubleAnimation Storyboard.TargetName="RemoveBtn" Storyboard.TargetProperty="Opacity"
+                                                                         To="0" Duration="0:0:0.1"/>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RemoveBtn" Storyboard.TargetProperty="Visibility" BeginTime="0:0:0.1">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{x:Static Visibility.Hidden}"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                    </Storyboard>
+                                                </BeginStoryboard>
+                                            </EventTrigger>
+                                        </Grid.Triggers>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
 
-                <Border Grid.Column="2" Background="{StaticResource VexTabStrip}" Padding="4,0">
-                    <DockPanel>
-                        <!-- Window caption buttons: pinned to the top-right corner. -->
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                            <Button Style="{StaticResource WindowControlButton}" ToolTip="Minimize" Click="MinimizeWindow_Click">
-                                <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
-                            </Button>
-                            <Button x:Name="MaximizeButton" Style="{StaticResource WindowControlButton}" ToolTip="Maximize" Click="MaximizeWindow_Click">
-                                <TextBlock x:Name="MaximizeButtonIcon" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
-                            </Button>
-                            <Button Style="{StaticResource WindowCloseButton}" ToolTip="Close" Click="CloseWindow_Click">
-                                <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
-                            </Button>
-                        </StackPanel>
-                        <!-- New Tab button: stays on the bar so tabs can always be added. -->
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
-                            <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)" Width="26" Height="26" Padding="0" FontSize="12"
-                                    Click="NewTab_Click">＋</Button>
-                        </StackPanel>
+                        <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource VexBorder}" Margin="12,4"/>
+
+                        <local:FileTreeView DataContext="{Binding SelectedProject}"/>
                     </DockPanel>
-                </Border>
-            </Grid>
+                </Grid>
+            </Border>
+
+            <!-- Main active tab content -->
+            <ContentControl Grid.Column="1"
+                            Content="{Binding SelectedProject.SelectedTab.Root}"/>
         </Grid>
         
         <Popup x:Name="PalettePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True">
