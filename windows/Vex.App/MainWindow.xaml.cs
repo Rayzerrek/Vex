@@ -40,6 +40,16 @@ public partial class MainWindow : Window
         }
     }
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        // Acrylic blur with a deep blue tint replaces the painted gradient
+        // when DWM accepts the backdrop; the XAML gradient stays as the
+        // fallback, since a transparent window without a backdrop is black.
+        if (WindowBackdrop.EnableAcrylic(this, Color.FromRgb(0x0A, 0x14, 0x20), alpha: 0x30))
+            Background = Brushes.Transparent;
+    }
+
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
         UpdateLayoutForWindowState();

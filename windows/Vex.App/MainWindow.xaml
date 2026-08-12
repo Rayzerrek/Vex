@@ -9,7 +9,7 @@
         FontFamily="Segoe UI" FontSize="13">
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="40"
-                      CornerRadius="0"
+                      CornerRadius="12"
                       GlassFrameThickness="0"
                       ResizeBorderThickness="6"
                       UseAeroCaptionButtons="False" />
@@ -59,14 +59,14 @@
         </Grid.ColumnDefinitions>
 
         <!-- Left sidebar: projects, like upstream's SidebarView. -->
-        <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource VexBackground}"
+        <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource VexSidebar}"
                 BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,1,0"
                 ClipToBounds="True">
             <!-- Fixed-width content: the column animates while this grid is
                  clipped, so the tree never reflows mid-slide. -->
             <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
             <DockPanel>
-                <Border DockPanel.Dock="Top" Height="40" Padding="12,0" Background="{StaticResource VexBackground}">
+                <Border DockPanel.Dock="Top" Height="40" Padding="12,0" Background="Transparent">
                     <DockPanel>
                         <TextBlock Text="" FontWeight="SemiBold" FontSize="15"
                                    VerticalAlignment="Center" Foreground="{StaticResource VexText}"/>
