@@ -55,13 +55,20 @@ public partial class MainWindow : Window
 
     private void UpdateLayoutForWindowState()
     {
-        if (WindowState == WindowState.Maximized)
+        if (MaximizeButtonIcon != null && MaximizeButton != null)
         {
-            MainGrid.Margin = new Thickness(6);
-        }
-        else
-        {
-            MainGrid.Margin = new Thickness(0);
+            if (WindowState == WindowState.Maximized)
+            {
+                MaximizeButtonIcon.Text = "\uE923";
+                MaximizeButton.ToolTip = "Restore";
+                MainGrid.Margin = new Thickness(6);
+            }
+            else
+            {
+                MaximizeButtonIcon.Text = "\uE922";
+                MaximizeButton.ToolTip = "Maximize";
+                MainGrid.Margin = new Thickness(0);
+            }
         }
     }
 
