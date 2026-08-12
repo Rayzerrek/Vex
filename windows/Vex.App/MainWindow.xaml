@@ -130,7 +130,8 @@
         </Grid.RowDefinitions>
 
         <!-- Tab bar across the top of the window -->
-        <Grid Grid.Row="0" x:Name="TabBarGrid"
+        <Border Grid.Row="0" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,0,1">
+        <Grid x:Name="TabBarGrid"
               Panel.ZIndex="100"
               Background="{StaticResource VexTabStrip}">
             <Grid.ColumnDefinitions>
@@ -298,6 +299,7 @@
                 </Button>
             </StackPanel>
         </Grid>
+        </Border>
 
         <!-- Lower content panel containing Sidebar and active WorkspaceTab content -->
         <Grid Grid.Row="1">
