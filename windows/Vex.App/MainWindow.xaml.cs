@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Diagnostics;
 using System.Windows.Media;
 using Vex.App.Model;
+using Vex.App.Terminal.Native;
 using Microsoft.Win32;
 
 namespace Vex.App;
@@ -139,6 +140,15 @@ public partial class MainWindow : Window
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
         var modifiers = System.Windows.Input.Keyboard.Modifiers;
 
+        // A full-screen TUI owns plain-Ctrl shortcuts; its own bindings
+        // (e.g. Ctrl+P in lazygit or vim-style apps) win over the app's.
+        if (modifiers == System.Windows.Input.ModifierKeys.Control
+            && (key == System.Windows.Input.Key.P || key == System.Windows.Input.Key.S)
+            && FocusedTerminalIsTui())
+        {
+            return;
+        }
+
         if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.P)
         {
             SettingsOverlay.Toggle();
@@ -156,6 +166,18 @@ public partial class MainWindow : Window
                 e.Handled = true;
             }
         }
+    }
+
+    private static bool FocusedTerminalIsTui()
+    {
+        for (var node = System.Windows.Input.Keyboard.FocusedElement as DependencyObject;
+             node is not null;
+             node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is NativeTerminalControl terminal)
+                return terminal.IsTuiMode;
+        }
+        return false;
     }
 
     private bool SaveCurrentFile()

@@ -1,5 +1,4 @@
 using System.Windows.Controls;
-using System.Windows.Threading;
 using Vex.App.Terminal;
 using Vex.Terminal;
 
@@ -117,15 +116,24 @@ public sealed class TerminalPane : LeafPane
 
     public override void Focus()
     {
-        if (View is ITerminalView tv)
+        if (View is not ITerminalView tv)
+            return;
+        if (View is System.Windows.FrameworkElement { IsLoaded: true })
         {
-            if (View is System.Windows.FrameworkElement { IsLoaded: true })
-                tv.FocusTerminal();
-            else
-                // The view may not be in the tree yet (e.g. a brand-new tab);
-                // focus once it is loaded so typing works immediately.
-                Dispatcher.CurrentDispatcher.BeginInvoke(tv.FocusTerminal);
+            tv.FocusTerminal();
+            return;
         }
+        // The view may not be in the tree yet (e.g. a brand-new tab); a
+        // dispatcher callback would still run before the template is
+        // realized, so focus only once the view is loaded.
+        var element = (System.Windows.FrameworkElement)View;
+        System.Windows.RoutedEventHandler onLoaded = null!;
+        onLoaded = (_, _) =>
+        {
+            element.Loaded -= onLoaded;
+            tv.FocusTerminal();
+        };
+        element.Loaded += onLoaded;
     }
 
     protected override object CreateView()

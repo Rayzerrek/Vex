@@ -3,7 +3,7 @@
   <ItemGroup>
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <ProjectReference Include="..\Vex.Terminal\Vex.Terminal.csproj" />
-    <ProjectReference Include="..\..\Vendor\XtermSharp\XtermSharp.csproj" />
+    <ProjectReference Include="..\Vex.Libghostty\Vex.Libghostty.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,8 +25,8 @@
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <TieredPGO>true</TieredPGO>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <AssemblyTitle>Vex Terminal Workspace</AssemblyTitle>
-    <Product>Vex Terminal Workspace</Product>
+    <AssemblyTitle>Vex</AssemblyTitle>
+    <Product>Vex</Product>
     <Description>ConPTY terminal workspace with split panes, file tree, and editor.</Description>
     <Company>Vex</Company>
     <Authors>Vex</Authors>

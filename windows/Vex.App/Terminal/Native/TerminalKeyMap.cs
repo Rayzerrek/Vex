@@ -1,6 +1,5 @@
 using System.Text;
 using System.Windows.Input;
-using XtermSharp;
 
 namespace Vex.App.Terminal.Native;
 
@@ -11,6 +10,17 @@ namespace Vex.App.Terminal.Native;
 /// </summary>
 public static class TerminalKeyMap
 {
+    private static readonly byte[] CmdRet = { (byte)'\r' };
+    private static readonly byte[] CmdDel = { 0x7f };
+    private static readonly byte[] CmdEsc = { 0x1b };
+    private static readonly byte[] CmdTab = { (byte)'\t' };
+    private static readonly byte[] CmdBackTab = Encoding.ASCII.GetBytes("\x1b[Z");
+    private static readonly byte[] CmdDelKey = Encoding.ASCII.GetBytes("\x1b[3~");
+    private static readonly byte[] CmdPageUp = Encoding.ASCII.GetBytes("\x1b[5~");
+    private static readonly byte[] CmdPageDown = Encoding.ASCII.GetBytes("\x1b[6~");
+
+    private static byte[] Csi(string sequence) => Encoding.ASCII.GetBytes(sequence);
+
     /// <summary>
     /// Returns the bytes to write to the PTY for <paramref name="key"/>, or
     /// null when the key produces regular text input instead.
@@ -27,35 +37,35 @@ public static class TerminalKeyMap
         switch (key)
         {
             case Key.Return: // same value as Key.Enter
-                return EscapeSequences.CmdRet;
+                return CmdRet;
             case Key.Back:
-                return EscapeSequences.CmdDel;
+                return CmdDel;
             case Key.Escape:
-                return EscapeSequences.CmdEsc;
+                return CmdEsc;
             case Key.Tab:
-                return shift ? EscapeSequences.CmdBackTab : EscapeSequences.CmdTab;
+                return shift ? CmdBackTab : CmdTab;
 
             case Key.Up:
-                return Arrow("A", EscapeSequences.MoveUpApp, EscapeSequences.MoveUpNormal);
+                return Arrow("A", "\x1bOA", "\x1b[A");
             case Key.Down:
-                return Arrow("B", EscapeSequences.MoveDownApp, EscapeSequences.MoveDownNormal);
+                return Arrow("B", "\x1bOB", "\x1b[B");
             case Key.Right:
-                return Arrow("C", EscapeSequences.MoveRightApp, EscapeSequences.MoveRightNormal);
+                return Arrow("C", "\x1bOC", "\x1b[C");
             case Key.Left:
-                return Arrow("D", EscapeSequences.MoveLeftApp, EscapeSequences.MoveLeftNormal);
+                return Arrow("D", "\x1bOD", "\x1b[D");
             case Key.Home:
-                return Arrow("H", EscapeSequences.MoveHomeApp, EscapeSequences.MoveHomeNormal);
+                return Arrow("H", "\x1bOH", "\x1b[H");
             case Key.End:
-                return Arrow("F", EscapeSequences.MoveEndApp, EscapeSequences.MoveEndNormal);
+                return Arrow("F", "\x1bOF", "\x1b[F");
 
             case Key.Delete:
-                return mod > 1 ? Csi(mod, "~", 3) : EscapeSequences.CmdDelKey;
+                return mod > 1 ? Csi(mod, "~", 3) : CmdDelKey;
             case Key.Insert:
                 return Csi(mod, "~", 2);
             case Key.PageUp:
-                return mod > 1 ? Csi(mod, "~", 5) : EscapeSequences.CmdPageUp;
+                return mod > 1 ? Csi(mod, "~", 5) : CmdPageUp;
             case Key.PageDown:
-                return mod > 1 ? Csi(mod, "~", 6) : EscapeSequences.CmdPageDown;
+                return mod > 1 ? Csi(mod, "~", 6) : CmdPageDown;
 
             case Key.Space when ctrl:
                 return new byte[] { 0 };
@@ -68,8 +78,10 @@ public static class TerminalKeyMap
                 return new byte[] { 0x1d };
         }
 
-        if (key >= Key.F1 && key <= Key.F12)
-            return EscapeSequences.CmdF[key - Key.F1];
+        if (key >= Key.F1 && key <= Key.F4)
+            return Csi($"\x1bO{(char)('P' + key - Key.F1)}");
+        if (key >= Key.F5 && key <= Key.F12)
+            return Csi($"\x1b[{15 + key - Key.F5}~");
 
         if (key >= Key.A && key <= Key.Z)
         {
@@ -90,11 +102,11 @@ public static class TerminalKeyMap
 
         return null;
 
-        byte[] Arrow(string code, byte[] app, byte[] normal)
+        byte[] Arrow(string code, string app, string normal)
         {
             if (mod > 1)
                 return Csi(mod, code);
-            return applicationCursor ? app : normal;
+            return Csi(applicationCursor ? app : normal);
         }
     }
 
