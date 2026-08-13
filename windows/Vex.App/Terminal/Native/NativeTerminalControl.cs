@@ -438,6 +438,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     // ---- Session ----------------------------------------------------------
 
+    /// <summary>Shell override for live self-test scenarios; null uses the
+    /// configured default.</summary>
+    internal string? SelfTestShell;
+
     private void StartSession()
     {
         if (_session is not null)
@@ -446,7 +450,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         var session = new TerminalSession();
         session.OutputReceived += OnSessionOutput;
         session.Exited += OnSessionExited;
-        var shell = AppSettings.Instance.Shell switch
+        var shell = SelfTestShell ?? AppSettings.Instance.Shell switch
         {
             "Nushell" => "nu.exe",
             "PowerShell" => TerminalSession.PowerShell(),
@@ -659,6 +663,12 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     {
         _terminal.ScrollBy(lines);
         FlushRedraw();
+    }
+
+    internal string SelfTestScrollInfo()
+    {
+        var sb = _terminal.Scrollbar;
+        return $"scrollbar total={sb.Total} offset={sb.Offset} len={sb.Len}";
     }
 
     internal void SelfTestStabilizeCaret()

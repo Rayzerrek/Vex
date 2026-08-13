@@ -26,7 +26,12 @@ internal static class RenderSelfTest
     /// Tab accept, close) inside the app instead of the deterministic replay —
     /// the full async pump path, pixel-checked against the buffer.</summary>
     public static bool LiveMode { get; } = Environment.GetEnvironmentVariable("VEX_LIVE") == "1";
+
+    /// <summary>With VEX_LIVE=1, run the output-flood stress scenario (nu +
+    /// gh help) instead of the nvim pum scenario.</summary>
+    public static bool StressMode { get; } = Environment.GetEnvironmentVariable("VEX_LIVE_STRESS") == "1";
     private static readonly string? LiveDir = Environment.GetEnvironmentVariable("VEX_LIVE_DIR");
+    private static readonly string? LiveShell = Environment.GetEnvironmentVariable("VEX_LIVE_SHELL");
 
     public static void Run(NativeTerminalControl control)
     {
@@ -48,7 +53,10 @@ internal static class RenderSelfTest
                 {
                     // RunLive drives its own step timers and shuts the app
                     // down from the last step.
-                    RunLive(control);
+                    if (StressMode)
+                        RunStress(control);
+                    else
+                        RunLive(control);
                     return;
                 }
                 RunCore(control);
@@ -65,6 +73,96 @@ internal static class RenderSelfTest
             }
         };
         t.Start();
+    }
+
+    /// <summary>
+    /// Live output-flood stress: real nu + gh session fed through the full
+    /// async pump. Every phase is captured to a PNG (VEX_LIVE_DIR) and
+    /// pixel-checked against the emulator buffer — background corners must
+    /// match their cells (no overlapping/ghost pixels, colors correct) and
+    /// clears must leave a clean screen.
+    /// </summary>
+    private static void RunStress(NativeTerminalControl control)
+    {
+        var dir = string.IsNullOrEmpty(LiveDir) ? Path.GetTempPath() : LiveDir;
+        Report(control, $"stress start shell={LiveShell ?? "default"} cols={control.SelfTestCols} rows={control.SelfTestRows}");
+        control.SelfTestStabilizeCaret();
+        control.SelfTestShell = LiveShell;
+        control.SelfTestStartSession();
+
+        byte[]? clearedPixels = null;
+        var steps = new Queue<(int DelayMs, Action Act)>();
+        steps.Enqueue((4000, () => control.SelfTestType("1..200 | each {gh help}\r")));
+        steps.Enqueue((30000, () =>
+        {
+            Shot(control, Path.Combine(dir, "stress-01-flood.png"));
+            Report(control, $"stress flood {control.SelfTestScrollInfo()}");
+            ReplayCheck(control, "stress-flood");
+        }));
+        steps.Enqueue((300, () => control.SelfTestType("cls\r")));
+        steps.Enqueue((2500, () =>
+        {
+            clearedPixels = Capture(control);
+            Shot(control, Path.Combine(dir, "stress-02-clear.png"));
+            var clearedInk = InkBands(control, clearedPixels);
+            Report(control, clearedInk <= 2 ? "PASS stress-clear: screen clean" : $"FAIL stress-clear: ghost rows remain ({clearedInk} bands)");
+        }));
+        steps.Enqueue((200, () => control.SelfTestScroll(-10)));
+        steps.Enqueue((600, () =>
+        {
+            Shot(control, Path.Combine(dir, "stress-03-scrolled-up.png"));
+            ReplayCheck(control, "stress-scrolled-up");
+            control.SelfTestScroll(10);
+        }));
+        steps.Enqueue((600, () =>
+        {
+            var snapped = Capture(control);
+            Shot(control, Path.Combine(dir, "stress-04-snapback.png"));
+            Report(control, clearedPixels is not null && PixelsEqual(clearedPixels, snapped)
+                ? "PASS stress-scroll: snap-back identical"
+                : "FAIL stress-scroll: snap-back differs");
+        }));
+        steps.Enqueue((200, () => control.SelfTestType("1..2000 | each {print \"the quick brown fox jumps over the lazy dog 0123456789\"}\r")));
+        steps.Enqueue((20000, () =>
+        {
+            Shot(control, Path.Combine(dir, "stress-05-big.png"));
+            Report(control, $"stress big {control.SelfTestScrollInfo()}");
+            ReplayCheck(control, "stress-big");
+        }));
+        steps.Enqueue((200, () =>
+        {
+            Report(control, "stress done");
+            Application.Current.Shutdown();
+        }));
+
+        var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(100),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (steps.Count == 0)
+            {
+                timer.Stop();
+                return;
+            }
+            var (delay, act) = steps.Peek();
+            // The pump timer has driven the previous step long enough.
+            timer.Stop();
+            var fire = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(Math.Max(50, delay)),
+            };
+            fire.Tick += (_, _) =>
+            {
+                fire.Stop();
+                steps.Dequeue();
+                act();
+                timer.Start();
+            };
+            fire.Start();
+        };
+        timer.Start();
     }
 
     /// <summary>
@@ -297,6 +395,19 @@ internal static class RenderSelfTest
         var closedCell = CellCornerLum(control, pumClosed, col: 3, row: 1);
         Report(control, $"pum-closed corner cell3-row1={closedCell} attrs={CellAttrDump(control, 1)}");
         Report(control, closedCell < 150 ? "PASS pum: popup pixels cleared" : "FAIL pum: ghost popup remains");
+
+        // Erase with a background color: what TUI apps (nvim, less, btop,
+        // tmux, fzf) do to paint their full-screen background. Erased cells
+        // have no text and carry the color as cell CONTENT, not style — the
+        // screen must be that color everywhere, not just under text.
+        control.SelfTestFeed("\x1b[48;2;30;40;60m\x1b[2J\x1b[H\x1b[0m");
+        var painted = Capture(control);
+        var (p1r, p1g, p1b) = CellCornerRgb(control, painted, col: 5, row: 10);
+        var (p2r, p2g, p2b) = CellCornerRgb(control, painted, col: 40, row: 20);
+        Report(control, $"bg-paint corners ({p1r},{p1g},{p1b}) ({p2r},{p2g},{p2b})");
+        Report(control, p1r == 30 && p1g == 40 && p1b == 60 && p2r == 30 && p2g == 40 && p2b == 60
+            ? "PASS bg-paint: erased cells painted everywhere"
+            : "FAIL bg-paint: background missing outside text");
 
         // Replay a captured real nvim session (pum open, Tab accept, pum
         // close) through the exact pump-style feeding and check every cell's
