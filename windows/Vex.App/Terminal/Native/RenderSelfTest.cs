@@ -51,12 +51,21 @@ internal static class RenderSelfTest
             {
                 if (LiveMode)
                 {
-                    // RunLive drives its own step timers and shuts the app
-                    // down from the last step.
-                    if (StressMode)
-                        RunStress(control);
-                    else
-                        RunLive(control);
+                    // Live scenarios drive their own step timers and shut
+                    // the app down from their last step (or below on error);
+                    // they return immediately after scheduling.
+                    try
+                    {
+                        if (StressMode)
+                            RunStress(control);
+                        else
+                            RunLive(control);
+                    }
+                    catch (Exception e)
+                    {
+                        Report(control, $"EXCEPTION {e}");
+                        Application.Current.Shutdown();
+                    }
                     return;
                 }
                 RunCore(control);
@@ -69,7 +78,8 @@ internal static class RenderSelfTest
             {
                 // Self-test runs are disposable: close the app once the
                 // report is written so the caller knows it finished.
-                Application.Current.Shutdown();
+                if (!LiveMode)
+                    Application.Current.Shutdown();
             }
         };
         t.Start();
@@ -147,6 +157,7 @@ internal static class RenderSelfTest
                 return;
             }
             var (delay, act) = steps.Peek();
+            Report(control, $"live step remaining={steps.Count} delay={delay}");
             // The pump timer has driven the previous step long enough.
             timer.Stop();
             var fire = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
@@ -174,8 +185,18 @@ internal static class RenderSelfTest
     private static void RunLive(NativeTerminalControl control)
     {
         Report(control, $"live start cols={control.SelfTestCols} rows={control.SelfTestRows}");
-        control.SelfTestStabilizeCaret();
-        control.SelfTestStartSession();
+        try
+        {
+            control.SelfTestStabilizeCaret();
+            Report(control, "live caret stabilized");
+            control.SelfTestStartSession();
+            Report(control, "live session started");
+        }
+        catch (Exception e)
+        {
+            Report(control, $"live setup EXCEPTION {e.GetType().Name}: {e.Message}");
+            return;
+        }
 
         var dir = string.IsNullOrEmpty(LiveDir) ? Path.GetTempPath() : LiveDir;
         var testFile = Path.Combine(dir, "vex-live-words.txt");
@@ -184,7 +205,9 @@ internal static class RenderSelfTest
         File.WriteAllText(initFile, "set completeopt=menuone,noinsert,noselect\nhighlight Pmenu ctermbg=236 ctermfg=250\nhighlight PmenuSel ctermbg=240 ctermfg=255 cterm=bold\nhighlight PmenuSbar ctermbg=238\nset pumheight=12\n");
 
         var steps = new Queue<(int DelayMs, Action Act)>();
-        steps.Enqueue((2000, () => control.SelfTestType($"nvim --clean -u \"{initFile}\" -i NONE \"{testFile}\"\r")));
+        // nu treats backslashes as escapes in double quotes ('\U' breaks
+        // paths), so the file paths use single quotes.
+        steps.Enqueue((2000, () => control.SelfTestType($"nvim --clean -u '{initFile}' -i NONE '{testFile}'\r")));
         steps.Enqueue((3000, () => control.SelfTestType("i")));
         steps.Enqueue((600, () => control.SelfTestType("b")));
         steps.Enqueue((700, () => control.SelfTestType("\x0e")));   // Ctrl-N: open pum
@@ -197,6 +220,10 @@ internal static class RenderSelfTest
         steps.Enqueue((1500, () =>
         {
             Shot(control, Path.Combine(dir, "live-03-after-tab.png"));
+            Report(control, $"live after-tab {control.SelfTestCursorInfo()}");
+            Report(control, $"live after-tab row0='{control.SelfTestRowText(0)}'");
+            Report(control, $"live after-tab row1='{control.SelfTestRowText(1)}'");
+            Report(control, $"live after-tab cells18-26: {CellAttrDumpRange(control, 1, 18, 9)}");
             Report(control, $"live after-tab buffer attrs: {CellAttrDump(control, 1)} / {CellAttrDump(control, 2)}");
             ReplayCheck(control, "live-after-tab");
         }));
@@ -225,6 +252,7 @@ internal static class RenderSelfTest
                 return;
             }
             var (delay, act) = steps.Peek();
+            Report(control, $"live step remaining={steps.Count} delay={delay}");
             // The pump timer has driven the previous step long enough.
             timer.Stop();
             var fire = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
@@ -531,15 +559,20 @@ internal static class RenderSelfTest
     /// raw emulator state behind whatever pixels got rendered.</summary>
     private static string CellAttrDump(NativeTerminalControl control, int row)
     {
+        return CellAttrDumpRange(control, row, 0, 8);
+    }
+
+    private static string CellAttrDumpRange(NativeTerminalControl control, int row, int start, int count)
+    {
         var line = control.SelfTestLine(row);
         if (line is null)
             return "no-line";
         var sb = new StringBuilder();
         var cells = line.Cells;
-        for (var c = 0; c < 8 && c < cells.Length; c++)
+        for (var c = start; c < start + count && c < cells.Length; c++)
         {
             var cell = cells[c];
-            sb.Append($"{c}:{(cell.Text.Length == 0 ? '·' : cell.Text[0])}={(byte)cell.Flags:X2}/{cell.FgTag}{(cell.FgTag == ColorTag.Rgb ? cell.FgValue.ToString("X6") : cell.FgValue.ToString())} ");
+            sb.Append($"{c}:'{(cell.Text.Length == 0 ? '·' : cell.Text)}'={(byte)cell.Flags:X2}/{cell.FgTag}{(cell.FgTag == ColorTag.Rgb ? cell.FgValue.ToString("X6") : cell.FgValue.ToString())} ");
         }
         return sb.ToString().TrimEnd();
     }
@@ -565,6 +598,16 @@ internal static class RenderSelfTest
                 if (caret is { Row: var cr, Col: var cc } && row == cr && col == cc)
                     continue;
                 ref readonly var cell = ref cells[col];
+                // Cells with text legitimately carry glyph ink at any corner,
+                // and the cell right after a text cell can carry the
+                // overflow of a font-wide glyph (emoji are single-column in
+                // ghostty's grid but their fallback glyphs are not);
+                // background-fill verification (ghost pixel detection) only
+                // makes sense on cells away from text.
+                if (cell.Text.Length > 0)
+                    continue;
+                if (col > 0 && cells[col - 1].Text.Length > 0)
+                    continue;
                 var (bg, baseColor) = control.SelfTestResolveCell(cell);
                 var expected = bg ?? baseColor;
                 // Premultiplied over the (opaque-ish) backdrop: compare the
