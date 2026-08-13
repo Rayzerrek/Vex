@@ -32,6 +32,7 @@
                          BorderBrush="{StaticResource VexBorder}"
                          BorderThickness="1" Padding="8,0"
                          TextChanged="SearchBox_TextChanged"
+                         GotKeyboardFocus="SearchBox_GotKeyboardFocus"
                          PreviewKeyDown="SearchBox_PreviewKeyDown"/>
             </Grid>
         </Border>
