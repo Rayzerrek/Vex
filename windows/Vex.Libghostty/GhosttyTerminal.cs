@@ -391,7 +391,7 @@ public sealed class GhosttyTerminal : IDisposable
 
     public bool HasSelection => TryGetBuffer(TerminalData.Selection, s_selectionScratch);
 
-    public unsafe void SelectionPress(int viewportCol, int viewportRow)
+    public unsafe void SelectionPress(int viewportCol, int viewportRow, double xPx, double yPx)
     {
         var point = new Native.GhosttyPoint
         {
@@ -402,6 +402,8 @@ public sealed class GhosttyTerminal : IDisposable
 
         SetEventOption(_pressEvent, SelectionGestureEventOption.Ref, gridRef);
         SetEventOption(_pressEvent, SelectionGestureEventOption.TimeNs, NowNs());
+        var position = new Native.GhosttySurfacePosition { x = xPx, y = yPx };
+        SetEventOption(_pressEvent, SelectionGestureEventOption.Position, position);
 
         var snapshot = GhosttySelectionScratch();
         var result = Native.ghostty_selection_gesture_event(_gesture, _terminal, _pressEvent, (IntPtr)(&snapshot));
@@ -409,7 +411,7 @@ public sealed class GhosttyTerminal : IDisposable
             Check(Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, (IntPtr)(&snapshot)), "set selection");
     }
 
-    public unsafe void SelectionDrag(int viewportCol, int viewportRow)
+    public unsafe void SelectionDrag(int viewportCol, int viewportRow, double xPx, double yPx)
     {
         var point = new Native.GhosttyPoint
         {
@@ -427,6 +429,8 @@ public sealed class GhosttyTerminal : IDisposable
             screenHeight = (uint)Math.Max(1, Rows * _cellHeightPx),
         };
         SetEventOption(_dragEvent, SelectionGestureEventOption.Geometry, geometry);
+        var position = new Native.GhosttySurfacePosition { x = xPx, y = yPx };
+        SetEventOption(_dragEvent, SelectionGestureEventOption.Position, position);
 
         var snapshot = GhosttySelectionScratch();
         var result = Native.ghostty_selection_gesture_event(_gesture, _terminal, _dragEvent, (IntPtr)(&snapshot));

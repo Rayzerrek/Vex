@@ -1429,7 +1429,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             // fresh selection at the pointer instead of extending.
             _selectionActive = true;
             _selectionDragged = false;
-            _terminal.SelectionPress(col, row);
+            _terminal.SelectionPress(col, row, pos.X, pos.Y);
             CaptureMouse();
             FlushRedraw();
             e.Handled = true;
@@ -1451,7 +1451,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             // derives word selection on the second press.
             _selectionActive = true;
             _selectionDragged = false;
-            _terminal.SelectionPress(col, row);
+            _terminal.SelectionPress(col, row, pos.X, pos.Y);
             CaptureMouse();
             FlushRedraw();
             e.Handled = true;
@@ -1460,7 +1460,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
         _selectionActive = true;
         _selectionDragged = false;
-        _terminal.SelectionPress(col, row);
+        _terminal.SelectionPress(col, row, pos.X, pos.Y);
         CaptureMouse();
         FlushRedraw();
     }
@@ -1490,7 +1490,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         {
             var (col, row) = CellFromPoint(pos);
             _selectionDragged = true;
-            _terminal.SelectionDrag(col, row);
+            _terminal.SelectionDrag(col, row, pos.X, pos.Y);
             FlushRedraw();
         }
     }
