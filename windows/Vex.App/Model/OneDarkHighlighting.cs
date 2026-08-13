@@ -1,5 +1,6 @@
 using System.IO;
 using System.Reflection;
+using System.Threading;
 using System.Xml;
 using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Highlighting.Xshd;
@@ -14,6 +15,8 @@ internal static class OneDarkHighlighting
 {
     private const string ResourcePrefix = "Vex.App.Highlighting.";
 
+    private static int _registered;
+
     // Names that match the x:Key in each XSHD <SyntaxDefinition name="…">
     private static readonly string[] DefinitionNames =
     [
@@ -27,11 +30,16 @@ internal static class OneDarkHighlighting
     ];
 
     /// <summary>
-    /// Call once at startup (before any <see cref="EditorPane"/> is created) to
-    /// register all One Dark definitions with <see cref="HighlightingManager"/>.
+    /// Call once before any <see cref="EditorPane"/> is created to register all
+    /// One Dark definitions with <see cref="HighlightingManager"/>. Idempotent;
+    /// also invoked lazily from <see cref="Get"/> so startup never pays for
+    /// parsing the XSHD files until an editor is actually shown.
     /// </summary>
     internal static void Register()
     {
+        if (Interlocked.Exchange(ref _registered, 1) != 0)
+            return;
+
         var assembly = Assembly.GetExecutingAssembly();
         foreach (var name in DefinitionNames)
         {
@@ -101,6 +109,9 @@ internal static class OneDarkHighlighting
             _ => null,
         };
 
-    private static IHighlightingDefinition? Get(string name) =>
-        HighlightingManager.Instance.GetDefinition(name);
+    private static IHighlightingDefinition? Get(string name)
+    {
+        Register();
+        return HighlightingManager.Instance.GetDefinition(name);
+    }
 }

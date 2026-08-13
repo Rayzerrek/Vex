@@ -13,6 +13,7 @@ public partial class FileSearchView : UserControl
     private string _root = "";
     private List<FileSearchResult> _allResults = new();
     private bool _rebuildQueued;
+    private bool _indexDirty = true;
 
     public FileSearchView()
     {
@@ -31,9 +32,17 @@ public partial class FileSearchView : UserControl
     {
         _root = workingDirectory;
         _engine = new FileSearchEngine(workingDirectory);
+        _indexDirty = true;
         SearchBox.Text = "";
         UpdateResults();
-        RebuildIndex();
+    }
+
+    private void SearchBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        // The index walk is deferred until the user actually starts searching,
+        // so startup never spends time enumerating the project directory.
+        if (_indexDirty)
+            RebuildIndex();
     }
 
     private void RebuildIndex()
@@ -43,6 +52,7 @@ public partial class FileSearchView : UserControl
             return;
 
         _rebuildQueued = true;
+        _indexDirty = false;
         // Snapshot the root: the index may be rebuilding when the project
         // switches, and we must not overwrite a newer root's index.
         var root = _root;
