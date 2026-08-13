@@ -671,6 +671,22 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         return $"scrollbar total={sb.Total} offset={sb.Offset} len={sb.Len}";
     }
 
+    internal string SelfTestCursorInfo()
+    {
+        var cursor = _terminal.Cursor;
+        return $"cursor x={cursor.X} y={cursor.Y} visible={cursor.Visible} blink={cursor.Blinking} shape={cursor.Shape}";
+    }
+
+    internal string SelfTestRowText(int row)
+    {
+        if (row < 0 || row >= _terminal.FrameRows.Length)
+            return "no-row";
+        var sb = new StringBuilder();
+        foreach (var cell in _terminal.FrameRows[row].Cells)
+            sb.Append(cell.Text.Length > 0 ? cell.Text : " ");
+        return sb.ToString().TrimEnd();
+    }
+
     internal void SelfTestStabilizeCaret()
     {
         _selfTestCaret = true;
