@@ -14,7 +14,9 @@ public sealed class Workspace : ObservableObject
 
     public Workspace()
     {
-        NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        // Projects are added by the caller (SessionStore.Load falls back to a
+        // fresh project). Not creating one here avoids building a throwaway
+        // terminal pane that would linger in AppIconTracker.
     }
 
     public ObservableCollection<Project> Projects { get; } = new();
