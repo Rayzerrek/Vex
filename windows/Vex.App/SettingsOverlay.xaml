@@ -399,6 +399,7 @@
                                         <TextBlock Text="Applied to all open terminals." Style="{StaticResource RowDesc}" Margin="0,1,0,14"/>
                                         <ListBox x:Name="ThemeList" Background="Transparent" BorderThickness="0"
                                                  SelectionChanged="ThemeList_SelectionChanged"
+                                                 PreviewMouseLeftButtonDown="ThemeList_PreviewMouseLeftButtonDown"
                                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
@@ -422,7 +423,7 @@
                                             </ListBox.ItemContainerStyle>
                                             <ListBox.ItemTemplate>
                                                 <DataTemplate>
-                                                    <StackPanel Width="120" Cursor="Hand" RenderTransformOrigin="0.5,0.5">
+                                                    <StackPanel Width="120" Cursor="Hand" RenderTransformOrigin="0.5,0.5" Background="Transparent">
                                                         <StackPanel.RenderTransform>
                                                             <ScaleTransform x:Name="cardScale" ScaleX="1" ScaleY="1"/>
                                                         </StackPanel.RenderTransform>

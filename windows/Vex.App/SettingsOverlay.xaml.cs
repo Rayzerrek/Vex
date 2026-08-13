@@ -266,4 +266,13 @@ public partial class SettingsOverlay : UserControl
             AppSettings.Instance.ThemeName = theme.Name;
         }
     }
+
+    private void ThemeList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // Item containers are non-focusable so the terminal keeps keyboard
+        // focus, and WPF skips click-selection for items that cannot take
+        // focus. Select the clicked card explicitly.
+        if (ItemsControl.ContainerFromElement(ThemeList, e.OriginalSource as DependencyObject) is ListBoxItem item)
+            ThemeList.SelectedItem = item.DataContext;
+    }
 }
