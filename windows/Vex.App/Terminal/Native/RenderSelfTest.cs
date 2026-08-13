@@ -33,6 +33,11 @@ internal static class RenderSelfTest
     private static readonly string? LiveDir = Environment.GetEnvironmentVariable("VEX_LIVE_DIR");
     private static readonly string? LiveShell = Environment.GetEnvironmentVariable("VEX_LIVE_SHELL");
 
+    /// <summary>With VEX_LIVE=1, open this file in nvim and type a function
+    /// into it instead of running the words-file pum scenario. The session's
+    /// working directory is the pane's own.</summary>
+    public static string? LiveFile { get; } = Environment.GetEnvironmentVariable("VEX_LIVE_FILE");
+
     public static void Run(NativeTerminalControl control)
     {
         if (string.IsNullOrEmpty(ReportPath))
@@ -58,6 +63,8 @@ internal static class RenderSelfTest
                     {
                         if (StressMode)
                             RunStress(control);
+                        else if (!string.IsNullOrEmpty(LiveFile))
+                            RunLiveFile(control, LiveFile);
                         else
                             RunLive(control);
                     }
@@ -114,8 +121,10 @@ internal static class RenderSelfTest
         {
             clearedPixels = Capture(control);
             Shot(control, Path.Combine(dir, "stress-02-clear.png"));
-            var clearedInk = InkBands(control, clearedPixels);
-            Report(control, clearedInk <= 2 ? "PASS stress-clear: screen clean" : $"FAIL stress-clear: ghost rows remain ({clearedInk} bands)");
+            // The shell redraws its (possibly multi-line) prompt right after
+            // cls, so "empty screen" is not the contract; the contract is
+            // that every painted pixel matches the buffer (no ghosts).
+            ReplayCheck(control, "stress-clear");
         }));
         steps.Enqueue((200, () => control.SelfTestScroll(-10)));
         steps.Enqueue((600, () =>
@@ -142,6 +151,82 @@ internal static class RenderSelfTest
         steps.Enqueue((200, () =>
         {
             Report(control, "stress done");
+            Application.Current.Shutdown();
+        }));
+
+        var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(100),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (steps.Count == 0)
+            {
+                timer.Stop();
+                return;
+            }
+            var (delay, act) = steps.Peek();
+            Report(control, $"live step remaining={steps.Count} delay={delay}");
+            // The pump timer has driven the previous step long enough.
+            timer.Stop();
+            var fire = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(Math.Max(50, delay)),
+            };
+            fire.Tick += (_, _) =>
+            {
+                fire.Stop();
+                steps.Dequeue();
+                act();
+                timer.Start();
+            };
+            fire.Start();
+        };
+        timer.Start();
+    }
+
+    /// <summary>
+    /// Live file-edit scenario: open the given file in nvim, type a function
+    /// into it (insert mode), leave without saving, and pixel-check every
+    /// phase against the emulator buffer.
+    /// </summary>
+    private static void RunLiveFile(NativeTerminalControl control, string file)
+    {
+        var dir = string.IsNullOrEmpty(LiveDir) ? Path.GetTempPath() : LiveDir;
+        Report(control, $"live-file start file={file} cols={control.SelfTestCols} rows={control.SelfTestRows}");
+        control.SelfTestStabilizeCaret();
+        control.SelfTestStartSession();
+
+        var steps = new Queue<(int DelayMs, Action Act)>();
+        // Single quotes: nu treats backslashes in double quotes as escapes.
+        steps.Enqueue((2000, () => control.SelfTestType($"nvim --clean -i NONE '{file}'\r")));
+        steps.Enqueue((3000, () =>
+        {
+            Shot(control, Path.Combine(dir, "file-01-open.png"));
+            Report(control, $"live-file open {control.SelfTestCursorInfo()}");
+            ReplayCheck(control, "file-open");
+        }));
+        // Append at the end of the last line, then type a small function.
+        steps.Enqueue((300, () => control.SelfTestType("Go")));
+        steps.Enqueue((500, () => control.SelfTestType("function greet(name: string): string {\r\treturn `Hello, ${name}!`;\r}\r")));
+        steps.Enqueue((1500, () =>
+        {
+            Shot(control, Path.Combine(dir, "file-02-typed.png"));
+            Report(control, $"live-file typed {control.SelfTestCursorInfo()}");
+            Report(control, $"live-file row0='{control.SelfTestRowText(0)}'");
+            ReplayCheck(control, "file-typed");
+        }));
+        // Leave insert mode and quit without saving: the user's file must
+        // stay untouched.
+        steps.Enqueue((300, () => control.SelfTestType("\x1b:q!\r")));
+        steps.Enqueue((2500, () =>
+        {
+            Shot(control, Path.Combine(dir, "file-03-after-exit.png"));
+            ReplayCheck(control, "file-after-exit");
+        }));
+        steps.Enqueue((200, () =>
+        {
+            Report(control, "live-file done");
             Application.Current.Shutdown();
         }));
 
