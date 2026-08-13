@@ -118,6 +118,10 @@ public sealed class GhosttyTerminal : IDisposable
         SetOption(TerminalOption.TitleChanged, Marshal.GetFunctionPointerForDelegate(s_titleChanged));
         SetOption(TerminalOption.WritePty, Marshal.GetFunctionPointerForDelegate(s_writePty));
         SetOption(TerminalOption.Bell, Marshal.GetFunctionPointerForDelegate(s_bell));
+        // xterm's default cursor (DECSCUSR 0) blinks; Vex's caret follows
+        // the terminal unless an app forces a steady cursor.
+        var defaultCursorBlink = true;
+        SetOption(TerminalOption.DefaultCursorBlink, defaultCursorBlink);
 
         Check(Native.ghostty_render_state_new(IntPtr.Zero, out _renderState), "render_state_new");
         Check(Native.ghostty_render_state_row_iterator_new(IntPtr.Zero, out _rowIterator), "row_iterator_new");
@@ -222,13 +226,17 @@ public sealed class GhosttyTerminal : IDisposable
 
     public void ScrollToBottom() => Scroll(Native.ScrollViewportTag.Bottom, 0);
 
+    public void ScrollToRow(ulong row) => Scroll(Native.ScrollViewportTag.Row, (nint)row);
+
     public void ScrollBy(int delta) => Scroll(Native.ScrollViewportTag.Delta, delta);
 
-    private void Scroll(Native.ScrollViewportTag tag, nint delta)
+    private void Scroll(Native.ScrollViewportTag tag, nint value)
     {
         var behavior = new Native.GhosttyTerminalScrollViewport { tag = (int)tag, value = default };
         if (tag == Native.ScrollViewportTag.Delta)
-            behavior.value.delta = delta;
+            behavior.value.delta = value;
+        else if (tag == Native.ScrollViewportTag.Row)
+            behavior.value.row = (nuint)value;
         Native.ghostty_terminal_scroll_viewport(_terminal, behavior);
     }
 
@@ -333,7 +341,7 @@ public sealed class GhosttyTerminal : IDisposable
         ulong raw = 0;
         Check(Native.ghostty_render_state_row_cells_get(_rowCells, RenderStateRowCellsData.Raw, (IntPtr)(&raw)), "cell raw");
         var wide = Native.CellWide.Narrow;
-        Check(Native.ghostty_cell_get(ref Unsafe.As<ulong, byte>(ref raw), CellData.Wide, (IntPtr)(&wide)), "cell wide");
+        Check(Native.ghostty_cell_get(raw, CellData.Wide, (IntPtr)(&wide)), "cell wide");
         cell.Wide = wide == Native.CellWide.Wide;
         cell.Tail = wide == Native.CellWide.WideSpacerTail;
 

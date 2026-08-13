@@ -1,4 +1,7 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+
+[assembly: InternalsVisibleTo("VexLibghosttySpike")]
 
 namespace Vex.Libghostty;
 
@@ -189,6 +192,8 @@ internal static class Native
         ColorCursor = 13,
         ColorPalette = 14,
         Selection = 21,
+        DefaultCursorStyle = 22,
+        DefaultCursorBlink = 23,
     }
 
     internal enum TerminalData : int
@@ -453,8 +458,10 @@ internal static class Native
 
     // --- Cell helpers ---------------------------------------------------
 
+    // NB: ghostty_cell_get takes the raw cell BY VALUE (an 8-byte packed
+    // struct in the first register) despite the header's pointer spelling.
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern Result ghostty_cell_get(ref byte cell, CellData data, IntPtr outValue);
+    internal static extern Result ghostty_cell_get(ulong cell, CellData data, IntPtr outValue);
 
     // --- Grid refs / selection -----------------------------------------
 

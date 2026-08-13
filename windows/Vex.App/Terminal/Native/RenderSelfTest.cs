@@ -1,0 +1,580 @@
+using System;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using Vex.Libghostty;
+
+namespace Vex.App.Terminal.Native;
+
+/// <summary>
+/// Deterministic renderer self-test, enabled by setting VEX_SELFTEST to a
+/// report path. Instead of driving the shell through ConPTY, it feeds the
+/// emulator scripted VT output directly — the same pump/flush pipeline the
+/// live shell uses — then renders the control to a bitmap and checks the
+/// pixels: a full screen of text, a clean screen after ED2 (no ghost rows),
+/// wide-character rendering, and pixel-identical snap-back after scrolling.
+/// </summary>
+internal static class RenderSelfTest
+{
+    public static string? ReportPath { get; } = Environment.GetEnvironmentVariable("VEX_SELFTEST");
+
+    /// <summary>Set VEX_LIVE=1 to drive a real ConPTY session (nvim pum open,
+    /// Tab accept, close) inside the app instead of the deterministic replay —
+    /// the full async pump path, pixel-checked against the buffer.</summary>
+    public static bool LiveMode { get; } = Environment.GetEnvironmentVariable("VEX_LIVE") == "1";
+    private static readonly string? LiveDir = Environment.GetEnvironmentVariable("VEX_LIVE_DIR");
+
+    public static void Run(NativeTerminalControl control)
+    {
+        if (string.IsNullOrEmpty(ReportPath))
+            return;
+
+        var t = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(250),
+        };
+        t.Tick += (_, _) =>
+        {
+            if (control.SelfTestCols == 0 || control.SelfTestRows == 0)
+                return;
+            t.Stop();
+            try
+            {
+                if (LiveMode)
+                {
+                    // RunLive drives its own step timers and shuts the app
+                    // down from the last step.
+                    RunLive(control);
+                    return;
+                }
+                RunCore(control);
+            }
+            catch (Exception e)
+            {
+                Report(control, $"EXCEPTION {e}");
+            }
+            finally
+            {
+                // Self-test runs are disposable: close the app once the
+                // report is written so the caller knows it finished.
+                Application.Current.Shutdown();
+            }
+        };
+        t.Start();
+    }
+
+    /// <summary>
+    /// Live end-to-end drive: real ConPTY session, real pump, real async
+    /// timing — the same nvim pum scenario the user runs by hand. Each
+    /// phase is captured to a PNG (VEX_LIVE_DIR) and the "after Tab" frame
+    /// is pixel-checked against the emulator buffer.
+    /// </summary>
+    private static void RunLive(NativeTerminalControl control)
+    {
+        Report(control, $"live start cols={control.SelfTestCols} rows={control.SelfTestRows}");
+        control.SelfTestStabilizeCaret();
+        control.SelfTestStartSession();
+
+        var dir = string.IsNullOrEmpty(LiveDir) ? Path.GetTempPath() : LiveDir;
+        var testFile = Path.Combine(dir, "vex-live-words.txt");
+        var initFile = Path.Combine(dir, "vex-live-init.vim");
+        File.WriteAllText(testFile, "apple\napricot\navocado\nbanana\nbattery\nbook\nbottle\nbrave\nbreeze\nbridge\n");
+        File.WriteAllText(initFile, "set completeopt=menuone,noinsert,noselect\nhighlight Pmenu ctermbg=236 ctermfg=250\nhighlight PmenuSel ctermbg=240 ctermfg=255 cterm=bold\nhighlight PmenuSbar ctermbg=238\nset pumheight=12\n");
+
+        var steps = new Queue<(int DelayMs, Action Act)>();
+        steps.Enqueue((2000, () => control.SelfTestType($"nvim --clean -u \"{initFile}\" -i NONE \"{testFile}\"\r")));
+        steps.Enqueue((3000, () => control.SelfTestType("i")));
+        steps.Enqueue((600, () => control.SelfTestType("b")));
+        steps.Enqueue((700, () => control.SelfTestType("\x0e")));   // Ctrl-N: open pum
+        steps.Enqueue((1200, () =>
+        {
+            Shot(control, Path.Combine(dir, "live-02-pum-open.png"));
+            Report(control, $"live pum-open buffer attrs: {CellAttrDump(control, 1)} / {CellAttrDump(control, 2)}");
+        }));
+        steps.Enqueue((300, () => control.SelfTestType("\t")));     // Tab: accept, pum closes
+        steps.Enqueue((1500, () =>
+        {
+            Shot(control, Path.Combine(dir, "live-03-after-tab.png"));
+            Report(control, $"live after-tab buffer attrs: {CellAttrDump(control, 1)} / {CellAttrDump(control, 2)}");
+            ReplayCheck(control, "live-after-tab");
+        }));
+        steps.Enqueue((300, () => control.SelfTestType("\x1b")));
+        steps.Enqueue((400, () => control.SelfTestType(":q!\r")));
+        steps.Enqueue((2500, () =>
+        {
+            Shot(control, Path.Combine(dir, "live-04-after-exit.png"));
+            ReplayCheck(control, "live-after-exit");
+        }));
+        steps.Enqueue((200, () =>
+        {
+            Report(control, "live done");
+            Application.Current.Shutdown();
+        }));
+
+        var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(100),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (steps.Count == 0)
+            {
+                timer.Stop();
+                return;
+            }
+            var (delay, act) = steps.Peek();
+            // The pump timer has driven the previous step long enough.
+            timer.Stop();
+            var fire = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(Math.Max(50, delay)),
+            };
+            fire.Tick += (_, _) =>
+            {
+                fire.Stop();
+                steps.Dequeue();
+                act();
+                timer.Start();
+            };
+            fire.Start();
+        };
+        timer.Start();
+    }
+
+    private static void Shot(NativeTerminalControl control, string path)
+    {
+        try
+        {
+            DumpPng(control, Capture(control), path);
+        }
+        catch (Exception e)
+        {
+            Report(control, $"shot-EXCEPTION {e.Message}");
+        }
+    }
+
+    private static void Report(NativeTerminalControl c, string line)
+    {
+        try { File.AppendAllText(ReportPath!, $"{line}\n"); }
+        catch { }
+    }
+
+    private static void RunCore(NativeTerminalControl control)
+    {
+        Report(control, $"start cols={control.SelfTestCols} rows={control.SelfTestRows} cell={control.SelfTestCellWidth:0.0}x{control.SelfTestCellHeight:0.0}");
+
+        // A steady caret so bitmaps from different captures are comparable.
+        control.SelfTestStabilizeCaret();
+
+        // 300 lines: the long-session stress case (scrollback + full redraws).
+        var sb = new StringBuilder(300 * 60);
+        for (var i = 1; i <= 300; i++)
+            sb.Append("line-").Append(i).Append(" the quick brown fox jumps over the lazy dog 0123456789\r\n");
+        control.SelfTestFeed(sb.ToString());
+        var full = Capture(control);
+        var fullInk = InkBands(control, full);
+        Report(control, $"after-feed inkBands={fullInk}");
+
+        // ED2 + cursor home: what `clear` sends. The screen must be empty
+        // afterwards — any leftover text rows are ghost pixels.
+        control.SelfTestFeed("\x1b[2J\x1b[H");
+        var cleared = Capture(control);
+        var clearedInk = InkBands(control, cleared);
+        Report(control, $"after-clear inkBands={clearedInk}");
+        Report(control, clearedInk <= 2 ? "PASS clear: screen clean" : "FAIL clear: ghost rows remain");
+
+        // Wide characters: CJK, emoji and box drawing on one line.
+        control.SelfTestFeed("wide: 日本語テスト 🎉🚀 emoji ┌─┐│├┤┼ ✓ あいうえお END\r\n");
+        var wide = Capture(control);
+        var wideInk = InkBands(control, wide);
+        Report(control, $"after-wide inkBands={wideInk}");
+        Report(control, wideInk >= 1 ? "PASS wide: line rendered" : "FAIL wide: nothing rendered");
+
+        // Wide-glyph advance: a 2-column CJK glyph at cell 0 must push the X
+        // to cell 2 — a 1-cell advance (the old bug) puts it at cell 1. The
+        // caret moves to row 1 so its overlay cannot ink the cells under test.
+        control.SelfTestFeed("\x1b[2J\x1b[H中X\x1b[2;1H");
+        var wideAdv = Capture(control);
+        var xAt2 = HasInkAt(control, wideAdv, col: 2, row: 0);
+        var xAt3 = HasInkAt(control, wideAdv, col: 3, row: 0);
+        Report(control, $"wide-adv X at cell2={xAt2} cell3={xAt3}");
+        Report(control, xAt2 && !xAt3 ? "PASS wide-adv: X lands in cell 2" : "FAIL wide-adv: X misplaced");
+
+        // Scroll up two pages and back: the snap-back bitmap must be
+        // pixel-identical to the pre-scroll one, otherwise stale rows remain.
+        control.SelfTestFeed("scroll-anchor\r\n");
+        var anchor = Capture(control);
+        control.SelfTestScroll(-control.SelfTestRows * 2);
+        var scrolledUp = Capture(control);
+        control.SelfTestScroll(control.SelfTestRows * 2);
+        var snappedBack = Capture(control);
+        Report(control, PixelsEqual(anchor, snappedBack) ? "PASS scroll: snap-back identical" : "FAIL scroll: snap-back differs");
+        Report(control, PixelsEqual(anchor, scrolledUp) ? "FAIL scroll: scrolled-up unchanged" : "PASS scroll: scrolled-up shows other content");
+
+        // Alt-screen round trip (nvim): the normal screen must come back
+        // pixel-identical after the TUI exits.
+        var preAlt = Capture(control);
+        control.SelfTestFeed("\x1b[?1049h");
+        control.SelfTestFeed("tui line one\r\ntui line two\r\n");
+        var altShot = Capture(control);
+        control.SelfTestFeed("\x1b[?1049l");
+        var postAlt = Capture(control);
+        Report(control, PixelsEqual(preAlt, postAlt) ? "PASS alt-screen: normal screen restored" : "FAIL alt-screen: normal screen differs");
+        Report(control, PixelsEqual(altShot, preAlt) ? "FAIL alt-screen: no change on enter" : "PASS alt-screen: TUI content drawn");
+
+        // Live-like chunked feeding: ConPTY delivers output in many small
+        // chunks and typing arrives byte-by-byte, so this exercises the
+        // partial-redraw path across many sequential flushes — the pattern
+        // that never happens in a single big Feed.
+        var chunked = new StringBuilder(20000);
+        for (var i = 1; i <= 200; i++)
+            chunked.Append("chunked-line-").Append(i).Append(" padding text to make the line reasonably long\r\n");
+        var chunkedText = chunked.ToString();
+        for (var i = 0; i < chunkedText.Length; i += 64)
+            control.SelfTestFeed(chunkedText.Substring(i, Math.Min(64, chunkedText.Length - i)));
+        var chunkedShot = Capture(control);
+        var chunkedInk = InkBands(control, chunkedShot);
+        Report(control, $"after-chunked inkBands={chunkedInk}");
+        Report(control, chunkedInk >= 10 ? "PASS chunked: content rendered" : "FAIL chunked: missing content");
+
+        // Typing stress: single characters that wrap and scroll the buffer.
+        const string typewriter = "typewritertest";
+        for (var i = 0; i < 1200; i++)
+            control.SelfTestFeed(typewriter[i % typewriter.Length].ToString());
+        control.SelfTestFeed("\r\n");
+
+        control.SelfTestFeed("\x1b[2J\x1b[H");
+        var cleared2 = Capture(control);
+        var cleared2Ink = InkBands(control, cleared2);
+        Report(control, $"after-chunked-clear inkBands={cleared2Ink}");
+        Report(control, cleared2Ink <= 2 ? "PASS chunked-clear: screen clean" : "FAIL chunked-clear: ghost rows remain");
+
+        control.SelfTestScroll(-10);
+        var chunkScrolledUp = Capture(control);
+        control.SelfTestScroll(10);
+        var chunkSnappedBack = Capture(control);
+        Report(control, PixelsEqual(cleared2, chunkSnappedBack) ? "PASS chunked-scroll: snap-back identical" : "FAIL chunked-scroll: snap-back differs");
+        Report(control, PixelsEqual(cleared2, chunkScrolledUp) ? "FAIL chunked-scroll: scrolled-up unchanged" : "PASS chunked-scroll: scrolled-up differs");
+
+        // Caret-over-glyph pass: the block caret draws the cell glyph on the
+        // overlay. Two caret moves queue two versions of the overlay; fresh
+        // per-draw glyph arrays keep the in-flight first version from
+        // rasterizing the second version's glyph (ghost characters behind the
+        // cursor while typing fast).
+        control.SelfTestFeed("\x1b[2J\x1b[Hab\x1b[2D"); // caret over 'b'
+        control.SelfTestFeed("\x1b[1D");                // caret over 'a'
+        var caretAtA = Capture(control);
+        var bInk = CellInk(control, caretAtA, col: 1, row: 0);
+        var aInk = CellInk(control, caretAtA, col: 0, row: 0);
+        Report(control, $"caret-race ink a={aInk} b={bInk}");
+        Report(control, bInk >= 20 ? "PASS caret-race: b clean" : "FAIL caret-race: b obscured by ghost glyph");
+        Report(control, aInk >= 20 ? "PASS caret-race: caret over a" : "FAIL caret-race: caret missing");
+
+        // Popup-menu round trip (nvim pum): a popup drawn with reverse video
+        // over two text rows, then closed by restoring those rows the way
+        // nvim does (cursor moves + SGR reset + print + EL). Stale pixels
+        // would leave a bright inverse band where the popup used to be.
+        control.SelfTestFeed("\x1b[2J\x1b[H");
+        control.SelfTestFeedBatch(
+            "line one\r\nline two\r\nline three\r\nline four\r\nline five\r\nline six\r\n",
+            "\x1b[2;1H\x1b[7mITEM ONE     \x1b[27m",
+            "\x1b[3;1H\x1b[7mITEM TWO     \x1b[27m",
+            "\x1b[1;1H");
+        var pumOpen = Capture(control);
+        var openCellInverse = CellCornerLum(control, pumOpen, col: 3, row: 1);
+        var openCellPlain = CellCornerLum(control, pumOpen, col: 20, row: 1);
+        Report(control, $"pum-open corner inverse-cell={openCellInverse} plain-cell={openCellPlain} attrs={CellAttrDump(control, 1)}");
+        Report(control, openCellInverse > 160 && openCellPlain < 150 ? "PASS pum: popup rendered" : "FAIL pum: popup not visible");
+        control.SelfTestFeedBatch(
+            "\x1b[2;1H\x1b[0mline two\x1b[0K",
+            "\x1b[3;1H\x1b[0mline three\x1b[0K",
+            "\x1b[1;1H");
+        var pumClosed = Capture(control);
+        var closedCell = CellCornerLum(control, pumClosed, col: 3, row: 1);
+        Report(control, $"pum-closed corner cell3-row1={closedCell} attrs={CellAttrDump(control, 1)}");
+        Report(control, closedCell < 150 ? "PASS pum: popup pixels cleared" : "FAIL pum: ghost popup remains");
+
+        // Replay a captured real nvim session (pum open, Tab accept, pum
+        // close) through the exact pump-style feeding and check every cell's
+        // rendered fill against its emulator attribute: ghost pixels are
+        // cells whose painted background disagrees with the buffer.
+        var replayPath = Environment.GetEnvironmentVariable("VEX_SELFTEST_REPLAY");
+        if (!string.IsNullOrEmpty(replayPath) && File.Exists(replayPath))
+        {
+            var replayBytes = File.ReadAllBytes(replayPath);
+            control.SelfTestFeed("\x1b[2J\x1b[H");
+            control.SelfTestFeedBytes(replayBytes);
+            ReplayCheck(control, "replay-end");
+
+            // Mid-stream checks: capture4-style streams have the Tab-close
+            // tail ESC[12X (the pum-close frame); opencode-style streams have
+            // the title set ESC]0;OpenCode right after the background fill
+            // (the "TUI running" frame). Check whichever marks exist.
+            var replayText = System.Text.Encoding.Latin1.GetString(replayBytes);
+            var marks = new[] { "\u001b[12X", "\u001b]0;OpenCode\u0007", "\u001b]0;OpenCode\u001b\\" };
+            foreach (var mark in marks)
+            {
+                var idx = replayText.IndexOf(mark);
+                if (idx <= 0)
+                    continue;
+                control.SelfTestFeed("\x1b[2J\x1b[H");
+                control.SelfTestFeedBytes(replayBytes[..idx]);
+                ReplayCheck(control, $"replay-mid({EscapeMark(mark)})");
+            }
+        }
+
+        Report(control, "done");
+    }
+
+    private static byte[] Capture(NativeTerminalControl control)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = Math.Max(1, (int)Math.Round(control.ActualHeight * dpi));
+        var bitmap = new RenderTargetBitmap(width, height, 96 * dpi, 96 * dpi, PixelFormats.Pbgra32);
+        bitmap.Render(control);
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        bitmap.CopyPixels(pixels, stride, 0);
+        return pixels;
+    }
+
+    /// <summary>Writes a raw Pbgra32 capture to disk for visual inspection.</summary>
+    internal static void DumpPng(NativeTerminalControl control, byte[] pixels, string path)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = pixels.Length / (width * 4);
+        var bitmap = BitmapSource.Create(width, height, 96 * dpi, 96 * dpi, PixelFormats.Pbgra32, null, pixels, width * 4);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+    }
+
+    private static bool PixelsEqual(byte[] a, byte[] b)
+    {
+        if (a.Length != b.Length)
+            return false;
+        for (var i = 0; i < a.Length; i++)
+        {
+            if (a[i] != b[i])
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>Number of row bands that carry ink (text or stale pixels). The
+    /// scrollbar overlay occupies the right edge, so columns there are ignored.</summary>
+    private static int InkBands(NativeTerminalControl control, byte[] pixels)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = pixels.Length / (width * 4);
+        var rowPixels = Math.Max(1, (int)Math.Round(control.SelfTestCellHeight * dpi));
+        var textWidth = width - (int)Math.Round(24 * dpi);
+
+        // Background reference: the darkest pixels anywhere (text is brighter).
+        var minLum = 765;
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            // Pbgra32: premultiplied, but channel sums stay ordered for our
+            // opaque-over-black base fill.
+            var lum = pixels[i] + pixels[i + 1] + pixels[i + 2];
+            if (lum < minLum)
+                minLum = lum;
+        }
+
+        var bands = new StringBuilder();
+        var y = 0;
+        while (y < height)
+        {
+            var bandEnd = Math.Min(y + rowPixels, height);
+            var hasInk = false;
+            for (var py = y; py < bandEnd && !hasInk; py += 2)
+            {
+                var rowStart = py * width * 4;
+                for (var px = 0; px < textWidth * 4; px += 8)
+                {
+                    var lum = pixels[rowStart + px] + pixels[rowStart + px + 1] + pixels[rowStart + px + 2];
+                    if (lum > minLum + 90)
+                    {
+                        hasInk = true;
+                        break;
+                    }
+                }
+            }
+            if (hasInk)
+                bands.Append(y / rowPixels).Append(',');
+            y += rowPixels;
+        }
+        Report(control, $"ink bands at: {bands}");
+        return bands.Length == 0 ? 0 : bands.ToString().TrimEnd(',').Split(',').Length;
+    }
+
+    /// <summary>Tagged colors and flags of the first few cells of a row — the
+    /// raw emulator state behind whatever pixels got rendered.</summary>
+    private static string CellAttrDump(NativeTerminalControl control, int row)
+    {
+        var line = control.SelfTestLine(row);
+        if (line is null)
+            return "no-line";
+        var sb = new StringBuilder();
+        var cells = line.Cells;
+        for (var c = 0; c < 8 && c < cells.Length; c++)
+        {
+            var cell = cells[c];
+            sb.Append($"{c}:{(cell.Text.Length == 0 ? '·' : cell.Text[0])}={(byte)cell.Flags:X2}/{cell.FgTag}{(cell.FgTag == ColorTag.Rgb ? cell.FgValue.ToString("X6") : cell.FgValue.ToString())} ");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>Replays a captured stream and asserts that every checked cell's
+    /// painted background fill agrees with its emulator attribute: ghost
+    /// pixels are cells whose rendered fill disagrees with the buffer.</summary>
+    private static void ReplayCheck(NativeTerminalControl control, string label)
+    {
+        var shot = Capture(control);
+        var caret = control.SelfTestCaretCell();
+        var disagreements = 0;
+        for (var row = 0; row < Math.Min(control.SelfTestRows, 12); row++)
+        {
+            var line = control.SelfTestLine(row);
+            if (line is null)
+                continue;
+            var cells = line.Cells;
+            for (var col = 0; col < Math.Min(24, cells.Length); col++)
+            {
+                // The block caret repaints its cell (cursor color); pixels
+                // there are not cell content, so skip it.
+                if (caret is { Row: var cr, Col: var cc } && row == cr && col == cc)
+                    continue;
+                ref readonly var cell = ref cells[col];
+                var (bg, baseColor) = control.SelfTestResolveCell(cell);
+                var expected = bg ?? baseColor;
+                // Premultiplied over the (opaque-ish) backdrop: compare the
+                // corner pixel channels to the resolved color's.
+                var (r, g, b) = CellCornerRgb(control, shot, col, row);
+                var tol = 60;
+                if (Math.Abs(r - expected.R) > tol || Math.Abs(g - expected.G) > tol || Math.Abs(b - expected.B) > tol)
+                {
+                    disagreements++;
+                    if (disagreements <= 10)
+                        Report(control, $"{label} disagree row{row} col{col} flags={(byte)cell.Flags:X2} fg={cell.FgTag}:{cell.FgValue} bg={cell.BgTag}:{cell.BgValue} pixel=({r},{g},{b}) expected=({expected.R},{expected.G},{expected.B})");
+                }
+            }
+        }
+        Report(control, disagreements == 0 ? $"PASS {label}: pixels match buffer" : $"FAIL {label}: {disagreements} cells disagree");
+    }
+
+    private static string EscapeMark(string mark) =>
+        string.Concat(mark.Select(c => c < 0x20 ? $"<{(int)c:x2}>" : c.ToString()));
+
+    /// <summary>RGB at a cell's top-right corner — background fill only,
+    /// away from glyph strokes.</summary>
+    private static (byte R, byte G, byte B) CellCornerRgb(NativeTerminalControl control, byte[] pixels, int col, int row)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = pixels.Length / (width * 4);
+        var x = Math.Min(width - 1, (int)Math.Round((col + 0.85) * control.SelfTestCellWidth * dpi));
+        var y = Math.Min(height - 1, (int)Math.Round((row + 0.12) * control.SelfTestCellHeight * dpi));
+        var i = (y * width + x) * 4;
+        return (pixels[i + 2], pixels[i + 1], pixels[i]);
+    }
+
+    /// <summary>Luminance at a cell's top-right corner — background fill only,
+    /// away from glyph strokes.</summary>
+    private static int CellCornerLum(NativeTerminalControl control, byte[] pixels, int col, int row)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = pixels.Length / (width * 4);
+        var x = Math.Min(width - 1, (int)Math.Round((col + 0.85) * control.SelfTestCellWidth * dpi));
+        var y = Math.Min(height - 1, (int)Math.Round((row + 0.12) * control.SelfTestCellHeight * dpi));
+        var i = (y * width + x) * 4;
+        return pixels[i] + pixels[i + 1] + pixels[i + 2];
+    }
+
+    /// <summary>Darkest channel sum in the frame: the base background fill.</summary>
+    private static int MinLum(byte[] pixels)
+    {
+        var minLum = 765;
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            var lum = pixels[i] + pixels[i + 1] + pixels[i + 2];
+            if (lum < minLum)
+                minLum = lum;
+        }
+        return minLum;
+    }
+
+    /// <summary>Number of bright pixels inside the cell at (col,row): how much
+    /// of the glyph there survives (a background-colored ghost glyph painted
+    /// over it would eat into the ink).</summary>
+    private static int CellInk(NativeTerminalControl control, byte[] pixels, int col, int row)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = pixels.Length / (width * 4);
+        var minLum = 765;
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            var lum = pixels[i] + pixels[i + 1] + pixels[i + 2];
+            if (lum < minLum)
+                minLum = lum;
+        }
+
+        var x0 = (int)Math.Round(col * control.SelfTestCellWidth * dpi);
+        var x1 = (int)Math.Round((col + 1) * control.SelfTestCellWidth * dpi);
+        var y0 = (int)Math.Round(row * control.SelfTestCellHeight * dpi);
+        var y1 = (int)Math.Round((row + 1) * control.SelfTestCellHeight * dpi);
+        var ink = 0;
+        for (var y = y0; y < y1 && y < height; y++)
+        {
+            for (var x = x0; x < x1 && x < width; x++)
+            {
+                var i = (y * width + x) * 4;
+                if (pixels[i] + pixels[i + 1] + pixels[i + 2] > minLum + 90)
+                    ink++;
+            }
+        }
+        return ink;
+    }
+
+    /// <summary>True when the cell at (col,row) contains any ink.</summary>
+    private static bool HasInkAt(NativeTerminalControl control, byte[] pixels, int col, int row)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = pixels.Length / (width * 4);
+        var minLum = 765;
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            var lum = pixels[i] + pixels[i + 1] + pixels[i + 2];
+            if (lum < minLum)
+                minLum = lum;
+        }
+
+        var cx = (int)Math.Round((col + 0.5) * control.SelfTestCellWidth * dpi);
+        var cy = (int)Math.Round((row + 0.5) * control.SelfTestCellHeight * dpi);
+        for (var dy = -2; dy <= 2; dy++)
+        {
+            for (var dx = -2; dx <= 2; dx++)
+            {
+                var x = cx + dx;
+                var y = cy + dy;
+                if (x < 0 || y < 0 || x >= width || y >= height)
+                    continue;
+                var i = (y * width + x) * 4;
+                if (pixels[i] + pixels[i + 1] + pixels[i + 2] > minLum + 90)
+                    return true;
+            }
+        }
+        return false;
+    }
+}
