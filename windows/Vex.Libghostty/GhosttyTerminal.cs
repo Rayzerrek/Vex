@@ -345,6 +345,30 @@ public sealed class GhosttyTerminal : IDisposable
         cell.Wide = wide == Native.CellWide.Wide;
         cell.Tail = wide == Native.CellWide.WideSpacerTail;
 
+        // A cell's background can live in the cell CONTENT rather than the
+        // style: erases with a color set ("clear" in TUI apps) write cells
+        // whose content is a palette index or RGB and whose style is the
+        // default. Paint those like any other background.
+        // Packed cell layout: content_tag = bits 0-1, content = bits 2-25.
+        var contentTag = (int)(raw & 0b11);
+        if (cell.BgTag == ColorTag.None && contentTag == 2)
+        {
+            // color_palette: packed struct(u24) { data: u8 at bits 2-9 }
+            cell.BgTag = ColorTag.Palette;
+            cell.BgValue = (int)((raw >> 2) & 0xFF);
+        }
+        else if (cell.BgTag == ColorTag.None && contentTag == 3)
+        {
+            // color_rgb: packed RGB at bits 2-25, LSB first: r 2-9, g 10-17,
+            // b 18-25. Repack into (r<<16)|(g<<8)|b like style RGB values.
+            var content = (int)((raw >> 2) & 0xFFFFFF);
+            var cr = content & 0xFF;
+            var cg = (content >> 8) & 0xFF;
+            var cb = (content >> 16) & 0xFF;
+            cell.BgTag = ColorTag.Rgb;
+            cell.BgValue = (cr << 16) | (cg << 8) | cb;
+        }
+
         uint graphemesLen = 0;
         Check(Native.ghostty_render_state_row_cells_get(_rowCells, RenderStateRowCellsData.GraphemesLen, (IntPtr)(&graphemesLen)), "cell graphemes len");
         if (graphemesLen == 0 || cell.Tail)
