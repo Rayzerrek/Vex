@@ -94,6 +94,17 @@ public sealed class GhosttyTerminal : IDisposable
     private uint[] _codepoints = new uint[MaxGraphemes];
     private bool _disposed;
 
+    // OSC 133 (FTCS shell-integration) filter state. Vex does not implement
+    // shell integration, and ghostty-vt's "fresh line" handling of OSC 133;A
+    // moves the cursor when it is not at column 0. A shell (nushell) sends
+    // these markers on every prompt redraw, so after a full-screen TUI exits
+    // the mid-line marker forces a line feed and the prompt is drawn twice.
+    // Stripping the sequence makes the emulator ignore it like an unknown OSC.
+    private enum FeedState { Normal, EscapeSeen, InOsc, InOscEscapeSeen }
+    private FeedState _feedState;
+    private readonly byte[] _oscBuf = new byte[1024];
+    private int _oscLen;
+
     public event Action<string>? TitleChanged;
     public event Action<byte[]>? WritePty;
     public event Action? Bell;
@@ -158,26 +169,123 @@ public sealed class GhosttyTerminal : IDisposable
     {
         if (count <= 0 || _disposed)
             return;
-        if (offset == 0)
+
+        // Strip OSC 133 sequences (see the filter state above) before feeding,
+        // tolerating sequences that are split across separate Feed calls.
+        var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(count + _oscBuf.Length + 4);
+        try
         {
-            Native.ghostty_terminal_vt_write(_terminal, data, (nuint)count);
+            var written = 0;
+            for (var i = offset; i < offset + count; i++)
+            {
+                var b = data[i];
+                switch (_feedState)
+                {
+                    case FeedState.Normal:
+                        if (b == 0x1B)
+                            _feedState = FeedState.EscapeSeen;
+                        else
+                            buffer[written++] = b;
+                        break;
+                    case FeedState.EscapeSeen:
+                        if (b == 0x5D) // ESC ] starts an OSC sequence
+                        {
+                            _feedState = FeedState.InOsc;
+                            _oscLen = 0;
+                        }
+                        else
+                        {
+                            buffer[written++] = 0x1B;
+                            buffer[written++] = b;
+                            _feedState = FeedState.Normal;
+                        }
+                        break;
+                    case FeedState.InOsc:
+                        if (b == 0x07) // BEL terminates the OSC string
+                        {
+                            FlushOsc(buffer, ref written, 0x07);
+                            _feedState = FeedState.Normal;
+                        }
+                        else if (b == 0x1B) // possible ST (ESC \) terminator
+                        {
+                            _feedState = FeedState.InOscEscapeSeen;
+                        }
+                        else if (_oscLen < _oscBuf.Length)
+                        {
+                            _oscBuf[_oscLen++] = b;
+                        }
+                        else
+                        {
+                            // Pathological oversized OSC: emit verbatim and bail.
+                            buffer[written++] = 0x1B;
+                            buffer[written++] = 0x5D;
+                            for (var j = 0; j < _oscLen; j++)
+                                buffer[written++] = _oscBuf[j];
+                            buffer[written++] = b;
+                            _feedState = FeedState.Normal;
+                        }
+                        break;
+                    case FeedState.InOscEscapeSeen:
+                        if (b == 0x5C) // ST terminator: ESC \
+                        {
+                            FlushOsc(buffer, ref written, 0x1B, 0x5C);
+                            _feedState = FeedState.Normal;
+                        }
+                        else
+                        {
+                            // A lone ESC inside the OSC string, not a terminator.
+                            if (_oscLen < _oscBuf.Length)
+                                _oscBuf[_oscLen++] = 0x1B;
+                            if (_oscLen < _oscBuf.Length)
+                                _oscBuf[_oscLen++] = b;
+                            _feedState = FeedState.InOsc;
+                        }
+                        break;
+                }
+            }
+            if (written > 0)
+                Native.ghostty_terminal_vt_write(_terminal, buffer, (nuint)written);
         }
-        else
+        finally
         {
-            var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(count);
-            Array.Copy(data, offset, buffer, 0, count);
-            try
-            {
-                Native.ghostty_terminal_vt_write(_terminal, buffer, (nuint)count);
-            }
-            finally
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-            }
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
-    public void Reset() => Native.ghostty_terminal_reset(_terminal);
+    /// <summary>
+    /// Re-emits a buffered OSC sequence (with its terminator) unless it is an
+    /// OSC 133 semantic-prompt marker, which is dropped entirely.
+    /// </summary>
+    private void FlushOsc(byte[] dst, ref int written, params byte[] terminator)
+    {
+        if (IsOsc133(_oscBuf, _oscLen))
+            return;
+        dst[written++] = 0x1B;
+        dst[written++] = 0x5D;
+        for (var j = 0; j < _oscLen; j++)
+            dst[written++] = _oscBuf[j];
+        foreach (var t in terminator)
+            dst[written++] = t;
+    }
+
+    private static bool IsOsc133(byte[] buf, int len)
+    {
+        // The OSC number is the leading decimal digits; distinguish 133 from
+        // 1337 (iTerm2 shell integration) by reading every leading digit.
+        var num = 0;
+        for (var i = 0; i < len && buf[i] >= (byte)'0' && buf[i] <= (byte)'9'; i++)
+        {
+            if (num < 10000)
+                num = num * 10 + (buf[i] - '0');
+        }
+        return num == 133;
+    }
+
+    public void Reset()
+    {
+        _feedState = FeedState.Normal;
+        Native.ghostty_terminal_reset(_terminal);
+    }
 
     // ---- Geometry / colors ------------------------------------------------
 
@@ -398,12 +506,16 @@ public sealed class GhosttyTerminal : IDisposable
 
     private void EnsureFrameRows(int rows)
     {
-        if (FrameRows.Length == rows)
-            return;
-        var previous = FrameRows;
-        FrameRows = new FrameRow[rows];
-        for (var i = 0; i < rows; i++)
-            FrameRows[i] = i < previous.Length ? previous[i] : new FrameRow();
+        if (FrameRows.Length != rows)
+        {
+            var previous = FrameRows;
+            FrameRows = new FrameRow[rows];
+            for (var i = 0; i < rows; i++)
+                FrameRows[i] = i < previous.Length ? previous[i] : new FrameRow();
+        }
+        // A width-only resize keeps the row count unchanged, so the early
+        // return above cannot be the only guard: the per-row cell arrays must
+        // still grow to the new Cols. Size every row unconditionally.
         for (var i = 0; i < rows; i++)
         {
             if (FrameRows[i].Cells.Length != Cols)
