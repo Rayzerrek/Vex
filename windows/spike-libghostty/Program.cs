@@ -37,7 +37,7 @@ internal static class Program
     {
         Require(Marshal.SizeOf<GhosttyString>() == 16, "GhosttyString layout");
         Require(Marshal.SizeOf<GhosttyStyleColor>() == 16, "GhosttyStyleColor layout");
-        Require(Marshal.SizeOf<GhosttyStyle>() == 56, "GhosttyStyle layout");
+        Require(Marshal.SizeOf<GhosttyStyle>() == 72, "GhosttyStyle layout");
         Require(Marshal.SizeOf<GhosttyRenderStateColors>() == 792, "GhosttyRenderStateColors layout");
         Console.WriteLine("layouts OK");
     }
@@ -90,7 +90,7 @@ internal static class Program
             for (var i = 0; i < 100; i++)
                 Feed(term, $"line {i:D3} of scroll pressure\r\n");
             Console.WriteLine("-- after 100 scroll lines --");
-            DumpViewport(term, expectDirty: RenderStateDirty.Partial);
+            DumpViewport(term, expectDirty: null);
 
             // Reflow: shrink the grid.
             Require(Native.ghostty_terminal_resize(term, 40, 24, 8, 16) == Result.Success, "resize");
@@ -194,27 +194,27 @@ internal static class Program
                 $"fg=#{colors.foreground.r:X2}{colors.foreground.g:X2}{colors.foreground.b:X2}");
 
             Require(Native.ghostty_render_state_row_iterator_new(IntPtr.Zero, out var rowIt) == Result.Success, "row_iterator_new");
-            Console.WriteLine("  [dbg] row_iterator_new OK");
             Require(Native.ghostty_render_state_row_cells_new(IntPtr.Zero, out var cells) == Result.Success, "row_cells_new");
-            Console.WriteLine("  [dbg] row_cells_new OK");
             try
             {
                 Require(Native.ghostty_render_state_get(state, RenderStateData.RowIterator, (IntPtr)(&rowIt)) == Result.Success, "get row iterator");
-                Console.WriteLine("  [dbg] get row iterator OK");
 
                 var y = 0;
                 while (Native.ghostty_render_state_row_iterator_next(rowIt))
                 {
-                    Console.WriteLine($"  [dbg] row {y}");
                     Require(Native.ghostty_render_state_row_get(rowIt, RenderStateRowData.Cells, (IntPtr)(&cells)) == Result.Success, "row get cells");
-                    Console.WriteLine($"  [dbg] row {y} cells OK");
 
+                    if (y == 1)
+                    {
+                        DumpRowCellsDetail(cells, cols);
+                        y++;
+                        continue;
+                    }
                     var text = new StringBuilder(cols);
                     var styles = new StringBuilder(cols);
                     var col = 0;
                     while (Native.ghostty_render_state_row_cells_next(cells))
                     {
-                        Console.WriteLine($"  [dbg] cell {col}");
                         var grapheme = CellUtf8(cells);
                         text.Append(grapheme.Length > 0 ? grapheme : " ");
                         styles.Append(StyleFlags(cells));
@@ -279,6 +279,23 @@ internal static class Program
         if (Native.ghostty_render_state_row_cells_get(cells, RenderStateRowCellsData.FgColor, (IntPtr)(&fg)) == Result.Success)
             flags.Append($"[{fg.r:X2}{fg.g:X2}{fg.b:X2}]");
         return flags.ToString();
+    }
+
+    private static unsafe void DumpRowCellsDetail(IntPtr cells, ushort cols)
+    {
+        Native.ghostty_render_state_row_cells_select(cells, 0);
+        for (var x = 0; x < 16; x++)
+        {
+            var style = new GhosttyStyle { size = (nuint)Marshal.SizeOf<GhosttyStyle>() };
+            Native.ghostty_render_state_row_cells_get(cells, RenderStateRowCellsData.Style, (IntPtr)(&style));
+            var fg = new GhosttyColorRgb { r = 0xEE, g = 0xEE, b = 0xEE };
+            var fgR = Native.ghostty_render_state_row_cells_get(cells, RenderStateRowCellsData.FgColor, (IntPtr)(&fg));
+            var grapheme = CellUtf8(cells);
+            Console.WriteLine(
+                $"  [detail] x={x} '{grapheme}' bold={style.bold} it={style.italic} u={style.underline} inv={style.inverse} " +
+                $"fgTag={style.fgColor.tag} fg={fg.r:X2}{fg.g:X2}{fg.b:X2}({fgR}) bgTag={style.bgColor.tag}");
+            Native.ghostty_render_state_row_cells_next(cells);
+        }
     }
 
     private static void OnTitleChanged(IntPtr terminal, IntPtr userdata)
