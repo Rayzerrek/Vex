@@ -47,13 +47,15 @@ internal static class Native
         public GhosttyStyleColorValue value;
     }
 
-    // Sized struct; size field must be set by the caller.
+    // Sized struct; size field must be set by the caller. The writer always
+    // emits the full 72-byte struct, so the caller buffer must match.
     [StructLayout(LayoutKind.Sequential)]
     internal struct GhosttyStyle
     {
         public nuint size;
         public GhosttyStyleColor fgColor;
         public GhosttyStyleColor bgColor;
+        public GhosttyStyleColor underlineColor;
         public byte bold;
         public byte italic;
         public byte faint;
@@ -280,4 +282,7 @@ internal static class Native
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Result ghostty_render_state_row_cells_get(IntPtr cells, RenderStateRowCellsData data, IntPtr outValue);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_render_state_row_cells_select(IntPtr cells, ushort x);
 }

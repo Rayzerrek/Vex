@@ -28,6 +28,16 @@ dotnet run --project windows\spike-libghostty
 
 ## Status
 
-Phase 1 (in-memory VT): effects, write_pty, colors, cursor, row/cell
-iteration all verified. Known open item: `ghostty_render_state_row_cells_get`
-crashes on the first cell query — see `Program.cs` for the current state.
+All verified against `ghostty@f64f4aca`:
+
+- phase 1 (in-memory VT): effect callbacks (title/pwd/enquiry/xtversion),
+  write_pty responses, default colors + palette, SGR styles (bold/italic/
+  underline/strike/inverse/blink), 256-color and truecolor, wide chars,
+  ZWJ emoji graphemes, cursor state, scroll + scrollback, resize with
+  reflow, per-cell resolved fg/bg colors
+- phase 2 (live ConPTY): `Vex.Terminal.TerminalSession` (cmd.exe) fed into
+  `ghostty_terminal_vt_write`, rendered grid matches the real session
+
+Gotcha found: `GhosttyStyle` is 72 bytes (has `underline_color` between
+`bg_color` and the flags); the writer emits the full struct regardless of
+the `size` field, so a too-small caller buffer silently corrupts the stack.
