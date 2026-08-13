@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Vex.Terminal\Vex.Terminal.csproj" />
+    <ProjectReference Include="..\Vex.Libghostty\Vex.Libghostty.csproj" />
   </ItemGroup>
 
 </Project>
