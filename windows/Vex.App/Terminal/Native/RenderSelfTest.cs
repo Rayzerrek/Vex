@@ -30,6 +30,10 @@ internal static class RenderSelfTest
     /// <summary>With VEX_LIVE=1, run the output-flood stress scenario (nu +
     /// gh help) instead of the nvim pum scenario.</summary>
     public static bool StressMode { get; } = Environment.GetEnvironmentVariable("VEX_LIVE_STRESS") == "1";
+
+    /// <summary>With VEX_LIVE=1, run the enter-TUI/exit/type scenario that
+    /// reproduces the duplicate-prompt bug.</summary>
+    public static bool PromptMode { get; } = Environment.GetEnvironmentVariable("VEX_LIVE_PROMPT") == "1";
     private static readonly string? LiveDir = Environment.GetEnvironmentVariable("VEX_LIVE_DIR");
     private static readonly string? LiveShell = Environment.GetEnvironmentVariable("VEX_LIVE_SHELL");
 
@@ -61,7 +65,9 @@ internal static class RenderSelfTest
                     // they return immediately after scheduling.
                     try
                     {
-                        if (StressMode)
+                        if (PromptMode)
+                            RunLivePrompt(control);
+                        else if (StressMode)
                             RunStress(control);
                         else if (!string.IsNullOrEmpty(LiveFile))
                             RunLiveFile(control, LiveFile);
@@ -354,6 +360,97 @@ internal static class RenderSelfTest
             fire.Start();
         };
         timer.Start();
+    }
+
+    /// <summary>
+    /// Live enter-TUI / exit / type scenario: reproduces the duplicate-prompt
+    /// bug by opening nvim, quitting, then typing into the shell and dumping
+    /// every frame row so the duplication is visible in the report.
+    /// </summary>
+    private static void RunLivePrompt(NativeTerminalControl control)
+    {
+        Report(control, $"prompt start cols={control.SelfTestCols} rows={control.SelfTestRows}");
+        control.SelfTestStabilizeCaret();
+        control.SelfTestStartSession();
+
+        var dir = string.IsNullOrEmpty(LiveDir) ? Path.GetTempPath() : LiveDir;
+
+        var steps = new Queue<(int DelayMs, Action Act)>();
+        steps.Enqueue((2500, () => control.SelfTestType("nvim --clean -i NONE\r")));
+        steps.Enqueue((3500, () =>
+        {
+            Report(control, $"in-nvim {control.SelfTestCursorInfo()}");
+            control.SelfTestType(":q!\r");
+        }));
+        steps.Enqueue((2500, () =>
+        {
+            Shot(control, Path.Combine(dir, "prompt-01-after-exit.png"));
+            DumpRows(control, "after-exit");
+            // The regression: after a TUI exits there must be exactly one
+            // prompt. The stale OSC 133;A marker used to force a line feed
+            // here, leaving the prompt duplicated on the row below.
+            var prompt0 = control.SelfTestRowText(0);
+            var prompt1 = control.SelfTestRowText(1);
+            var prompt2 = control.SelfTestRowText(2);
+            // Row 0 is the restored command line ("... nvim --clean -i NONE"),
+            // row 1 the single prompt, row 2 must be empty (no duplicate).
+            var ok = prompt0.Contains("nvim") && !prompt1.Contains("nvim")
+                     && prompt1.Length > 0 && prompt2.Length == 0;
+            Report(control, ok
+                ? "PASS prompt: single prompt after TUI exit"
+                : $"FAIL prompt: duplicate or misplaced prompt row0='{prompt0}' row1='{prompt1}' row2='{prompt2}'");
+            control.SelfTestType("hello");
+        }));
+        steps.Enqueue((1500, () =>
+        {
+            Shot(control, Path.Combine(dir, "prompt-02-typed.png"));
+            DumpRows(control, "after-type");
+        }));
+        steps.Enqueue((500, () =>
+        {
+            Report(control, "prompt done");
+            Application.Current.Shutdown();
+        }));
+
+        var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(100),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (steps.Count == 0)
+            {
+                timer.Stop();
+                return;
+            }
+            var (delay, act) = steps.Peek();
+            timer.Stop();
+            var fire = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(Math.Max(50, delay)),
+            };
+            fire.Tick += (_, _) =>
+            {
+                fire.Stop();
+                steps.Dequeue();
+                act();
+                timer.Start();
+            };
+            fire.Start();
+        };
+        timer.Start();
+    }
+
+    private static void DumpRows(NativeTerminalControl control, string label)
+    {
+        for (var r = 0; r < control.SelfTestRows; r++)
+        {
+            var text = control.SelfTestRowText(r);
+            if (!string.IsNullOrEmpty(text))
+                Report(control, $"{label} row{r}='{text}'");
+        }
+        Report(control, $"{label} {control.SelfTestCursorInfo()}");
+        Report(control, $"{label} {control.SelfTestScrollInfo()}");
     }
 
     private static void Shot(NativeTerminalControl control, string path)

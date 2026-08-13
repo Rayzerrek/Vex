@@ -350,7 +350,10 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         // don't appear scrolled up due to buffer reflow.
         _terminal.ScrollToBottom();
         _needsFullRedraw = true;
-        RedrawAll();
+        // UpdateFrame must run before the repaint so FrameRows reflects the
+        // new geometry; RedrawAll against the stale frame reads out of bounds
+        // when the grid grows (e.g. maximizing the window).
+        FlushRedraw();
 
         if (_session is null)
         {
@@ -780,6 +783,12 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
         var y = row * _cellHeight;
         var cells = frameRow.Cells;
+        if (cells.Length == 0)
+        {
+            _rowVersions[row] = 0;
+            using var clearDc = _rowVisuals[row].RenderOpen();
+            return;
+        }
         ref readonly var first = ref cells[0];
         var runFgTag = first.FgTag;
         var runFg = first.FgValue;
@@ -793,7 +802,8 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         var textRuns = 0;
         var runWidthCount = 0;
 
-        for (var col = 0; col < _cols; col++)
+        var colCount = Math.Min(_cols, cells.Length);
+        for (var col = 0; col < colCount; col++)
         {
             ref readonly var cell = ref cells[col];
 
