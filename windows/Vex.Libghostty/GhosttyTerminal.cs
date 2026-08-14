@@ -80,7 +80,6 @@ public sealed class GhosttyTerminal : IDisposable
 
     private static readonly TitleChangedFn s_titleChanged = OnTitleChanged;
     private static readonly WritePtyFn s_writePty = OnWritePty;
-    private static readonly BellFn s_bell = OnBell;
 
     private IntPtr _terminal;
     private IntPtr _renderState;
@@ -107,28 +106,27 @@ public sealed class GhosttyTerminal : IDisposable
 
     public event Action<string>? TitleChanged;
     public event Action<byte[]>? WritePty;
-    public event Action? Bell;
 
     public FrameDirty FrameDirty { get; private set; }
     public CursorState Cursor { get; private set; }
     public FrameRow[] FrameRows { get; private set; } = Array.Empty<FrameRow>();
-    public int Cols { get; private set; }
-    public int Rows { get; private set; }
+
+    private int _cols;
+    private int _rows;
 
     private int _cellWidthPx = 8;
     private int _cellHeightPx = 16;
 
     public GhosttyTerminal(int cols, int rows)
     {
-        Cols = cols;
-        Rows = rows;
+        _cols = cols;
+        _rows = rows;
         Check(Native.ghostty_terminal_new(IntPtr.Zero, out _terminal, (ushort)cols, (ushort)rows), "terminal_new");
 
         _selfHandle = GCHandle.Alloc(this);
         SetOption(TerminalOption.Userdata, GCHandle.ToIntPtr(_selfHandle));
         SetOption(TerminalOption.TitleChanged, Marshal.GetFunctionPointerForDelegate(s_titleChanged));
         SetOption(TerminalOption.WritePty, Marshal.GetFunctionPointerForDelegate(s_writePty));
-        SetOption(TerminalOption.Bell, Marshal.GetFunctionPointerForDelegate(s_bell));
         // xterm's default cursor (DECSCUSR 0) blinks; Vex's caret follows
         // the terminal unless an app forces a steady cursor.
         var defaultCursorBlink = true;
@@ -159,16 +157,26 @@ public sealed class GhosttyTerminal : IDisposable
 
     // ---- Feed ------------------------------------------------------------
 
-    public void Feed(string text) => Feed(Encoding.UTF8.GetBytes(text));
+    public void Feed(string text)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        Feed(bytes, 0, bytes.Length);
+    }
 
-    public void Feed(byte[] data) => Feed(data, 0, data.Length);
-
-    public void Feed(byte[] data, int count) => Feed(data, 0, count);
-
-    public void Feed(byte[] data, int offset, int count)
+    public unsafe void Feed(byte[] data, int offset, int count)
     {
         if (count <= 0 || _disposed)
             return;
+
+        // Fast path: no ESC byte and no half-parsed OSC pending, so the
+        // chunk goes straight to the emulator without the pooled-array copy
+        // the filter below needs.
+        if (_feedState == FeedState.Normal && Array.IndexOf(data, (byte)0x1B, offset, count) < 0)
+        {
+            fixed (byte* p = data)
+                Native.ghostty_terminal_vt_write(_terminal, (IntPtr)(p + offset), (nuint)count);
+            return;
+        }
 
         // Strip OSC 133 sequences (see the filter state above) before feeding,
         // tolerating sequences that are split across separate Feed calls.
@@ -291,8 +299,8 @@ public sealed class GhosttyTerminal : IDisposable
 
     public void Resize(int cols, int rows, int cellWidthPx, int cellHeightPx)
     {
-        Cols = cols;
-        Rows = rows;
+        _cols = cols;
+        _rows = rows;
         _cellWidthPx = cellWidthPx;
         _cellHeightPx = cellHeightPx;
         Check(Native.ghostty_terminal_resize(_terminal, (ushort)cols, (ushort)rows, (uint)cellWidthPx, (uint)cellHeightPx), "resize");
@@ -354,6 +362,11 @@ public sealed class GhosttyTerminal : IDisposable
     /// Pulls the latest terminal state into the render state and copies the
     /// viewport into managed <see cref="FrameRows"/>. Row/cell arrays are
     /// reused between calls; data is only valid until the next call.
+    /// Rows the emulator did not mark dirty keep their previous cell data:
+    /// per the render-state contract, this method consumes the dirty flags it
+    /// reads (global and per-row), so the next update reports exactly the
+    /// rows that changed since. Only a full rebuild (viewport move, screen
+    /// switch, resize, terminal-wide change) re-reads every row.
     /// </summary>
     public unsafe void UpdateFrame()
     {
@@ -365,8 +378,9 @@ public sealed class GhosttyTerminal : IDisposable
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.Cols, (IntPtr)(&cols)), "get cols");
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.Rows, (IntPtr)(&rows)), "get rows");
         FrameDirty = dirty;
-        Cols = cols;
-        Rows = rows;
+        var readAll = dirty == FrameDirty.Full || cols != _cols || rows != _rows;
+        _cols = cols;
+        _rows = rows;
 
         byte cursorVisible = 0, cursorBlink = 0, cursorInViewport = 0;
         var cursorStyle = CursorShape.Block;
@@ -386,6 +400,7 @@ public sealed class GhosttyTerminal : IDisposable
         var rowIterator = _rowIterator;
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.RowIterator, (IntPtr)(&rowIterator)), "row iterator");
 
+        byte rowDirtyFalse = 0;
         var row = 0;
         while (Native.ghostty_render_state_row_iterator_next(_rowIterator))
         {
@@ -403,22 +418,38 @@ public sealed class GhosttyTerminal : IDisposable
                 frameRow.SelectionEnd = selection.endX;
             }
 
-            var rowCellsHandle = _rowCells;
-            Check(Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Cells, (IntPtr)(&rowCellsHandle)), "row cells");
-            var cells = frameRow.Cells;
-            var col = 0;
-            while (col < cols && Native.ghostty_render_state_row_cells_next(_rowCells))
+            // A clean row was unchanged since the previous update, so its
+            // managed cells are still valid; the per-row dirty flag is only
+            // consumed for rows whose cells are actually re-read.
+            if (readAll || frameRow.Dirty)
             {
-                ref var cell = ref cells[col];
-                ReadCell(ref cell);
-                col++;
+                var rowCellsHandle = _rowCells;
+                Check(Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Cells, (IntPtr)(&rowCellsHandle)), "row cells");
+                var cells = frameRow.Cells;
+                var col = 0;
+                while (col < cols && Native.ghostty_render_state_row_cells_next(_rowCells))
+                {
+                    ref var cell = ref cells[col];
+                    ReadCell(ref cell);
+                    col++;
+                }
+                for (; col < cols; col++)
+                    cells[col] = default;
+
+                Check(Native.ghostty_render_state_row_set(_rowIterator, RenderStateRowOption.Dirty, (IntPtr)(&rowDirtyFalse)), "row dirty clear");
             }
-            for (; col < cols; col++)
-                cells[col] = default;
 
             row++;
             if (row >= rows)
                 break;
+        }
+
+        // Clear the global dirty state too: it accumulates across updates and
+        // would otherwise force a full read (and full repaint) on every frame.
+        if (dirty != FrameDirty.Clean)
+        {
+            var clean = FrameDirty.Clean;
+            Check(Native.ghostty_render_state_set(_renderState, RenderStateOption.Dirty, (IntPtr)(&clean)), "dirty clear");
         }
     }
 
@@ -493,7 +524,10 @@ public sealed class GhosttyTerminal : IDisposable
 
         if (graphemesLen == 1)
         {
-            cell.Text = char.ConvertFromUtf32((int)_codepoints[0]);
+            var cp = _codepoints[0];
+            cell.Text = cp < (uint)s_asciiStrings.Length
+                ? s_asciiStrings[(int)cp]
+                : char.ConvertFromUtf32((int)cp);
         }
         else
         {
@@ -515,11 +549,11 @@ public sealed class GhosttyTerminal : IDisposable
         }
         // A width-only resize keeps the row count unchanged, so the early
         // return above cannot be the only guard: the per-row cell arrays must
-        // still grow to the new Cols. Size every row unconditionally.
+        // still grow to the new width. Size every row unconditionally.
         for (var i = 0; i < rows; i++)
         {
-            if (FrameRows[i].Cells.Length != Cols)
-                FrameRows[i].Cells = new CellInfo[Cols];
+            if (FrameRows[i].Cells.Length != _cols)
+                FrameRows[i].Cells = new CellInfo[_cols];
         }
     }
 
@@ -563,10 +597,10 @@ public sealed class GhosttyTerminal : IDisposable
         SetEventOption(_dragEvent, SelectionGestureEventOption.Ref, gridRef);
         var geometry = new Native.GhosttySelectionGestureGeometry
         {
-            columns = (uint)Cols,
+            columns = (uint)_cols,
             cellWidth = (uint)Math.Max(1, _cellWidthPx),
             paddingLeft = 0,
-            screenHeight = (uint)Math.Max(1, Rows * _cellHeightPx),
+            screenHeight = (uint)Math.Max(1, _rows * _cellHeightPx),
         };
         SetEventOption(_dragEvent, SelectionGestureEventOption.Geometry, geometry);
         var position = new Native.GhosttySurfacePosition { x = xPx, y = yPx };
@@ -674,9 +708,25 @@ public sealed class GhosttyTerminal : IDisposable
 
     private static ulong NowNs()
     {
+        // Stopwatch.Frequency is constant for the process; precompute the
+        // scale so selection events don't divide on every call.
         var ticks = System.Diagnostics.Stopwatch.GetTimestamp();
-        var frequency = System.Diagnostics.Stopwatch.Frequency;
-        return (ulong)(ticks * 1_000_000_000.0 / frequency);
+        return (ulong)(ticks * s_ticksToNs);
+    }
+
+    private static readonly double s_ticksToNs = 1_000_000_000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+    /// <summary>Single-codepoint strings for the ASCII range: most terminal
+    /// cells are ASCII, and ConvertFromUtf32 would allocate a fresh string
+    /// per cell per frame otherwise.</summary>
+    private static readonly string[] s_asciiStrings = BuildAsciiStrings();
+
+    private static string[] BuildAsciiStrings()
+    {
+        var strings = new string[128];
+        for (var i = 0; i < strings.Length; i++)
+            strings[i] = ((char)i).ToString();
+        return strings;
     }
 
     private static void Check(Result result, string what)
@@ -700,11 +750,6 @@ public sealed class GhosttyTerminal : IDisposable
         var bytes = new byte[(int)len];
         Marshal.Copy(data, bytes, 0, (int)len);
         self.WritePty?.Invoke(bytes);
-    }
-
-    private static void OnBell(IntPtr terminal, IntPtr userdata)
-    {
-        GetTarget(userdata)?.Bell?.Invoke();
     }
 
     private static GhosttyTerminal? GetTarget(IntPtr userdata) =>
