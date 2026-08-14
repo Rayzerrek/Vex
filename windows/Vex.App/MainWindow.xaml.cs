@@ -63,6 +63,11 @@ public partial class MainWindow : Window
         // Sidebar visibility is a single source of truth: any change (toolbar
         // button, keyboard, or the settings toggle) animates the panel.
         AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
+
+        // When the settings overlay finishes closing, hand keyboard focus back
+        // to the active pane so typing is never stranded after Escape/close.
+        SettingsOverlay.Hidden += () =>
+            _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
     }
 
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -150,9 +155,11 @@ public partial class MainWindow : Window
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
         var modifiers = System.Windows.Input.Keyboard.Modifiers;
 
-        // Escape closes the settings overlay while it is open, before the
-        // terminal (or any focused control inside it) sees the key.
-        if (key == System.Windows.Input.Key.Escape && SettingsOverlay.Visibility == Visibility.Visible)
+        // Plain Escape closes the settings overlay while it is open, before the
+        // terminal (or any focused control inside it) sees the key. Chorded
+        // Escape (e.g. Ctrl+Escape) still belongs to the terminal.
+        if (key == System.Windows.Input.Key.Escape && modifiers == System.Windows.Input.ModifierKeys.None
+            && SettingsOverlay.Visibility == Visibility.Visible)
         {
             SettingsOverlay.Hide();
             e.Handled = true;
@@ -386,20 +393,30 @@ public partial class MainWindow : Window
         if (e.ChangedButton != System.Windows.Input.MouseButton.Left)
             return;
 
-        // A click on a non-focusable surface (sidebar padding, pane chrome)
-        // leaves keyboard focus stranded in a text box like the file search,
-        // so typing goes nowhere. Return focus to the active pane unless the
-        // click landed on something focusable.
-        if (System.Windows.Input.Keyboard.FocusedElement is not TextBox)
+        // A click on a non-interactive surface (sidebar padding, pane chrome,
+        // empty tree space) leaves keyboard focus stranded in a text box like
+        // the file search, so typing goes nowhere. Let the click settle, and
+        // if nothing took focus, return it to the active pane.
+        if (System.Windows.Input.Keyboard.FocusedElement is not TextBox focused)
             return;
+        if (IsVisualDescendantOf(focused, e.OriginalSource as DependencyObject))
+            return; // clicking the box itself repositions the caret
 
-        for (var node = e.OriginalSource as DependencyObject; node is not null; node = VisualTreeHelper.GetParent(node))
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
         {
-            if (node is UIElement { Focusable: true })
-                return;
-        }
+            if (ReferenceEquals(System.Windows.Input.Keyboard.FocusedElement, focused))
+                _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
+        });
+    }
 
-        _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
+    private static bool IsVisualDescendantOf(DependencyObject ancestor, DependencyObject? node)
+    {
+        for (; node is not null; node = VisualTreeHelper.GetParent(node))
+        {
+            if (ReferenceEquals(node, ancestor))
+                return true;
+        }
+        return false;
     }
 
     private static Button? FindAncestorButton(DependencyObject? node)
