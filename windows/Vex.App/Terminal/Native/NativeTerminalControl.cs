@@ -1074,7 +1074,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     /// the substring, so hot paths use <see cref="IsOverLink"/> instead.</summary>
     private string? LinkUriAt(int col, int row)
     {
-        if (!TryFindLink(col, row, out var link, out var rowText))
+        if (!TryFindLink(col, row, out var link, out var rowText) || rowText is null)
             return null;
         return rowText.Substring(link.TextStart, link.TextLength);
     }
