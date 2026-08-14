@@ -18,8 +18,8 @@
         <SolidColorBrush x:Key="NavHover" Color="#FF21262C"/>
         <SolidColorBrush x:Key="NavSelected" Color="#FF2E343D"/>
         <LinearGradientBrush x:Key="AccentSolid" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#FF4C7BB5" Offset="0"/>
-            <GradientStop Color="#FF8A6BB5" Offset="1"/>
+            <GradientStop Color="{DynamicResource VexAccentBlueColor}" Offset="0"/>
+            <GradientStop Color="{DynamicResource VexAccentPurpleColor}" Offset="1"/>
         </LinearGradientBrush>
 
         <local:SliderFillConverter x:Key="SliderFill"/>
@@ -280,7 +280,7 @@
                         </StackPanel>
 
                         <StackPanel DockPanel.Dock="Bottom" Margin="18,0">
-                            <TextBlock Text="Vex 1.0.4" FontSize="11" Foreground="{StaticResource VexTextDim}"/>
+                            <TextBlock Text="Vex 1.2.0" FontSize="11" Foreground="{StaticResource VexTextDim}"/>
                         </StackPanel>
 
                         <StackPanel>
@@ -600,7 +600,7 @@
                                         </Viewbox>
                                         <TextBlock Text="Vex" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource VexText}"
                                                    HorizontalAlignment="Center" Margin="0,16,0,4"/>
-                                        <TextBlock Text="Version 1.0.4" FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="Version 1.2.0" FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
                                         <TextBlock Text="Split panes, a file tree and an editor over ConPTY sessions."
                                                    FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"
                                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,0" MaxWidth="340"/>

@@ -4,6 +4,8 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using Vex.App.Model;
 
 namespace Vex.App;
@@ -31,7 +33,8 @@ public partial class CommandPalette : UserControl
         if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = true;
         SearchBox.Text = "";
         UpdateFilter();
-        
+        AnimateOpen();
+
         // Use Dispatcher to focus after the popup opens
         Dispatcher.BeginInvoke(() =>
         {
@@ -41,8 +44,36 @@ public partial class CommandPalette : UserControl
 
     public void Hide()
     {
-        Visibility = Visibility.Collapsed;
-        if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = false;
+        if (Visibility != Visibility.Visible)
+            return;
+        AnimateClose();
+    }
+
+    private static DoubleAnimation Anim(double from, double to, double ms) =>
+        new(from, to, TimeSpan.FromMilliseconds(ms))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+
+    private void AnimateOpen()
+    {
+        Backdrop.BeginAnimation(OpacityProperty, Anim(0, 1, 110));
+        Panel.BeginAnimation(OpacityProperty, Anim(0, 1, 150));
+        PanelScale.BeginAnimation(ScaleTransform.ScaleXProperty, Anim(0.96, 1, 170));
+        PanelScale.BeginAnimation(ScaleTransform.ScaleYProperty, Anim(0.96, 1, 170));
+        PanelTranslate.BeginAnimation(TranslateTransform.YProperty, Anim(8, 0, 170));
+    }
+
+    private void AnimateClose()
+    {
+        var fade = Anim(1, 0, 90);
+        fade.Completed += (_, _) =>
+        {
+            Visibility = Visibility.Collapsed;
+            if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = false;
+        };
+        Backdrop.BeginAnimation(OpacityProperty, Anim(1, 0, 90));
+        Panel.BeginAnimation(OpacityProperty, fade);
     }
 
     private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e)
