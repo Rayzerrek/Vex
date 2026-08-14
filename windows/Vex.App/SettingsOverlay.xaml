@@ -238,7 +238,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid>
+    <Grid PreviewKeyDown="Overlay_PreviewKeyDown">
         <!-- Dimmed backdrop -->
         <Border x:Name="Backdrop" Background="#80000000" MouseDown="Backdrop_MouseDown" Opacity="0"/>
 
