@@ -268,6 +268,17 @@ public partial class SettingsOverlay : UserControl
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();
 
+    private void Overlay_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        // Escape closes the overlay even when a control inside it (font
+        // combo, slider) has keyboard focus.
+        if (e.Key == Key.Escape)
+        {
+            Hide();
+            e.Handled = true;
+        }
+    }
+
     private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e) => Hide();
 
     private void ThemeList_SelectionChanged(object sender, SelectionChangedEventArgs e)
