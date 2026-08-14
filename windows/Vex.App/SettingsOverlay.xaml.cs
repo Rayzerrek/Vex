@@ -83,6 +83,11 @@ public partial class SettingsOverlay : UserControl
         DataContext = AppSettings.Instance;
     }
 
+    /// <summary>Fired once the closing animation finishes and the overlay is
+    /// fully hidden; the window uses it to hand keyboard focus back to the
+    /// active pane.</summary>
+    public event Action? Hidden;
+
     public void Toggle()
     {
         if (Visibility == Visibility.Visible) Hide();
@@ -151,6 +156,7 @@ public partial class SettingsOverlay : UserControl
             if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = false;
             Backdrop.Opacity = 0;
             Panel.Opacity = 0;
+            Hidden?.Invoke();
         }
         else
         {
@@ -272,7 +278,8 @@ public partial class SettingsOverlay : UserControl
     {
         // Escape closes the overlay even when a control inside it (font
         // combo, slider) has keyboard focus.
-        if (e.Key == Key.Escape)
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None)
         {
             Hide();
             e.Handled = true;
