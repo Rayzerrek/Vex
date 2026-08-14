@@ -46,12 +46,6 @@ public sealed class EditorPane : LeafPane
         set => Set(ref _filePath, value);
     }
 
-    public string Content
-    {
-        get => _content;
-        set => Set(ref _content, value);
-    }
-
     public void Save()
     {
         if (string.IsNullOrEmpty(_filePath))

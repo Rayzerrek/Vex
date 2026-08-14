@@ -14,7 +14,6 @@ public static class SessionStore
     public static Workspace Load()
     {
         var workspace = new Workspace();
-        workspace.Projects.Clear();
 
         try
         {
