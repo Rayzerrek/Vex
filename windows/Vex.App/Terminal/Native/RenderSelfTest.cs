@@ -689,6 +689,48 @@ internal static class RenderSelfTest
             ? "PASS selection: scrolled-up drag selects"
             : "FAIL selection: scrolled-up drag failed");
 
+        // URL detection: a printed link resolves at its cells (and nowhere
+        // else), and its underline paints the cell bottom rows — the
+        // ctrl+click target for the mouse handler.
+        control.SelfTestFeed("\x1b[2J\x1b[Hsee https://github.com/anomalyco/opencode done\r\n");
+        control.SelfTestScrollToBottom();
+        Report(control, $"link row0='{control.SelfTestRowText(0)}' scroll={control.SelfTestScrollInfo()}");
+        var linkUri = control.SelfTestLinkAt(0, 6);
+        var linkOffUri = control.SelfTestLinkAt(0, 0);
+        Report(control, $"link uri='{linkUri}' off-uri='{linkOffUri ?? "none"}'");
+        Report(control, linkUri == "https://github.com/anomalyco/opencode" && linkOffUri is null
+            ? "PASS link: url detected at its cells only"
+            : "FAIL link: url detection wrong");
+        var linkShot = Capture(control);
+        var linkLineInk = BottomLineInk(control, linkShot, col: 5, row: 0);
+        var plainLineInk = BottomLineInk(control, linkShot, col: 1, row: 0);
+        Report(control, $"link-underline ink link-cell={linkLineInk} plain-cell={plainLineInk}");
+        Report(control, linkLineInk > 0 && plainLineInk == 0
+            ? "PASS link: underline painted under url only"
+            : "FAIL link: underline wrong");
+
+        // Link flood: a screen full of URLs (the worst case for the scan)
+        // must stay cheap. The feed+flush wall time over repeated floods is
+        // reported, not asserted — selftest hosts vary too much for a hard
+        // bound.
+        var flood = new StringBuilder(40 * 80);
+        for (var i = 0; i < 40; i++)
+            flood.Append("check https://example.com/path/").Append(i).Append(" and https://github.com/ghostty/ghostty/issues/").Append(i).Append(" ok\r\n");
+        control.SelfTestFeed("\x1b[2J\x1b[H");
+        control.SelfTestScrollToBottom();
+        var floodWatch = System.Diagnostics.Stopwatch.StartNew();
+        var floodAllocBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 20; i++)
+            control.SelfTestFeed(flood.ToString());
+        floodWatch.Stop();
+        var floodAlloc = GC.GetAllocatedBytesForCurrentThread() - floodAllocBefore;
+        var floodUri = control.SelfTestLinkAt(0, 8);
+        Report(control, $"link-flood 20x40lines ms={floodWatch.Elapsed.TotalMilliseconds:F2} allocKB={floodAlloc / 1024.0:F0} sample-uri='{floodUri ?? "none"}'");
+        Report(control, floodUri is not null && floodUri.StartsWith("https://example.com/path/")
+            ? "PASS link-flood: url resolves"
+            : "FAIL link-flood: url missing");
+        Report(control, control.SelfTestBenchLinkScan(100));
+
         Report(control, "done");
     }
 
@@ -910,6 +952,38 @@ internal static class RenderSelfTest
         var x1 = (int)Math.Round((col + 1) * control.SelfTestCellWidth * dpi);
         var y0 = (int)Math.Round(row * control.SelfTestCellHeight * dpi);
         var y1 = (int)Math.Round((row + 1) * control.SelfTestCellHeight * dpi);
+        var ink = 0;
+        for (var y = y0; y < y1 && y < height; y++)
+        {
+            for (var x = x0; x < x1 && x < width; x++)
+            {
+                var i = (y * width + x) * 4;
+                if (pixels[i] + pixels[i + 1] + pixels[i + 2] > minLum + 90)
+                    ink++;
+            }
+        }
+        return ink;
+    }
+
+    /// <summary>Inked pixels along the bottom two pixel rows of a cell, where
+    /// SGR and detected-link underlines land.</summary>
+    private static int BottomLineInk(NativeTerminalControl control, byte[] pixels, int col, int row)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = pixels.Length / (width * 4);
+        var minLum = 765;
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            var lum = pixels[i] + pixels[i + 1] + pixels[i + 2];
+            if (lum < minLum)
+                minLum = lum;
+        }
+
+        var x0 = (int)Math.Round(col * control.SelfTestCellWidth * dpi);
+        var x1 = (int)Math.Round((col + 1) * control.SelfTestCellWidth * dpi);
+        var y1 = (int)Math.Round((row + 1) * control.SelfTestCellHeight * dpi);
+        var y0 = Math.Max(0, y1 - 2);
         var ink = 0;
         for (var y = y0; y < y1 && y < height; y++)
         {

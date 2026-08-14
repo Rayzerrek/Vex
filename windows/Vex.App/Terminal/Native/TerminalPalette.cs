@@ -21,6 +21,7 @@ public sealed class TerminalPalette
     public Brush Background { get; }
     public Brush Cursor { get; }
     public Brush Selection { get; }
+    public Brush Link { get; }
 
     public TerminalPalette(TerminalTheme theme)
     {
@@ -32,6 +33,7 @@ public sealed class TerminalPalette
         Background = Freeze(Parse(theme.Background, alpha: 0xE6));
         Cursor = Freeze(Parse(theme.Cursor));
         Selection = Freeze(Parse(theme.SelectionBackground, alpha: 0xA0));
+        Link = Freeze(Parse(theme.Blue));
 
         string[] theme16 =
         {
