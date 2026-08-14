@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -16,7 +17,7 @@ namespace Vex.App.Terminal.Native;
 /// redrawn only when the emulator marks it dirty). No browser bridge, no IPC —
 /// the app's fast path in the spirit of upstream's Alacritty backend.
 /// </summary>
-public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
+public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalView
 {
     private readonly string _workingDirectory;
     private readonly GhosttyTerminal _terminal;
@@ -59,6 +60,20 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private int[] _rowHashes = Array.Empty<int>();
     private int[] _rowVersions = Array.Empty<int>();
 
+    // Detected-URL state. Rows are scanned once per painted content (keyed by
+    // the same hash the row cache uses); hit-testing and underline drawing
+    // read the cached spans between redraws.
+    private static readonly Regex LinkRegex = new(
+        @"[a-z][a-z0-9+.\-]*://[^\s<>\u0000-\u001f""']+|www\.[^\s<>\u0000-\u001f""']+",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private int[] _rowLinkHashes = Array.Empty<int>();
+    private LinkSpan[][] _rowLinks = Array.Empty<LinkSpan[]>();
+    private string?[] _rowLinkTexts = Array.Empty<string?>();
+    private char[] _linkText = Array.Empty<char>();
+    private int[] _linkCharToCol = Array.Empty<int>();
+    private LinkSpan[] _linkSpans = Array.Empty<LinkSpan>();
+    private Pen _linkPen = new(Brushes.Blue, 1);
+
     // Last viewport offset seen after UpdateFrame; a change means the
     // viewport moved (wheel, PgUp/Dn, autoscroll) and every visible row
     // maps to different content.
@@ -78,7 +93,6 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     private bool _pumpRunning;
 
     private bool _caretBlinkVisible = true;
-    private bool _selfTestCaret;
     private bool _cursorBlinkSetting = true;
     private bool _selectionActive;
     private bool _selectionDragged;
@@ -184,6 +198,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 _palette = PaletteFor(theme);
                 ApplyTerminalColors();
                 RebuildScrollbarBrushes();
+                RebuildLinkPen();
                 _renderVersion++;
                 _needsFullRedraw = true;
                 InvalidateVisual(); // background brush changed
@@ -268,6 +283,7 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         _palette = PaletteFor(theme);
         ApplyTerminalColors();
         RebuildScrollbarBrushes();
+        RebuildLinkPen();
         ApplyTypefaces(settings.FontFamily);
         _fontSize = settings.FontSize;
         _cursorBlinkSetting = settings.CursorBlink;
@@ -394,6 +410,9 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             // cells are all repainted on the next pass after a resize.
             _rowHashes = new int[_rows];
             _rowVersions = new int[_rows];
+            _rowLinks = new LinkSpan[_rows][];
+            _rowLinkHashes = new int[_rows];
+            _rowLinkTexts = new string?[_rows];
         }
     }
 
@@ -440,10 +459,6 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     }
 
     // ---- Session ----------------------------------------------------------
-
-    /// <summary>Shell override for live self-test scenarios; null uses the
-    /// configured default.</summary>
-    internal string? SelfTestShell;
 
     private void StartSession()
     {
@@ -580,150 +595,11 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         });
     }
 
-    // ---- Self-test hooks (see RenderSelfTest) -----------------------------
-
-    internal int SelfTestCols => _cols;
-    internal int SelfTestRows => _rows;
-    internal double SelfTestCellWidth => _cellWidth;
-    internal double SelfTestCellHeight => _cellHeight;
-
-    /// <summary>The visible frame row for a viewport row, or null.</summary>
-    internal FrameRow? SelfTestLine(int row)
-    {
-        if (row < 0 || row >= _terminal.FrameRows.Length)
-            return null;
-        return _terminal.FrameRows[row];
-    }
-
-    /// <summary>Viewport cell currently occupied by the drawn caret, or null.</summary>
-    internal (int Row, int Col)? SelfTestCaretCell()
-    {
-        var cursor = _terminal.Cursor;
-        if (!cursor.Visible || cursor.Y < 0 || cursor.Y >= _rows)
-            return null;
-        return (cursor.Y, Math.Min(cursor.X, _cols - 1));
-    }
-
-    /// <summary>Colors a cell renders with: the resolved background brush
-    /// color, or the theme background when the cell carries no background
-    /// (the row leaves the base layer visible).</summary>
-    internal (System.Windows.Media.Color? Background, System.Windows.Media.Color Base) SelfTestResolveCell(in CellInfo cell)
-    {
-        _palette.Resolve(cell.FgTag, cell.FgValue, cell.BgTag, cell.BgValue, cell.Flags, out _, out var bg);
-        var baseColor = _palette.Background is SolidColorBrush baseBrush ? baseBrush.Color : default;
-        return (bg is SolidColorBrush brush ? brush.Color : (System.Windows.Media.Color?)null, baseColor);
-    }
-
-    internal void SelfTestFeed(string text)
-    {
-        _terminal.Feed(text);
-        FlushRedraw();
-    }
-
-    /// <summary>Feed several chunks then flush once, mirroring the output
-    /// pump's drain-then-repaint pattern.</summary>
-    internal void SelfTestFeedBatch(params string[] chunks)
-    {
-        foreach (var chunk in chunks)
-            _terminal.Feed(chunk);
-        FlushRedraw();
-    }
-
-    /// <summary>Starts a real ConPTY session even in selftest mode (where the
-    /// normal startup path is disabled), sized to the current grid.</summary>
-    internal void SelfTestStartSession()
-    {
-        if (_session is not null)
-            return;
-        StartSession();
-        _session?.Resize((short)_cols, (short)_rows);
-    }
-
-    /// <summary>Writes bytes to the live session's PTY input, as typed keys
-    /// would; output flows back through the normal async pump.</summary>
-    internal void SelfTestType(string text)
-    {
-        if (_session is null)
-            return;
-        var bytes = Encoding.UTF8.GetBytes(text);
-        Diag($"type '{text.Replace("\r", "<CR>").Replace("\x1b", "<ESC>")}'");
-        _session.Write(bytes);
-    }
-
-    /// <summary>Feed raw bytes in fixed-size chunks (like ConPTY delivery),
-    /// one flush at the end — the pump's exact drain pattern.</summary>
-    internal void SelfTestFeedBytes(byte[] data, int chunkSize = 64)
-    {
-        for (var off = 0; off < data.Length; off += chunkSize)
-        {
-            var n = Math.Min(chunkSize, data.Length - off);
-            _terminal.Feed(data, off, n);
-        }
-        FlushRedraw();
-    }
-
-    internal void SelfTestScroll(int lines)
-    {
-        _terminal.ScrollBy(lines);
-        FlushRedraw();
-    }
-
-    /// <summary>Runs the exact press-drag-release sequence the mouse handlers
-    /// use, so the selection gesture (and its grid_ref calls) is testable
-    /// without real pointer input. Ghostty includes a cell only when the
-    /// pointer passes its 60%-width threshold, so the press lands left of it
-    /// and the drag right of it (like a real left-to-right drag).</summary>
-    internal void SelfTestSelect(int pressCol, int pressRow, int dragCol, int dragRow)
-    {
-        _selectionActive = true;
-        _selectionDragged = true;
-        var pressX = pressCol * _cellWidth + _cellWidth * 0.2;
-        var pressY = pressRow * _cellHeight + _cellHeight * 0.5;
-        var dragX = dragCol * _cellWidth + _cellWidth * 0.8;
-        var dragY = dragRow * _cellHeight + _cellHeight * 0.5;
-        _terminal.SelectionPress(pressCol, pressRow, pressX, pressY);
-        _terminal.SelectionDrag(dragCol, dragRow, dragX, dragY);
-        _terminal.SelectionRelease(dragCol, dragRow);
-        FlushRedraw();
-    }
-
-    /// <summary>Plain text of the active selection, or null when there is none.</summary>
-    internal string? SelfTestSelectedText() => _terminal.HasSelection ? _terminal.GetSelectedText() : null;
-
-    internal string SelfTestScrollInfo()
-    {
-        var sb = _terminal.Scrollbar;
-        return $"scrollbar total={sb.Total} offset={sb.Offset} len={sb.Len}";
-    }
-
-    internal string SelfTestCursorInfo()
-    {
-        var cursor = _terminal.Cursor;
-        return $"cursor x={cursor.X} y={cursor.Y} visible={cursor.Visible} blink={cursor.Blinking} shape={cursor.Shape}";
-    }
-
-    internal string SelfTestRowText(int row)
-    {
-        if (row < 0 || row >= _terminal.FrameRows.Length)
-            return "no-row";
-        var sb = new StringBuilder();
-        foreach (var cell in _terminal.FrameRows[row].Cells)
-            sb.Append(cell.Text.Length > 0 ? cell.Text : " ");
-        return sb.ToString().TrimEnd();
-    }
-
-    internal void SelfTestStabilizeCaret()
-    {
-        _selfTestCaret = true;
-        _cursorBlinkSetting = false;
-        UpdateBlinkTimer();
-        DrawCaret();
-    }
-
     // ---- Rendering --------------------------------------------------------
 
     private void FlushRedraw()
     {
+        var flushStarted = DiagPath is null ? default : System.Diagnostics.Stopwatch.StartNew();
         try
         {
             _terminal.UpdateFrame();
@@ -731,7 +607,8 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             var scrollbar = _terminal.Scrollbar;
             var viewportMoved = scrollbar.Offset != _lastScrollOffset;
             _lastScrollOffset = scrollbar.Offset;
-            Diag($"flush dirty={dirty} full={_needsFullRedraw} scroll={viewportMoved} offset={scrollbar.Offset}/{scrollbar.Total} rows={_rows} cols={_cols}");
+            if (DiagPath is not null)
+                Diag($"flush dirty={dirty} full={_needsFullRedraw} scroll={viewportMoved} offset={scrollbar.Offset}/{scrollbar.Total} rows={_rows} cols={_cols} ms={flushStarted.Elapsed.TotalMilliseconds:F4}");
 
             if (_needsFullRedraw || dirty == FrameDirty.Full || viewportMoved)
             {
@@ -784,9 +661,11 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
             return;
 
         var frameRows = _terminal.FrameRows;
-        if (row >= frameRows.Length)
+        if (row >= frameRows.Length || frameRows[row].Cells.Length == 0)
         {
             _rowVersions[row] = 0;
+            _rowLinks[row] = Array.Empty<LinkSpan>();
+            _rowLinkTexts[row] = null;
             using var clearDc = _rowVisuals[row].RenderOpen();
             return;
         }
@@ -795,22 +674,21 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
         // Skip the re-render when this row's cells are unchanged since it was
         // last drawn — the common case after a redundant full redraw.
-        if (!force && _rowVersions[row] == _renderVersion && _rowHashes[row] == RowHash(frameRow))
+        var hash = RowHash(frameRow);
+        if (!force && _rowVersions[row] == _renderVersion && _rowHashes[row] == hash)
             return;
         _rowVersions[row] = _renderVersion;
-        _rowHashes[row] = RowHash(frameRow);
+        _rowHashes[row] = hash;
 
-        var visual = _rowVisuals[row];
-        using var dc = visual.RenderOpen();
+        // The link scan is keyed by the same hash: equal hash means the row
+        // content is identical, so the spans stay valid between redraws.
+        var links = _rowLinkHashes[row] == hash ? _rowLinks[row] : (_rowLinks[row] = ComputeRowLinks(frameRow, row));
+        _rowLinkHashes[row] = hash;
+
+        using var dc = _rowVisuals[row].RenderOpen();
 
         var y = row * _cellHeight;
         var cells = frameRow.Cells;
-        if (cells.Length == 0)
-        {
-            _rowVersions[row] = 0;
-            using var clearDc = _rowVisuals[row].RenderOpen();
-            return;
-        }
         ref readonly var first = ref cells[0];
         var runFgTag = first.FgTag;
         var runFg = first.FgValue;
@@ -892,6 +770,14 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
                 dc.DrawLine(pen, new Point(runX, rowY + _cellHeight - pen.Thickness), new Point(runX + runWidth, rowY + _cellHeight - pen.Thickness));
             if (run.CrossedOut)
                 dc.DrawLine(pen, new Point(runX, rowY + _cellHeight / 2), new Point(runX + runWidth, rowY + _cellHeight / 2));
+        }
+
+        // Detected URLs get their own underline, independent of SGR styles.
+        foreach (var link in links)
+        {
+            var linkX = link.StartCol * _cellWidth;
+            var linkWidth = (link.EndCol - link.StartCol + 1) * _cellWidth;
+            dc.DrawLine(_linkPen, new Point(linkX, y + _cellHeight - _linkPen.Thickness), new Point(linkX + linkWidth, y + _cellHeight - _linkPen.Thickness));
         }
 
         int FlushRun(DrawingContext context, StringBuilder runText, int[] widths, int cellCount, int startCol, double rowY,
@@ -1047,26 +933,185 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
     private TextRun[] _textRuns = Array.Empty<TextRun>();
 
+    private readonly record struct LinkSpan(int StartCol, int EndCol, int TextStart, int TextLength);
+
     /// <summary>
     /// FNV-1a over the cells RedrawRow renders: (text, width, flags, fg, bg)
     /// per column, mirroring the render loop's cell selection so equal hashes
-    /// guarantee equal pixels for the current metrics.
+    /// guarantee equal pixels for the current metrics. Every character of a
+    /// cell's text is hashed so two different clusters of the same length
+    /// cannot collide.
     /// </summary>
     private int RowHash(FrameRow row)
     {
+        const ulong prime = 1099511628211;
         ulong hash = 14695981039346656037;
         var cells = row.Cells;
         for (var col = 0; col < _cols && col < cells.Length; col++)
         {
             ref readonly var cell = ref cells[col];
-            hash = (hash ^ (ulong)(uint)(cell.Text.Length == 0 ? 0 : cell.Text[0])) * 1099511628211;
-            hash = (hash ^ (ulong)(uint)(cell.Text.Length)) * 1099511628211;
-            hash = (hash ^ (ulong)(cell.Wide ? 1u : 0u)) * 1099511628211;
-            hash = (hash ^ (ulong)(byte)cell.Flags) * 1099511628211;
-            hash = (hash ^ (ulong)(uint)cell.FgValue ^ (uint)cell.FgTag) * 1099511628211;
-            hash = (hash ^ (ulong)(uint)cell.BgValue ^ (uint)cell.BgTag) * 1099511628211;
+            var text = cell.Text;
+            for (var i = 0; i < text.Length; i++)
+                hash = (hash ^ text[i]) * prime;
+            hash = (hash ^ (ulong)(uint)text.Length) * prime;
+            hash = (hash ^ (ulong)(cell.Wide ? 1u : 0u)) * prime;
+            hash = (hash ^ (ulong)(byte)cell.Flags) * prime;
+            hash = (hash ^ (ulong)(uint)cell.FgValue ^ (uint)cell.FgTag) * prime;
+            hash = (hash ^ (ulong)(uint)cell.BgValue ^ (uint)cell.BgTag) * prime;
         }
         return (int)(hash ^ (hash >> 32));
+    }
+
+    /// <summary>
+    /// Scans a row's cells for URLs (scheme:// and www. forms). The row text
+    /// is assembled into a pooled char buffer with a parallel char→column
+    /// map, so wide glyphs and empty cells keep regex offsets aligned with
+    /// grid columns. Span URIs are stored as offsets into a per-row text
+    /// snapshot: rows without links allocate nothing, rows with links
+    /// allocate one string regardless of link count.
+    /// </summary>
+    private LinkSpan[] ComputeRowLinks(FrameRow row, int rowIndex)
+    {
+        var cells = row.Cells;
+        var colCount = Math.Min(_cols, cells.Length);
+        var capacity = colCount * 2;
+        if (_linkText.Length < capacity)
+        {
+            _linkText = new char[capacity];
+            _linkCharToCol = new int[capacity];
+        }
+
+        var len = 0;
+        for (var col = 0; col < colCount; col++)
+        {
+            ref readonly var cell = ref cells[col];
+            if (cell.Tail)
+                continue; // wide stub: the base cell owns the glyph
+            var text = cell.Text;
+            if (text.Length == 0)
+            {
+                _linkText[len] = ' ';
+                _linkCharToCol[len] = col;
+                len++;
+            }
+            else
+            {
+                for (var i = 0; i < text.Length; i++)
+                {
+                    _linkText[len] = text[i];
+                    _linkCharToCol[len] = col;
+                    len++;
+                }
+            }
+        }
+
+        var span = _linkText.AsSpan(0, len);
+
+        // Gate: a URL must contain either ":" (scheme) or "www". Two
+        // vectorized scans replace a full regex pass for the common
+        // link-free row.
+        if (span.IndexOf(':') < 0 && span.IndexOf("www") < 0)
+        {
+            _rowLinkTexts[rowIndex] = null;
+            return Array.Empty<LinkSpan>();
+        }
+
+        var count = 0;
+        foreach (var match in LinkRegex.EnumerateMatches(span))
+        {
+            var start = match.Index;
+            var end = TrimLinkEnd(span, start, match.Index + match.Length);
+            if (end - start < 3)
+                continue;
+            if (_linkSpans.Length <= count)
+                Array.Resize(ref _linkSpans, Math.Max(8, _linkSpans.Length * 2));
+            var lastCharCol = _linkCharToCol[end - 1];
+            _linkSpans[count] = new LinkSpan
+            {
+                StartCol = _linkCharToCol[start],
+                EndCol = Math.Min(colCount - 1, lastCharCol + (cells[lastCharCol].Wide ? 1 : 0)),
+                TextStart = start,
+                TextLength = end - start,
+            };
+            count++;
+        }
+        if (count == 0)
+        {
+            _rowLinkTexts[rowIndex] = null;
+            return Array.Empty<LinkSpan>();
+        }
+        _rowLinkTexts[rowIndex] = new string(span[..len]);
+        var result = new LinkSpan[count];
+        Array.Copy(_linkSpans, result, count);
+        return result;
+    }
+
+    /// <summary>Strips trailing punctuation from a URL match. Closing
+    /// brackets are only stripped when unmatched inside the URL, so
+    /// wikipedia-style "(foo)" links survive.</summary>
+    private static int TrimLinkEnd(ReadOnlySpan<char> text, int start, int end)
+    {
+        while (end > start)
+        {
+            var c = text[end - 1];
+            if (c is '.' or ',' or ';' or ':' or '!' or '?' or '\'' or '"')
+            {
+                end--;
+                continue;
+            }
+            var open = c switch { ')' => '(', ']' => '[', '}' => '{', _ => '\0' };
+            if (open != '\0' && !text[start..(end - 1)].Contains(open))
+            {
+                end--;
+                continue;
+            }
+            break;
+        }
+        return end;
+    }
+
+    /// <summary>The URL under the given viewport cell, or null. Materializes
+    /// the substring, so hot paths use <see cref="IsOverLink"/> instead.</summary>
+    private string? LinkUriAt(int col, int row)
+    {
+        if (!TryFindLink(col, row, out var link, out var rowText))
+            return null;
+        return rowText.Substring(link.TextStart, link.TextLength);
+    }
+
+    /// <summary>True when a detected URL covers the viewport cell. Called on
+    /// every mouse move, so it must not allocate.</summary>
+    private bool IsOverLink(int col, int row)
+        => TryFindLink(col, row, out _, out _);
+
+    private bool TryFindLink(int col, int row, out LinkSpan link, out string? rowText)
+    {
+        link = default;
+        rowText = null;
+        if (row < 0 || row >= _rowLinks.Length || _rowLinks[row] is not { Length: > 0 } links)
+            return false;
+        foreach (var span in links)
+        {
+            if (col >= span.StartCol && col <= span.EndCol)
+            {
+                link = span;
+                rowText = _rowLinkTexts[row];
+                return rowText is not null;
+            }
+        }
+        return false;
+    }
+
+    private static void OpenLink(string uri)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri) { UseShellExecute = true });
+        }
+        catch (Exception e)
+        {
+            Diag($"open-link-EXCEPTION {e.GetType().Name}: {e.Message}");
+        }
     }
 
     private Typeface ResolveTypeface(CellFlags flags)
@@ -1215,6 +1260,13 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         var fg = ((SolidColorBrush)_palette.Foreground).Color;
         _scrollbarThumbBrush = FrozenBrush(System.Windows.Media.Color.FromArgb(0x50, fg.R, fg.G, fg.B));
         _scrollbarThumbHoverBrush = FrozenBrush(System.Windows.Media.Color.FromArgb(0xA0, fg.R, fg.G, fg.B));
+    }
+
+    private void RebuildLinkPen()
+    {
+        var pen = new Pen(_palette.Link, 1);
+        pen.Freeze();
+        _linkPen = pen;
     }
 
     /// <summary>True while there is scrollback above the viewport to scroll into.</summary>
@@ -1411,7 +1463,8 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
     protected override void OnTextInput(TextCompositionEventArgs e)
     {
         base.OnTextInput(e);
-        Diag($"text '{e.Text.Replace("\r", "<CR>")}' session={_session is not null}");
+        if (DiagPath is not null)
+            Diag($"text '{e.Text.Replace("\r", "<CR>")}' session={_session is not null}");
         if (_session is null || string.IsNullOrEmpty(e.Text))
             return;
         _session.Write(Encoding.UTF8.GetBytes(e.Text));
@@ -1481,6 +1534,15 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
 
         var (col, row) = CellFromPoint(pos);
 
+        // Ctrl+click on a detected URL opens it in the browser instead of
+        // selecting or forwarding the click to the app's mouse mode.
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && LinkUriAt(col, row) is { } linkUri)
+        {
+            OpenLink(linkUri);
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && _terminal.MouseTracking)
         {
             // Shift overrides app mouse capture, as in xterm; it starts a
@@ -1537,6 +1599,14 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         }
 
         SetScrollbarHovered(IsOverScrollbar(pos));
+
+        // Hand cursor over detected links, except while dragging a selection
+        // or the scrollbar thumb (where the pointer means something else).
+        if (!_scrollbarDragging && !IsOverScrollbar(pos) && e.LeftButton != MouseButtonState.Pressed)
+        {
+            var (hoverCol, hoverRow) = CellFromPoint(pos);
+            Cursor = IsOverLink(hoverCol, hoverRow) ? Cursors.Hand : Cursors.IBeam;
+        }
 
         if (_terminal.MouseTracking && e.LeftButton == MouseButtonState.Pressed)
         {
@@ -1627,7 +1697,12 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         e.Handled = true;
     }
 
-    /// <summary>SGR mouse report (1006): ESC [ &lt; b ; x+1 ; y+1 M/m.</summary>
+    /// <summary>SGR mouse report (1006): ESC [ &lt; b ; x+1 ; y+1 M/m. Built
+    /// into a reusable buffer: mouse-motion reports can fire dozens of times
+    /// per second while dragging, so per-event string and byte-array
+    /// allocations would be pure GC churn.</summary>
+    private readonly byte[] _mouseReport = new byte[24];
+
     private void SendMouse(int button, int col, int row, bool release, bool motion)
     {
         var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
@@ -1646,8 +1721,31 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         if (ctrl)
             code += 16;
 
-        var sequence = $"\x1b[<{code};{col + 1};{row + 1}{(release ? 'm' : 'M')}";
-        _session?.Write(Encoding.ASCII.GetBytes(sequence));
+        var len = 0;
+        _mouseReport[len++] = 0x1B;
+        _mouseReport[len++] = (byte)'[';
+        _mouseReport[len++] = (byte)'<';
+        len = AppendDecimal(_mouseReport, len, code);
+        _mouseReport[len++] = (byte)';';
+        len = AppendDecimal(_mouseReport, len, col + 1);
+        _mouseReport[len++] = (byte)';';
+        len = AppendDecimal(_mouseReport, len, row + 1);
+        _mouseReport[len++] = (byte)(release ? 'm' : 'M');
+        _session?.Write(_mouseReport.AsSpan(0, len));
+    }
+
+    private static int AppendDecimal(byte[] buffer, int offset, int value)
+    {
+        Span<byte> digits = stackalloc byte[4];
+        var count = 0;
+        do
+        {
+            digits[count++] = (byte)('0' + value % 10);
+            value /= 10;
+        } while (value > 0);
+        for (var i = count - 1; i >= 0; i--)
+            buffer[offset++] = digits[i];
+        return offset;
     }
 
     private (int Col, int Row) CellFromPoint(Point point)
