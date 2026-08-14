@@ -29,9 +29,8 @@ public partial class FileTreeView : UserControl
             var treeView = (TreeView)sender;
             if (treeView.SelectedItem is Model.FileTreeNode selectedNode)
             {
-                selectedNode.IsExpanded = selectedNode.IsExpanded; // does nothing to selection
-                // Actually WPF TreeView doesn't easily let you unselect bound items unless IsSelected is a property on the model.
-                // But we can clear it using reflection or finding the TreeViewItem.
+                // WPF TreeView doesn't easily unselect bound items, so clear it
+                // via the container, with a recursive fallback.
                 if (treeView.ItemContainerGenerator.ContainerFromItem(selectedNode) is TreeViewItem tvi)
                 {
                     tvi.IsSelected = false;
