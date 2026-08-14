@@ -1,7 +1,4 @@
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-
-[assembly: InternalsVisibleTo("VexLibghosttySpike")]
 
 namespace Vex.Libghostty;
 
@@ -280,12 +277,22 @@ internal static class Native
         CursorViewportWideTail = 17,
     }
 
+    internal enum RenderStateOption : int
+    {
+        Dirty = 0,
+    }
+
     internal enum RenderStateRowData : int
     {
         Dirty = 1,
         Raw = 2,
         Cells = 3,
         Selection = 4,
+    }
+
+    internal enum RenderStateRowOption : int
+    {
+        Dirty = 0,
     }
 
     internal enum RenderStateRowCellsData : int
@@ -411,6 +418,9 @@ internal static class Native
     internal static extern void ghostty_terminal_vt_write(IntPtr terminal, byte[] data, nuint len);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_terminal_vt_write(IntPtr terminal, IntPtr data, nuint len);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void ghostty_terminal_reset(IntPtr terminal);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -434,6 +444,9 @@ internal static class Native
     internal static extern Result ghostty_render_state_get(IntPtr state, RenderStateData data, IntPtr outValue);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_render_state_set(IntPtr state, RenderStateOption option, IntPtr value);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Result ghostty_render_state_row_iterator_new(IntPtr allocator, out IntPtr iterator);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -445,6 +458,9 @@ internal static class Native
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Result ghostty_render_state_row_get(IntPtr iterator, RenderStateRowData data, IntPtr outValue);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_render_state_row_set(IntPtr iterator, RenderStateRowOption option, IntPtr value);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Result ghostty_render_state_row_cells_new(IntPtr allocator, out IntPtr cells);
