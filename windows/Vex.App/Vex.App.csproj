@@ -35,6 +35,9 @@
     <AssemblyVersion>1.1.0.0</AssemblyVersion>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
+    <!-- Ahead-of-time compiled method bodies for the published exe: faster
+         cold start than the default JIT tiering at process launch. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
