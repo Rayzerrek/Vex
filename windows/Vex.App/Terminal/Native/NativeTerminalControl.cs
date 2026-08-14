@@ -668,6 +668,28 @@ public sealed class NativeTerminalControl : FrameworkElement, ITerminalView
         FlushRedraw();
     }
 
+    /// <summary>Runs the exact press-drag-release sequence the mouse handlers
+    /// use, so the selection gesture (and its grid_ref calls) is testable
+    /// without real pointer input. Ghostty includes a cell only when the
+    /// pointer passes its 60%-width threshold, so the press lands left of it
+    /// and the drag right of it (like a real left-to-right drag).</summary>
+    internal void SelfTestSelect(int pressCol, int pressRow, int dragCol, int dragRow)
+    {
+        _selectionActive = true;
+        _selectionDragged = true;
+        var pressX = pressCol * _cellWidth + _cellWidth * 0.2;
+        var pressY = pressRow * _cellHeight + _cellHeight * 0.5;
+        var dragX = dragCol * _cellWidth + _cellWidth * 0.8;
+        var dragY = dragRow * _cellHeight + _cellHeight * 0.5;
+        _terminal.SelectionPress(pressCol, pressRow, pressX, pressY);
+        _terminal.SelectionDrag(dragCol, dragRow, dragX, dragY);
+        _terminal.SelectionRelease(dragCol, dragRow);
+        FlushRedraw();
+    }
+
+    /// <summary>Plain text of the active selection, or null when there is none.</summary>
+    internal string? SelfTestSelectedText() => _terminal.HasSelection ? _terminal.GetSelectedText() : null;
+
     internal string SelfTestScrollInfo()
     {
         var sb = _terminal.Scrollbar;

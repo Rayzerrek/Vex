@@ -615,7 +615,12 @@ internal static class RenderSelfTest
         var (p1r, p1g, p1b) = CellCornerRgb(control, painted, col: 5, row: 10);
         var (p2r, p2g, p2b) = CellCornerRgb(control, painted, col: 40, row: 20);
         Report(control, $"bg-paint corners ({p1r},{p1g},{p1b}) ({p2r},{p2g},{p2b})");
-        Report(control, p1r == 30 && p1g == 40 && p1b == 60 && p2r == 30 && p2g == 40 && p2b == 60
+        // ±2 tolerance: the windowed capture wobbles by 1 LSB per channel
+        // depending on where the window lands (DPI/rounding), so exact
+        // equality flakes across runs.
+        var p1Ok = Math.Abs(p1r - 30) <= 2 && Math.Abs(p1g - 40) <= 2 && Math.Abs(p1b - 60) <= 2;
+        var p2Ok = Math.Abs(p2r - 30) <= 2 && Math.Abs(p2g - 40) <= 2 && Math.Abs(p2b - 60) <= 2;
+        Report(control, p1Ok && p2Ok
             ? "PASS bg-paint: erased cells painted everywhere"
             : "FAIL bg-paint: background missing outside text");
 
@@ -647,6 +652,42 @@ internal static class RenderSelfTest
                 ReplayCheck(control, $"replay-mid({EscapeMark(mark)})");
             }
         }
+
+        // Selection gesture end-to-end: the press-drag-release sequence the
+        // mouse handlers run (grid_ref → gesture events → selection snapshot).
+        // A GhosttyPoint size mismatch used to make grid_ref fail here and
+        // crash the whole app on a plain click.
+        control.SelfTestFeed("\x1b[2J\x1b[Hselection test line\r\n");
+        control.SelfTestSelect(pressCol: 0, pressRow: 0, dragCol: 4, dragRow: 0);
+        var selText = control.SelfTestSelectedText();
+        var selShot = Capture(control);
+        var selCellLum = CellCornerLum(control, selShot, col: 2, row: 0);
+        Report(control, $"selection text='{selText}' bandLum={selCellLum}");
+        Report(control, selText == "selec"
+            ? "PASS selection: drag selects 'selec'"
+            : $"FAIL selection: text='{selText}'");
+        Report(control, selCellLum > 170
+            ? "PASS selection: band painted"
+            : $"FAIL selection: band not painted (lum={selCellLum})");
+
+        // Selecting while scrolled up resolves viewport points into
+        // scrollback; it must select content, not throw.
+        control.SelfTestScroll(-2);
+        string? scrolledSel = null;
+        Exception? scrolledErr = null;
+        try
+        {
+            control.SelfTestSelect(pressCol: 2, pressRow: 0, dragCol: 6, dragRow: 0);
+            scrolledSel = control.SelfTestSelectedText();
+        }
+        catch (Exception ex)
+        {
+            scrolledErr = ex;
+        }
+        Report(control, $"selection scrolled='{scrolledSel}' err={scrolledErr?.Message ?? "none"}");
+        Report(control, scrolledErr is null && !string.IsNullOrEmpty(scrolledSel)
+            ? "PASS selection: scrolled-up drag selects"
+            : "FAIL selection: scrolled-up drag failed");
 
         Report(control, "done");
     }

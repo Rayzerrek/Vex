@@ -94,11 +94,14 @@ internal static class Native
         public uint y;
     }
 
+    // C union GhosttyPointValue is 16 bytes: coordinate plus
+    // uint64_t _padding[2] for ABI stability.
     [StructLayout(LayoutKind.Explicit)]
     internal struct GhosttyPointValue
     {
         [FieldOffset(0)] public GhosttyPointCoordinate coordinate;
-        [FieldOffset(0)] public ulong padding;
+        [FieldOffset(0)] public ulong padding0;
+        [FieldOffset(8)] public ulong padding1;
     }
 
     [StructLayout(LayoutKind.Sequential)]
