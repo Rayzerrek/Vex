@@ -32,8 +32,6 @@ public sealed class TerminalSession : IDisposable
 
     public int ProcessId { get; private set; }
 
-    public bool IsRunning => _processHandle != IntPtr.Zero && !_disposed;
-
     /// <summary>
     /// The closest Windows analogue of upstream's "login shell": PowerShell 7
     /// when installed, Windows PowerShell otherwise.
