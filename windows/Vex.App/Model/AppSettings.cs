@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Windows.Threading;
 
 namespace Vex.App.Model;
@@ -58,6 +59,7 @@ public class AppSettings : ObservableObject
     // Enumerating every system font family takes hundreds of milliseconds, so
     // it is deferred until the settings overlay actually needs the list.
     private string[]? _availableFonts;
+    [JsonIgnore]
     public string[] AvailableFonts => _availableFonts ??= System.Windows.Media.Fonts.SystemFontFamilies
         .Select(f => f.Source)
         .OrderBy(f => f)
@@ -83,8 +85,6 @@ public class AppSettings : ObservableObject
         get => _cursorBlink;
         set { if (Set(ref _cursorBlink, value)) Save(); }
     }
-
-    public string[] AvailableShells { get; } = { "PowerShell", "Nushell" };
 
     private string _shell = "Nushell";
     public string Shell
