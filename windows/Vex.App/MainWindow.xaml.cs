@@ -67,6 +67,15 @@ public partial class MainWindow : Window
 
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(AppSettings.ThemeName))
+        {
+            // The acrylic tint is painted by DWM, outside the XAML palette, so
+            // it must be re-applied when the theme (and thus the chrome tint)
+            // changes.
+            ApplyBackdrop();
+            return;
+        }
+
         if (e.PropertyName != nameof(AppSettings.SidebarVisible))
             return;
 
@@ -86,10 +95,11 @@ public partial class MainWindow : Window
 
     private void ApplyBackdrop()
     {
-        // Acrylic/blur-behind with a graphite tint replaces the painted
-        // gradient when DWM accepts the backdrop; the XAML gradient stays as
-        // the fallback, since a transparent window without a backdrop is black.
-        if (WindowBackdrop.EnableAcrylic(this, Color.FromRgb(0x0E, 0x10, 0x13), alpha: 0x30))
+        // Acrylic/blur-behind with a theme-tinted graphite replaces the
+        // painted gradient when DWM accepts the backdrop; the XAML gradient
+        // stays as the fallback, since a transparent window without a
+        // backdrop is black.
+        if (WindowBackdrop.EnableAcrylic(this, ChromePalette.BackdropTint(AppSettings.Instance.ThemeName), alpha: 0x30))
             Background = Brushes.Transparent;
     }
 
@@ -154,6 +164,11 @@ public partial class MainWindow : Window
             SettingsOverlay.Toggle();
             e.Handled = true;
         }
+        else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.M)
+        {
+            ToggleThemeSwitcher();
+            e.Handled = true;
+        }
         else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.P)
         {
             ShowCommandPalette();
@@ -198,6 +213,14 @@ public partial class MainWindow : Window
             else if (action == "Settings") Settings_Click(this, new RoutedEventArgs());
         });
         PaletteOverlay.Show(items);
+    }
+
+    private void ToggleThemeSwitcher()
+    {
+        if (ThemeSwitcher.Visibility == Visibility.Visible)
+            ThemeSwitcher.Hide();
+        else
+            ThemeSwitcher.Show();
     }
 
     private void NewProject_Click(object sender, RoutedEventArgs e)

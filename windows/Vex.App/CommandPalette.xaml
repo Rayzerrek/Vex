@@ -3,8 +3,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:m="clr-namespace:Vex.App.Model"
              Visibility="Collapsed">
-    <Grid Background="#66000000" MouseDown="Backdrop_MouseDown">
-        <Border Background="{StaticResource VexSurface}"
+    <Grid>
+        <Border x:Name="Backdrop" Background="#66000000" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+        <Border x:Name="Panel" Background="{StaticResource VexSurface}"
                 BorderBrush="{StaticResource VexBorder}"
                 BorderThickness="1"
                 CornerRadius="8"
@@ -13,7 +14,15 @@
                 HorizontalAlignment="Center"
                 VerticalAlignment="Top"
                 Margin="0,80,0,0"
+                Opacity="0"
+                RenderTransformOrigin="0.5,0.5"
                 MouseDown="Border_MouseDown">
+            <Border.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="PanelScale" ScaleX="0.96" ScaleY="0.96"/>
+                    <TranslateTransform x:Name="PanelTranslate" Y="8"/>
+                </TransformGroup>
+            </Border.RenderTransform>
             <Border.Effect>
                 <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.3" />
             </Border.Effect>

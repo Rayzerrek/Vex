@@ -7,8 +7,8 @@
         <!-- Icons are drawn as translucent fills with a solid stroke so they read
              as soft pills, echoing the calm dark palette (accent = folders,
              dim text = files). -->
-        <SolidColorBrush x:Key="VexAccentTranslucent" Color="{StaticResource VexAccentColor}" Opacity="0.16"/>
-        <SolidColorBrush x:Key="VexTextDimTranslucent" Color="{StaticResource VexTextDimColor}" Opacity="0.12"/>
+        <SolidColorBrush x:Key="VexAccentTranslucent" Color="{DynamicResource VexAccentColor}" Opacity="0.16"/>
+        <SolidColorBrush x:Key="VexTextDimTranslucent" Color="{DynamicResource VexTextDimColor}" Opacity="0.12"/>
         <HierarchicalDataTemplate DataType="{x:Type m:FileTreeNode}" ItemsSource="{Binding Children}">
             <Border x:Name="row" CornerRadius="4" Padding="4,2" Margin="0,0,4,0">
                 <Border.Style>
@@ -65,10 +65,10 @@
             <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
             <Setter Property="Padding" Value="4"/>
             <Style.Resources>
-                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="{StaticResource VexHoverColor}" />
-                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="{StaticResource VexTextColor}" />
-                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="{StaticResource VexSurfaceColor}" />
-                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="{StaticResource VexTextColor}" />
+                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="{DynamicResource VexHoverColor}" />
+                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="{DynamicResource VexTextColor}" />
+                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="{DynamicResource VexSurfaceColor}" />
+                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="{DynamicResource VexTextColor}" />
             </Style.Resources>
         </Style>
         <Style TargetType="TreeViewItem">

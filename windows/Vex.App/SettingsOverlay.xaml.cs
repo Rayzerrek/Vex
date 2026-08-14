@@ -69,6 +69,17 @@ public partial class SettingsOverlay : UserControl
 
         _activePage = PageGeneral;
 
+        // Follow theme changes made from the quick switcher (Ctrl+Shift+M)
+        // so the card selection stays in sync if both are open.
+        AppSettings.Instance.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(AppSettings.ThemeName))
+                return;
+            var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
+            if (theme != null && !ReferenceEquals(ThemeList.SelectedItem, theme))
+                ThemeList.SelectedItem = theme;
+        };
+
         DataContext = AppSettings.Instance;
     }
 

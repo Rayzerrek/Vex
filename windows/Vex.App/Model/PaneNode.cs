@@ -1,4 +1,6 @@
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Animation;
 using Vex.App.Terminal;
 using Vex.Terminal;
 
@@ -38,7 +40,42 @@ public abstract class LeafPane : PaneNode, IDisposable
         set => Set(ref _isFocused, value);
     }
 
-    public object View => _view ??= CreateView();
+    public object View
+    {
+        get
+        {
+            if (_view is null)
+            {
+                _view = CreateView();
+                PrepareEntrance(_view);
+            }
+            return _view;
+        }
+    }
+
+    /// <summary>
+    /// Fades a pane's view in the first time it is realized, so a split or a
+    /// new tab reads as a soft reveal instead of a hard pop. Later re-shows
+    /// (switching back to a tab) skip the fade: the view has already been
+    /// revealed once and the terminal stays live in the tree.
+    /// </summary>
+    private static void PrepareEntrance(object view)
+    {
+        if (view is not FrameworkElement element)
+            return;
+        element.Opacity = 0;
+        RoutedEventHandler onLoaded = null!;
+        onLoaded = (_, _) =>
+        {
+            element.Loaded -= onLoaded;
+            element.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                });
+        };
+        element.Loaded += onLoaded;
+    }
 
     /// <summary>The view when it already exists; unlike <see cref="View"/>,
     /// never forces creation of a pane that was never shown.</summary>
