@@ -205,6 +205,7 @@ public partial class MainWindow : Window
         {
             if (action == "NewProject") NewProject_Click(this, new RoutedEventArgs());
             else if (action == "Settings") Settings_Click(this, new RoutedEventArgs());
+            else if (action == "ThemePicker") ToggleThemeSwitcher();
         });
         PaletteOverlay.Show(items);
     }
