@@ -25,35 +25,42 @@
         <Color x:Key="VexTabHoverColor">#1EFFFFFF</Color>
 
         <LinearGradientBrush x:Key="VexBackground" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#FF0E1013" Offset="0"/>
-            <GradientStop Color="#FF15171B" Offset="1"/>
+            <GradientStop Color="{DynamicResource VexBackgroundTopColor}" Offset="0"/>
+            <GradientStop Color="{DynamicResource VexBackgroundBottomColor}" Offset="1"/>
         </LinearGradientBrush>
-        <SolidColorBrush x:Key="VexSurface" Color="{StaticResource VexSurfaceColor}"/>
-        <SolidColorBrush x:Key="VexHover" Color="{StaticResource VexHoverColor}"/>
-        <SolidColorBrush x:Key="VexBorder" Color="{StaticResource VexBorderColor}"/>
-        <SolidColorBrush x:Key="VexText" Color="{StaticResource VexTextColor}"/>
-        <SolidColorBrush x:Key="VexTextDim" Color="{StaticResource VexTextDimColor}"/>
-        <SolidColorBrush x:Key="VexAccent" Color="{StaticResource VexAccentColor}"/>
-        <SolidColorBrush x:Key="VexFocusBorder" Color="{StaticResource VexFocusBorderColor}"/>
-        <SolidColorBrush x:Key="VexSidebar" Color="{StaticResource VexSidebarColor}"/>
-        <SolidColorBrush x:Key="VexPaneTitleBar" Color="{StaticResource VexPaneTitleBarColor}"/>
-        <SolidColorBrush x:Key="VexPaneTitleBarFocused" Color="{StaticResource VexPaneTitleBarFocusedColor}"/>
-        <SolidColorBrush x:Key="VexTabStrip" Color="{StaticResource VexTabStripColor}"/>
+        <SolidColorBrush x:Key="VexSurface" Color="{DynamicResource VexSurfaceColor}"/>
+        <SolidColorBrush x:Key="VexHover" Color="{DynamicResource VexHoverColor}"/>
+        <SolidColorBrush x:Key="VexBorder" Color="{DynamicResource VexBorderColor}"/>
+        <SolidColorBrush x:Key="VexText" Color="{DynamicResource VexTextColor}"/>
+        <SolidColorBrush x:Key="VexTextDim" Color="{DynamicResource VexTextDimColor}"/>
+        <SolidColorBrush x:Key="VexAccent" Color="{DynamicResource VexAccentColor}"/>
+        <SolidColorBrush x:Key="VexFocusBorder" Color="{DynamicResource VexFocusBorderColor}"/>
+        <SolidColorBrush x:Key="VexSidebar" Color="{DynamicResource VexSidebarColor}"/>
+        <SolidColorBrush x:Key="VexPaneTitleBar" Color="{DynamicResource VexPaneTitleBarColor}"/>
+        <SolidColorBrush x:Key="VexPaneTitleBarFocused" Color="{DynamicResource VexPaneTitleBarFocusedColor}"/>
+        <SolidColorBrush x:Key="VexTabStrip" Color="{DynamicResource VexTabStripColor}"/>
         <LinearGradientBrush x:Key="VexTabSelected" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#334C7BB5" Offset="0"/>
-            <GradientStop Color="#338A6BB5" Offset="1"/>
+            <GradientStop Color="{DynamicResource VexTabSelectedStartColor}" Offset="0"/>
+            <GradientStop Color="{DynamicResource VexTabSelectedEndColor}" Offset="1"/>
         </LinearGradientBrush>
-        <SolidColorBrush x:Key="VexTabHover" Color="{StaticResource VexTabHoverColor}"/>
+        <SolidColorBrush x:Key="VexTabHover" Color="{DynamicResource VexTabHoverColor}"/>
 
         <!-- Accent ramp: muted blue and violet used sparingly for highlights
-             and gradients over the neutral graphite chrome. -->
+             and gradients over the chrome. Overwritten at runtime by
+             ChromePalette from the active terminal theme. -->
         <Color x:Key="VexAccentBlueColor">#FF4C7BB5</Color>
         <Color x:Key="VexAccentPurpleColor">#FF8A6BB5</Color>
-        <SolidColorBrush x:Key="VexAccentBlue" Color="{StaticResource VexAccentBlueColor}"/>
-        <SolidColorBrush x:Key="VexAccentPurple" Color="{StaticResource VexAccentPurpleColor}"/>
+        <Color x:Key="VexBackgroundTopColor">#FF0E1013</Color>
+        <Color x:Key="VexBackgroundBottomColor">#FF15171B</Color>
+        <Color x:Key="VexTabSelectedStartColor">#334C7BB5</Color>
+        <Color x:Key="VexTabSelectedEndColor">#338A6BB5</Color>
+        <Color x:Key="VexAccentGradientStartColor">#664C7BB5</Color>
+        <Color x:Key="VexAccentGradientEndColor">#668A6BB5</Color>
+        <SolidColorBrush x:Key="VexAccentBlue" Color="{DynamicResource VexAccentBlueColor}"/>
+        <SolidColorBrush x:Key="VexAccentPurple" Color="{DynamicResource VexAccentPurpleColor}"/>
         <LinearGradientBrush x:Key="VexAccentGradient" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#664C7BB5" Offset="0"/>
-            <GradientStop Color="#668A6BB5" Offset="1"/>
+            <GradientStop Color="{DynamicResource VexAccentGradientStartColor}" Offset="0"/>
+            <GradientStop Color="{DynamicResource VexAccentGradientEndColor}" Offset="1"/>
         </LinearGradientBrush>
 
         <!-- Shared hover treatment: a soft fill fades in/out over ~0.12s with
