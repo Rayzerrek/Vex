@@ -58,8 +58,6 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         leaf.ProcessExited += OnLeafExited;
     }
 
-    public Guid Id { get; } = Guid.NewGuid();
-
     /// <summary>Directory new panes in this tab start in.</summary>
     public string WorkingDirectory { get; }
 
