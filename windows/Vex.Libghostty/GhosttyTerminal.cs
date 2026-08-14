@@ -534,7 +534,10 @@ public sealed class GhosttyTerminal : IDisposable
             tag = (int)Native.PointTag.Viewport,
             value = { coordinate = new Native.GhosttyPointCoordinate { x = (ushort)viewportCol, y = (uint)viewportRow } },
         };
-        Check(Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef), "grid_ref");
+        // A point that no longer maps to the grid (resize, alt-screen switch)
+        // must skip the press, not crash the app.
+        if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) != Result.Success)
+            return;
 
         SetEventOption(_pressEvent, SelectionGestureEventOption.Ref, gridRef);
         SetEventOption(_pressEvent, SelectionGestureEventOption.TimeNs, NowNs());
@@ -554,7 +557,8 @@ public sealed class GhosttyTerminal : IDisposable
             tag = (int)Native.PointTag.Viewport,
             value = { coordinate = new Native.GhosttyPointCoordinate { x = (ushort)viewportCol, y = (uint)viewportRow } },
         };
-        Check(Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef), "grid_ref");
+        if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) != Result.Success)
+            return;
 
         SetEventOption(_dragEvent, SelectionGestureEventOption.Ref, gridRef);
         var geometry = new Native.GhosttySelectionGestureGeometry
