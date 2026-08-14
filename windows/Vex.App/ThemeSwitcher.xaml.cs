@@ -1,26 +1,22 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Animation;
 using Vex.App.Model;
 
 namespace Vex.App;
 
-public partial class ThemeSwitcher : UserControl
+public partial class ThemeSwitcher : OverlayControl
 {
     private string _openingTheme = "";
 
     public ThemeSwitcher()
     {
         InitializeComponent();
-        Loaded += (_, _) =>
-        {
-            if (Window.GetWindow(this) is { } window)
-                window.Deactivated += (_, _) => Hide();
-        };
+        HideOnWindowDeactivate();
         ThemeList.ItemsSource = BuiltInThemes.All;
     }
+
+    protected override void HideCore() => Hide();
 
     public void Show()
     {
@@ -28,49 +24,17 @@ public partial class ThemeSwitcher : UserControl
         _openingTheme = AppSettings.Instance.ThemeName;
 
         Visibility = Visibility.Visible;
-        if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = true;
+        OpenPopup(this);
 
         ThemeList.SelectedItem = BuiltInThemes.All.FirstOrDefault(t => t.Name == _openingTheme)
             ?? BuiltInThemes.VexDark;
 
-        AnimateOpen();
+        AnimateOverlayOpen(Backdrop, Panel, PanelScale, PanelTranslate);
 
         Dispatcher.BeginInvoke(() => ThemeList.Focus(), System.Windows.Threading.DispatcherPriority.Input);
     }
 
-    public void Hide()
-    {
-        if (Visibility != Visibility.Visible)
-            return;
-        AnimateClose();
-    }
-
-    private static DoubleAnimation Anim(double from, double to, double ms) =>
-        new(from, to, TimeSpan.FromMilliseconds(ms))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-        };
-
-    private void AnimateOpen()
-    {
-        Backdrop.BeginAnimation(OpacityProperty, Anim(0, 1, 110));
-        Panel.BeginAnimation(OpacityProperty, Anim(0, 1, 150));
-        PanelScale.BeginAnimation(ScaleTransform.ScaleXProperty, Anim(0.96, 1, 170));
-        PanelScale.BeginAnimation(ScaleTransform.ScaleYProperty, Anim(0.96, 1, 170));
-        PanelTranslate.BeginAnimation(TranslateTransform.YProperty, Anim(8, 0, 170));
-    }
-
-    private void AnimateClose()
-    {
-        var fade = Anim(1, 0, 90);
-        fade.Completed += (_, _) =>
-        {
-            Visibility = Visibility.Collapsed;
-            if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = false;
-        };
-        Backdrop.BeginAnimation(OpacityProperty, Anim(1, 0, 90));
-        Panel.BeginAnimation(OpacityProperty, fade);
-    }
+    public void Hide() => HideWithAnimation(Backdrop, Panel);
 
     private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e) => Hide();
 
