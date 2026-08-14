@@ -32,7 +32,7 @@ public sealed class SliderFillConverter : IMultiValueConverter
         => throw new NotSupportedException();
 }
 
-public partial class SettingsOverlay : UserControl
+public partial class SettingsOverlay : OverlayControl
 {
     private const double AnimDuration = 280;
     private const double PageDuration = 130;
@@ -52,13 +52,7 @@ public partial class SettingsOverlay : UserControl
     {
         InitializeComponent();
 
-        Loaded += (s, e) => {
-            var window = Window.GetWindow(this);
-            if (window != null)
-            {
-                window.Deactivated += (ws, we) => { Hide(); };
-            }
-        };
+        HideOnWindowDeactivate();
 
         ThemeList.ItemsSource = BuiltInThemes.All;
         var currentTheme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
@@ -88,6 +82,8 @@ public partial class SettingsOverlay : UserControl
     /// active pane.</summary>
     public event Action? Hidden;
 
+    protected override void HideCore() => Hide();
+
     public void Toggle()
     {
         if (Visibility == Visibility.Visible) Hide();
@@ -103,7 +99,7 @@ public partial class SettingsOverlay : UserControl
         }
 
         Visibility = Visibility.Visible;
-        if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = true;
+        OpenPopup(this);
 
         // Continue from wherever the panel currently sits mid-animation.
         _animFrom = Panel.Opacity;
@@ -153,7 +149,7 @@ public partial class SettingsOverlay : UserControl
         if (_animClosing)
         {
             Visibility = Visibility.Collapsed;
-            if (Parent is System.Windows.Controls.Primitives.Popup popup) popup.IsOpen = false;
+            ClosePopup(this);
             Backdrop.Opacity = 0;
             Panel.Opacity = 0;
             Hidden?.Invoke();

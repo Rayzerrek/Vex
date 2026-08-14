@@ -25,6 +25,7 @@ public static class PaletteProvider
         }
 
         yield return new PaletteItem("New Project", "Open a new project directory", () => uiAction("NewProject"), "Workspace");
+        yield return new PaletteItem("Theme Picker", "Browse color themes with a live preview · Ctrl+Shift+M", () => uiAction("ThemePicker"), "App");
         yield return new PaletteItem("Settings", "Open application settings", () => uiAction("Settings"), "App");
     }
 }
