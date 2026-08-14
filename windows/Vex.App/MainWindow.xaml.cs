@@ -3,7 +3,6 @@ using System.Windows.Controls;
 using System.Diagnostics;
 using System.Windows.Media;
 using Vex.App.Model;
-using Vex.App.Terminal.Native;
 using Microsoft.Win32;
 
 namespace Vex.App;
@@ -38,6 +37,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _workspace;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+        PreviewMouseDown += MainWindow_PreviewMouseDown;
         PreviewMouseMove += MainWindow_PreviewMouseMove;
         PreviewMouseLeftButtonUp += MainWindow_PreviewMouseLeftButtonUp;
         StateChanged += MainWindow_StateChanged;
@@ -150,28 +150,27 @@ public partial class MainWindow : Window
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
         var modifiers = System.Windows.Input.Keyboard.Modifiers;
 
-        // A full-screen TUI owns plain-Ctrl shortcuts; its own bindings
-        // (e.g. Ctrl+P in lazygit or vim-style apps) win over the app's.
-        if (modifiers == System.Windows.Input.ModifierKeys.Control
-            && (key == System.Windows.Input.Key.P || key == System.Windows.Input.Key.S)
-            && FocusedTerminalIsTui())
+        // Escape closes the settings overlay while it is open, before the
+        // terminal (or any focused control inside it) sees the key.
+        if (key == System.Windows.Input.Key.Escape && SettingsOverlay.Visibility == Visibility.Visible)
         {
+            SettingsOverlay.Hide();
+            e.Handled = true;
             return;
         }
 
+        // Plain Ctrl+<letter> is never claimed here, so a full-screen TUI's own
+        // bindings (opencode's Ctrl+P, vim-style apps, ...) always reach the PTY.
+        // Vex owns Ctrl+Shift chords instead; Ctrl+Shift+P opens the palette,
+        // which also hosts Settings.
         if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.P)
         {
-            SettingsOverlay.Toggle();
+            ShowCommandPalette();
             e.Handled = true;
         }
         else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.M)
         {
             ToggleThemeSwitcher();
-            e.Handled = true;
-        }
-        else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.P)
-        {
-            ShowCommandPalette();
             e.Handled = true;
         }
         else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.S)
@@ -181,18 +180,6 @@ public partial class MainWindow : Window
                 e.Handled = true;
             }
         }
-    }
-
-    private static bool FocusedTerminalIsTui()
-    {
-        for (var node = System.Windows.Input.Keyboard.FocusedElement as DependencyObject;
-             node is not null;
-             node = VisualTreeHelper.GetParent(node))
-        {
-            if (node is NativeTerminalControl terminal)
-                return terminal.IsTuiMode;
-        }
-        return false;
     }
 
     private bool SaveCurrentFile()
@@ -392,6 +379,27 @@ public partial class MainWindow : Window
             // leaves the title bar during the drag.
             System.Windows.Input.Mouse.Capture(this);
         }
+    }
+
+    private void MainWindow_PreviewMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != System.Windows.Input.MouseButton.Left)
+            return;
+
+        // A click on a non-focusable surface (sidebar padding, pane chrome)
+        // leaves keyboard focus stranded in a text box like the file search,
+        // so typing goes nowhere. Return focus to the active pane unless the
+        // click landed on something focusable.
+        if (System.Windows.Input.Keyboard.FocusedElement is not TextBox)
+            return;
+
+        for (var node = e.OriginalSource as DependencyObject; node is not null; node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is UIElement { Focusable: true })
+                return;
+        }
+
+        _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
     }
 
     private static Button? FindAncestorButton(DependencyObject? node)
