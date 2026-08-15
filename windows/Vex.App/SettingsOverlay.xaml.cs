@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Vex.App.Model;
 
 namespace Vex.App;
@@ -47,12 +50,21 @@ public partial class SettingsOverlay : OverlayControl
     private FrameworkElement? _inPage;
     private Stopwatch? _pageClock;
     private bool _pageFadingOut = true;
+    private bool _fontsWarmed;
 
     public SettingsOverlay()
     {
         InitializeComponent();
 
         HideOnWindowDeactivate();
+
+        // Terminal font size applies on release, not per thumb tick: every
+        // commit resizes the ConPTY session in each pane, which turns a drag
+        // into a slideshow when fired per pixel.
+        FontSizeSlider.AddHandler(Thumb.DragCompletedEvent,
+            new DragCompletedEventHandler((_, _) => CommitFontSize()));
+        FontSizeSlider.PreviewMouseLeftButtonUp += (_, _) => CommitFontSize();
+        FontSizeSlider.KeyUp += (_, _) => CommitFontSize();
 
         ThemeList.ItemsSource = BuiltInThemes.All;
         var currentTheme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
@@ -101,6 +113,14 @@ public partial class SettingsOverlay : OverlayControl
         Visibility = Visibility.Visible;
         OpenPopup(this);
 
+        // Rasterize the panel once and animate the cached bitmap; without the
+        // cache every frame re-renders the whole subtree (four pages).
+        Panel.CacheMode = new BitmapCache();
+
+        // Enumerating system fonts takes hundreds of milliseconds; warm the
+        // list on a background thread so the Terminal page never hitches.
+        WarmFonts();
+
         // Continue from wherever the panel currently sits mid-animation.
         _animFrom = Panel.Opacity;
         _animClosing = false;
@@ -117,6 +137,8 @@ public partial class SettingsOverlay : OverlayControl
             CompositionTarget.Rendering -= OnAnimRendering;
             _animInProgress = false;
         }
+
+        Panel.CacheMode = new BitmapCache();
 
         _animFrom = Panel.Opacity;
         _animClosing = true;
@@ -152,12 +174,16 @@ public partial class SettingsOverlay : OverlayControl
             ClosePopup(this);
             Backdrop.Opacity = 0;
             Panel.Opacity = 0;
+            Panel.CacheMode = null;
             Hidden?.Invoke();
         }
         else
         {
             Backdrop.Opacity = 1;
             Panel.Opacity = 1;
+            // Drop the cache now: live content (theme cards, toggles) would
+            // otherwise re-render the whole panel raster on every change.
+            Panel.CacheMode = null;
         }
     }
 
@@ -183,6 +209,9 @@ public partial class SettingsOverlay : OverlayControl
         if (ReferenceEquals(_activePage, page))
             return;
 
+        if (ReferenceEquals(page, PageTerminal))
+            EnsureFontList();
+
         _outPage = _activePage;
         _inPage = page;
         _activePage = page;
@@ -199,6 +228,24 @@ public partial class SettingsOverlay : OverlayControl
             return;
         }
 
+        // A page's first visit realizes its whole subtree (41 theme cards);
+        // let that layout pass finish before the transition starts so the
+        // first animation frame does not pay for the realization.
+        if (!page.IsMeasureValid)
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
+            {
+                if (ReferenceEquals(_inPage, page) && IsVisible)
+                    StartPageTransition();
+            });
+            return;
+        }
+
+        StartPageTransition();
+    }
+
+    private void StartPageTransition()
+    {
         _pageFadingOut = true;
         _pageClock = Stopwatch.StartNew();
         CompositionTarget.Rendering -= OnPageRendering;
@@ -266,6 +313,31 @@ public partial class SettingsOverlay : OverlayControl
     {
         if (sender is RadioButton { Tag: string shell })
             AppSettings.Instance.Shell = shell;
+    }
+
+    /// <summary>Attaches the font list the first time the Terminal page is
+    /// visited; the eager XAML binding used to enumerate every system font on
+    /// the UI thread while the main window was still loading.</summary>
+    private void EnsureFontList()
+    {
+        if (FontCombo.ItemsSource != null)
+            return;
+        FontCombo.ItemsSource = AppSettings.Instance.AvailableFonts;
+    }
+
+    private void WarmFonts()
+    {
+        if (_fontsWarmed)
+            return;
+        _fontsWarmed = true;
+        _ = Task.Run(() => _ = AppSettings.Instance.AvailableFonts);
+    }
+
+    private void CommitFontSize()
+    {
+        var size = (int)Math.Round(FontSizeSlider.Value);
+        if (AppSettings.Instance.FontSize != size)
+            AppSettings.Instance.FontSize = size;
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();

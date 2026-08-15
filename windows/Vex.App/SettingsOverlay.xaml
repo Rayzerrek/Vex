@@ -256,9 +256,6 @@
                 Margin="48,40"
                 Opacity="0"
                 RenderTransformOrigin="0.5,0.5">
-            <Border.Effect>
-                <DropShadowEffect BlurRadius="36" ShadowDepth="12" Direction="270" Opacity="0.55" Color="#000000"/>
-            </Border.Effect>
             <Border.RenderTransform>
                 <TransformGroup>
                     <ScaleTransform x:Name="PanelScale" ScaleX="0.96" ScaleY="0.96"/>
@@ -508,8 +505,7 @@
                                                 <TextBlock Text="Font family" Style="{StaticResource RowTitle}"/>
                                                 <TextBlock Text="Used for terminal text." Style="{StaticResource RowDesc}"/>
                                             </StackPanel>
-                                            <ComboBox Grid.Column="1" Style="{StaticResource DarkComboBox}"
-                                                      ItemsSource="{Binding AvailableFonts}"
+                                            <ComboBox x:Name="FontCombo" Grid.Column="1" Style="{StaticResource DarkComboBox}"
                                                       SelectedItem="{Binding FontFamily, UpdateSourceTrigger=PropertyChanged}"
                                                       ItemContainerStyle="{StaticResource DarkComboBoxItem}"/>
                                         </Grid>
@@ -528,13 +524,15 @@
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <Slider Style="{StaticResource SettingsSlider}"
+                                                <!-- Value commits to the terminals on release, not per tick:
+                                                     each commit resizes every ConPTY session. -->
+                                                <Slider x:Name="FontSizeSlider" Style="{StaticResource SettingsSlider}"
                                                         Minimum="10" Maximum="24" IsSnapToTickEnabled="True" TickFrequency="1"
-                                                        Value="{Binding FontSize, UpdateSourceTrigger=PropertyChanged}"
+                                                        Value="{Binding FontSize, Mode=TwoWay, UpdateSourceTrigger=Explicit}"
                                                         VerticalAlignment="Center"/>
                                                 <Border Grid.Column="1" Background="{StaticResource TrackSurface}" CornerRadius="6"
                                                         MinWidth="34" Height="24" Margin="12,0,0,0" Padding="8,0">
-                                                    <TextBlock Text="{Binding FontSize}" FontSize="12" Foreground="{StaticResource VexText}"
+                                                    <TextBlock Text="{Binding Value, ElementName=FontSizeSlider, StringFormat=0}" FontSize="12" Foreground="{StaticResource VexText}"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                 </Border>
                                             </Grid>
