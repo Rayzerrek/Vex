@@ -33,15 +33,20 @@ public static class ChromePalette
         Set(res, "VexBackgroundBottomColor", Darken(bg, 0.45));
         Set(res, "VexSurfaceColor", WithAlpha(bg, 0xE6));
         Set(res, "VexHoverColor", Lighten(bg, 0.12));
-        Set(res, "VexBorderColor", Mix(bg, fg, 0.20));
+        // Borders read clearly against the tinted chrome and shift with the
+        // theme instead of disappearing into it.
+        Set(res, "VexBorderColor", Mix(bg, fg, 0.30));
         Set(res, "VexTextColor", fg);
         Set(res, "VexTextDimColor", Mix(fg, bg, 0.45));
         Set(res, "VexAccentColor", accent);
-        Set(res, "VexFocusBorderColor", Mix(bg, blue, 0.35));
+        Set(res, "VexFocusBorderColor", Mix(bg, blue, 0.50));
         Set(res, "VexSidebarColor", WithAlpha(bg, 0x30));
         Set(res, "VexTabStripColor", WithAlpha(bg, 0x40));
-        Set(res, "VexPaneTitleBarColor", WithAlpha(fg, 0x14));
-        Set(res, "VexPaneTitleBarFocusedColor", WithAlpha(fg, 0x24));
+        // The pane title bar carries the terminal's own background, so each
+        // pane reads as one tinted block; focus lifts it slightly and the
+        // accent border marks the active pane.
+        Set(res, "VexPaneTitleBarColor", bg);
+        Set(res, "VexPaneTitleBarFocusedColor", Lighten(bg, 0.10));
         Set(res, "VexTabHoverColor", WithAlpha(fg, 0x12));
         Set(res, "VexTabSelectedStartColor", WithAlpha(blue, 0x30));
         Set(res, "VexTabSelectedEndColor", WithAlpha(magenta, 0x30));
