@@ -57,13 +57,16 @@ public class AppSettings : ObservableObject
     }
 
     // Enumerating every system font family takes hundreds of milliseconds, so
-    // it is deferred until the settings overlay actually needs the list.
-    private string[]? _availableFonts;
+    // it is deferred until the settings overlay actually needs the list; the
+    // overlay warms it on a background thread, hence the thread-safe Lazy.
+    private readonly Lazy<string[]> _availableFonts = new(() =>
+        System.Windows.Media.Fonts.SystemFontFamilies
+            .Select(f => f.Source)
+            .OrderBy(f => f)
+            .ToArray());
+
     [JsonIgnore]
-    public string[] AvailableFonts => _availableFonts ??= System.Windows.Media.Fonts.SystemFontFamilies
-        .Select(f => f.Source)
-        .OrderBy(f => f)
-        .ToArray();
+    public string[] AvailableFonts => _availableFonts.Value;
 
     private string _fontFamily = "Cascadia Mono";
     public string FontFamily
