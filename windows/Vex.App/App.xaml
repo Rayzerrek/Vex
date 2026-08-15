@@ -9,18 +9,18 @@
         <Color x:Key="VexBackgroundColor">#FF0E1013</Color>
         <Color x:Key="VexSurfaceColor">#E6191B20</Color>
         <Color x:Key="VexHoverColor">#FF21262C</Color>
-        <Color x:Key="VexBorderColor">#FF2A3037</Color>
+        <Color x:Key="VexBorderColor">#FF3A424D</Color>
         <Color x:Key="VexTextColor">#FFE6E8EB</Color>
         <Color x:Key="VexTextDimColor">#FF868D96</Color>
         <Color x:Key="VexAccentColor">#FF8B939E</Color>
         <!-- Neutral outline for the active pane; focus reads as a highlight,
              not a saturated frame. -->
-        <Color x:Key="VexFocusBorderColor">#FF4C555F</Color>
+        <Color x:Key="VexFocusBorderColor">#FF4C6B9C</Color>
         <!-- Translucent chrome overlays so the acrylic backdrop shows through. -->
         <Color x:Key="VexSidebarColor">#30111317</Color>
         <Color x:Key="VexTabStripColor">#40111317</Color>
-        <Color x:Key="VexPaneTitleBarColor">#1EFFFFFF</Color>
-        <Color x:Key="VexPaneTitleBarFocusedColor">#30FFFFFF</Color>
+        <Color x:Key="VexPaneTitleBarColor">#FF1E2026</Color>
+        <Color x:Key="VexPaneTitleBarFocusedColor">#FF262932</Color>
         <Color x:Key="VexTabSelectedColor">#2EFFFFFF</Color>
         <Color x:Key="VexTabHoverColor">#1EFFFFFF</Color>
 
@@ -167,7 +167,7 @@
 
         <Style TargetType="Button" x:Key="PaneTitleButton">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
