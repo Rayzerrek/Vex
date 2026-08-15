@@ -62,7 +62,7 @@
                                         </Style>
                                     </Image.Style>
                                 </Image>
-                                <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform">
+                                <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexText}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform">
                                     <Path.Style>
                                         <Style TargetType="Path">
                                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -74,7 +74,7 @@
                                         </Style>
                                     </Path.Style>
                                 </Path>
-                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{StaticResource VexTextDim}"
+                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{StaticResource VexText}"
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </DockPanel>
@@ -119,8 +119,8 @@
                                 </Button>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0,0,0">
-                                <Path Data="M 2,1 H 9 L 12,4 V 13 H 2 Z M 9,1 V 4 H 12" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform" Fill="Transparent"/>
-                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{StaticResource VexTextDim}"
+                                <Path Data="M 2,1 H 9 L 12,4 V 13 H 2 Z M 9,1 V 4 H 12" Stroke="{StaticResource VexText}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform" Fill="Transparent"/>
+                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{StaticResource VexText}"
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </DockPanel>
