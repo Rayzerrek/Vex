@@ -599,7 +599,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void FlushRedraw()
     {
-        var flushStarted = DiagPath is null ? default : System.Diagnostics.Stopwatch.StartNew();
+        // Copy the static so the null state of the stopwatch matches the
+        // guard below without flow-tracking a static field read.
+        var diagPath = DiagPath;
+        var flushStarted = diagPath is null ? null : System.Diagnostics.Stopwatch.StartNew();
         try
         {
             _terminal.UpdateFrame();
@@ -607,7 +610,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var scrollbar = _terminal.Scrollbar;
             var viewportMoved = scrollbar.Offset != _lastScrollOffset;
             _lastScrollOffset = scrollbar.Offset;
-            if (DiagPath is not null)
+            if (flushStarted is not null)
                 Diag($"flush dirty={dirty} full={_needsFullRedraw} scroll={viewportMoved} offset={scrollbar.Offset}/{scrollbar.Total} rows={_rows} cols={_cols} ms={flushStarted.Elapsed.TotalMilliseconds:F4}");
 
             if (_needsFullRedraw || dirty == FrameDirty.Full || viewportMoved)
