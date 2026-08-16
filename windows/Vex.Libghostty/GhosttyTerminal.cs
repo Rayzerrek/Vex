@@ -105,7 +105,7 @@ public sealed class GhosttyTerminal : IDisposable
     private int _oscLen;
 
     public event Action<string>? TitleChanged;
-    public event Action<byte[]>? WritePty;
+    public event Action<byte[], int>? WritePty;
 
     public FrameDirty FrameDirty { get; private set; }
     public CursorState Cursor { get; private set; }
@@ -211,7 +211,7 @@ public sealed class GhosttyTerminal : IDisposable
                     case FeedState.InOsc:
                         if (b == 0x07) // BEL terminates the OSC string
                         {
-                            FlushOsc(buffer, ref written, 0x07);
+                            FlushOscBel(buffer, ref written);
                             _feedState = FeedState.Normal;
                         }
                         else if (b == 0x1B) // possible ST (ESC \) terminator
@@ -236,7 +236,7 @@ public sealed class GhosttyTerminal : IDisposable
                     case FeedState.InOscEscapeSeen:
                         if (b == 0x5C) // ST terminator: ESC \
                         {
-                            FlushOsc(buffer, ref written, 0x1B, 0x5C);
+                            FlushOscSt(buffer, ref written);
                             _feedState = FeedState.Normal;
                         }
                         else
@@ -262,9 +262,11 @@ public sealed class GhosttyTerminal : IDisposable
 
     /// <summary>
     /// Re-emits a buffered OSC sequence (with its terminator) unless it is an
-    /// OSC 133 semantic-prompt marker, which is dropped entirely.
+    /// OSC 133 semantic-prompt marker, which is dropped entirely. BEL and ST
+    /// are the only terminators the feed filter emits, so the terminator
+    /// bytes are inlined instead of allocating a params array.
     /// </summary>
-    private void FlushOsc(byte[] dst, ref int written, params byte[] terminator)
+    private void FlushOscBel(byte[] dst, ref int written)
     {
         if (IsOsc133(_oscBuf, _oscLen))
             return;
@@ -272,8 +274,19 @@ public sealed class GhosttyTerminal : IDisposable
         dst[written++] = 0x5D;
         for (var j = 0; j < _oscLen; j++)
             dst[written++] = _oscBuf[j];
-        foreach (var t in terminator)
-            dst[written++] = t;
+        dst[written++] = 0x07;
+    }
+
+    private void FlushOscSt(byte[] dst, ref int written)
+    {
+        if (IsOsc133(_oscBuf, _oscLen))
+            return;
+        dst[written++] = 0x1B;
+        dst[written++] = 0x5D;
+        for (var j = 0; j < _oscLen; j++)
+            dst[written++] = _oscBuf[j];
+        dst[written++] = 0x1B;
+        dst[written++] = 0x5C;
     }
 
     private static bool IsOsc133(byte[] buf, int len)
@@ -747,9 +760,16 @@ public sealed class GhosttyTerminal : IDisposable
     {
         if (GetTarget(userdata) is not { } self)
             return;
-        var bytes = new byte[(int)len];
-        Marshal.Copy(data, bytes, 0, (int)len);
-        self.WritePty?.Invoke(bytes);
+        var bytes = System.Buffers.ArrayPool<byte>.Shared.Rent((int)len);
+        try
+        {
+            Marshal.Copy(data, bytes, 0, (int)len);
+            self.WritePty?.Invoke(bytes, (int)len);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(bytes);
+        }
     }
 
     private static GhosttyTerminal? GetTarget(IntPtr userdata) =>

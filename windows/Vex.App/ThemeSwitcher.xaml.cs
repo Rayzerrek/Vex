@@ -13,13 +13,15 @@ public partial class ThemeSwitcher : OverlayControl
     {
         InitializeComponent();
         HideOnWindowDeactivate();
-        ThemeList.ItemsSource = BuiltInThemes.All;
     }
 
     protected override void HideCore() => Hide();
 
     public void Show()
     {
+        if (ThemeList.ItemsSource == null)
+            ThemeList.ItemsSource = BuiltInThemes.All;
+
         // Snapshot so Escape can revert a previewed theme.
         _openingTheme = AppSettings.Instance.ThemeName;
 

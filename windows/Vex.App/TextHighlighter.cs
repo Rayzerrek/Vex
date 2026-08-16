@@ -13,6 +13,15 @@ namespace Vex.App;
 /// </summary>
 public static class TextHighlighter
 {
+    private static readonly Brush HighlightBrush = CreateFrozenBrush(Color.FromRgb(0x7F, 0xC4, 0xFF));
+
+    private static Brush CreateFrozenBrush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
     public static readonly DependencyProperty HighlightProperty =
         DependencyProperty.RegisterAttached(
             "Highlight",
@@ -33,21 +42,39 @@ public static class TextHighlighter
 
         textBlock.Inlines.Clear();
 
-        var match = new HashSet<int>(result.MatchPositions);
         var text = result.FileName;
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        var positions = result.MatchPositions;
+        if (positions.Length == 0)
+        {
+            textBlock.Inlines.Add(new Run(text));
+            return;
+        }
+
+        // Avoid HashSet allocation: MatchPositions is sorted ascending, so an index scan is O(1) per char.
+        var posIndex = 0;
         var runStart = 0;
-        var inMatch = match.Contains(0);
+        var inMatch = positions[0] == 0;
+        if (inMatch)
+            posIndex++;
 
         for (var i = 1; i <= text.Length; i++)
         {
-            var nextIsMatch = i < text.Length && match.Contains(i);
+            var nextIsMatch = false;
+            if (i < text.Length && posIndex < positions.Length && positions[posIndex] == i)
+            {
+                nextIsMatch = true;
+                posIndex++;
+            }
+
             if (i == text.Length || nextIsMatch != inMatch)
             {
-                // Run from runStart to i with the current inMatch state.
                 var run = new Run(text[runStart..i]);
                 if (inMatch)
                 {
-                    run.Foreground = new SolidColorBrush(Color.FromRgb(0x7F, 0xC4, 0xFF));
+                    run.Foreground = HighlightBrush;
                     run.FontWeight = FontWeights.Bold;
                 }
                 textBlock.Inlines.Add(run);

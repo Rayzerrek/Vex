@@ -17,6 +17,8 @@ public sealed class TerminalPalette
     private readonly Dictionary<int, Brush> _rgbCache = new();
     private readonly Dictionary<int, Brush> _dimCache = new();
 
+    private readonly GhosttyColorRgb[] _paletteRgb = new GhosttyColorRgb[256];
+
     public Brush Foreground { get; }
     public Brush Background { get; }
     public Brush Cursor { get; }
@@ -62,26 +64,19 @@ public sealed class TerminalPalette
             var v = (byte)(8 + (i - 232) * 10);
             _ansi[i] = Freeze(Color.FromRgb(v, v, v));
         }
-    }
 
-    /// <summary>The palette handed to libghostty for ANSI color resolution.</summary>
-    public GhosttyColorRgb[] PaletteRgb()
-    {
-        var palette = new GhosttyColorRgb[256];
         for (var i = 0; i < 256; i++)
         {
             var c = ((SolidColorBrush)_ansi[i]).Color;
-            palette[i] = new GhosttyColorRgb(c.R, c.G, c.B);
+            _paletteRgb[i] = new GhosttyColorRgb(c.R, c.G, c.B);
         }
-        return palette;
     }
 
+    /// <summary>The palette handed to libghostty for ANSI color resolution.</summary>
+    public GhosttyColorRgb[] PaletteRgb() => _paletteRgb;
+
     private static Color Parse(string hex, byte alpha = 0xFF)
-    {
-        var color = (Color)ColorConverter.ConvertFromString(hex);
-        color.A = alpha;
-        return color;
-    }
+        => FastColor.ParseHex(hex, alpha);
 
     private static Brush Freeze(Color color)
     {
@@ -156,6 +151,19 @@ public sealed class TerminalPalette
             }
             foreground = dim;
         }
+    }
+
+    private readonly Dictionary<Brush, Pen> _penCache = new();
+
+    public Pen GetPen(Brush brush)
+    {
+        if (!_penCache.TryGetValue(brush, out var pen))
+        {
+            pen = new Pen(brush, 1);
+            pen.Freeze();
+            _penCache[brush] = pen;
+        }
+        return pen;
     }
 
     private static int RgbOf(Brush brush)

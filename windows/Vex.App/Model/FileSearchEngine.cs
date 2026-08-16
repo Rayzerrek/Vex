@@ -1,5 +1,4 @@
 using System.IO;
-using System.Windows.Media;
 
 namespace Vex.App.Model;
 
@@ -30,8 +29,9 @@ public sealed class FileSearchResult
 /// </summary>
 public sealed class FileSearchEngine
 {
+    private static readonly char[] PathSeparators = { '/', '\\' };
     private readonly string _root;
-    private List<string> _files = new();
+    private List<(string FullPath, string RelativePath)> _indexedFiles = new();
 
     public FileSearchEngine(string root)
     {
@@ -43,26 +43,29 @@ public sealed class FileSearchEngine
     /// a background thread.</summary>
     public void RebuildIndex()
     {
-        var files = new List<string>();
+        var files = new List<(string FullPath, string RelativePath)>();
         try
         {
-            Walk(new DirectoryInfo(_root), files);
+            var rootDir = new DirectoryInfo(_root);
+            if (rootDir.Exists)
+            {
+                var prefixLen = _root.Length + (_root.EndsWith(Path.DirectorySeparatorChar) || _root.EndsWith(Path.AltDirectorySeparatorChar) ? 0 : 1);
+                Walk(rootDir, prefixLen, files);
+            }
         }
         catch
         {
             // A missing root or an access error leaves the previous index.
         }
-        _files = files;
+        _indexedFiles = files;
     }
 
-    private void Walk(DirectoryInfo dir, List<string> files)
+    private void Walk(DirectoryInfo dir, int rootPrefixLen, List<(string FullPath, string RelativePath)> files)
     {
-        // Shallow-first scan: try to get entries once, bail out on access
-        // errors instead of throwing per subdirectory.
-        FileSystemInfo[] entries;
+        IEnumerable<FileSystemInfo> entries;
         try
         {
-            entries = dir.GetFileSystemInfos();
+            entries = dir.EnumerateFileSystemInfos();
         }
         catch
         {
@@ -71,19 +74,22 @@ public sealed class FileSearchEngine
 
         foreach (var entry in entries)
         {
-            if (entry.Name.StartsWith(".") ||
-                entry.Name == "node_modules" ||
-                entry.Name == "bin" ||
-                entry.Name == "obj")
+            var name = entry.Name;
+            if (name.StartsWith('.') ||
+                name == "node_modules" ||
+                name == "bin" ||
+                name == "obj")
                 continue;
 
             if (entry is DirectoryInfo sub)
             {
-                Walk(sub, files);
+                Walk(sub, rootPrefixLen, files);
             }
             else
             {
-                files.Add(entry.FullName);
+                var full = entry.FullName;
+                var rel = full.Length >= rootPrefixLen ? full[rootPrefixLen..] : name;
+                files.Add((full, rel));
             }
         }
     }
@@ -94,34 +100,44 @@ public sealed class FileSearchEngine
     /// the query is blank.</summary>
     public List<FileSearchResult> Search(string query, int limit = 50)
     {
-        var results = new List<FileSearchResult>(limit);
+        var results = new List<FileSearchResult>(Math.Min(limit, 50));
         if (string.IsNullOrWhiteSpace(query))
             return results;
 
-        foreach (var file in _files)
+        var files = _indexedFiles;
+        for (var i = 0; i < files.Count; i++)
         {
-            var rel = Path.GetRelativePath(_root, file);
-            var match = Score(rel, query);
-            if (match == null)
+            var (full, rel) = files[i];
+            if (!TryScore(rel, query, out var score, out var positions))
                 continue;
 
             var fileName = Path.GetFileName(rel);
             var nameStart = rel.Length - fileName.Length;
-            // Positions relative to the file name so the row can highlight
-            // the matched characters in the name line.
-            var namePositions = match.Value.Positions
-                .Where(p => p >= nameStart)
-                .Select(p => p - nameStart)
-                .ToArray();
+
+            // Extract match positions in the file name without LINQ allocations
+            var nameMatchCount = 0;
+            for (var p = 0; p < positions.Length; p++)
+            {
+                if (positions[p] >= nameStart)
+                    nameMatchCount++;
+            }
+
+            var namePositions = new int[nameMatchCount];
+            var dest = 0;
+            for (var p = 0; p < positions.Length; p++)
+            {
+                if (positions[p] >= nameStart)
+                    namePositions[dest++] = positions[p] - nameStart;
+            }
 
             results.Add(new FileSearchResult
             {
-                FullPath = file,
+                FullPath = full,
                 RelativePath = rel,
                 FileName = fileName,
                 DirectoryPart = Path.GetDirectoryName(rel) ?? "",
                 MatchPositions = namePositions,
-                Score = match.Value.Score,
+                Score = score,
             });
         }
 
@@ -133,54 +149,74 @@ public sealed class FileSearchEngine
 
     /// <summary>
     /// Scores a candidate path against the query using subsequence matching.
-    /// Returns null when the query is not a subsequence of the path.
+    /// Fast-path returns false before allocating positions array for non-matches.
     /// </summary>
-    private static (double Score, int[] Positions)? Score(string text, string query)
+    private static bool TryScore(string text, string query, out double score, out int[] positions)
     {
-        var positions = new int[query.Length];
+        score = 0;
+        positions = Array.Empty<int>();
+
+        var qLen = query.Length;
+        var tLen = text.Length;
+        if (tLen < qLen)
+            return false;
+
+        // Subsequence pre-check
+        var qIdx = 0;
+        for (var t = 0; t < tLen && qIdx < qLen; t++)
+        {
+            if (char.ToLowerInvariant(text[t]) == char.ToLowerInvariant(query[qIdx]))
+                qIdx++;
+        }
+
+        if (qIdx < qLen)
+            return false;
+
+        var pos = new int[qLen];
         var idx = 0;
-        for (var i = 0; i < query.Length; i++)
+        for (var i = 0; i < qLen; i++)
         {
             var ch = char.ToLowerInvariant(query[i]);
-            while (idx < text.Length && char.ToLowerInvariant(text[idx]) != ch)
+            while (idx < tLen && char.ToLowerInvariant(text[idx]) != ch)
                 idx++;
-            if (idx == text.Length)
-                return null;
-            positions[i] = idx;
-            idx++;
+            pos[i] = idx++;
         }
 
-        double score = 0;
+        double s = 0;
         var last = -1;
-        for (var i = 0; i < positions.Length; i++)
+        var lastSlash = text.LastIndexOfAny(PathSeparators);
+
+        for (var i = 0; i < pos.Length; i++)
         {
-            var pos = positions[i];
+            var p = pos[i];
             // Consecutive matches chain bonuses (fzf's consecutive bonus).
-            if (last >= 0 && pos == last + 1)
-                score += 8;
-            // Boundary bonus: after a slash or a separator, or a camelCase
-            // transition — matches at "word starts" are worth more.
-            if (pos == 0 ||
-                text[pos - 1] == '/' ||
-                text[pos - 1] == '\\' ||
-                text[pos - 1] == '_' ||
-                text[pos - 1] == '-' ||
-                text[pos - 1] == '.' ||
-                (pos > 0 && char.IsUpper(text[pos]) && char.IsLower(text[pos - 1])))
-                score += 16;
-            // Matches in the file name (after the last slash) weigh more than
-            // in the directory part.
-            var lastSlash = text.LastIndexOf('/');
-            if (pos > lastSlash)
-                score += 6;
-            last = pos;
+            if (last >= 0 && p == last + 1)
+                s += 8;
+
+            // Boundary bonus: after a slash or a separator, or a camelCase transition
+            if (p == 0 ||
+                text[p - 1] == '/' ||
+                text[p - 1] == '\\' ||
+                text[p - 1] == '_' ||
+                text[p - 1] == '-' ||
+                text[p - 1] == '.' ||
+                (p > 0 && char.IsUpper(text[p]) && char.IsLower(text[p - 1])))
+            {
+                s += 16;
+            }
+
+            // Matches in the file name weigh more than in directory part
+            if (p > lastSlash)
+                s += 6;
+
+            last = p;
         }
 
-        // Prefer shorter paths and matches that start earlier.
-        score += Math.Max(0, 40 - text.Length) * 0.25;
-        score -= positions[0] * 0.05;
+        s += Math.Max(0, 40 - tLen) * 0.25;
+        s -= pos[0] * 0.05;
 
-        // Normalize so scores are comparable across candidates.
-        return (score, positions);
+        score = s;
+        positions = pos;
+        return true;
     }
 }
