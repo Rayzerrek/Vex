@@ -68,7 +68,7 @@ public static class ChromePalette
         => res[key] = color;
 
     private static Color Parse(string hex)
-        => (Color)ColorConverter.ConvertFromString(hex);
+        => FastColor.ParseHex(hex);
 
     private static Color WithAlpha(Color c, byte a)
         => Color.FromArgb(a, c.R, c.G, c.B);

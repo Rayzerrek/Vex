@@ -39,7 +39,7 @@ public class AppSettings : ObservableObject
             return;
         _saveDebounce.Stop();
         _savePending = false;
-        WriteSettings();
+        WriteSettings(waitForWrite: true);
     }
 
     private bool _sidebarVisible = true;
@@ -96,6 +96,8 @@ public class AppSettings : ObservableObject
         set { if (Set(ref _shell, value)) Save(); }
     }
 
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
     private static AppSettings Load()
     {
         try
@@ -122,15 +124,27 @@ public class AppSettings : ObservableObject
         _saveDebounce.Start();
     }
 
-    private void WriteSettings()
+    private void WriteSettings(bool waitForWrite = false)
     {
         try
         {
             var dir = Path.GetDirectoryName(SettingsPath);
             if (dir != null)
                 Directory.CreateDirectory(dir);
-            var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsPath, json);
+            var json = JsonSerializer.Serialize(this, JsonOptions);
+            var write = Task.Run(() =>
+            {
+                try
+                {
+                    File.WriteAllText(SettingsPath, json);
+                }
+                catch
+                {
+                    // Ignore save errors
+                }
+            });
+            if (waitForWrite)
+                write.Wait();
         }
         catch
         {

@@ -208,6 +208,14 @@ internal static class NativeMethods
         int nSize,
         out int lpNumberOfBytesRead);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static unsafe extern bool ReadProcessMemory(
+        IntPtr hProcess,
+        IntPtr lpBaseAddress,
+        void* lpBuffer,
+        int nSize,
+        out int lpNumberOfBytesRead);
+
     [DllImport("ntdll.dll")]
     internal static extern int NtQueryInformationProcess(
         IntPtr hProcess,
