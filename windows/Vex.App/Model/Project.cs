@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Threading;
 using System.Windows.Threading;
 
 namespace Vex.App.Model;
@@ -64,9 +65,35 @@ public sealed class Project : ObservableObject
         tab.TabClosedRequested += t => CloseTab(t);
     }
 
+    private int _gitBranchVersion;
+
     public void RefreshGitBranch()
     {
-        GitBranch = ResolveGitBranch(WorkingDirectory);
+        var dir = WorkingDirectory;
+        if (string.IsNullOrEmpty(dir))
+        {
+            GitBranch = null;
+            return;
+        }
+
+        // Drop stale completions: a newer refresh supersedes an older one,
+        // so an in-flight read must not overwrite the freshest result.
+        var version = ++_gitBranchVersion;
+        var syncContext = SynchronizationContext.Current;
+        if (syncContext is null)
+        {
+            // No UI context (unexpected caller): resolve inline instead of
+            // throwing from FromCurrentSynchronizationContext.
+            GitBranch = ResolveGitBranch(dir);
+            return;
+        }
+        _ = Task.Run(() => ResolveGitBranch(dir))
+            .ContinueWith(t =>
+            {
+                if (t.IsFaulted || version != _gitBranchVersion)
+                    return;
+                GitBranch = t.Result;
+            }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     private static string? ResolveGitBranch(string workingDirectory)

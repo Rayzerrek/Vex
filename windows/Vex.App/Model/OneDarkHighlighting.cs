@@ -1,6 +1,6 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Reflection;
-using System.Threading;
 using System.Xml;
 using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Highlighting.Xshd;
@@ -8,51 +8,15 @@ using ICSharpCode.AvalonEdit.Highlighting.Xshd;
 namespace Vex.App.Model;
 
 /// <summary>
-/// Loads and registers One Dark <see cref="IHighlightingDefinition"/> instances from
-/// the embedded XSHD resources at application startup.
+/// Loads and registers One Dark <see cref="IHighlightingDefinition"/> instances lazily from
+/// the embedded XSHD resources on demand.
 /// </summary>
 internal static class OneDarkHighlighting
 {
     private const string ResourcePrefix = "Vex.App.Highlighting.";
-
-    private static int _registered;
-
-    // Names that match the x:Key in each XSHD <SyntaxDefinition name="…">
-    private static readonly string[] DefinitionNames =
-    [
-        "OneDark-JavaScript",
-        "OneDark-CSharp",
-        "OneDark-Python",
-        "OneDark-Cpp",
-        "OneDark-JSON",
-        "OneDark-XML",
-        "OneDark-Shell",
-    ];
-
-    /// <summary>
-    /// Call once before any <see cref="EditorPane"/> is created to register all
-    /// One Dark definitions with <see cref="HighlightingManager"/>. Idempotent;
-    /// also invoked lazily from <see cref="Get"/> so startup never pays for
-    /// parsing the XSHD files until an editor is actually shown.
-    /// </summary>
-    internal static void Register()
-    {
-        if (Interlocked.Exchange(ref _registered, 1) != 0)
-            return;
-
-        var assembly = Assembly.GetExecutingAssembly();
-        foreach (var name in DefinitionNames)
-        {
-            var resourceName = $"{ResourcePrefix}{name}.xshd";
-            using var stream = assembly.GetManifestResourceStream(resourceName);
-            if (stream is null)
-                continue;
-
-            using var reader = new XmlTextReader(stream);
-            var definition = HighlightingLoader.Load(reader, HighlightingManager.Instance);
-            HighlightingManager.Instance.RegisterHighlighting(name, null, definition);
-        }
-    }
+    // ConcurrentDictionary forbids null values, so the cache holds a sentinel
+    // for "resource missing" instead of null.
+    private static readonly ConcurrentDictionary<string, IHighlightingDefinition> Definitions = new();
 
     /// <summary>
     /// Returns the One Dark <see cref="IHighlightingDefinition"/> most appropriate for
@@ -111,7 +75,31 @@ internal static class OneDarkHighlighting
 
     private static IHighlightingDefinition? Get(string name)
     {
-        Register();
-        return HighlightingManager.Instance.GetDefinition(name);
+        // GetOrAdd runs the factory once per key even under concurrency; the
+        // sentinel (a zero-cost singleton) marks a missing resource.
+        var definition = Definitions.GetOrAdd(name, static key =>
+        {
+            var resourceName = $"{ResourcePrefix}{key}.xshd";
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
+            if (stream is null)
+                return MissingDefinition.Instance;
+
+            using var reader = XmlReader.Create(stream);
+            var loaded = HighlightingLoader.Load(reader, HighlightingManager.Instance);
+            HighlightingManager.Instance.RegisterHighlighting(key, null, loaded);
+            return loaded;
+        });
+        return ReferenceEquals(definition, MissingDefinition.Instance) ? null : definition;
+    }
+
+    private sealed class MissingDefinition : IHighlightingDefinition
+    {
+        public static readonly MissingDefinition Instance = new();
+        public string Name => "";
+        public HighlightingRuleSet? MainRuleSet => null;
+        public IEnumerable<HighlightingColor> NamedHighlightingColors => [];
+        public IDictionary<string, string> Properties => new Dictionary<string, string>();
+        public HighlightingColor? GetNamedColor(string name) => null;
+        public HighlightingRuleSet? GetNamedRuleSet(string name) => null;
     }
 }

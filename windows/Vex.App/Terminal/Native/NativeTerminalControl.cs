@@ -154,7 +154,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             TitleRawChanged?.Invoke(title);
             TitleChanged?.Invoke(title);
         };
-        _terminal.WritePty += data => _session?.Write(data);
+        _terminal.WritePty += (data, len) => _session?.Write(data.AsSpan(0, len));
 
         _children = new VisualCollection(this)
         {
@@ -766,8 +766,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 continue;
             var runX = run.StartCol * _cellWidth;
             var runWidth = run.Length * _cellWidth;
-            var pen = new Pen(run.Foreground ?? _palette.Foreground, 1);
-            pen.Freeze();
+            var pen = _palette.GetPen(run.Foreground ?? _palette.Foreground);
             var rowY = y;
             if (run.Underline)
                 dc.DrawLine(pen, new Point(runX, rowY + _cellHeight - pen.Thickness), new Point(runX + runWidth, rowY + _cellHeight - pen.Thickness));
@@ -1470,7 +1469,19 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             Diag($"text '{e.Text.Replace("\r", "<CR>")}' session={_session is not null}");
         if (_session is null || string.IsNullOrEmpty(e.Text))
             return;
-        _session.Write(Encoding.UTF8.GetBytes(e.Text));
+        // Short single-line text (the overwhelmingly common case) encodes
+        // into a stack buffer; the pooled fallback covers multi-line pastes
+        // via IME. Avoids a byte[] allocation per keystroke.
+        if (e.Text.Length <= 32 && e.Text.IndexOf('\n') < 0)
+        {
+            Span<byte> buffer = stackalloc byte[Encoding.UTF8.GetMaxByteCount(e.Text.Length)];
+            var written = Encoding.UTF8.GetBytes(e.Text, buffer);
+            _session.Write(buffer[..written]);
+        }
+        else
+        {
+            _session.Write(Encoding.UTF8.GetBytes(e.Text));
+        }
         e.Handled = true;
     }
 

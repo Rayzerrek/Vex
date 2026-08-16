@@ -66,10 +66,6 @@ public partial class SettingsOverlay : OverlayControl
         FontSizeSlider.PreviewMouseLeftButtonUp += (_, _) => CommitFontSize();
         FontSizeSlider.KeyUp += (_, _) => CommitFontSize();
 
-        ThemeList.ItemsSource = BuiltInThemes.All;
-        var currentTheme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
-        ThemeList.SelectedItem = currentTheme ?? BuiltInThemes.VexDark;
-
         ShellPowerShell.IsChecked = AppSettings.Instance.Shell == "PowerShell";
         ShellNushell.IsChecked = AppSettings.Instance.Shell != "PowerShell";
 
@@ -79,7 +75,7 @@ public partial class SettingsOverlay : OverlayControl
         // so the card selection stays in sync if both are open.
         AppSettings.Instance.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName != nameof(AppSettings.ThemeName))
+            if (e.PropertyName != nameof(AppSettings.ThemeName) || ThemeList.ItemsSource == null)
                 return;
             var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
             if (theme != null && !ReferenceEquals(ThemeList.SelectedItem, theme))
@@ -211,6 +207,8 @@ public partial class SettingsOverlay : OverlayControl
 
         if (ReferenceEquals(page, PageTerminal))
             EnsureFontList();
+        if (ReferenceEquals(page, PageAppearance))
+            EnsureThemeList();
 
         _outPage = _activePage;
         _inPage = page;
@@ -323,6 +321,15 @@ public partial class SettingsOverlay : OverlayControl
         if (FontCombo.ItemsSource != null)
             return;
         FontCombo.ItemsSource = AppSettings.Instance.AvailableFonts;
+    }
+
+    private void EnsureThemeList()
+    {
+        if (ThemeList.ItemsSource != null)
+            return;
+        ThemeList.ItemsSource = BuiltInThemes.All;
+        var currentTheme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
+        ThemeList.SelectedItem = currentTheme ?? BuiltInThemes.VexDark;
     }
 
     private void WarmFonts()
