@@ -10,9 +10,20 @@
         <SolidColorBrush x:Key="VexAccentTranslucent" Color="{DynamicResource VexAccentColor}" Opacity="0.16"/>
         <SolidColorBrush x:Key="VexTextDimTranslucent" Color="{DynamicResource VexTextDimColor}" Opacity="0.12"/>
         <HierarchicalDataTemplate DataType="{x:Type m:FileTreeNode}" ItemsSource="{Binding Children}">
-            <Border x:Name="row" CornerRadius="4" Margin="0,0,4,0" Padding="4,2" Background="Transparent">
+            <Border x:Name="row" CornerRadius="4" Margin="0,0,4,0" Padding="4,2"
+                    PreviewMouseLeftButtonDown="TreeRow_PreviewMouseLeftButtonDown"
+                    PreviewMouseRightButtonDown="TreeRow_PreviewMouseRightButtonDown">
+                <Border.ContextMenu>
+                    <ContextMenu Style="{StaticResource DarkContextMenu}"
+                                 DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="Open" Style="{StaticResource DarkMenuItem}" Click="FileTreeOpen_Click"/>
+                        <MenuItem Header="Open in Explorer" Style="{StaticResource DarkMenuItem}" Click="FileTreeReveal_Click"/>
+                        <MenuItem Header="Copy Path" Style="{StaticResource DarkMenuItem}" Click="FileTreeCopyPath_Click"/>
+                    </ContextMenu>
+                </Border.ContextMenu>
                 <Border.Style>
                     <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent"/>
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=TreeViewItem}}" Value="True">
                                 <Setter Property="Background" Value="{StaticResource VexHover}"/>
@@ -82,5 +93,5 @@
         </Style>
     </UserControl.Resources>
     
-    <TreeView ItemsSource="{Binding TreeRoots}" Background="Transparent" BorderThickness="0" MouseDown="TreeView_MouseDown" MouseDoubleClick="TreeView_MouseDoubleClick" VirtualizingStackPanel.IsVirtualizing="True" VirtualizingStackPanel.VirtualizationMode="Recycling" />
+    <TreeView x:Name="FileTree" ItemsSource="{Binding TreeRoots}" Background="Transparent" BorderThickness="0" MouseDown="TreeView_MouseDown" MouseDoubleClick="TreeView_MouseDoubleClick" VirtualizingStackPanel.IsVirtualizing="True" VirtualizingStackPanel.VirtualizationMode="Recycling" />
 </UserControl>
