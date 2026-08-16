@@ -209,6 +209,18 @@ public sealed class Project : ObservableObject
         SelectedTab = tab;
     }
 
+    /// <summary>Moves a tab to a new position in the tab bar.</summary>
+    public void MoveTab(WorkspaceTab tab, int newIndex)
+    {
+        var oldIndex = Tabs.IndexOf(tab);
+        if (oldIndex < 0)
+            return;
+        newIndex = Math.Clamp(newIndex, 0, Tabs.Count - 1);
+        if (newIndex == oldIndex)
+            return;
+        Tabs.Move(oldIndex, newIndex);
+    }
+
     public void CloseTab(WorkspaceTab tab)
     {
         var index = Tabs.IndexOf(tab);
