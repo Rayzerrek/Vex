@@ -38,7 +38,8 @@
                             </Style>
                         </Border.Style>
                         <DockPanel LastChildFill="False">
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0">
+                            <StackPanel x:Name="TerminalActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
+                                        Opacity="0">
                                 <Button Style="{StaticResource PaneTitleButton}" ToolTip="Split Right (Ctrl+Shift+Right)" Click="PaneSplitRight_Click">
                                     <Path Data="M 1.5,1.5 H 12.5 V 12.5 H 1.5 Z M 7,1.5 V 12.5" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.1"/>
                                 </Button>
@@ -91,6 +92,32 @@
                     </Style>
                 </Border.Style>
             </Border>
+            <DataTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Trigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="TerminalActionButtons" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
+                                    <DoubleAnimation.EasingFunction>
+                                        <QuadraticEase EasingMode="EaseOut"/>
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.EnterActions>
+                    <Trigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="TerminalActionButtons" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
+                                    <DoubleAnimation.EasingFunction>
+                                        <QuadraticEase EasingMode="EaseOut"/>
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.ExitActions>
+                </Trigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
         <DataTemplate DataType="{x:Type m:EditorPane}">
             <Border Background="{StaticResource VexSurface}" BorderBrush="{StaticResource VexBorder}"
@@ -113,7 +140,8 @@
                             </Style>
                         </Border.Style>
                         <DockPanel LastChildFill="False">
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0">
+                            <StackPanel x:Name="EditorActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
+                                        Opacity="0">
                                 <Button Style="{StaticResource PaneTitleButton}" ToolTip="Close Pane (Ctrl+Shift+W)" Click="PaneClose_Click">
                                     <Path Data="M 3,3 L 11,11 M 11,3 L 3,11" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
                                 </Button>
@@ -137,6 +165,32 @@
                     </Style>
                 </Border.Style>
             </Border>
+            <DataTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Trigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="EditorActionButtons" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
+                                    <DoubleAnimation.EasingFunction>
+                                        <QuadraticEase EasingMode="EaseOut"/>
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.EnterActions>
+                    <Trigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="EditorActionButtons" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
+                                    <DoubleAnimation.EasingFunction>
+                                        <QuadraticEase EasingMode="EaseOut"/>
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.ExitActions>
+                </Trigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
         <DataTemplate DataType="{x:Type m:SplitPane}">
             <local:SplitPaneView Pane="{Binding}"/>
