@@ -195,6 +195,94 @@
         <DataTemplate DataType="{x:Type m:SplitPane}">
             <local:SplitPaneView Pane="{Binding}"/>
         </DataTemplate>
+
+        <!-- Reusable tab header (real tabs and the drag ghost). -->
+        <DataTemplate x:Key="TabHeaderTemplate">
+            <Grid Background="Transparent" MouseDown="TabHeader_MouseDown">
+                <Grid.ContextMenu>
+                    <ContextMenu Style="{StaticResource DarkContextMenu}">
+                        <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+→" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
+                        <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+↓" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
+                    </ContextMenu>
+                </Grid.ContextMenu>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Image Width="16" Height="16" Margin="0,0,6,0"
+                           Source="{Binding ActiveLeaf.AppIcon.Image}"
+                           VerticalAlignment="Center">
+                        <Image.Style>
+                            <Style TargetType="Image">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ActiveLeaf.AppIcon}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Image.Style>
+                    </Image>
+                    <!-- Terminal glyph shown when no app icon is available -->
+                    <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform">
+                        <Path.Style>
+                            <Style TargetType="Path">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ActiveLeaf.AppIcon}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Path.Style>
+                    </Path>
+                    <TextBlock x:Name="TitleBlock" Text="{Binding Title}"
+                               TextTrimming="CharacterEllipsis" FontSize="13"
+                               ToolTip="{Binding Title}"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="2" Text="{Binding Title}"
+                         Visibility="Collapsed" FontSize="14"
+                         VerticalAlignment="Center" HorizontalAlignment="Stretch"
+                         Foreground="{StaticResource VexText}"
+                         Background="{StaticResource VexSurface}"
+                         BorderBrush="{StaticResource VexBorder}"
+                         KeyDown="TitleEditBox_KeyDown"
+                         LostFocus="TitleEditBox_LostFocus"/>
+                <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource CloseButton}"
+                        Margin="4,0,0,0" ToolTip="Close Tab"
+                        Click="CloseTab_Click"
+                        Opacity="0"
+                        RenderTransformOrigin="0.5,0.5">
+                    <Button.RenderTransform>
+                        <ScaleTransform x:Name="CloseScale" ScaleX="0.6" ScaleY="0.6"/>
+                    </Button.RenderTransform>
+                    <TextBlock Text="×" FontSize="15"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                </Button>
+                <Grid.Triggers>
+                    <EventTrigger RoutedEvent="Grid.MouseEnter">
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.12"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.12"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </EventTrigger>
+                    <EventTrigger RoutedEvent="Grid.MouseLeave">
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.1"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="0.6" Duration="0:0:0.1"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="0.6" Duration="0:0:0.1"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </EventTrigger>
+                </Grid.Triggers>
+            </Grid>
+        </DataTemplate>
     </Window.Resources>
 
     <Grid x:Name="MainGrid">
@@ -225,7 +313,7 @@
             </Button>
 
             <!-- Tabs: natural width, left-aligned from the toggle -->
-            <ListBox Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="False"
+            <ListBox x:Name="TabStrip" Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="False"
                      ItemsSource="{Binding SelectedProject.Tabs}"
                      SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
                      Background="Transparent" BorderThickness="0"
@@ -268,93 +356,25 @@
                 </ListBox.ItemContainerStyle>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Grid Background="Transparent" MouseDown="TabHeader_MouseDown">
-                            <Grid.ContextMenu>
-                                <ContextMenu Style="{StaticResource DarkContextMenu}">
-                                    <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+→" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
-                                    <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+↓" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
-                                </ContextMenu>
-                            </Grid.ContextMenu>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <Image Width="16" Height="16" Margin="0,0,6,0"
-                                       Source="{Binding ActiveLeaf.AppIcon.Image}"
-                                       VerticalAlignment="Center">
-                                    <Image.Style>
-                                        <Style TargetType="Image">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding ActiveLeaf.AppIcon}" Value="{x:Null}">
-                                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Image.Style>
-                                </Image>
-                                <!-- Terminal glyph shown when no app icon is available -->
-                                <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform">
-                                    <Path.Style>
-                                        <Style TargetType="Path">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding ActiveLeaf.AppIcon}" Value="{x:Null}">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Path.Style>
-                                </Path>
-                                <TextBlock x:Name="TitleBlock" Text="{Binding Title}"
-                                           TextTrimming="CharacterEllipsis" FontSize="13"
-                                           ToolTip="{Binding Title}"
-                                           VerticalAlignment="Center"/>
-                            </StackPanel>
-                            <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="2" Text="{Binding Title}"
-                                     Visibility="Collapsed" FontSize="14"
-                                     VerticalAlignment="Center" HorizontalAlignment="Stretch"
-                                     Foreground="{StaticResource VexText}"
-                                     Background="{StaticResource VexSurface}"
-                                     BorderBrush="{StaticResource VexBorder}"
-                                     KeyDown="TitleEditBox_KeyDown"
-                                     LostFocus="TitleEditBox_LostFocus"/>
-                            <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource CloseButton}"
-                                    Margin="4,0,0,0" ToolTip="Close Tab"
-                                    Click="CloseTab_Click"
-                                    Opacity="0"
-                                    RenderTransformOrigin="0.5,0.5">
-                                <Button.RenderTransform>
-                                    <ScaleTransform x:Name="CloseScale" ScaleX="0.6" ScaleY="0.6"/>
-                                </Button.RenderTransform>
-                                <TextBlock Text="×" FontSize="15"
-                                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                            </Button>
-                            <Grid.Triggers>
-                                <EventTrigger RoutedEvent="Grid.MouseEnter">
-                                    <BeginStoryboard>
-                                        <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
-                                            <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.12"/>
-                                            <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.12"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </EventTrigger>
-                                <EventTrigger RoutedEvent="Grid.MouseLeave">
-                                    <BeginStoryboard>
-                                        <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.1"/>
-                                            <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="0.6" Duration="0:0:0.1"/>
-                                            <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="0.6" Duration="0:0:0.1"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </EventTrigger>
-                            </Grid.Triggers>
-                        </Grid>
+                        <ContentControl Content="{Binding}" ContentTemplate="{StaticResource TabHeaderTemplate}"/>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
+
+            <!-- Insertion marker + drag ghost shown while reordering tabs. -->
+            <Canvas x:Name="TabDragCanvas" Grid.Column="1" IsHitTestVisible="False">
+                <Border x:Name="TabDropMarker" Width="2" Height="22"
+                        CornerRadius="1" Background="{StaticResource VexAccent}" Opacity="0"/>
+                <Border x:Name="TabDragGhostHost" CornerRadius="8"
+                        Background="{StaticResource VexTabSelected}"
+                        Opacity="0" Visibility="Collapsed" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.45" Color="#000000"/>
+                    </Border.Effect>
+                    <ContentControl x:Name="TabDragGhost" IsHitTestVisible="False"
+                                    ContentTemplate="{StaticResource TabHeaderTemplate}"/>
+                </Border>
+            </Canvas>
 
             <!-- New Tab button -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True">
