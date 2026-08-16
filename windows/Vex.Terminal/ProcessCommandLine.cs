@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -7,7 +8,7 @@ namespace Vex.Terminal;
 
 /// <summary>
 /// Reads another process's command line by walking its PEB
-/// (NtQueryInformationProcess → PEB.ProcessParameters → CommandLine, then
+/// (NtQueryInformationProcess -> PEB.ProcessParameters -> CommandLine, then
 /// ReadProcessMemory). Needed because node-shimmed CLIs (claude, pi,
 /// antigravity, ...) all show up as node.exe; only the script they run says
 /// which app they really are.
@@ -20,7 +21,7 @@ public static class ProcessCommandLine
     private static readonly int UnicodeStringBufferOffset = IntPtr.Size == 8 ? 8 : 4;
 
     /// <summary>Full command line of the process, or null when unreadable.</summary>
-    public static string? Get(uint pid)
+    public static unsafe string? Get(uint pid)
     {
         var handle = NativeMethods.OpenProcess(
             NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION |
@@ -47,10 +48,32 @@ public static class ProcessCommandLine
 
             if (commandLine.Length == 0)
                 return "";
-            var buffer = new byte[commandLine.Length];
-            if (!NativeMethods.ReadProcessMemory(handle, commandLine.Buffer, buffer, buffer.Length, out var read) || read == 0)
-                return null;
-            return Encoding.Unicode.GetString(buffer, 0, read);
+
+            // Stack-allocate for typical command lines (up to 2KB) to eliminate GC heap churn
+            if (commandLine.Length <= 2048)
+            {
+                byte* stackBuf = stackalloc byte[commandLine.Length];
+                if (!NativeMethods.ReadProcessMemory(handle, commandLine.Buffer, stackBuf, commandLine.Length, out var read) || read == 0)
+                    return null;
+                return Encoding.Unicode.GetString(stackBuf, read);
+            }
+            else
+            {
+                var rented = ArrayPool<byte>.Shared.Rent(commandLine.Length);
+                try
+                {
+                    fixed (byte* pBuf = rented)
+                    {
+                        if (!NativeMethods.ReadProcessMemory(handle, commandLine.Buffer, pBuf, commandLine.Length, out var read) || read == 0)
+                            return null;
+                        return Encoding.Unicode.GetString(rented, 0, read);
+                    }
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(rented);
+                }
+            }
         }
         finally
         {
@@ -58,32 +81,34 @@ public static class ProcessCommandLine
         }
     }
 
-    private static bool ReadPointer(IntPtr handle, IntPtr address, out IntPtr value)
+    private static unsafe bool ReadPointer(IntPtr handle, IntPtr address, out IntPtr value)
     {
-        var bytes = new byte[IntPtr.Size];
-        if (!NativeMethods.ReadProcessMemory(handle, address, bytes, bytes.Length, out var read) || read != bytes.Length)
+        byte* bytes = stackalloc byte[IntPtr.Size];
+        if (!NativeMethods.ReadProcessMemory(handle, address, bytes, IntPtr.Size, out var read) || read != IntPtr.Size)
         {
             value = IntPtr.Zero;
             return false;
         }
+        var span = new ReadOnlySpan<byte>(bytes, IntPtr.Size);
         value = IntPtr.Size == 8
-            ? new IntPtr(BinaryPrimitives.ReadInt64LittleEndian(bytes))
-            : new IntPtr(BitConverter.ToInt32(bytes, 0));
+            ? new IntPtr(BinaryPrimitives.ReadInt64LittleEndian(span))
+            : new IntPtr(BinaryPrimitives.ReadInt32LittleEndian(span));
         return true;
     }
 
-    private static bool ReadUnicodeString(IntPtr handle, IntPtr address, out (ushort Length, IntPtr Buffer) commandLine)
+    private static unsafe bool ReadUnicodeString(IntPtr handle, IntPtr address, out (ushort Length, IntPtr Buffer) commandLine)
     {
-        var bytes = new byte[16];
-        if (!NativeMethods.ReadProcessMemory(handle, address, bytes, bytes.Length, out var read) || read != bytes.Length)
+        byte* bytes = stackalloc byte[16];
+        if (!NativeMethods.ReadProcessMemory(handle, address, bytes, 16, out var read) || read != 16)
         {
             commandLine = default;
             return false;
         }
-        var length = BinaryPrimitives.ReadUInt16LittleEndian(bytes);
+        var span = new ReadOnlySpan<byte>(bytes, 16);
+        var length = BinaryPrimitives.ReadUInt16LittleEndian(span);
         var buffer = IntPtr.Size == 8
-            ? new IntPtr(BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(8)))
-            : new IntPtr(BitConverter.ToInt32(bytes, UnicodeStringBufferOffset));
+            ? new IntPtr(BinaryPrimitives.ReadInt64LittleEndian(span[8..]))
+            : new IntPtr(BinaryPrimitives.ReadInt32LittleEndian(span[UnicodeStringBufferOffset..]));
         commandLine = (length, buffer);
         return true;
     }

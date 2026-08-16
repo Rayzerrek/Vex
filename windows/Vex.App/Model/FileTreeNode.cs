@@ -1,7 +1,4 @@
-using System;
-using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
 
 namespace Vex.App.Model;
 
@@ -19,7 +16,7 @@ public class FileTreeNode : ObservableObject
     public string FullPath { get; }
     public bool IsDirectory { get; }
 
-    public ObservableCollection<FileTreeNode> Children { get; } = new();
+    public ObservableRangeCollection<FileTreeNode> Children { get; } = new();
 
     public bool IsExpanded
     {
@@ -51,18 +48,17 @@ public class FileTreeNode : ObservableObject
         if (!IsDirectory) return;
         
         _isPopulated = true;
-        Children.Clear();
 
         try
         {
-            var nodes = await System.Threading.Tasks.Task.Run(() =>
+            var nodes = await Task.Run(() =>
             {
                 var dirInfo = new DirectoryInfo(FullPath);
-                if (!dirInfo.Exists) return new System.Collections.Generic.List<FileTreeNode>();
+                if (!dirInfo.Exists) return new List<FileTreeNode>();
 
-                var entries = dirInfo.GetFileSystemInfos();
+                var entries = dirInfo.EnumerateFileSystemInfos();
                 return entries
-                    .Where(e => !e.Name.StartsWith(".") && 
+                    .Where(e => !e.Name.StartsWith('.') && 
                                 e.Name != "bin" && 
                                 e.Name != "obj" && 
                                 e.Name != "node_modules" &&
@@ -73,14 +69,11 @@ public class FileTreeNode : ObservableObject
                     .ToList();
             });
 
-            foreach (var node in nodes)
-            {
-                Children.Add(node);
-            }
+            Children.ReplaceRange(nodes);
         }
         catch (Exception)
         {
-            // Handle access denied by leaving children empty
+            Children.Clear();
         }
     }
 }

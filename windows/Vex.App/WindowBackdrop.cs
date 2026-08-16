@@ -110,7 +110,7 @@ internal static class WindowBackdrop
         });
     }
 
-    private static bool TrySetAccent(IntPtr handle, AccentState state, Color tint, byte alpha, int accentFlags)
+    private static unsafe bool TrySetAccent(IntPtr handle, AccentState state, Color tint, byte alpha, int accentFlags)
     {
         var policy = new AccentPolicy
         {
@@ -122,22 +122,12 @@ internal static class WindowBackdrop
             GradientColor = (alpha << 24) | (tint.B << 16) | (tint.G << 8) | tint.R,
         };
 
-        var size = Marshal.SizeOf(policy);
-        var ptr = Marshal.AllocHGlobal(size);
-        try
+        var data = new WindowCompositionAttributeData
         {
-            Marshal.StructureToPtr(policy, ptr, false);
-            var data = new WindowCompositionAttributeData
-            {
-                Attribute = WcaAccentPolicy,
-                Data = ptr,
-                SizeOfData = size,
-            };
-            return SetWindowCompositionAttribute(handle, ref data) != 0;
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(ptr);
-        }
+            Attribute = WcaAccentPolicy,
+            Data = (IntPtr)(&policy),
+            SizeOfData = sizeof(AccentPolicy),
+        };
+        return SetWindowCompositionAttribute(handle, ref data) != 0;
     }
 }

@@ -51,6 +51,8 @@ public static class SessionStore
         return workspace;
     }
 
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
     /// <summary>Writes the whole workspace (projects, tabs, split tree and
     /// divider ratios) to disk. Best-effort: persistence must never crash the
     /// app, so any I/O error is swallowed.</summary>
@@ -59,7 +61,7 @@ public static class SessionStore
         try
         {
             var appSnapshot = new AppSnapshot { Windows = { Capture(workspace) } };
-            var json = JsonSerializer.Serialize(appSnapshot, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(appSnapshot, JsonOptions);
             Directory.CreateDirectory(Path.GetDirectoryName(SessionPath)!);
             File.WriteAllText(SessionPath, json);
         }
