@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows.Threading;
 
 namespace Vex.App.Model;
@@ -14,12 +15,20 @@ public sealed class Project : ObservableObject
 {
     public const int MaxTabs = 8;
     private string _name;
+    private string? _gitBranch;
     private WorkspaceTab? _selectedTab;
 
     private FileTreeNode[] _treeRoots = Array.Empty<FileTreeNode>();
     private FileTreeNode? _rootTree;
 
     public bool CanCreateTab => Tabs.Count < MaxTabs;
+
+    /// <summary>The active git branch in WorkingDirectory, or null if not a repository.</summary>
+    public string? GitBranch
+    {
+        get => _gitBranch;
+        private set => Set(ref _gitBranch, value);
+    }
 
     public Project(string name, string workingDirectory)
     {
@@ -29,6 +38,7 @@ public sealed class Project : ObservableObject
         var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
         RefreshFileTree();
+        RefreshGitBranch();
     }
 
     /// <summary>Restores a project from a saved session; tabs are wired up
@@ -40,12 +50,74 @@ public sealed class Project : ObservableObject
         Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
         foreach (var tab in tabs)
         {
-            tab.NewTabRequested += () => NewTab();
-            tab.TabClosedRequested += t => CloseTab(t);
+            WireTabEvents(tab);
             Tabs.Add(tab);
         }
         _selectedTab = Tabs.FirstOrDefault();
         RefreshFileTree();
+        RefreshGitBranch();
+    }
+
+    private void WireTabEvents(WorkspaceTab tab)
+    {
+        tab.NewTabRequested += () => NewTab();
+        tab.TabClosedRequested += t => CloseTab(t);
+    }
+
+    public void RefreshGitBranch()
+    {
+        GitBranch = ResolveGitBranch(WorkingDirectory);
+    }
+
+    private static string? ResolveGitBranch(string workingDirectory)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(workingDirectory) || !Directory.Exists(workingDirectory))
+                return null;
+
+            var gitPath = Path.Combine(workingDirectory, ".git");
+            string headPath;
+            if (File.Exists(gitPath))
+            {
+                // Submodule or git worktree file: "gitdir: /path/to/real/gitdir"
+                var line = File.ReadAllLines(gitPath).FirstOrDefault()?.Trim();
+                if (line != null && line.StartsWith("gitdir:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var target = line.Substring(7).Trim();
+                    var realGitDir = Path.IsPathRooted(target)
+                        ? target
+                        : Path.GetFullPath(Path.Combine(workingDirectory, target));
+                    headPath = Path.Combine(realGitDir, "HEAD");
+                }
+                else
+                {
+                    return null;
+                }
+            }
+            else if (Directory.Exists(gitPath))
+            {
+                headPath = Path.Combine(gitPath, "HEAD");
+            }
+            else
+            {
+                return null;
+            }
+
+            if (!File.Exists(headPath))
+                return null;
+
+            var headContent = File.ReadAllText(headPath).Trim();
+            if (headContent.StartsWith("ref: refs/heads/", StringComparison.OrdinalIgnoreCase))
+                return headContent.Substring("ref: refs/heads/".Length).Trim();
+
+            // Detached HEAD: short commit SHA
+            return headContent.Length > 7 ? headContent.Substring(0, 7) : headContent;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public FileTreeNode Root
@@ -67,6 +139,7 @@ public sealed class Project : ObservableObject
     {
         Root = new FileTreeNode(WorkingDirectory, true, Name);
         Root.IsExpanded = true;
+        RefreshGitBranch();
     }
 
     public string Name
@@ -111,8 +184,7 @@ public sealed class Project : ObservableObject
             return null;
 
         var tab = new WorkspaceTab(title, WorkingDirectory);
-        tab.NewTabRequested += () => NewTab();
-        tab.TabClosedRequested += t => CloseTab(t);
+        WireTabEvents(tab);
         Tabs.Add(tab);
         return tab;
     }
@@ -132,8 +204,7 @@ public sealed class Project : ObservableObject
         var fileName = System.IO.Path.GetFileName(filePath);
         var editorPane = new EditorPane(filePath);
         var tab = new WorkspaceTab(fileName, WorkingDirectory, editorPane, hasCustomTitle: false);
-        tab.NewTabRequested += () => NewTab();
-        tab.TabClosedRequested += t => CloseTab(t);
+        WireTabEvents(tab);
         Tabs.Add(tab);
         SelectedTab = tab;
     }

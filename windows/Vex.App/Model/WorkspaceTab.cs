@@ -30,7 +30,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         HasCustomTitle = hasCustomTitle;
         _root = root;
         
-        foreach (var leaf in Leaves(_root))
+        foreach (var leaf in EnumerateLeaves(_root))
         {
             AttachLeafEvents(leaf);
             if (leaf.IsFocused)
@@ -72,14 +72,31 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     public PaneNode Root
     {
         get => _root;
-        private set => Set(ref _root, value);
+        private set
+        {
+            if (Set(ref _root, value))
+            {
+                OnPropertyChanged(nameof(PaneCount));
+                OnPropertyChanged(nameof(Leaves));
+                LayoutChanged?.Invoke();
+            }
+        }
     }
+
+    /// <summary>Number of active leaf panes in this tab.</summary>
+    public int PaneCount => EnumerateLeaves(Root).Count();
+
+    /// <summary>All leaf panes in the split tree of this tab.</summary>
+    public IEnumerable<LeafPane> Leaves => EnumerateLeaves(Root);
+
+    /// <summary>Raised when panes are split or closed inside this tab.</summary>
+    public event Action? LayoutChanged;
 
     /// <summary>The pane that last had focus; split and title derive from it.</summary>
     public LeafPane? ActiveLeaf
     {
         get => _activeLeaf;
-        private set
+        set
         {
             if (_activeLeaf == value)
                 return;
@@ -190,14 +207,14 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     public void Dispose()
     {
-        foreach (var leaf in Leaves(Root))
+        foreach (var leaf in EnumerateLeaves(Root))
         {
             leaf.PropertyChanged -= OnLeafPropertyChanged;
             leaf.Dispose();
         }
     }
 
-    private static IEnumerable<LeafPane> Leaves(PaneNode node)
+    private static IEnumerable<LeafPane> EnumerateLeaves(PaneNode node)
     {
         switch (node)
         {
@@ -205,9 +222,9 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
                 yield return leaf;
                 break;
             case SplitPane split:
-                foreach (var leaf in Leaves(split.First))
+                foreach (var leaf in EnumerateLeaves(split.First))
                     yield return leaf;
-                foreach (var leaf in Leaves(split.Second))
+                foreach (var leaf in EnumerateLeaves(split.Second))
                     yield return leaf;
                 break;
         }

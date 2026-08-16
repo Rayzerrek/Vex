@@ -19,13 +19,19 @@ internal enum DropZone
 public partial class MainWindow : Window
 {
     private const double SidebarWidth = 240;
-    private const double SidebarAnimDuration = 300;
+    private const double SidebarOpenDuration = 280;
+    private const double SidebarCloseDuration = 230;
 
     private readonly Workspace _workspace;
     private Stopwatch? _sidebarAnimationClock;
-    private double _sidebarAnimationFrom;
-    private double _sidebarAnimationTo;
-    private bool _sidebarAnimationFadingOut;
+    private double _sidebarAnimationFromWidth;
+    private double _sidebarAnimationToWidth;
+    private double _sidebarAnimationFromOpacity;
+    private double _sidebarAnimationToOpacity;
+    private bool _sidebarAnimationClosing;
+    // Parallax translation applied to the sidebar inner content while the
+    // column smoothly expands/collapses for a fluid, polished reveal.
+    private readonly TranslateTransform _sidebarContentTranslate = new();
     private bool _draggingPane;
     private LeafPane? _dragPane;
     private System.Windows.Point _dragStart;
@@ -50,6 +56,9 @@ public partial class MainWindow : Window
                 FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
         };
         FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
+
+        // Parallax translation on sidebar inner content
+        SidebarContent.RenderTransform = _sidebarContentTranslate;
 
         // Restore the persisted sidebar state, collapsed (no animation) when
         // the user closed it last time.
@@ -251,19 +260,17 @@ public partial class MainWindow : Window
 
     private void AnimateSidebar(double target, bool fadeOut = false)
     {
-        _sidebarAnimationFrom = SidebarColumn.ActualWidth;
-        _sidebarAnimationTo = target;
-        _sidebarAnimationFadingOut = fadeOut;
+        _sidebarAnimationClosing = fadeOut;
+        _sidebarAnimationFromWidth = SidebarColumn.ActualWidth;
+        _sidebarAnimationToWidth = target;
+        _sidebarAnimationFromOpacity = SidebarPanel.Visibility == Visibility.Visible ? SidebarPanel.Opacity : 0;
+        _sidebarAnimationToOpacity = fadeOut ? 0 : 1;
 
-        // Prepare the side the animation is moving to so there is no layout
-        // jump on the very first frame.
-        if (fadeOut)
-        {
-            SidebarColumn.Width = new GridLength(SidebarWidth, GridUnitType.Pixel);
-        }
-        else
+        if (!fadeOut)
         {
             SidebarPanel.Visibility = Visibility.Visible;
+            if (_sidebarAnimationFromWidth <= 0 && SidebarPanel.Opacity <= 0)
+                _sidebarAnimationFromOpacity = 0;
         }
 
         _sidebarAnimationClock = Stopwatch.StartNew();
@@ -273,39 +280,59 @@ public partial class MainWindow : Window
 
     private void SidebarAnimation_Rendering(object? sender, EventArgs e)
     {
-        // Smoothstep easing: starts and ends gently instead of lurching.
-        var elapsed = _sidebarAnimationClock?.Elapsed.TotalMilliseconds ?? SidebarAnimDuration;
-        var t = Math.Min(elapsed / SidebarAnimDuration, 1);
-        var eased = t * t * (3 - 2 * t);
+        var duration = _sidebarAnimationClosing ? SidebarCloseDuration : SidebarOpenDuration;
+        var elapsed = _sidebarAnimationClock?.Elapsed.TotalMilliseconds ?? duration;
+        var t = Math.Clamp(elapsed / duration, 0.0, 1.0);
 
-        // Width eases smoothly; the reveal button is eased over the same
-        // timeline (fade + slight scale) rather than popping at the end.
-        var width = _sidebarAnimationFrom + ((_sidebarAnimationTo - _sidebarAnimationFrom) * eased);
-        SidebarColumn.Width = new GridLength(width, GridUnitType.Pixel);
-
-        if (_sidebarAnimationFadingOut)
+        // Fluid easing: Quartic Ease-Out on reveal for natural deceleration;
+        // smoothstep on collapse for soft exit.
+        double eased;
+        if (!_sidebarAnimationClosing)
         {
-            SidebarPanel.Opacity = 1 - eased;
+            // Deceleration curve: instant response on click, softly gliding into dock
+            eased = 1.0 - Math.Pow(1.0 - t, 3.2);
         }
         else
         {
-            // Fade the content in only once the panel is mostly on screen so
-            // it never flashes over the terminal.
-            var contentOpacity = Math.Clamp((eased - 0.35) / 0.5, 0, 1);
-            SidebarPanel.Opacity = contentOpacity;
+            // Smooth acceleration and deceleration for clean collapse
+            eased = t * t * (3.0 - 2.0 * t);
         }
 
-        if (eased < 1)
+        // Animate column width smoothly
+        var width = _sidebarAnimationFromWidth + ((_sidebarAnimationToWidth - _sidebarAnimationFromWidth) * eased);
+        SidebarColumn.Width = new GridLength(Math.Max(0, width), GridUnitType.Pixel);
+
+        if (_sidebarAnimationClosing)
+        {
+            SidebarPanel.Opacity = Math.Clamp(_sidebarAnimationFromOpacity + (_sidebarAnimationToOpacity - _sidebarAnimationFromOpacity) * eased, 0, 1);
+            _sidebarContentTranslate.X = -18.0 * eased;
+        }
+        else
+        {
+            var targetOpacity = Math.Clamp(eased * 1.25, 0, 1);
+            SidebarPanel.Opacity = targetOpacity;
+            _sidebarContentTranslate.X = -18.0 * (1.0 - eased);
+        }
+
+        if (t < 1.0)
             return;
 
         CompositionTarget.Rendering -= SidebarAnimation_Rendering;
-        SidebarColumn.Width = new GridLength(_sidebarAnimationTo, GridUnitType.Pixel);
-        SidebarPanel.Opacity = 1;
         _sidebarAnimationClock = null;
 
-        if (_sidebarAnimationFadingOut)
+        if (_sidebarAnimationClosing)
         {
+            SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
             SidebarPanel.Visibility = Visibility.Collapsed;
+            SidebarPanel.Opacity = 0;
+            _sidebarContentTranslate.X = 0;
+        }
+        else
+        {
+            SidebarColumn.Width = new GridLength(SidebarWidth, GridUnitType.Pixel);
+            SidebarPanel.Visibility = Visibility.Visible;
+            SidebarPanel.Opacity = 1;
+            _sidebarContentTranslate.X = 0;
         }
     }
 
