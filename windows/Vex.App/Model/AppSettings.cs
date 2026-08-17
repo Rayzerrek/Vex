@@ -96,8 +96,6 @@ public class AppSettings : ObservableObject
         set { if (Set(ref _shell, value)) Save(); }
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
     private static AppSettings Load()
     {
         try
@@ -105,7 +103,7 @@ public class AppSettings : ObservableObject
             if (File.Exists(SettingsPath))
             {
                 var json = File.ReadAllText(SettingsPath);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json);
+                var settings = JsonSerializer.Deserialize(json, VexJsonContext.Default.AppSettings);
                 if (settings != null)
                     return settings;
             }
@@ -131,7 +129,7 @@ public class AppSettings : ObservableObject
             var dir = Path.GetDirectoryName(SettingsPath);
             if (dir != null)
                 Directory.CreateDirectory(dir);
-            var json = JsonSerializer.Serialize(this, JsonOptions);
+            var json = JsonSerializer.Serialize(this, VexJsonContext.Default.AppSettings);
             var write = Task.Run(() =>
             {
                 try

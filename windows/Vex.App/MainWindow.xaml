@@ -562,14 +562,8 @@
             </Grid>
         </Grid>
         
-        <Popup x:Name="PalettePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True">
-            <local:CommandPalette x:Name="PaletteOverlay" Width="{Binding ActualWidth, ElementName=MainGrid}" Height="{Binding ActualHeight, ElementName=MainGrid}"/>
-        </Popup>
-        <Popup x:Name="SettingsPopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True">
-            <local:SettingsOverlay x:Name="SettingsOverlay" Width="{Binding ActualWidth, ElementName=MainGrid}" Height="{Binding ActualHeight, ElementName=MainGrid}"/>
-        </Popup>
-        <Popup x:Name="ThemePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True">
-            <local:ThemeSwitcher x:Name="ThemeSwitcher" Width="{Binding ActualWidth, ElementName=MainGrid}" Height="{Binding ActualHeight, ElementName=MainGrid}"/>
-        </Popup>
+        <Popup x:Name="PalettePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
+        <Popup x:Name="SettingsPopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
+        <Popup x:Name="ThemePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
     </Grid>
 </Window>

@@ -45,7 +45,9 @@ public partial class FileSearchView : UserControl
             RebuildIndex();
     }
 
-    private void RebuildIndex()
+    private void RebuildIndex() => _ = RebuildIndexAsync();
+
+    private async Task RebuildIndexAsync()
     {
         _debounce.Stop();
         if (_engine == null || _rebuildQueued)
@@ -57,12 +59,17 @@ public partial class FileSearchView : UserControl
         // switches, and we must not overwrite a newer root's index.
         var root = _root;
         var engine = _engine;
-        Task.Run(() => engine.RebuildIndex()).ContinueWith(_ =>
+        try
+        {
+            await Task.Run(() => engine.RebuildIndex());
+        }
+        finally
         {
             _rebuildQueued = false;
-            if (engine == _engine && root == _root)
-                UpdateResults();
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        if (engine == _engine && root == _root)
+            UpdateResults();
     }
 
     private void UpdateResults()
