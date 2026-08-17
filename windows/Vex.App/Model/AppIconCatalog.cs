@@ -40,97 +40,99 @@ internal static partial class AppIconCatalog
         "npm", "npx", "node_modules", "bin", "lib", "cli", "scripts", "cmd",
     };
 
-    private static readonly Lazy<IReadOnlyDictionary<string, AppIcon>> ProcessIconsLazy = new(() =>
-        new Dictionary<string, AppIcon>(StringComparer.OrdinalIgnoreCase)
+    private static readonly IReadOnlyDictionary<string, Func<AppIcon>> ProcessIconFactories =
+        new Dictionary<string, Func<AppIcon>>(StringComparer.OrdinalIgnoreCase)
         {
             // Editors, terminals, shells and git tooling.
-            ["nvim"] = AppIcon.Glyph("neovim"),
-            ["vim"] = AppIcon.Glyph("vim"),
-            ["git"] = AppIcon.Glyph("git"),
-            ["lazygit"] = AppIcon.Badge("lg", Color.FromRgb(0x00, 0xAA, 0xDD)),
-            ["htop"] = AppIcon.Glyph("htop"),
-            ["btop"] = AppIcon.Badge("bt", Color.FromRgb(0x00, 0xA8, 0x96)),
-            ["tmux"] = AppIcon.Glyph("tmux"),
-            ["ssh"] = AppIcon.Badge("S", Color.FromRgb(0x2B, 0x8C, 0xBE)),
-            ["hx"] = AppIcon.Glyph("helix"),
-            ["ghostty"] = AppIcon.Glyph("ghostty"),
-            ["wezterm"] = AppIcon.Glyph("wezterm"),
-            ["alacritty"] = AppIcon.Glyph("alacritty"),
-            ["starship"] = AppIcon.Glyph("starship"),
+            ["nvim"] = () => AppIcon.Glyph("neovim"),
+            ["vim"] = () => AppIcon.Glyph("vim"),
+            ["git"] = () => AppIcon.Glyph("git"),
+            ["lazygit"] = () => AppIcon.Badge("lg", Color.FromRgb(0x00, 0xAA, 0xDD)),
+            ["htop"] = () => AppIcon.Glyph("htop"),
+            ["btop"] = () => AppIcon.Badge("bt", Color.FromRgb(0x00, 0xA8, 0x96)),
+            ["tmux"] = () => AppIcon.Glyph("tmux"),
+            ["ssh"] = () => AppIcon.Badge("S", Color.FromRgb(0x2B, 0x8C, 0xBE)),
+            ["hx"] = () => AppIcon.Glyph("helix"),
+            ["ghostty"] = () => AppIcon.Glyph("ghostty"),
+            ["wezterm"] = () => AppIcon.Glyph("wezterm"),
+            ["alacritty"] = () => AppIcon.Glyph("alacritty"),
+            ["starship"] = () => AppIcon.Glyph("starship"),
 
             // Agent CLIs: brand marks where available, letter badges otherwise.
-            ["claude"] = AppIcon.Glyph("claudecode"),
-            ["pi"] = AppIcon.Glyph("pi"),
-            ["antigravity"] = AppIcon.Glyph("antigravity"),
-            ["claude-code"] = AppIcon.Glyph("claudecode"),
-            ["claudecode"] = AppIcon.Glyph("claudecode"),
-            ["codex"] = AppIcon.Glyph("codex"),
-            ["opencode"] = AppIcon.Glyph("opencode"),
-            ["deepseek"] = AppIcon.Glyph("deepseek"),
-            ["qwen"] = AppIcon.Glyph("qwen"),
-            ["aider"] = AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6)),
-            ["gemini"] = AppIcon.Glyph("googlegemini"),
+            ["claude"] = () => AppIcon.Glyph("claudecode"),
+            ["pi"] = () => AppIcon.Glyph("pi"),
+            ["antigravity"] = () => AppIcon.Glyph("antigravity"),
+            ["claude-code"] = () => AppIcon.Glyph("claudecode"),
+            ["claudecode"] = () => AppIcon.Glyph("claudecode"),
+            ["codex"] = () => AppIcon.Glyph("codex"),
+            ["opencode"] = () => AppIcon.Glyph("opencode"),
+            ["deepseek"] = () => AppIcon.Glyph("deepseek"),
+            ["qwen"] = () => AppIcon.Glyph("qwen"),
+            ["aider"] = () => AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6)),
+            ["gemini"] = () => AppIcon.Glyph("googlegemini"),
 
             // Runtimes and package managers.
-            ["node"] = AppIcon.Glyph("nodedotjs"),
-            ["npm"] = AppIcon.Glyph("npm"),
-            ["pnpm"] = AppIcon.Glyph("pnpm"),
-            ["bun"] = AppIcon.Glyph("bun"),
-            ["python"] = AppIcon.Glyph("python"),
-            ["python3"] = AppIcon.Glyph("python"),
-            ["tsx"] = AppIcon.Glyph("typescript"),
-            ["deno"] = AppIcon.Glyph("typescript"),
+            ["node"] = () => AppIcon.Glyph("nodedotjs"),
+            ["npm"] = () => AppIcon.Glyph("npm"),
+            ["pnpm"] = () => AppIcon.Glyph("pnpm"),
+            ["bun"] = () => AppIcon.Glyph("bun"),
+            ["python"] = () => AppIcon.Glyph("python"),
+            ["python3"] = () => AppIcon.Glyph("python"),
+            ["tsx"] = () => AppIcon.Glyph("typescript"),
+            ["deno"] = () => AppIcon.Glyph("typescript"),
 
             // Ops tooling.
-            ["docker"] = AppIcon.Glyph("docker"),
-            ["gh"] = AppIcon.Glyph("github"),
-            ["kubectl"] = AppIcon.Glyph("kubernetes"),
-            ["rustc"] = AppIcon.Glyph("rust"),
-            ["cargo"] = AppIcon.Glyph("rust"),
-            ["go"] = AppIcon.Glyph("go"),
-            ["terraform"] = AppIcon.Glyph("terraform"),
-            ["ansible-playbook"] = AppIcon.Glyph("ansible"),
-            ["nginx"] = AppIcon.Glyph("nginx"),
-            ["gitlab-runner"] = AppIcon.Glyph("gitlab"),
-            ["gcloud"] = AppIcon.Glyph("googlecloud"),
-            ["psql"] = AppIcon.Glyph("postgresql"),
-            ["mysql"] = AppIcon.Glyph("mysql"),
-            ["redis-cli"] = AppIcon.Glyph("redis"),
-            ["sqlite3"] = AppIcon.Glyph("sqlite"),
+            ["docker"] = () => AppIcon.Glyph("docker"),
+            ["gh"] = () => AppIcon.Glyph("github"),
+            ["kubectl"] = () => AppIcon.Glyph("kubernetes"),
+            ["rustc"] = () => AppIcon.Glyph("rust"),
+            ["cargo"] = () => AppIcon.Glyph("rust"),
+            ["go"] = () => AppIcon.Glyph("go"),
+            ["terraform"] = () => AppIcon.Glyph("terraform"),
+            ["ansible-playbook"] = () => AppIcon.Glyph("ansible"),
+            ["nginx"] = () => AppIcon.Glyph("nginx"),
+            ["gitlab-runner"] = () => AppIcon.Glyph("gitlab"),
+            ["gcloud"] = () => AppIcon.Glyph("googlecloud"),
+            ["psql"] = () => AppIcon.Glyph("postgresql"),
+            ["mysql"] = () => AppIcon.Glyph("mysql"),
+            ["redis-cli"] = () => AppIcon.Glyph("redis"),
+            ["sqlite3"] = () => AppIcon.Glyph("sqlite"),
 
             // Shells themselves (shown when nothing else is running).
-            ["fish"] = AppIcon.Glyph("fishshell"),
-            ["bash"] = AppIcon.Glyph("gnubash"),
-            ["sh"] = AppIcon.Glyph("gnubash"),
-            ["zsh"] = AppIcon.Glyph("zsh"),
-            ["nu"] = AppIcon.Glyph("nushell"),
-            ["pwsh"] = AppIcon.Badge("P", Color.FromRgb(0x53, 0x91, 0xFE)),
-            ["powershell"] = AppIcon.Badge("P", Color.FromRgb(0x53, 0x91, 0xFE)),
-            ["cmd"] = AppIcon.Badge(">", Color.FromRgb(0x00, 0x78, 0xD4)),
-            ["wsl"] = AppIcon.Badge("W", HashColor("wsl")),
-        });
+            ["fish"] = () => AppIcon.Glyph("fishshell"),
+            ["bash"] = () => AppIcon.Glyph("gnubash"),
+            ["sh"] = () => AppIcon.Glyph("gnubash"),
+            ["zsh"] = () => AppIcon.Glyph("zsh"),
+            ["nu"] = () => AppIcon.Glyph("nushell"),
+            ["pwsh"] = () => AppIcon.Badge("P", Color.FromRgb(0x53, 0x91, 0xFE)),
+            ["powershell"] = () => AppIcon.Badge("P", Color.FromRgb(0x53, 0x91, 0xFE)),
+            ["cmd"] = () => AppIcon.Badge(">", Color.FromRgb(0x00, 0x78, 0xD4)),
+            ["wsl"] = () => AppIcon.Badge("W", HashColor("wsl")),
+        };
 
-    private static readonly Lazy<IReadOnlyList<(Regex Pattern, AppIcon Icon)>> TitleRulesLazy = new(() =>
-        new (Regex, AppIcon)[]
-        {
-            (new Regex(@"\bnvim\b", RegexOptions.IgnoreCase), AppIcon.Glyph("neovim")),
-            (new Regex(@"\blazyvim\b", RegexOptions.IgnoreCase), AppIcon.Glyph("lazyvim")),
-            (new Regex(@"\bvim\b", RegexOptions.IgnoreCase), AppIcon.Glyph("vim")),
-            (new Regex(@"\blazygit\b", RegexOptions.IgnoreCase), AppIcon.Badge("lg", Color.FromRgb(0x00, 0xAA, 0xDD))),
-            (new Regex(@"\bhtop\b", RegexOptions.IgnoreCase), AppIcon.Glyph("htop")),
-            (new Regex(@"\bbtop\b", RegexOptions.IgnoreCase), AppIcon.Badge("bt", Color.FromRgb(0x00, 0xA8, 0x96))),
-            (new Regex(@"\btmux\b", RegexOptions.IgnoreCase), AppIcon.Glyph("tmux")),
-            (new Regex(@"claude", RegexOptions.IgnoreCase), AppIcon.Glyph("claudecode")),
-            (new Regex(@"\bpi\b", RegexOptions.IgnoreCase), AppIcon.Glyph("pi")),
-            (new Regex(@"antigravity", RegexOptions.IgnoreCase), AppIcon.Glyph("antigravity")),
-            (new Regex(@"\bcodex\b", RegexOptions.IgnoreCase), AppIcon.Glyph("codex")),
-            (new Regex(@"\b(opencode|open-code)\b", RegexOptions.IgnoreCase), AppIcon.Glyph("opencode")),
-            (new Regex(@"\bdeepseek\b", RegexOptions.IgnoreCase), AppIcon.Glyph("deepseek")),
-            (new Regex(@"\bqwen\b", RegexOptions.IgnoreCase), AppIcon.Glyph("qwen")),
-            (new Regex(@"\baider\b", RegexOptions.IgnoreCase), AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6))),
-            (new Regex(@"\bgemini\b", RegexOptions.IgnoreCase), AppIcon.Glyph("googlegemini")),
-            (new Regex(@"\bssh\b", RegexOptions.IgnoreCase), AppIcon.Badge("S", Color.FromRgb(0x2B, 0x8C, 0xBE))),
-        });
+    private static readonly (Regex Pattern, Func<AppIcon> Factory)[] TitleRules =
+    {
+        (new Regex(@"\bnvim\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("neovim")),
+        (new Regex(@"\blazyvim\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("lazyvim")),
+        (new Regex(@"\bvim\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("vim")),
+        (new Regex(@"\blazygit\b", RegexOptions.IgnoreCase), () => AppIcon.Badge("lg", Color.FromRgb(0x00, 0xAA, 0xDD))),
+        (new Regex(@"\bhtop\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("htop")),
+        (new Regex(@"\bbtop\b", RegexOptions.IgnoreCase), () => AppIcon.Badge("bt", Color.FromRgb(0x00, 0xA8, 0x96))),
+        (new Regex(@"\btmux\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("tmux")),
+        (new Regex(@"claude", RegexOptions.IgnoreCase), () => AppIcon.Glyph("claudecode")),
+        (new Regex(@"\bpi\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("pi")),
+        (new Regex(@"antigravity", RegexOptions.IgnoreCase), () => AppIcon.Glyph("antigravity")),
+        (new Regex(@"\bcodex\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("codex")),
+        (new Regex(@"\b(opencode|open-code)\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("opencode")),
+        (new Regex(@"\bdeepseek\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("deepseek")),
+        (new Regex(@"\bqwen\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("qwen")),
+        (new Regex(@"\baider\b", RegexOptions.IgnoreCase), () => AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6))),
+        (new Regex(@"\bgemini\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("googlegemini")),
+        (new Regex(@"\bssh\b", RegexOptions.IgnoreCase), () => AppIcon.Badge("S", Color.FromRgb(0x2B, 0x8C, 0xBE))),
+    };
+
+    private static AppIcon? GetKnownProcessIcon(string name) =>
+        ProcessIconFactories.TryGetValue(name, out var factory) ? factory() : null;
 
     /// <summary>
     /// Resolves the tab icon. A shim host (node) is identified by the script
@@ -151,7 +153,7 @@ internal static partial class AppIconCatalog
                 if (FromTitle(title) is { } shimTitleIcon)
                     return shimTitleIcon;
             }
-            if (ProcessIconsLazy.Value.TryGetValue(name, out var known))
+            if (GetKnownProcessIcon(name) is { } known)
                 return known;
             if (!isShim && FromTitle(title) is { } fromTitle)
                 return fromTitle;
@@ -176,7 +178,6 @@ internal static partial class AppIconCatalog
         if (string.IsNullOrWhiteSpace(commandLine))
             return null;
 
-        var icons = ProcessIconsLazy.Value;
         foreach (var segment in PathSegments(commandLine))
         {
             // The host's own exe (node.exe) names no app; only the script does.
@@ -184,28 +185,28 @@ internal static partial class AppIconCatalog
                 continue;
             if (CommandLineNoise.Contains(segment))
                 continue;
-            if (icons.TryGetValue(segment, out var icon))
+            if (GetKnownProcessIcon(segment) is { } icon)
                 return icon;
             // npm lays pi out as @earendil-works\pi-coding-agent\dist\cli.js
             // and opencode as @opencode-ai\opencode\...; only the package stem
             // is on the disk, so match by the fragment that names the tool.
             if (segment.StartsWith("pi-", StringComparison.OrdinalIgnoreCase))
-                return icons["pi"];
+                return GetKnownProcessIcon("pi");
             if (segment.Contains("claude", StringComparison.OrdinalIgnoreCase))
-                return icons["claude"];
+                return GetKnownProcessIcon("claude");
             if (segment.Contains("antigravity", StringComparison.OrdinalIgnoreCase))
-                return icons["antigravity"];
+                return GetKnownProcessIcon("antigravity");
             if (segment.Contains("opencode", StringComparison.OrdinalIgnoreCase))
-                return icons["opencode"];
+                return GetKnownProcessIcon("opencode");
             if (segment.Contains("deepseek", StringComparison.OrdinalIgnoreCase))
-                return icons["deepseek"];
+                return GetKnownProcessIcon("deepseek");
             if (segment.Contains("qwen", StringComparison.OrdinalIgnoreCase))
-                return icons["qwen"];
+                return GetKnownProcessIcon("qwen");
         }
-        foreach (var (pattern, icon) in TitleRulesLazy.Value)
+        foreach (var (pattern, factory) in TitleRules)
         {
             if (pattern.IsMatch(commandLine))
-                return icon;
+                return factory();
         }
         return null;
     }
@@ -255,7 +256,7 @@ internal static partial class AppIconCatalog
     /// <summary>Icon for a process name; never null (letter badge fallback).</summary>
     internal static AppIcon FromProcess(string processName)
     {
-        if (ProcessIconsLazy.Value.TryGetValue(processName, out var known))
+        if (GetKnownProcessIcon(processName) is { } known)
             return known;
         var initial = char.ToUpperInvariant(processName.Length > 0 ? processName[0] : '?');
         return AppIcon.Badge(initial.ToString(), HashColor(processName));
@@ -266,10 +267,10 @@ internal static partial class AppIconCatalog
     {
         if (string.IsNullOrWhiteSpace(title))
             return null;
-        foreach (var (pattern, icon) in TitleRulesLazy.Value)
+        foreach (var (pattern, factory) in TitleRules)
         {
             if (pattern.IsMatch(title))
-                return icon;
+                return factory();
         }
         return null;
     }

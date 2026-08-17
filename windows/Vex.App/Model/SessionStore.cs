@@ -20,7 +20,7 @@ public static class SessionStore
             if (File.Exists(SessionPath))
             {
                 var json = File.ReadAllText(SessionPath);
-                var appSnapshot = JsonSerializer.Deserialize<AppSnapshot>(json);
+                var appSnapshot = JsonSerializer.Deserialize(json, VexJsonContext.Default.AppSnapshot);
                 if (appSnapshot?.Windows.Count > 0)
                 {
                     var sessionSnapshot = appSnapshot.Windows[0];
@@ -51,8 +51,6 @@ public static class SessionStore
         return workspace;
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
     /// <summary>Writes the whole workspace (projects, tabs, split tree and
     /// divider ratios) to disk. Best-effort: persistence must never crash the
     /// app, so any I/O error is swallowed.</summary>
@@ -61,7 +59,7 @@ public static class SessionStore
         try
         {
             var appSnapshot = new AppSnapshot { Windows = { Capture(workspace) } };
-            var json = JsonSerializer.Serialize(appSnapshot, JsonOptions);
+            var json = JsonSerializer.Serialize(appSnapshot, VexJsonContext.Default.AppSnapshot);
             Directory.CreateDirectory(Path.GetDirectoryName(SessionPath)!);
             File.WriteAllText(SessionPath, json);
         }

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Diagnostics;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -87,11 +88,6 @@ public partial class MainWindow : Window
         // Sidebar visibility is a single source of truth: any change (toolbar
         // button, keyboard, or the settings toggle) animates the panel.
         AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
-
-        // When the settings overlay finishes closing, hand keyboard focus back
-        // to the active pane so typing is never stranded after Escape/close.
-        SettingsOverlay.Hidden += () =>
-            _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
     }
 
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -183,9 +179,9 @@ public partial class MainWindow : Window
         // terminal (or any focused control inside it) sees the key. Chorded
         // Escape (e.g. Ctrl+Escape) still belongs to the terminal.
         if (key == System.Windows.Input.Key.Escape && modifiers == System.Windows.Input.ModifierKeys.None
-            && SettingsOverlay.Visibility == Visibility.Visible)
+            && _settingsOverlay is { Visibility: Visibility.Visible })
         {
-            SettingsOverlay.Hide();
+            _settingsOverlay.Hide();
             e.Handled = true;
             return;
         }
@@ -213,6 +209,56 @@ public partial class MainWindow : Window
         }
     }
 
+    private CommandPalette? _paletteOverlay;
+    private CommandPalette PaletteOverlay
+    {
+        get
+        {
+            if (_paletteOverlay is null)
+            {
+                _paletteOverlay = new CommandPalette();
+                _paletteOverlay.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
+                _paletteOverlay.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                PalettePopup.Child = _paletteOverlay;
+            }
+            return _paletteOverlay;
+        }
+    }
+
+    private SettingsOverlay? _settingsOverlay;
+    private SettingsOverlay SettingsOverlay
+    {
+        get
+        {
+            if (_settingsOverlay is null)
+            {
+                _settingsOverlay = new SettingsOverlay();
+                _settingsOverlay.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
+                _settingsOverlay.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                _settingsOverlay.Hidden += () =>
+                    _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
+                SettingsPopup.Child = _settingsOverlay;
+            }
+            return _settingsOverlay;
+        }
+    }
+
+    private ThemeSwitcher? _themeSwitcher;
+    private ThemeSwitcher ThemeSwitcher
+    {
+        get
+        {
+            if (_themeSwitcher is null)
+            {
+                _themeSwitcher = new ThemeSwitcher();
+                _themeSwitcher.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
+                _themeSwitcher.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                ThemePopup.Child = _themeSwitcher;
+            }
+            return _themeSwitcher;
+        }
+    }
+
     private bool SaveCurrentFile()
     {
         if (_workspace.SelectedProject?.SelectedTab?.ActiveLeaf is EditorPane editorPane)
@@ -236,8 +282,8 @@ public partial class MainWindow : Window
 
     private void ToggleThemeSwitcher()
     {
-        if (ThemeSwitcher.Visibility == Visibility.Visible)
-            ThemeSwitcher.Hide();
+        if (_themeSwitcher is { Visibility: Visibility.Visible })
+            _themeSwitcher.Hide();
         else
             ThemeSwitcher.Show();
     }
