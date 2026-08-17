@@ -39,28 +39,38 @@ public static class AppIconTracker
         return timer;
     }
 
-    private static void Tick()
+    private static void Tick() => _ = TickAsync();
+
+    private static async Task TickAsync()
     {
         // The system-wide snapshot is the expensive part of a cycle; run it
         // off the UI thread so its periodic process enumeration never hitches
         // typing or rendering. Skip when the previous cycle is still running.
         if (Interlocked.CompareExchange(ref _tickInFlight, 1, 0) != 0)
             return;
-        _ = Task.Run(() =>
+
+        try
         {
-            var entries = ProcessTree.Snapshot();
-            return entries is null ? null : ProcessTree.Index.Build(entries);
-        }).ContinueWith(task =>
+            var index = await Task.Run(() =>
+            {
+                var entries = ProcessTree.Snapshot();
+                return entries is null ? null : ProcessTree.Index.Build(entries);
+            });
+
+            if (index is not null)
+            {
+                // A copy: a pane may unregister mid-tick when its shell exits.
+                foreach (var pane in Panes.ToArray())
+                    pane.RefreshAppIcon(index);
+            }
+        }
+        catch
+        {
+            // Best-effort icon tracking: errors must never interrupt or crash the UI.
+        }
+        finally
         {
             Interlocked.Exchange(ref _tickInFlight, 0);
-            if (task.IsFaulted)
-                return;
-            var index = task.Result;
-            if (index is null)
-                return;
-            // A copy: a pane may unregister mid-tick when its shell exits.
-            foreach (var pane in Panes.ToArray())
-                pane.RefreshAppIcon(index);
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
     }
 }

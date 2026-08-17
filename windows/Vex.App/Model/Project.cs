@@ -38,8 +38,6 @@ public sealed class Project : ObservableObject
         Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
         var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
-        RefreshFileTree();
-        RefreshGitBranch();
     }
 
     /// <summary>Restores a project from a saved session; tabs are wired up
@@ -55,8 +53,6 @@ public sealed class Project : ObservableObject
             Tabs.Add(tab);
         }
         _selectedTab = Tabs.FirstOrDefault();
-        RefreshFileTree();
-        RefreshGitBranch();
     }
 
     private void WireTabEvents(WorkspaceTab tab)
@@ -67,7 +63,9 @@ public sealed class Project : ObservableObject
 
     private int _gitBranchVersion;
 
-    public void RefreshGitBranch()
+    public void RefreshGitBranch() => _ = RefreshGitBranchAsync();
+
+    public async Task RefreshGitBranchAsync()
     {
         var dir = WorkingDirectory;
         if (string.IsNullOrEmpty(dir))
@@ -79,21 +77,9 @@ public sealed class Project : ObservableObject
         // Drop stale completions: a newer refresh supersedes an older one,
         // so an in-flight read must not overwrite the freshest result.
         var version = ++_gitBranchVersion;
-        var syncContext = SynchronizationContext.Current;
-        if (syncContext is null)
-        {
-            // No UI context (unexpected caller): resolve inline instead of
-            // throwing from FromCurrentSynchronizationContext.
-            GitBranch = ResolveGitBranch(dir);
-            return;
-        }
-        _ = Task.Run(() => ResolveGitBranch(dir))
-            .ContinueWith(t =>
-            {
-                if (t.IsFaulted || version != _gitBranchVersion)
-                    return;
-                GitBranch = t.Result;
-            }, TaskScheduler.FromCurrentSynchronizationContext());
+        var branch = await Task.Run(() => ResolveGitBranch(dir));
+        if (version == _gitBranchVersion)
+            GitBranch = branch;
     }
 
     private static string? ResolveGitBranch(string workingDirectory)
@@ -149,7 +135,12 @@ public sealed class Project : ObservableObject
 
     public FileTreeNode Root
     {
-        get => _rootTree!;
+        get
+        {
+            if (_rootTree is null && !string.IsNullOrEmpty(WorkingDirectory))
+                RefreshFileTree();
+            return _rootTree!;
+        }
         private set
         {
             if (Set(ref _rootTree, value))
@@ -160,7 +151,15 @@ public sealed class Project : ObservableObject
         }
     }
 
-    public FileTreeNode[] TreeRoots => _treeRoots;
+    public FileTreeNode[] TreeRoots
+    {
+        get
+        {
+            if (_rootTree is null && !string.IsNullOrEmpty(WorkingDirectory))
+                RefreshFileTree();
+            return _treeRoots;
+        }
+    }
 
     public void RefreshFileTree()
     {

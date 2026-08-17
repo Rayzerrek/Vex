@@ -25,7 +25,7 @@ public class FileTreeNode : ObservableObject
         {
             if (Set(ref _isExpanded, value) && value && !_isPopulated && IsDirectory)
             {
-                PopulateChildren();
+                _ = PopulateChildrenAsync();
             }
         }
     }
@@ -43,7 +43,9 @@ public class FileTreeNode : ObservableObject
         }
     }
 
-    public async void PopulateChildren()
+    public void PopulateChildren() => _ = PopulateChildrenAsync();
+
+    public async Task PopulateChildrenAsync()
     {
         if (!IsDirectory) return;
         
