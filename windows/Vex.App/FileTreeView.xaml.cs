@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace Vex.App;
 
@@ -11,6 +12,17 @@ public partial class FileTreeView : UserControl
     public FileTreeView()
     {
         InitializeComponent();
+        Loaded += (_, _) => RequestTreeWhenVisible();
+        IsVisibleChanged += (_, _) => RequestTreeWhenVisible();
+        DataContextChanged += (_, _) => RequestTreeWhenVisible();
+    }
+
+    private void RequestTreeWhenVisible()
+    {
+        if (!IsVisible || DataContext is not Model.Project project)
+            return;
+
+        Dispatcher.BeginInvoke(project.EnsureFileTree, DispatcherPriority.ContextIdle);
     }
 
     private void TreeRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)

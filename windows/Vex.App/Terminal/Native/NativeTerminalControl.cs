@@ -49,6 +49,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private int _rows;
     private bool _needsFullRedraw = true;
     private bool _disposed;
+    private bool _sessionStartRequested;
 
     // Per-row render caches: the row's last-painted content hash plus the
     // render version it was painted with. RedrawRow skips the DrawingVisual
@@ -373,19 +374,27 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         if (_session is null)
         {
-            // Spawn the shell only once the layout settles at a sane geometry
-            // so prompt redraw logic in shells does not thrash on startup sizes.
-            // Self-test runs feed the emulator directly instead.
-            if (cols >= 20 && rows >= 5 && RenderSelfTest.ReportPath is null)
+            if (_sessionStartRequested)
             {
-                StartSession();
-                _terminal.ScrollToBottom();
+                // Start only the pane the user activates. Restored split panes
+                // remain lightweight until selected, avoiding a burst of shell
+                // processes during startup.
+                StartSessionIfReady();
             }
         }
         else
         {
             _session.Resize((short)cols, (short)rows);
         }
+    }
+
+    private void StartSessionIfReady()
+    {
+        if (_session is not null || _cols < 20 || _rows < 5 || RenderSelfTest.ReportPath is not null)
+            return;
+
+        StartSession();
+        _terminal.ScrollToBottom();
     }
 
     private void EnsureRowVisuals()
@@ -1360,6 +1369,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnGotKeyboardFocus(KeyboardFocusChangedEventArgs e)
     {
         base.OnGotKeyboardFocus(e);
+        _sessionStartRequested = true;
+        StartSessionIfReady();
         UpdateBlinkTimer();
         DrawCaret();
         FocusGained?.Invoke();

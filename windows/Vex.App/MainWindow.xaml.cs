@@ -86,6 +86,13 @@ public partial class MainWindow : Window
             SidebarPanel.Opacity = 0;
         }
 
+        // Session restoration assigns the initial selection before bindings
+        // create its terminal view. Focus it after the first frame so exactly
+        // one shell starts, and the window is immediately ready for typing.
+        ContentRendered += (_, _) => Dispatcher.BeginInvoke(
+            () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
+            DispatcherPriority.ContextIdle);
+
         // Sidebar visibility is a single source of truth: any change (toolbar
         // button, keyboard, or the settings toggle) animates the panel.
         AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
@@ -431,6 +438,16 @@ public partial class MainWindow : Window
     {
         if (sender is FrameworkElement { DataContext: LeafPane leaf })
             leaf.Close();
+    }
+
+    private void PaneFocus_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: LeafPane leaf } ||
+            _workspace.SelectedProject?.SelectedTab is not { } tab)
+            return;
+
+        tab.ActiveLeaf = leaf;
+        tab.ToggleFocusMode();
     }
 
     private void TabSplitDown_Click(object sender, RoutedEventArgs e)
