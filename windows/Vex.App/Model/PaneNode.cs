@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using Vex.App.Terminal;
 using Vex.Terminal;
 
@@ -155,20 +156,33 @@ public sealed class TerminalPane : LeafPane
     {
         if (View is not ITerminalView tv)
             return;
-        if (View is System.Windows.FrameworkElement { IsLoaded: true })
+        var element = (System.Windows.FrameworkElement)View;
+
+        void FocusWhenVisible()
         {
-            tv.FocusTerminal();
+            // Run after selection bindings, layout, and the click/key event
+            // that created the tab. This prevents the tab strip or new-tab
+            // button from taking focus back from a newly realized terminal.
+            element.Dispatcher.BeginInvoke(() =>
+            {
+                if (element.IsVisible)
+                    tv.FocusTerminal();
+            }, DispatcherPriority.ContextIdle);
+        }
+
+        if (element.IsLoaded)
+        {
+            FocusWhenVisible();
             return;
         }
-        // The view may not be in the tree yet (e.g. a brand-new tab); a
-        // dispatcher callback would still run before the template is
-        // realized, so focus only once the view is loaded.
-        var element = (System.Windows.FrameworkElement)View;
+
+        // A brand-new tab has no visual tree yet. Its Loaded event is the
+        // first point at which WPF can move keyboard focus to its terminal.
         System.Windows.RoutedEventHandler onLoaded = null!;
         onLoaded = (_, _) =>
         {
             element.Loaded -= onLoaded;
-            tv.FocusTerminal();
+            FocusWhenVisible();
         };
         element.Loaded += onLoaded;
     }
