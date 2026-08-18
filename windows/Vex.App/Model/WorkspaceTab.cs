@@ -13,6 +13,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     private string _title;
     private PaneNode _root;
     private LeafPane? _activeLeaf;
+    private bool _isFocusMode;
 
     public WorkspaceTab(string title, string workingDirectory)
     {
@@ -78,6 +79,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             {
                 OnPropertyChanged(nameof(PaneCount));
                 OnPropertyChanged(nameof(Leaves));
+                OnPropertyChanged(nameof(DisplayRoot));
                 LayoutChanged?.Invoke();
             }
         }
@@ -88,6 +90,26 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     /// <summary>All leaf panes in the split tree of this tab.</summary>
     public IEnumerable<LeafPane> Leaves => EnumerateLeaves(Root);
+
+    /// <summary>The tree currently rendered in the workspace. Focus mode
+    /// displays only the active pane without changing the saved split layout.</summary>
+    public PaneNode DisplayRoot => IsFocusMode && ActiveLeaf is { } active ? active : Root;
+
+    public bool IsFocusMode
+    {
+        get => _isFocusMode;
+        private set
+        {
+            if (Set(ref _isFocusMode, value))
+                OnPropertyChanged(nameof(DisplayRoot));
+        }
+    }
+
+    public void ToggleFocusMode()
+    {
+        IsFocusMode = !IsFocusMode;
+        ActiveLeaf?.Focus();
+    }
 
     /// <summary>Raised when panes are split or closed inside this tab.</summary>
     public event Action? LayoutChanged;
@@ -103,6 +125,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             if (_activeLeaf is not null)
                 _activeLeaf.IsFocused = false;
             _activeLeaf = value;
+            OnPropertyChanged(nameof(DisplayRoot));
             if (value is not null)
             {
                 value.IsFocused = true;

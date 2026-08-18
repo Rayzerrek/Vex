@@ -40,6 +40,9 @@
                         <DockPanel LastChildFill="False">
                             <StackPanel x:Name="TerminalActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
                                         Opacity="0">
+                                <Button Style="{StaticResource PaneTitleButton}" ToolTip="Focus this pane" Click="PaneFocus_Click">
+                                    <Path Data="M 2,2 H 12 V 12 H 2 Z M 5,5 H 9 V 9 H 5 Z" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.1" Fill="Transparent"/>
+                                </Button>
                                 <Button Style="{StaticResource PaneTitleButton}" ToolTip="Split Right (Ctrl+Shift+Right)" Click="PaneSplitRight_Click">
                                     <Path Data="M 1.5,1.5 H 12.5 V 12.5 H 1.5 Z M 7,1.5 V 12.5" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.1"/>
                                 </Button>
@@ -142,6 +145,9 @@
                         <DockPanel LastChildFill="False">
                             <StackPanel x:Name="EditorActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
                                         Opacity="0">
+                                <Button Style="{StaticResource PaneTitleButton}" ToolTip="Focus this pane" Click="PaneFocus_Click">
+                                    <Path Data="M 2,2 H 12 V 12 H 2 Z M 5,5 H 9 V 9 H 5 Z" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.1" Fill="Transparent"/>
+                                </Button>
                                 <Button Style="{StaticResource PaneTitleButton}" ToolTip="Close Pane (Ctrl+Shift+W)" Click="PaneClose_Click">
                                     <Path Data="M 3,3 L 11,11 M 11,3 L 3,11" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
                                 </Button>
@@ -554,7 +560,7 @@
             <!-- Main content: the active tab's pane layout, with a
                  drag-to-split preview overlay on top. -->
             <Grid x:Name="ContentArea" Grid.Column="1">
-                <ContentControl Content="{Binding SelectedProject.SelectedTab.Root}"/>
+                <ContentControl Content="{Binding SelectedProject.SelectedTab.DisplayRoot}"/>
                 <Canvas x:Name="DropOverlay" Visibility="Collapsed" Background="Transparent" Panel.ZIndex="50">
                     <Border x:Name="SplitPreview" Background="#40FFFFFF" BorderBrush="#66FFFFFF"
                             BorderThickness="1" CornerRadius="8" Opacity="0" Visibility="Collapsed"/>

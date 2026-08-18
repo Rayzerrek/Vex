@@ -152,13 +152,14 @@ public sealed class Project : ObservableObject
     }
 
     public FileTreeNode[] TreeRoots
+        => _treeRoots;
+
+    /// <summary>Creates the root only after the file tree becomes visible.
+    /// Enumerating a large working directory must not delay the first frame.</summary>
+    public void EnsureFileTree()
     {
-        get
-        {
-            if (_rootTree is null && !string.IsNullOrEmpty(WorkingDirectory))
-                RefreshFileTree();
-            return _treeRoots;
-        }
+        if (_rootTree is null && !string.IsNullOrEmpty(WorkingDirectory))
+            RefreshFileTree();
     }
 
     public void RefreshFileTree()
