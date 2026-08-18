@@ -13,7 +13,9 @@ Thumbs.db
 
 # Agent worktrees & local skills
 .claude/worktrees
-.agents/
 .commandcode/
+
+# Amp runtime state
+.amp/portals/
 
 windows/publish/
