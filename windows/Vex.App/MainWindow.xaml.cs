@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Vex.App.Model;
+using Vex.App.Terminal.Native;
 using Microsoft.Win32;
 
 namespace Vex.App;
@@ -185,6 +186,12 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+
+        // A full-screen terminal application owns its entire keyspace. In
+        // particular, applications such as vim, htop, and lazygit commonly
+        // use Ctrl+Shift chords that otherwise look like Vex shortcuts.
+        if (System.Windows.Input.Keyboard.FocusedElement is NativeTerminalControl { IsTuiMode: true })
+            return;
 
         // Plain Ctrl+<letter> is never claimed here, so a full-screen TUI's own
         // bindings (opencode's Ctrl+P, vim-style apps, ...) always reach the PTY.

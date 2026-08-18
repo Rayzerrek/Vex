@@ -1381,8 +1381,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var mods = Keyboard.Modifiers;
 
-        // Workspace shortcuts are handled before terminal key translation.
-        if (mods == (ModifierKeys.Control | ModifierKeys.Shift))
+        // Full-screen terminal applications own Ctrl+Shift chords too. They
+        // use these combinations for navigation and command palettes just as
+        // often as ordinary Ctrl chords.
+        if (!_terminal.IsAlternateScreen && mods == (ModifierKeys.Control | ModifierKeys.Shift))
         {
             var command = key switch
             {

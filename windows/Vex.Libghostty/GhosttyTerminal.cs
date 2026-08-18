@@ -127,6 +127,11 @@ public sealed class GhosttyTerminal : IDisposable
         SetOption(TerminalOption.Userdata, GCHandle.ToIntPtr(_selfHandle));
         SetOption(TerminalOption.TitleChanged, Marshal.GetFunctionPointerForDelegate(s_titleChanged));
         SetOption(TerminalOption.WritePty, Marshal.GetFunctionPointerForDelegate(s_writePty));
+        // Use the familiar text-insertion bar by default. Applications can
+        // still select another DECSCUSR shape (for example vim's block mode).
+        var defaultCursorStyle = TerminalCursorStyle.Bar;
+        SetOption(TerminalOption.DefaultCursorStyle, defaultCursorStyle);
+
         // xterm's default cursor (DECSCUSR 0) blinks; Vex's caret follows
         // the terminal unless an app forces a steady cursor.
         var defaultCursorBlink = true;
