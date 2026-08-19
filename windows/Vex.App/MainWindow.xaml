@@ -54,6 +54,24 @@
                                 </Button>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0,0,0">
+                                <Ellipse Width="6" Height="6" Margin="0,0,6,0" VerticalAlignment="Center">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="{StaticResource VexTextDim}"/>
+                                            <Setter Property="Opacity" Value="0.5"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding State}" Value="{x:Static m:PaneState.Busy}">
+                                                    <Setter Property="Fill" Value="{StaticResource VexAccentBlue}"/>
+                                                    <Setter Property="Opacity" Value="1"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding State}" Value="{x:Static m:PaneState.Exited}">
+                                                    <Setter Property="Fill" Value="#FF6B4B4B"/>
+                                                    <Setter Property="Opacity" Value="1"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
                                 <Image Width="13" Height="13" Margin="0,0,6,0" Source="{Binding AppIcon.Image}" VerticalAlignment="Center">
                                     <Image.Style>
                                         <Style TargetType="Image">
@@ -153,6 +171,7 @@
                                 </Button>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0,0,0">
+                                <Ellipse Width="6" Height="6" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{StaticResource VexTextDim}" Opacity="0.5"/>
                                 <Path Data="M 2,1 H 9 L 12,4 V 13 H 2 Z M 9,1 V 4 H 12" Stroke="{StaticResource VexText}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform" Fill="Transparent"/>
                                 <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{StaticResource VexText}"
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
@@ -571,5 +590,6 @@
         <Popup x:Name="PalettePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
         <Popup x:Name="SettingsPopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
         <Popup x:Name="ThemePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
+        <Popup x:Name="TabPeekPopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
     </Grid>
 </Window>

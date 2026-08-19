@@ -8,6 +8,22 @@ using Vex.Terminal;
 namespace Vex.App.Model;
 
 /// <summary>
+/// Operational state of a pane, surfaced in the title bar so a user (or a
+/// teammate reviewing an agent session) can tell at a glance whether a pane
+/// is waiting for input, running a full-screen TUI, or has exited.
+/// </summary>
+public enum PaneState
+{
+    /// <summary>Shell prompt visible; the pane is waiting for input.</summary>
+    Idle,
+    /// <summary>A full-screen TUI (vim, htop, an agent) is running on the
+    /// alternate screen buffer.</summary>
+    Busy,
+    /// <summary>The underlying process has exited.</summary>
+    Exited,
+}
+
+/// <summary>
 /// One node of a tab's binary split tree. Mirrors upstream's pane model:
 /// every split replaces a leaf with a <see cref="SplitPane"/> holding the
 /// original leaf and the new one.
@@ -21,6 +37,7 @@ public abstract class LeafPane : PaneNode, IDisposable
     private string _title = "Pane";
     private bool _isFocused;
     private bool _isDirty;
+    private PaneState _state = PaneState.Idle;
     private object? _view;
 
     public string Title
@@ -33,6 +50,14 @@ public abstract class LeafPane : PaneNode, IDisposable
     {
         get => _isDirty;
         set => Set(ref _isDirty, value);
+    }
+
+    /// <summary>Operational state shown as a coloured dot in the pane title
+    /// bar. Idle = dim, Busy (TUI) = accent, Exited = red.</summary>
+    public PaneState State
+    {
+        get => _state;
+        set => Set(ref _state, value);
     }
 
     public bool IsFocused
@@ -211,7 +236,12 @@ public sealed class TerminalPane : LeafPane
             }
         };
         view.FocusGained += RequestFocus;
-        view.ProcessExited += exitCode => RequestClose();
+        view.TuiModeChanged += isTui => State = isTui ? PaneState.Busy : PaneState.Idle;
+        view.ProcessExited += exitCode =>
+        {
+            State = PaneState.Exited;
+            RequestClose();
+        };
         view.CommandRequested += command =>
         {
             switch (command)

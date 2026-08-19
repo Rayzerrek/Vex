@@ -26,8 +26,15 @@
                 <DropShadowEffect BlurRadius="28" ShadowDepth="6" Opacity="0.4" Color="#000000"/>
             </Border.Effect>
             <StackPanel Margin="20,18,20,20">
-                <TextBlock Text="Theme" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource VexText}"/>
-                <TextBlock Text="← → move · Enter keep · Esc revert" FontSize="11" Foreground="{StaticResource VexTextDim}" Margin="0,2,0,14"/>
+                <DockPanel Margin="0,0,0,14">
+                    <Button x:Name="EditToggle" DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
+                            Padding="10,4" FontSize="11" Click="EditToggle_Click"
+                            Content="Edit"/>
+                    <TextBlock Text="Theme" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource VexText}" VerticalAlignment="Center"/>
+                </DockPanel>
+                <TextBlock x:Name="HintText" Text="← → move · Enter keep · Esc revert" FontSize="11" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,14"/>
+
+                <!-- Theme card grid -->
                 <ListBox x:Name="ThemeList"
                          Background="Transparent"
                          BorderThickness="0"
@@ -94,6 +101,22 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+
+                <!-- Theme editor panel (collapsed by default) -->
+                <Border x:Name="EditorPanel" Visibility="Collapsed" Margin="0,4,0,0"
+                        BorderBrush="{StaticResource VexBorder}" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+                    <StackPanel>
+                        <WrapPanel x:Name="ColorGrid" Orientation="Horizontal"/>
+
+                        <DockPanel Margin="0,14,0,0">
+                            <Button x:Name="ExportButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
+                                    Padding="10,4" FontSize="11" Click="ExportButton_Click" Content="Copy JSON"/>
+                            <Button x:Name="ResetButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
+                                    Padding="10,4" FontSize="11" Margin="0,0,8,0" Click="ResetButton_Click" Content="Reset"/>
+                            <TextBlock Text="Custom" FontSize="12" Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Border>
     </Grid>

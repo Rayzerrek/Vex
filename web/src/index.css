@@ -74,6 +74,13 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
+.theme-workspace,
+.theme-workspace * {
+  transition-property: color, background-color, border-color, box-shadow;
+  transition-duration: 220ms;
+  transition-timing-function: ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

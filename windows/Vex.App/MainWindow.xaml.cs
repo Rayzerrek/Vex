@@ -214,6 +214,11 @@ public partial class MainWindow : Window
             ToggleThemeSwitcher();
             e.Handled = true;
         }
+        else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Space)
+        {
+            ToggleTabPeek();
+            e.Handled = true;
+        }
         else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.S)
         {
             if (SaveCurrentFile())
@@ -273,6 +278,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private TabPeek? _tabPeek;
+    private TabPeek TabPeek
+    {
+        get
+        {
+            if (_tabPeek is null)
+            {
+                _tabPeek = new TabPeek();
+                _tabPeek.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
+                _tabPeek.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                TabPeekPopup.Child = _tabPeek;
+            }
+            return _tabPeek;
+        }
+    }
+
     private bool SaveCurrentFile()
     {
         if (_workspace.SelectedProject?.SelectedTab?.ActiveLeaf is EditorPane editorPane)
@@ -300,6 +321,14 @@ public partial class MainWindow : Window
             _themeSwitcher.Hide();
         else
             ThemeSwitcher.Show();
+    }
+
+    private void ToggleTabPeek()
+    {
+        if (_tabPeek is { Visibility: Visibility.Visible })
+            _tabPeek.Hide();
+        else if (_workspace.SelectedProject is { } project)
+            TabPeek.Show(project);
     }
 
     private void NewProject_Click(object sender, RoutedEventArgs e)
