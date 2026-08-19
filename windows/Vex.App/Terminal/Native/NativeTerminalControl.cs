@@ -97,6 +97,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private bool _cursorBlinkSetting = true;
     private bool _selectionActive;
     private bool _selectionDragged;
+    private bool _wasAlternateScreen;
 
     private static readonly string? DiagPath = Environment.GetEnvironmentVariable("VEX_DIAG");
     internal static void Diag(string message)
@@ -136,6 +137,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     public event Action<string>? TitleChanged;
     public event Action<string>? TitleRawChanged;
     public event Action<int>? ProcessExited;
+    public event Action<bool>? TuiModeChanged;
     public event Action? FocusGained;
     public event Action<TerminalCommand>? CommandRequested;
 
@@ -195,7 +197,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         switch (e.PropertyName)
         {
             case nameof(AppSettings.ThemeName):
-                var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == settings.ThemeName) ?? BuiltInThemes.VexDark;
+                var theme = BuiltInThemes.Resolve(settings.ThemeName);
                 _palette = PaletteFor(theme);
                 ApplyTerminalColors();
                 RebuildScrollbarBrushes();
@@ -245,6 +247,12 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         return palette;
     }
 
+    /// <summary>Evicts a theme's cached palette so the next render rebuilds it
+    /// from the current theme values. Used by the theme editor after mutating
+    /// <see cref="BuiltInThemes.Custom"/>.</summary>
+    public static void InvalidatePaletteCache(string themeName)
+        => PaletteCache.Remove(themeName);
+
     private static TypefaceSet TypefacesFor(string familySource)
     {
         if (TypefaceCache.TryGetValue(familySource, out var set))
@@ -280,7 +288,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void ApplySettings()
     {
         var settings = AppSettings.Instance;
-        var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == settings.ThemeName) ?? BuiltInThemes.VexDark;
+        var theme = BuiltInThemes.Resolve(settings.ThemeName);
         _palette = PaletteFor(theme);
         ApplyTerminalColors();
         RebuildScrollbarBrushes();
@@ -619,6 +627,16 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var scrollbar = _terminal.Scrollbar;
             var viewportMoved = scrollbar.Offset != _lastScrollOffset;
             _lastScrollOffset = scrollbar.Offset;
+
+            // Detect alternate-screen transitions (TUI start/exit) and notify
+            // the pane model so it can update the state indicator.
+            var isAlt = _terminal.IsAlternateScreen;
+            if (isAlt != _wasAlternateScreen)
+            {
+                _wasAlternateScreen = isAlt;
+                TuiModeChanged?.Invoke(isAlt);
+            }
+
             if (flushStarted is not null)
                 Diag($"flush dirty={dirty} full={_needsFullRedraw} scroll={viewportMoved} offset={scrollbar.Offset}/{scrollbar.Total} rows={_rows} cols={_cols} ms={flushStarted.Elapsed.TotalMilliseconds:F4}");
 

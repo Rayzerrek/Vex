@@ -17,5 +17,6 @@ Thumbs.db
 
 # Amp runtime state
 .amp/portals/
+**/.amp/portals/
 
 windows/publish/

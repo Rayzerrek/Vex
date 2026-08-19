@@ -15,7 +15,7 @@ public static class ChromePalette
 {
     public static void Apply(string? themeName)
     {
-        var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == themeName) ?? BuiltInThemes.VexDark;
+        var theme = BuiltInThemes.Resolve(themeName);
         Apply(theme);
     }
 
@@ -60,7 +60,7 @@ public static class ChromePalette
     /// background pushed dark so the chrome stays readable behind the blur.</summary>
     public static Color BackdropTint(string? themeName)
     {
-        var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == themeName) ?? BuiltInThemes.VexDark;
+        var theme = BuiltInThemes.Resolve(themeName);
         return Darken(Parse(theme.Background), 0.62);
     }
 

@@ -15,6 +15,11 @@ public interface ITerminalView : IDisposable
     event Action? FocusGained;
     event Action<TerminalCommand>? CommandRequested;
 
+    /// <summary>Raised when the terminal enters or leaves the alternate screen
+    /// buffer (a full-screen TUI starts or exits). The boolean is true while a
+    /// TUI is active. Used to surface pane state in the title bar.</summary>
+    event Action<bool>? TuiModeChanged;
+
     /// <summary>PID of the ConPTY shell; null until the session starts.</summary>
     int? ProcessId { get; }
 
