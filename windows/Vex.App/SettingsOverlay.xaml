@@ -277,7 +277,7 @@
                         </StackPanel>
 
                         <StackPanel DockPanel.Dock="Bottom" Margin="18,0">
-                            <TextBlock Text="Vex 1.0.4" FontSize="11" Foreground="{StaticResource VexTextDim}"/>
+                            <TextBlock Text="Vex 1.2.1" FontSize="11" Foreground="{StaticResource VexTextDim}"/>
                         </StackPanel>
 
                         <StackPanel>
