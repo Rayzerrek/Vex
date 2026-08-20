@@ -566,36 +566,8 @@
 
                                 <Border Style="{StaticResource SettingsCard}">
                                     <StackPanel HorizontalAlignment="Center" Margin="0,8">
-                                        <Viewbox Width="84" Height="84" HorizontalAlignment="Center">
-                                            <Canvas Width="256" Height="256">
-                                                <Border Width="240" Height="240" Canvas.Left="8" Canvas.Top="8" CornerRadius="36"
-                                                        BorderBrush="#FF4B506E" BorderThickness="3">
-                                                    <Border.Background>
-                                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                                            <GradientStop Color="#FF121218" Offset="0"/>
-                                                            <GradientStop Color="#FF1E1E2A" Offset="1"/>
-                                                        </LinearGradientBrush>
-                                                    </Border.Background>
-                                                </Border>
-                                                <Border Width="240" Height="48" Canvas.Left="8" Canvas.Top="8"
-                                                        CornerRadius="36,36,0,0" Background="#FF1C1C26"/>
-                                                <Ellipse Width="12" Height="12" Canvas.Left="30" Canvas.Top="26" Fill="#FFFF5F56"/>
-                                                <Ellipse Width="12" Height="12" Canvas.Left="50" Canvas.Top="26" Fill="#FFFFBD2E"/>
-                                                <Ellipse Width="12" Height="12" Canvas.Left="70" Canvas.Top="26" Fill="#FF27C93F"/>
-                                                <Path Data="M 44,96 L 84,128 L 44,160" StrokeThickness="14"
-                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round">
-                                                    <Path.Stroke>
-                                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                                            <GradientStop Color="#FF6366F1" Offset="0"/>
-                                                            <GradientStop Color="#FFA855F7" Offset="1"/>
-                                                        </LinearGradientBrush>
-                                                    </Path.Stroke>
-                                                </Path>
-                                                <Line X1="100" Y1="160" X2="140" Y2="160" Stroke="#FF38BDF8" StrokeThickness="14"
-                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
-                                                <Line X1="164" Y1="56" X2="164" Y2="230" Stroke="#64FFFFFF" StrokeThickness="4"/>
-                                            </Canvas>
-                                        </Viewbox>
+                                        <Image Source="/Assets/app-5.png" Width="84" Height="84" HorizontalAlignment="Center"
+                                               RenderOptions.BitmapScalingMode="HighQuality"/>
                                         <TextBlock Text="Vex" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource VexText}"
                                                    HorizontalAlignment="Center" Margin="0,16,0,4"/>
                                         <TextBlock Text="Version 1.2.1" FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>

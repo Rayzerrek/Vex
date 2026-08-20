@@ -48,7 +48,11 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     private void AttachLeafEvents(LeafPane leaf)
     {
-        leaf.FocusRequested += () => ActiveLeaf = leaf;
+        leaf.FocusRequested += () =>
+        {
+            if (_activeLeaf != leaf)
+                ActiveLeaf = leaf;
+        };
         leaf.SplitRequested += orientation =>
         {
             ActiveLeaf = leaf;
@@ -125,13 +129,14 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             if (_activeLeaf is not null)
                 _activeLeaf.IsFocused = false;
             _activeLeaf = value;
-            OnPropertyChanged(nameof(DisplayRoot));
+            if (IsFocusMode)
+                OnPropertyChanged(nameof(DisplayRoot));
             if (value is not null)
             {
                 value.IsFocused = true;
-                value.Focus();
                 if (!HasCustomTitle)
                     Title = value.Title + (value.IsDirty ? "*" : "");
+                value.Focus();
             }
         }
     }
@@ -150,7 +155,6 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         var fresh = NewLeaf();
         Root = ReplaceNode(Root, target, new SplitPane(orientation, target, fresh));
         ActiveLeaf = fresh;
-        fresh.Focus();
     }
 
     private LeafPane NewLeaf()
@@ -172,7 +176,6 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         if (ReferenceEquals(ActiveLeaf, leaf))
         {
             ActiveLeaf = FirstLeaf();
-            ActiveLeaf?.Focus();
         }
 
         leaf.PropertyChanged -= OnLeafPropertyChanged;

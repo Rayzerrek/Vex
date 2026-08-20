@@ -7,6 +7,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+    <Resource Include="Assets\app-5.png" />
     <None Remove="Assets\**\*" />
     <None Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

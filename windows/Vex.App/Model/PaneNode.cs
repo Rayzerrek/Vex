@@ -177,11 +177,16 @@ public sealed class TerminalPane : LeafPane
         AppIcon = AppIconCatalog.Resolve(deepest.Name, commandLine, _lastTitle);
     }
 
+    private bool _focusPendingLoaded;
+
     public override void Focus()
     {
         if (View is not ITerminalView tv)
             return;
         var element = (System.Windows.FrameworkElement)View;
+
+        if (element.IsKeyboardFocused)
+            return;
 
         void FocusWhenVisible()
         {
@@ -190,9 +195,9 @@ public sealed class TerminalPane : LeafPane
             // button from taking focus back from a newly realized terminal.
             element.Dispatcher.BeginInvoke(() =>
             {
-                if (element.IsVisible)
+                if (IsFocused && element.IsVisible && !element.IsKeyboardFocused)
                     tv.FocusTerminal();
-            }, DispatcherPriority.ContextIdle);
+            }, DispatcherPriority.Input);
         }
 
         if (element.IsLoaded)
@@ -201,11 +206,16 @@ public sealed class TerminalPane : LeafPane
             return;
         }
 
+        if (_focusPendingLoaded)
+            return;
+
+        _focusPendingLoaded = true;
         // A brand-new tab has no visual tree yet. Its Loaded event is the
         // first point at which WPF can move keyboard focus to its terminal.
         System.Windows.RoutedEventHandler onLoaded = null!;
         onLoaded = (_, _) =>
         {
+            _focusPendingLoaded = false;
             element.Loaded -= onLoaded;
             FocusWhenVisible();
         };

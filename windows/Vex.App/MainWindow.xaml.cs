@@ -533,6 +533,9 @@ public partial class MainWindow : Window
             return;
         if (sender is FrameworkElement { DataContext: LeafPane leaf })
         {
+            if (_workspace.SelectedProject?.SelectedTab is { } tab)
+                tab.ActiveLeaf = leaf;
+
             _dragPane = leaf;
             _dragStart = e.GetPosition(this);
             _draggingPane = false;
