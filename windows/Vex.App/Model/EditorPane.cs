@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Highlighting;
 
@@ -118,10 +119,43 @@ public sealed class EditorPane : LeafPane
         return editor;
     }
 
+    private bool _focusPendingLoaded;
+
     public override void Focus()
     {
-        if (View is TextEditor te)
-            te.Focus();
+        if (View is not TextEditor te)
+            return;
+
+        if (te.IsKeyboardFocused)
+            return;
+
+        void FocusWhenVisible()
+        {
+            te.Dispatcher.BeginInvoke(() =>
+            {
+                if (IsFocused && te.IsVisible && !te.IsKeyboardFocused)
+                    te.Focus();
+            }, DispatcherPriority.Input);
+        }
+
+        if (te.IsLoaded)
+        {
+            FocusWhenVisible();
+            return;
+        }
+
+        if (_focusPendingLoaded)
+            return;
+
+        _focusPendingLoaded = true;
+        RoutedEventHandler onLoaded = null!;
+        onLoaded = (_, _) =>
+        {
+            _focusPendingLoaded = false;
+            te.Loaded -= onLoaded;
+            FocusWhenVisible();
+        };
+        te.Loaded += onLoaded;
     }
 
     private static IHighlightingDefinition? ResolveHighlighting(string filePath)

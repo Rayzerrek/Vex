@@ -14,6 +14,7 @@ Thumbs.db
 # Agent worktrees & local skills
 .claude/worktrees
 .commandcode/
+.claude/
 
 # Amp runtime state
 .amp/portals/
