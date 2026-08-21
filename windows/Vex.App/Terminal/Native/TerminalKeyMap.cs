@@ -24,6 +24,9 @@ public static class TerminalKeyMap
     private static readonly byte[] CmdZero = { 0 };
     private static readonly byte[] CmdCtrlBackslash = { 0x1c };
     private static readonly byte[] CmdCtrlCloseBracket = { 0x1d };
+    // ETB / C-w: shells (readline, PSReadLine) bind this to backward-kill-word,
+    // which reproduces Windows Terminal's Ctrl+Backspace behavior.
+    private static readonly byte[] CmdCtrlBackspace = { 0x17 };
 
     private static readonly byte[] CmdUpNormal = "\x1b[A"u8.ToArray();
     private static readonly byte[] CmdDownNormal = "\x1b[B"u8.ToArray();
@@ -127,7 +130,7 @@ public static class TerminalKeyMap
             case Key.Return: // same value as Key.Enter
                 return CmdRet;
             case Key.Back:
-                return CmdDel;
+                return ctrl && !alt ? CmdCtrlBackspace : CmdDel;
             case Key.Escape:
                 return CmdEsc;
             case Key.Tab:
