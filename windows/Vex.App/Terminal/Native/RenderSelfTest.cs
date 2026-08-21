@@ -512,6 +512,35 @@ internal static class RenderSelfTest
         Report(control, $"wide-adv X at cell2={xAt2} cell3={xAt3}");
         Report(control, xAt2 && !xAt3 ? "PASS wide-adv: X lands in cell 2" : "FAIL wide-adv: X misplaced");
 
+        // Mixed-run alignment: an emoji mid-line must not shift the text that
+        // follows it. The whole-run FormattedText fallback applied natural
+        // font advances, so every later character drifted off the grid and
+        // slid under the next run's background — the doubled-letter look in
+        // nvim/AI-agent output. The drift is only a few px (Cascadia's ASCII
+        // advance matches the cell), so compare the tail's pixel band against
+        // a reference row of pure ASCII instead of probing cell centers.
+        control.SelfTestFeed("\x1b[2J\x1b[H🎉tail\r\n");
+        var mixedRow = control.SelfTestLine(0);
+        var tCol = -1;
+        if (mixedRow is not null)
+        {
+            for (var c = 0; c < mixedRow.Cells.Length; c++)
+            {
+                if (mixedRow.Cells[c].Text == "t")
+                {
+                    tCol = c;
+                    break;
+                }
+            }
+        }
+        Assert(control, tCol > 0, "mixed-run: emoji cell present before 'tail'");
+        var reference = new string('.', tCol) + "tail";
+        control.SelfTestFeed(reference + "\x1b[3;1H");
+        var mixedShot = Capture(control);
+        var (bestShift, diffAtBest, _) = BandAlignment(control, mixedShot, rowA: 0, rowB: 1, colFrom: tCol + 1, colTo: tCol + 4, maxShift: 3);
+        Report(control, $"mixed-run tail alignment bestShift={bestShift} diff={diffAtBest}");
+        Report(control, bestShift == 0 ? "PASS mixed-run: text after emoji is grid-aligned" : "FAIL mixed-run: fallback drift after emoji");
+
         // Scroll up two pages and back: the snap-back bitmap must be
         // pixel-identical to the pre-scroll one, otherwise stale rows remain.
         control.SelfTestFeed("scroll-anchor\r\n");
@@ -763,6 +792,73 @@ internal static class RenderSelfTest
         var pixels = new byte[stride * height];
         bitmap.CopyPixels(pixels, stride, 0);
         return pixels;
+    }
+
+    /// <summary>Hard precondition inside the deterministic suite: reports and
+    /// aborts so downstream checks do not read garbage.</summary>
+    private static void Assert(NativeTerminalControl control, bool condition, string what)
+    {
+        if (condition)
+            return;
+        Report(control, $"FAIL assert: {what}");
+        throw new InvalidOperationException($"selftest precondition failed: {what}");
+    }
+
+    /// <summary>Finds the horizontal shift in [-maxShift,maxShift] pixels
+    /// that best aligns the band spanning columns [colFrom,colTo) of two
+    /// viewport rows of one capture. Asserts grid alignment rather than
+    /// pixel identity: the same glyphs at the same grid column rasterize
+    /// with a slightly different AA phase depending on which run segment
+    /// carries them, so raw diffs never reach zero even when aligned —
+    /// but a real drift (whole-run font fallback moves the text by the
+    /// emoji's natural-vs-grid advance difference) shifts the argmin away
+    /// from 0 decisively.</summary>
+    /// <returns>(bestShift, diffAtBest, diffAtZero).</returns>
+    private static (int BestShift, int DiffAtBest, int DiffAtZero) BandAlignment(
+        NativeTerminalControl control, byte[] pixels, int rowA, int rowB, int colFrom, int colTo, int maxShift)
+    {
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = pixels.Length / (width * 4);
+        var x0 = (int)Math.Round(colFrom * control.SelfTestCellWidth * dpi);
+        var x1 = Math.Min(width - maxShift, (int)Math.Round(colTo * control.SelfTestCellWidth * dpi));
+        var yA0 = (int)Math.Round(rowA * control.SelfTestCellHeight * dpi);
+        var yA1 = Math.Min(height, (int)Math.Round((rowA + 1) * control.SelfTestCellHeight * dpi));
+        var yB0 = (int)Math.Round(rowB * control.SelfTestCellHeight * dpi);
+        var yB1 = Math.Min(height, (int)Math.Round((rowB + 1) * control.SelfTestCellHeight * dpi));
+        var rows = Math.Min(yA1 - yA0, yB1 - yB0);
+
+        int DiffAt(int shift)
+        {
+            var diff = 0;
+            for (var dy = 0; dy < rows; dy++)
+            {
+                for (var x = x0; x < x1; x++)
+                {
+                    var ia = ((yA0 + dy) * width + x) * 4;
+                    var ib = ((yB0 + dy) * width + x + shift) * 4;
+                    if (Math.Abs(pixels[ia] - pixels[ib]) > 8 ||
+                        Math.Abs(pixels[ia + 1] - pixels[ib + 1]) > 8 ||
+                        Math.Abs(pixels[ia + 2] - pixels[ib + 2]) > 8)
+                        diff++;
+                }
+            }
+            return diff;
+        }
+
+        var bestShift = 0;
+        var diffAtBest = int.MaxValue;
+        var diffAtZero = DiffAt(0);
+        for (var s = -maxShift; s <= maxShift; s++)
+        {
+            var d = DiffAt(s);
+            if (d < diffAtBest)
+            {
+                diffAtBest = d;
+                bestShift = s;
+            }
+        }
+        return (bestShift, diffAtBest, diffAtZero);
     }
 
     /// <summary>Writes a raw Pbgra32 capture to disk for visual inspection.</summary>
