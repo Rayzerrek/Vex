@@ -850,56 +850,64 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // check is "did we NOT get a real bold face".
             var syntheticBold = flags.HasFlag(CellFlags.Bold) && !ReferenceEquals(glyphFace, _boldGlyph);
 
-            bool canUseGlyphRun = glyphFace != null;
             var contentLength = contentEnd;
-            // GlyphRun uses the collection lengths as the glyph count. The
-            // row-sized pools cannot be passed directly: WPF's retained-mode
-            // DrawingContext keeps a reference to the glyph/advance arrays
-            // until the render thread consumes the visual, so reusing them
-            // across runs corrupts already-queued runs (stale characters,
-            // jumbled glyphs). Per-run arrays are required.
-            var glyphIndices = new ushort[contentLength];
-            var advanceWidths = new double[contentLength];
-            // Read the trimmed run directly from the run builder; no
-            // per-run copy, so the map loop and FormattedText below index
-            // runText up to contentEnd.
+            // Read the trimmed run directly from the run builder; no per-run
+            // copy, so the segment loop and FormattedText below index runText
+            // up to contentEnd.
             var trimmedText = runText;
 
-            if (canUseGlyphRun)
-            {
-                var map = glyphFace!.CharacterToGlyphMap;
-                for (var i = 0; i < contentLength; i++)
-                {
-                    if (map.TryGetValue(trimmedText[i], out var glyphIndex))
-                    {
-                        glyphIndices[i] = glyphIndex;
-                        // True cell advance: a wide glyph consumes two columns,
-                        // so the next cell starts where the grid places it.
-                        advanceWidths[i] = widths[i] * _cellWidth;
-                    }
-                    else
-                    {
-                        canUseGlyphRun = false;
-                        break;
-                    }
-                }
-            }
+            // Walk the trimmed run cell by cell. A cell whose every codepoint
+            // has a glyph in the face joins a shared GlyphRun segment; any
+            // other cell (emoji, symbols outside the family) is drawn alone
+            // through FormattedText — whose shaping and font fallback can
+            // find a glyph in another family — pinned to its exact grid
+            // column. Falling back for the WHOLE run used natural font
+            // advances, drifting every later character off the grid: text
+            // slid under the next run's background and read as doubled or
+            // overlapping letters whenever an emoji sat mid-line.
+            var map = glyphFace?.CharacterToGlyphMap;
+            var colCursor = startCol;
 
-            if (canUseGlyphRun)
+            if (map is not null)
             {
-                var glyphRun = new GlyphRun(
-                    glyphFace!,
-                    0,
-                    false,
-                    _fontSize,
-                    (float)_pixelsPerDip,
-                    glyphIndices,
-                    new Point(x, rowY + _baselineY),
-                    advanceWidths,
-                    null, null, null, null, null, null);
-                context.DrawGlyphRun(fg, glyphRun);
-                if (syntheticBold)
+                // Pending GlyphRun segment state. Per-segment arrays are
+                // required: WPF's retained-mode DrawingContext keeps a
+                // reference to the glyph/advance arrays until the render
+                // thread consumes the visual, so reusing them across runs
+                // corrupts already-queued runs (stale characters, jumbled
+                // glyphs).
+                var segIndices = new ushort[contentLength];
+                var segAdvances = new double[contentLength];
+                var segUnits = 0;
+                var segStartCol = startCol;
+
+                void FlushSegment()
                 {
+                    if (segUnits == 0)
+                        return;
+                    var indices = new ushort[segUnits];
+                    var advances = new double[segUnits];
+                    Array.Copy(segIndices, indices, segUnits);
+                    Array.Copy(segAdvances, advances, segUnits);
+                    DrawGlyph(indices, advances, segStartCol * _cellWidth);
+                    segUnits = 0;
+                }
+
+                void DrawGlyph(ushort[] indices, double[] advances, double originX)
+                {
+                    var run = new GlyphRun(
+                        glyphFace!,
+                        0,
+                        false,
+                        _fontSize,
+                        (float)_pixelsPerDip,
+                        indices,
+                        new Point(originX, rowY + _baselineY),
+                        advances,
+                        null, null, null, null, null, null);
+                    context.DrawGlyphRun(fg, run);
+                    if (!syntheticBold)
+                        return;
                     // Second pass offset by ~1px (fractional for subpixel
                     // crispness), the classic cheap fake-bold.
                     var boldRun = new GlyphRun(
@@ -908,16 +916,80 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                         false,
                         _fontSize,
                         (float)_pixelsPerDip,
-                        glyphIndices,
-                        new Point(x + Math.Max(1, _pixelsPerDip), rowY + _baselineY),
-                        advanceWidths,
+                        indices,
+                        new Point(originX + Math.Max(1, _pixelsPerDip), rowY + _baselineY),
+                        advances,
                         null, null, null, null, null, null);
                     context.DrawGlyphRun(fg, boldRun);
                 }
+
+                var i = 0;
+                while (i < contentLength)
+                {
+                    // A cell spans one width-consuming unit plus its
+                    // zero-width continuation units.
+                    var unitStart = i;
+                    i++;
+                    while (i < contentLength && widths[i] == 0)
+                        i++;
+
+                    var firstGlyph = segUnits;
+                    if (segUnits == 0)
+                        segStartCol = colCursor;
+                    var cellOk = true;
+                    var u = unitStart;
+                    while (u < i)
+                    {
+                        var ch = trimmedText[u];
+                        int cp;
+                        var span = 1;
+                        if (char.IsHighSurrogate(ch) && u + 1 < i && char.IsLowSurrogate(trimmedText[u + 1]))
+                        {
+                            cp = char.ConvertToUtf32(ch, trimmedText[u + 1]);
+                            span = 2;
+                        }
+                        else
+                        {
+                            cp = ch;
+                        }
+                        if (!map.TryGetValue(cp, out var glyphIndex))
+                        {
+                            cellOk = false;
+                            break;
+                        }
+                        segIndices[segUnits] = glyphIndex;
+                        segAdvances[segUnits] = 0;
+                        segUnits++;
+                        u += span;
+                    }
+                    if (cellOk)
+                    {
+                        // True cell advance: a wide glyph consumes two
+                        // columns, so the next cell starts where the grid
+                        // places it.
+                        segAdvances[firstGlyph] = widths[unitStart] * _cellWidth;
+                    }
+                    else
+                    {
+                        segUnits = firstGlyph;
+                        FlushSegment();
+                        var formatted = new FormattedText(
+                            trimmedText.ToString(unitStart, i - unitStart),
+                            CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                            face, _fontSize, fg, _pixelsPerDip);
+                        var fx = colCursor * _cellWidth;
+                        context.DrawText(formatted, new Point(fx, rowY));
+                        if (syntheticBold)
+                            context.DrawText(formatted, new Point(fx + Math.Max(1, _pixelsPerDip), rowY));
+                    }
+                    colCursor += widths[unitStart];
+                }
+                FlushSegment();
             }
             else
             {
-                // Read only the trimmed portion: StringBuilder.ToString(start,
+                // No usable face at all: shape the whole trimmed run through
+                // FormattedText's font fallback. StringBuilder.ToString(start,
                 // length) avoids copying the trailing-whitespace tail.
                 var formatted = new FormattedText(trimmedText.ToString(0, contentLength), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                     face, _fontSize, fg, _pixelsPerDip);
