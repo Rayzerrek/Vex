@@ -150,6 +150,23 @@ public sealed partial class NativeTerminalControl
     /// <summary>Plain text of the active selection, or null when there is none.</summary>
     internal string? SelfTestSelectedText() => _terminal.HasSelection ? _terminal.GetSelectedText() : null;
 
+    /// <summary>Full press-drag-release sequence the keyboard-selection
+    /// handler replays on every Shift+Arrow: ghostty commits the selection
+    /// only on release, so the gesture must complete despite there being no
+    /// real pointer button.</summary>
+    internal void SelfTestKeyboardSelect(int pressCol, int pressRow, int dragCol, int dragRow)
+    {
+        _selectionActive = true;
+        var pressX = pressCol * _cellWidth + _cellWidth * 0.2;
+        var pressY = pressRow * _cellHeight + _cellHeight * 0.5;
+        var dragX = dragCol * _cellWidth + _cellWidth * 0.8;
+        var dragY = dragRow * _cellHeight + _cellHeight * 0.5;
+        _terminal.SelectionPress(pressCol, pressRow, pressX, pressY);
+        _terminal.SelectionDrag(dragCol, dragRow, dragX, dragY);
+        _terminal.SelectionRelease(dragCol, dragRow);
+        FlushRedraw();
+    }
+
     /// <summary>The detected URL under a viewport cell, or null. Recomputes
     /// the row's spans directly so the harness can query rows that were not
     /// repainted since their content changed.</summary>

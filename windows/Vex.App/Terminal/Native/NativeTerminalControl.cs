@@ -97,6 +97,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private bool _cursorBlinkSetting = true;
     private bool _selectionActive;
     private bool _selectionDragged;
+    private bool _kbSelectionActive;
+    private int _kbAnchorCol, _kbAnchorRow;
+    private int _kbFocusCol, _kbFocusRow;
     private bool _wasAlternateScreen;
 
     private static readonly string? DiagPath = Environment.GetEnvironmentVariable("VEX_DIAG");
@@ -1410,6 +1413,26 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var mods = Keyboard.Modifiers;
 
+        // Modifier-only presses are the first half of chords like Ctrl+C used
+        // to copy the selection; clearing here would tear the selection down
+        // before the chord completes.
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift
+            or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
+            return;
+
+        // Word/line-wise keyboard selection owns the Ctrl+Shift+arrow chords
+        // (Windows Terminal/Ghostty style): arrows step a whole word, Home/
+        // End jump to the line edges. Selection outranks pane management, so
+        // splitting moved to Ctrl+Shift+R / Ctrl+Shift+D below.
+        if (!_terminal.IsAlternateScreen &&
+            mods == (ModifierKeys.Control | ModifierKeys.Shift) &&
+            key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End)
+        {
+            ExtendKeyboardSelection(key, byWord: true);
+            e.Handled = true;
+            return;
+        }
+
         // Full-screen terminal applications own Ctrl+Shift chords too. They
         // use these combinations for navigation and command palettes just as
         // often as ordinary Ctrl chords.
@@ -1417,8 +1440,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             var command = key switch
             {
-                Key.Right => TerminalCommand.SplitRight,
-                Key.Down => TerminalCommand.SplitDown,
+                Key.R => TerminalCommand.SplitRight,
+                Key.D => TerminalCommand.SplitDown,
                 Key.T => TerminalCommand.NewTab,
                 Key.W => TerminalCommand.ClosePane,
                 _ => (TerminalCommand?)null,
@@ -1441,12 +1464,29 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 e.Handled = true;
                 return;
             }
+            if (key == Key.X)
+            {
+                CutSelection();
+                e.Handled = true;
+                return;
+            }
         }
 
         // Ctrl+C copies when a selection exists, otherwise sends ETX.
-        if (key == Key.C && mods == ModifierKeys.Control && _selectionActive)
+        if (key == Key.C && mods == ModifierKeys.Control && (_selectionActive || _terminal.HasSelection))
         {
             CopySelection();
+            e.Handled = true;
+            return;
+        }
+
+        // Keyboard selection (Shift+Arrow) drives the same selection gesture
+        // the mouse uses, with a virtual caret independent of the shell
+        // cursor. Only in the primary screen: full-screen apps own these keys.
+        if (mods == ModifierKeys.Shift && !_terminal.IsAlternateScreen &&
+            key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End)
+        {
+            ExtendKeyboardSelection(key, byWord: false);
             e.Handled = true;
             return;
         }
@@ -1523,16 +1563,113 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var text = _terminal.GetSelectedText();
         if (!string.IsNullOrEmpty(text))
             Clipboard.SetText(text);
+        // Copied text is deselected, matching the copy-then-clear convention.
+        ClearSelection();
     }
 
     private void ClearSelection()
     {
+        _kbSelectionActive = false;
         if (_selectionActive || _terminal.HasSelection)
         {
             _selectionActive = false;
             _terminal.ClearSelection();
             FlushRedraw();
         }
+    }
+
+    /// <summary>
+    /// Moves the keyboard-selection caret and re-drives the selection
+    /// gesture. Every key replays the full press-drag-release sequence:
+    /// ghostty only commits the selection snapshot on release, so a bare
+    /// press+drag (no pointer button ever releases here) leaves nothing
+    /// selectable. The caret wraps at line boundaries but stays inside the
+    /// viewport; <paramref name="byWord"/> steps a whole word (left) or is
+    /// reserved for the Home/End line jumps.
+    /// </summary>
+    private void ExtendKeyboardSelection(Key key, bool byWord)
+    {
+        if (!_kbSelectionActive)
+        {
+            var cursor = _terminal.Cursor;
+            _kbAnchorCol = Math.Clamp(cursor.X, 0, _cols - 1);
+            _kbAnchorRow = Math.Clamp(cursor.Y, 0, _rows - 1);
+            _kbFocusCol = _kbAnchorCol;
+            _kbFocusRow = _kbAnchorRow;
+            _kbSelectionActive = true;
+        }
+
+        switch (key)
+        {
+            case Key.Left:
+                if (byWord) _kbFocusCol = WordBoundaryCol(_kbFocusRow, _kbFocusCol, forward: false);
+                else if (_kbFocusCol > 0) _kbFocusCol--;
+                else if (_kbFocusRow > 0) { _kbFocusRow--; _kbFocusCol = _cols - 1; }
+                break;
+            case Key.Right:
+                if (byWord) _kbFocusCol = WordBoundaryCol(_kbFocusRow, _kbFocusCol, forward: true);
+                else if (_kbFocusCol < _cols - 1) _kbFocusCol++;
+                else if (_kbFocusRow < _rows - 1) { _kbFocusRow++; _kbFocusCol = 0; }
+                break;
+            case Key.Up:
+                if (_kbFocusRow > 0) _kbFocusRow--;
+                break;
+            case Key.Down:
+                if (_kbFocusRow < _rows - 1) _kbFocusRow++;
+                break;
+            case Key.Home:
+                _kbFocusCol = 0;
+                break;
+            case Key.End:
+                _kbFocusCol = _cols - 1;
+                break;
+        }
+
+        var pressX = _kbAnchorCol * _cellWidth + _cellWidth * 0.2;
+        var rowY = _kbAnchorRow * _cellHeight + _cellHeight * 0.5;
+        var focusX = _kbFocusCol * _cellWidth + _cellWidth * 0.8;
+        var focusY = _kbFocusRow * _cellHeight + _cellHeight * 0.5;
+        _terminal.SelectionPress(_kbAnchorCol, _kbAnchorRow, pressX, rowY);
+        _terminal.SelectionDrag(_kbFocusCol, _kbFocusRow, focusX, focusY);
+        _terminal.SelectionRelease(_kbFocusCol, _kbFocusRow);
+        FlushRedraw();
+    }
+
+    /// <summary>
+    /// Nearest word boundary at or next to <paramref name="col"/> in the
+    /// viewport row. Backward skips separators then the word's characters, so
+    /// a caret inside "foo|bar" lands on "foo" first and "bar" on the next
+    /// press — the readline word-left behavior; forward is the mirror image.
+    /// </summary>
+    private int WordBoundaryCol(int row, int col, bool forward)
+    {
+        var frameRows = _terminal.FrameRows;
+        if ((uint)row >= (uint)frameRows.Length)
+            return col;
+        var cells = frameRows[row].Cells;
+        var last = Math.Max(0, cells.Length - 1);
+
+        static bool IsSeparator(in CellInfo cell)
+        {
+            var text = cell.Text.TrimEnd('\0');
+            return text.Length == 0 || char.IsWhiteSpace(text[0]);
+        }
+
+        if ((uint)col >= (uint)cells.Length)
+            return last;
+        if (forward)
+        {
+            while (col < last && IsSeparator(cells[col]))
+                col++;
+            while (col < last && !IsSeparator(cells[col + 1]))
+                col++;
+            return col;
+        }
+        while (col > 0 && IsSeparator(cells[col]))
+            col--;
+        while (col > 0 && !IsSeparator(cells[col - 1]))
+            col--;
+        return col;
     }
 
     private void PasteClipboard()
@@ -1543,6 +1680,39 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         if (_terminal.BracketedPaste)
             text = "\x1b[200~" + text + "\x1b[201~";
         _session.Write(Encoding.UTF8.GetBytes(text));
+    }
+
+    /// <summary>
+    /// Copies the selection and, when it is single-line input ending exactly
+    /// at the shell cursor (a leftward keyboard selection from the prompt),
+    /// deletes it with backspaces — the only text a terminal can truly "cut"
+    /// is unsubmitted line input.
+    /// </summary>
+    private void CutSelection()
+    {
+        if (!_selectionActive && !_terminal.HasSelection)
+            return;
+        var text = _terminal.GetSelectedText();
+        if (string.IsNullOrEmpty(text))
+            return;
+        Clipboard.SetText(text);
+
+        var cursor = _terminal.Cursor;
+        var nearestCursorCol = _kbFocusRow == _kbAnchorRow
+            ? Math.Max(_kbAnchorCol, _kbFocusCol)
+            : -1;
+        var deletable = _kbSelectionActive
+            && _kbFocusRow == _kbAnchorRow
+            && _kbFocusRow == cursor.Y
+            && nearestCursorCol == cursor.X;
+        ClearSelection();
+
+        if (deletable && _session is not null)
+        {
+            var backspaces = new byte[text.Length];
+            Array.Fill(backspaces, (byte)0x7f);
+            _session.Write(backspaces);
+        }
     }
 
     // ---- Mouse ------------------------------------------------------------

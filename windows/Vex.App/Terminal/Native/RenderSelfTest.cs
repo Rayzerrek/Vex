@@ -689,6 +689,24 @@ internal static class RenderSelfTest
             ? "PASS selection: scrolled-up drag selects"
             : "FAIL selection: scrolled-up drag failed");
 
+        // Keyboard-style selection: the Shift+Arrow handler replays the full
+        // press-drag-release gesture (ghostty commits only on release) even
+        // though no pointer button exists. The result must be copyable.
+        control.SelfTestFeed("\x1b[2J\x1b[Hkeyboard sel line\r\n");
+        // The scrolled-selection scenario above leaves the viewport up in
+        // scrollback; row 0 must be the freshly fed line again.
+        control.SelfTestScrollToBottom();
+        control.SelfTestKeyboardSelect(pressCol: 0, pressRow: 0, dragCol: 4, dragRow: 0);
+        var kbSel = control.SelfTestSelectedText();
+        var kbLum = CellCornerLum(control, Capture(control), col: 2, row: 0);
+        Report(control, $"selection keyboard='{kbSel}' bandLum={kbLum}");
+        Report(control, kbSel == "keybo"
+            ? "PASS selection: keyboard press-drag-release selects"
+            : $"FAIL selection: keyboard press-drag-release selected '{kbSel}'");
+        Report(control, kbLum > 170
+            ? "PASS selection: keyboard band painted"
+            : $"FAIL selection: keyboard band not painted (lum={kbLum})");
+
         // URL detection: a printed link resolves at its cells (and nowhere
         // else), and its underline paints the cell bottom rows — the
         // ctrl+click target for the mouse handler.

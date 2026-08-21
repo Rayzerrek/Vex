@@ -41,12 +41,14 @@
                             <StackPanel x:Name="TerminalActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
                                         Opacity="0">
                                 <Button Style="{StaticResource PaneTitleButton}" ToolTip="Focus this pane" Click="PaneFocus_Click">
-                                    <Path Data="M 2,2 H 12 V 12 H 2 Z M 5,5 H 9 V 9 H 5 Z" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.1" Fill="Transparent"/>
+                                    <Path Data="M9.79,12.79 C10.18,12.4 10.82,12.4 11.21,12.79 C11.57,13.15 11.6,13.72 11.29,14.11 L11.21,14.21 L6.41,19 L9,19 C9.55,19 10,19.45 10,20 C10,20.51 9.61,20.94 9.12,20.99 L9,21 L4,21 C3.49,21 3.06,20.61 3.01,20.12 L3,20 L3,15 C3,14.45 3.45,14 4,14 C4.51,14 4.94,14.39 4.99,14.88 L5,15 L5,17.59 L9.79,12.79 Z M20,3 C20.51,3 20.94,3.39 20.99,3.88 L21,4 L21,9 C21,9.55 20.55,10 20,10 C19.49,10 19.06,9.61 19.01,9.12 L19,9 L19,6.41 L14.21,11.21 C13.82,11.6 13.18,11.6 12.79,11.21 C12.43,10.85 12.4,10.28 12.71,9.89 L12.79,9.79 L17.59,5 L15,5 C14.45,5 14,4.55 14,4 C14,3.49 14.39,3.06 14.88,3.01 L15,3 L20,3 Z"
+                                          Fill="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                                          Width="13" Height="13" Stretch="Uniform"/>
                                 </Button>
-                                <Button Style="{StaticResource PaneTitleButton}" ToolTip="Split Right (Ctrl+Shift+Right)" Click="PaneSplitRight_Click">
+                                <Button Style="{StaticResource PaneTitleButton}" ToolTip="Split Right (Ctrl+Shift+R)" Click="PaneSplitRight_Click">
                                     <Path Data="M 1.5,1.5 H 12.5 V 12.5 H 1.5 Z M 7,1.5 V 12.5" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.1"/>
                                 </Button>
-                                <Button Style="{StaticResource PaneTitleButton}" ToolTip="Split Down (Ctrl+Shift+Down)" Click="PaneSplitDown_Click">
+                                <Button Style="{StaticResource PaneTitleButton}" ToolTip="Split Down (Ctrl+Shift+D)" Click="PaneSplitDown_Click">
                                     <Path Data="M 1.5,1.5 H 12.5 V 12.5 H 1.5 Z M 1.5,7 H 12.5" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.1"/>
                                 </Button>
                                 <Button Style="{StaticResource PaneTitleButton}" ToolTip="Close Pane (Ctrl+Shift+W)" Click="PaneClose_Click">
@@ -164,7 +166,9 @@
                             <StackPanel x:Name="EditorActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
                                         Opacity="0">
                                 <Button Style="{StaticResource PaneTitleButton}" ToolTip="Focus this pane" Click="PaneFocus_Click">
-                                    <Path Data="M 2,2 H 12 V 12 H 2 Z M 5,5 H 9 V 9 H 5 Z" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.1" Fill="Transparent"/>
+                                    <Path Data="M9.79,12.79 C10.18,12.4 10.82,12.4 11.21,12.79 C11.57,13.15 11.6,13.72 11.29,14.11 L11.21,14.21 L6.41,19 L9,19 C9.55,19 10,19.45 10,20 C10,20.51 9.61,20.94 9.12,20.99 L9,21 L4,21 C3.49,21 3.06,20.61 3.01,20.12 L3,20 L3,15 C3,14.45 3.45,14 4,14 C4.51,14 4.94,14.39 4.99,14.88 L5,15 L5,17.59 L9.79,12.79 Z M20,3 C20.51,3 20.94,3.39 20.99,3.88 L21,4 L21,9 C21,9.55 20.55,10 20,10 C19.49,10 19.06,9.61 19.01,9.12 L19,9 L19,6.41 L14.21,11.21 C13.82,11.6 13.18,11.6 12.79,11.21 C12.43,10.85 12.4,10.28 12.71,9.89 L12.79,9.79 L17.59,5 L15,5 C14.45,5 14,4.55 14,4 C14,3.49 14.39,3.06 14.88,3.01 L15,3 L20,3 Z"
+                                          Fill="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                                          Width="13" Height="13" Stretch="Uniform"/>
                                 </Button>
                                 <Button Style="{StaticResource PaneTitleButton}" ToolTip="Close Pane (Ctrl+Shift+W)" Click="PaneClose_Click">
                                     <Path Data="M 3,3 L 11,11 M 11,3 L 3,11" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
@@ -226,8 +230,8 @@
             <Grid Background="Transparent" MouseDown="TabHeader_MouseDown">
                 <Grid.ContextMenu>
                     <ContextMenu Style="{StaticResource DarkContextMenu}">
-                        <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+→" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
-                        <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+↓" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
+                        <MenuItem Header="Split Right" InputGestureText="Ctrl+Shift+R" Style="{StaticResource DarkMenuItem}" Click="TabSplitRight_Click"/>
+                        <MenuItem Header="Split Down" InputGestureText="Ctrl+Shift+D" Style="{StaticResource DarkMenuItem}" Click="TabSplitDown_Click"/>
                     </ContextMenu>
                 </Grid.ContextMenu>
                 <Grid.ColumnDefinitions>
@@ -283,7 +287,7 @@
                     <Button.RenderTransform>
                         <ScaleTransform x:Name="CloseScale" ScaleX="0.6" ScaleY="0.6"/>
                     </Button.RenderTransform>
-                    <TextBlock Text="×" FontSize="15"
+                    <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"
                                VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 </Button>
                 <Grid.Triggers>
@@ -403,8 +407,11 @@
 
             <!-- New Tab button -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True">
-                <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)" Width="30" Height="30" Padding="0" FontSize="16"
-                        Click="NewTab_Click">＋</Button>
+                <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)" Width="30" Height="30" Padding="0"
+                        Click="NewTab_Click">
+                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                </Button>
             </StackPanel>
 
             <!-- Drag region: empty stretch between tabs and caption buttons.
@@ -444,8 +451,14 @@
                         <Border DockPanel.Dock="Top" Padding="10,8,10,6">
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">⚙</Button>
-                                    <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">＋</Button>
+                                    <Button Style="{StaticResource GhostButton}" ToolTip="Settings" Click="Settings_Click">
+                                        <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Button>
+                                    <Button Style="{StaticResource GhostButton}" ToolTip="New Project" Click="NewProject_Click">
+                                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Button>
                                 </StackPanel>
                             </DockPanel>
                         </Border>
@@ -514,7 +527,7 @@
                                                 Margin="4,0,2,0" ToolTip="Remove Project"
                                                 Click="RemoveProject_Click"
                                                 Visibility="Hidden" Opacity="0">
-                                            <TextBlock Text="×" FontSize="15"
+                                            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"
                                                        VerticalAlignment="Center" HorizontalAlignment="Center"/>
                                         </Button>
                                         <Grid.Style>
