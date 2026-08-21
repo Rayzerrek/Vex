@@ -1,12 +1,6 @@
 # Vex
 
-> Note: This repository is an opinionated Windows-native fork/port of [egoist/kero](https://github.com/egoist/kero) — a native terminal workspace.
-
----
-
-## Overview
-
-Vex reimplements the workspace experience of original Kero on a native Windows stack. Built with WPF and Windows ConPTY, it brings low-latency terminal sessions, tabbed multi-project management, split views, a file tree, and an editor into a desktop workspace.
+**Vex** is a native Windows terminal workspace built with WPF and Windows ConPTY. It brings low-latency terminal sessions, tabbed multi-project management, split views, a file tree, and a built-in editor into a single desktop workspace.
 
 ---
 
@@ -62,3 +56,10 @@ dotnet build windows/Vex.slnx
 # Run the desktop application
 dotnet run --project windows/Vex.App
 ```
+
+---
+
+## License
+
+Distributed under the [GPL-3.0 License](LICENSE).
+
