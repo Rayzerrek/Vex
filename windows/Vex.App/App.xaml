@@ -63,6 +63,40 @@
             <GradientStop Color="{DynamicResource VexAccentGradientEndColor}" Offset="1"/>
         </LinearGradientBrush>
 
+        <!-- Variant chrome: overlays, pressed states, drag previews, settings
+             surfaces. Defaults mirror the dark variant; ChromePalette rewrites
+             every key at startup and on every appearance/theme switch. -->
+        <Color x:Key="VexBackdropScrimColor">#66000000</Color>
+        <Color x:Key="VexPressFillColor">#FF3A3A42</Color>
+        <Color x:Key="VexSidebarToggleBgColor">#14181A1F</Color>
+        <Color x:Key="VexSidebarToggleBorderColor">#2630373E</Color>
+        <Color x:Key="VexSplitPreviewColor">#40FFFFFF</Color>
+        <Color x:Key="VexSplitPreviewBorderColor">#66FFFFFF</Color>
+        <Color x:Key="VexPaneExitedColor">#FF6B4B4B</Color>
+        <Color x:Key="VexSettingsPanelColor">#F21B1E24</Color>
+        <Color x:Key="VexSettingsSidebarColor">#F014171C</Color>
+        <Color x:Key="VexCardColor">#FF20242B</Color>
+        <Color x:Key="VexCardBorderColor">#FF2A3037</Color>
+        <Color x:Key="VexTrackColor">#FF3A414C</Color>
+        <Color x:Key="VexNavHoverColor">#FF21262C</Color>
+        <Color x:Key="VexNavSelectedColor">#FF2E343D</Color>
+        <Color x:Key="VexInputColor">#FF1B1E24</Color>
+        <Color x:Key="VexToggleThumbColor">#FFEDEFF3</Color>
+        <Color x:Key="VexOnAccentColor">#FFEDEFF2</Color>
+        <SolidColorBrush x:Key="VexBackdropScrim" Color="{DynamicResource VexBackdropScrimColor}"/>
+        <SolidColorBrush x:Key="VexPressFill" Color="{DynamicResource VexPressFillColor}"/>
+        <SolidColorBrush x:Key="VexSidebarToggleBg" Color="{DynamicResource VexSidebarToggleBgColor}"/>
+        <SolidColorBrush x:Key="VexSidebarToggleBorder" Color="{DynamicResource VexSidebarToggleBorderColor}"/>
+        <SolidColorBrush x:Key="VexSplitPreview" Color="{DynamicResource VexSplitPreviewColor}"/>
+        <SolidColorBrush x:Key="VexSplitPreviewBorder" Color="{DynamicResource VexSplitPreviewBorderColor}"/>
+        <SolidColorBrush x:Key="VexPaneExited" Color="{DynamicResource VexPaneExitedColor}"/>
+        <SolidColorBrush x:Key="VexCard" Color="{DynamicResource VexCardColor}"/>
+        <SolidColorBrush x:Key="VexCardBorder" Color="{DynamicResource VexCardBorderColor}"/>
+        <SolidColorBrush x:Key="VexTrack" Color="{DynamicResource VexTrackColor}"/>
+        <SolidColorBrush x:Key="VexInput" Color="{DynamicResource VexInputColor}"/>
+        <SolidColorBrush x:Key="VexToggleThumb" Color="{DynamicResource VexToggleThumbColor}"/>
+        <SolidColorBrush x:Key="VexOnAccent" Color="{DynamicResource VexOnAccentColor}"/>
+
         <!-- Shared hover treatment: a soft fill fades in/out over ~0.12s with
              the same easing on every button so the chrome feels consistent.
              Accent (blue→violet) is reserved for selection and the Deck
@@ -119,8 +153,8 @@
             <Setter Property="Padding" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Margin" Value="4,0,-8,0"/>
-            <Setter Property="Background" Value="#14181A1F"/>
-            <Setter Property="BorderBrush" Value="#2630373E"/>
+            <Setter Property="Background" Value="{StaticResource VexSidebarToggleBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource VexSidebarToggleBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -139,7 +173,7 @@
                                 <Setter Property="Foreground" Value="{StaticResource VexText}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="chrome" Property="Background" Value="#3D444B"/>
+                                <Setter TargetName="chrome" Property="Background" Value="{StaticResource VexPressFill}"/>
                             </Trigger>
                             <EventTrigger RoutedEvent="MouseEnter">
                                 <BeginStoryboard>
@@ -223,7 +257,7 @@
                     <ControlTemplate TargetType="Button">
                         <Grid>
                             <Border x:Name="hoverFill" Background="{StaticResource VexHover}" CornerRadius="4" Opacity="0"/>
-                            <Border x:Name="pressFill" Background="#FF3A3A42" CornerRadius="4" Opacity="0"/>
+                            <Border x:Name="pressFill" Background="{StaticResource VexPressFill}" CornerRadius="4" Opacity="0"/>
                             <ContentPresenter x:Name="content" HorizontalAlignment="Center" VerticalAlignment="Center"
                                               RenderTransformOrigin="0.5,0.5">
                                 <ContentPresenter.RenderTransform>
@@ -490,7 +524,7 @@
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Border" Property="Background" Value="{StaticResource VexAccent}"/>
-                                <Setter Property="Foreground" Value="#17171A"/>
+                                <Setter Property="Foreground" Value="{StaticResource VexOnAccent}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

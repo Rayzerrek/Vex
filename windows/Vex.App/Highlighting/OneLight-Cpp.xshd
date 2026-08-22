@@ -1,0 +1,160 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OneLight-Cpp" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment"      foreground="#A0A1A7" fontStyle="italic"/>
+  <Color name="String"       foreground="#50A14F"/>
+  <Color name="Char"         foreground="#50A14F"/>
+  <Color name="Number"       foreground="#986801"/>
+  <Color name="Keyword"      foreground="#A626A4"/>
+  <Color name="StorageType"  foreground="#E45649"/>
+  <Color name="Type"         foreground="#C18401"/>
+  <Color name="Preprocessor" foreground="#A0A1A7"/>
+  <Color name="Builtin"      foreground="#0184BC"/>
+
+  <RuleSet>
+    <!-- Block comment -->
+    <Span color="Comment" multiline="true">
+      <Begin>/\*</Begin>
+      <End>\*/</End>
+    </Span>
+
+    <!-- Line comment -->
+    <Span color="Comment">
+      <Begin>//</Begin>
+    </Span>
+
+    <!-- Preprocessor directive -->
+    <Span color="Preprocessor">
+      <Begin>^\s*\#</Begin>
+    </Span>
+
+
+    <!-- String -->
+    <Span color="String">
+      <Begin>"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Char literal -->
+    <Span color="Char">
+      <Begin>'</Begin>
+      <End>'</End>
+      <RuleSet>
+        <Rule color="Char">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Numbers (hex, bin, float, integer) -->
+    <Rule color="Number">\b(0x[\da-fA-F']+[uUlL]*|0b[01']+[uUlL]*|\d[\d']*\.?[\d']*([eE][+-]?[\d']+)?[fFlLuU]*)\b</Rule>
+
+    <!-- Storage / declaration -->
+    <Keywords color="StorageType">
+      <Word>class</Word>
+      <Word>struct</Word>
+      <Word>union</Word>
+      <Word>enum</Word>
+      <Word>namespace</Word>
+      <Word>template</Word>
+      <Word>typename</Word>
+      <Word>typedef</Word>
+      <Word>using</Word>
+      <Word>operator</Word>
+      <Word>new</Word>
+      <Word>delete</Word>
+      <Word>virtual</Word>
+      <Word>override</Word>
+      <Word>final</Word>
+      <Word>explicit</Word>
+      <Word>inline</Word>
+      <Word>constexpr</Word>
+      <Word>consteval</Word>
+      <Word>constinit</Word>
+      <Word>static</Word>
+      <Word>extern</Word>
+      <Word>mutable</Word>
+      <Word>volatile</Word>
+      <Word>friend</Word>
+    </Keywords>
+
+    <!-- Control flow -->
+    <Keywords color="Keyword">
+      <Word>if</Word>
+      <Word>else</Word>
+      <Word>for</Word>
+      <Word>while</Word>
+      <Word>do</Word>
+      <Word>switch</Word>
+      <Word>case</Word>
+      <Word>default</Word>
+      <Word>break</Word>
+      <Word>continue</Word>
+      <Word>return</Word>
+      <Word>goto</Word>
+      <Word>throw</Word>
+      <Word>try</Word>
+      <Word>catch</Word>
+    </Keywords>
+
+    <!-- Access modifiers -->
+    <Keywords color="Keyword">
+      <Word>public</Word>
+      <Word>private</Word>
+      <Word>protected</Word>
+    </Keywords>
+
+    <!-- Literals / values -->
+    <Keywords color="Number">
+      <Word>true</Word>
+      <Word>false</Word>
+      <Word>nullptr</Word>
+      <Word>NULL</Word>
+      <Word>this</Word>
+    </Keywords>
+
+    <!-- Built-in types -->
+    <Keywords color="Type">
+      <Word>void</Word>
+      <Word>bool</Word>
+      <Word>char</Word>
+      <Word>wchar_t</Word>
+      <Word>char8_t</Word>
+      <Word>char16_t</Word>
+      <Word>char32_t</Word>
+      <Word>short</Word>
+      <Word>int</Word>
+      <Word>long</Word>
+      <Word>float</Word>
+      <Word>double</Word>
+      <Word>unsigned</Word>
+      <Word>signed</Word>
+      <Word>auto</Word>
+      <Word>decltype</Word>
+      <Word>size_t</Word>
+      <Word>int8_t</Word>
+      <Word>int16_t</Word>
+      <Word>int32_t</Word>
+      <Word>int64_t</Word>
+      <Word>uint8_t</Word>
+      <Word>uint16_t</Word>
+      <Word>uint32_t</Word>
+      <Word>uint64_t</Word>
+    </Keywords>
+
+    <!-- Special operators / misc -->
+    <Keywords color="Builtin">
+      <Word>sizeof</Word>
+      <Word>alignof</Word>
+      <Word>typeid</Word>
+      <Word>static_cast</Word>
+      <Word>dynamic_cast</Word>
+      <Word>reinterpret_cast</Word>
+      <Word>const_cast</Word>
+      <Word>and</Word>
+      <Word>or</Word>
+      <Word>not</Word>
+      <Word>xor</Word>
+    </Keywords>
+  </RuleSet>
+</SyntaxDefinition>

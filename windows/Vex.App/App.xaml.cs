@@ -20,13 +20,29 @@ public partial class App : Application
             new PropertyMetadata(240));
 
         // Chrome colors follow the active terminal theme (sidebar, tab strip,
-        // pane chrome, accents). Apply once now and again whenever the theme
-        // changes so the whole app re-tints with the terminal.
+        // pane chrome, accents). Resolve the stored appearance first so the
+        // very first frame is already dark or light — never a half-applied
+        // mix. Re-apply whenever the theme or appearance changes.
+        Vex.App.Model.AppSettings.Instance.InitializeAppearance();
         ChromePalette.Apply(Vex.App.Model.AppSettings.Instance.ThemeName);
+        Vex.App.Model.EditorHighlighting.SetAppearance(
+            Vex.App.Model.AppSettings.Instance.IsDarkAppearance);
         Vex.App.Model.AppSettings.Instance.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(Vex.App.Model.AppSettings.ThemeName))
-                ChromePalette.Apply(Vex.App.Model.AppSettings.Instance.ThemeName);
+            if (e.PropertyName is not (nameof(Vex.App.Model.AppSettings.ThemeName)
+                or nameof(Vex.App.Model.AppSettings.Appearance)))
+                return;
+
+            var settings = Vex.App.Model.AppSettings.Instance;
+            ChromePalette.Apply(settings.ThemeName);
+
+            if (e.PropertyName == nameof(Vex.App.Model.AppSettings.Appearance))
+            {
+                // Editors carry their own syntax palette, so an appearance
+                // flip swaps One Dark for One Light (and back) live.
+                Vex.App.Model.EditorHighlighting.SetAppearance(settings.IsDarkAppearance);
+                Vex.App.Model.EditorPane.OnAppearanceChanged();
+            }
         };
 
         // Required for ported TUI applications (vim, agy, pi, etc.) to

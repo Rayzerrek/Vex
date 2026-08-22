@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -492,13 +493,28 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var session = new TerminalSession();
         session.OutputReceived += OnSessionOutput;
         session.Exited += OnSessionExited;
-        var shell = SelfTestShell ?? AppSettings.Instance.Shell switch
+        // Resolve the configured shell profile at spawn time; null means the
+        // system default (or a configured shell that vanished), which ConPTY
+        // starts bare. Arguments ride along for custom shells.
+        var resolved = ShellRegistry.Resolve(AppSettings.Instance.ShellId);
+        var shellProgram = SelfTestShell ?? resolved?.Program ?? TerminalSession.DefaultShell();
+        var shellArguments = SelfTestShell is null ? resolved?.Arguments : null;
+        try
         {
-            "Nushell" => "nu.exe",
-            "PowerShell" => TerminalSession.PowerShell(),
-            _ => TerminalSession.DefaultShell()
-        };
-        session.Start(_workingDirectory, (short)_cols, (short)_rows, shell);
+            session.Start(_workingDirectory, (short)_cols, (short)_rows, shellProgram, shellArguments);
+        }
+        catch (Win32Exception)
+        {
+            // Custom shells are free-form text, so the program can be gone or
+            // mistyped; fall back to the OS default instead of throwing out of
+            // layout and leaving the pane dead.
+            Diag($"shell '{shellProgram}' failed to launch; falling back to default");
+            session.Dispose();
+            session = new TerminalSession();
+            session.OutputReceived += OnSessionOutput;
+            session.Exited += OnSessionExited;
+            session.Start(_workingDirectory, (short)_cols, (short)_rows, TerminalSession.DefaultShell());
+        }
         _session = session;
     }
 

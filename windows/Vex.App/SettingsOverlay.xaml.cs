@@ -9,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Vex.App.Model;
+using Vex.Terminal;
 
 namespace Vex.App;
 
@@ -66,20 +67,19 @@ public partial class SettingsOverlay : OverlayControl
         FontSizeSlider.PreviewMouseLeftButtonUp += (_, _) => CommitFontSize();
         FontSizeSlider.KeyUp += (_, _) => CommitFontSize();
 
-        ShellPowerShell.IsChecked = AppSettings.Instance.Shell == "PowerShell";
-        ShellNushell.IsChecked = AppSettings.Instance.Shell != "PowerShell";
-
         _activePage = PageGeneral;
 
         // Follow theme changes made from the quick switcher (Ctrl+Shift+M)
-        // so the card selection stays in sync if both are open.
+        // so the card selection stays in sync if both are open, and rebind
+        // when the appearance flips (the offered set changes with it).
         AppSettings.Instance.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName != nameof(AppSettings.ThemeName) || ThemeList.ItemsSource == null)
+            if (e.PropertyName == nameof(AppSettings.Appearance))
+                SyncAppearanceToggles();
+            if (e.PropertyName is not (nameof(AppSettings.ThemeName) or nameof(AppSettings.Appearance))
+                || ThemeList.ItemsSource == null)
                 return;
-            var theme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
-            if (theme != null && !ReferenceEquals(ThemeList.SelectedItem, theme))
-                ThemeList.SelectedItem = theme;
+            RebindThemeList();
         };
 
         DataContext = AppSettings.Instance;
@@ -109,6 +109,10 @@ public partial class SettingsOverlay : OverlayControl
         Visibility = Visibility.Visible;
         OpenPopup(this);
 
+        // Reflect the persisted appearance even if it was last changed before
+        // this overlay existed.
+        SyncAppearanceToggles();
+
         // Rasterize the panel once and animate the cached bitmap; without the
         // cache every frame re-renders the whole subtree (four pages).
         Panel.CacheMode = new BitmapCache();
@@ -116,6 +120,7 @@ public partial class SettingsOverlay : OverlayControl
         // Enumerating system fonts takes hundreds of milliseconds; warm the
         // list on a background thread so the Terminal page never hitches.
         WarmFonts();
+        WarmShells();
 
         // Continue from wherever the panel currently sits mid-animation.
         _animFrom = Panel.Opacity;
@@ -307,10 +312,121 @@ public partial class SettingsOverlay : OverlayControl
         }
     }
 
-    private void Shell_Checked(object sender, RoutedEventArgs e)
+    // ---- Shell selection ----------------------------------------------------
+
+    // Detection probes the filesystem and PATH once; like font enumeration it
+    // is kept off the startup path and runs behind the first frame.
+    private bool _shellsWarmed;
+
+    private void WarmShells()
     {
-        if (sender is RadioButton { Tag: string shell })
-            AppSettings.Instance.Shell = shell;
+        if (_shellsWarmed)
+            return;
+        _shellsWarmed = true;
+        _ = Task.Run(() => Dispatcher.BeginInvoke(DispatcherPriority.Background, PopulateShellList));
+    }
+
+    private sealed record ShellChoice(string Id, string DisplayName, string? Detail);
+
+    private void PopulateShellList()
+    {
+        var settings = AppSettings.Instance;
+        var choices = new List<ShellChoice>
+        {
+            new(ShellRegistry.SystemDefaultId, "System default",
+                TerminalSession.DefaultShell()),
+        };
+        foreach (var shell in ShellRegistry.Detected())
+            choices.Add(new ShellChoice(shell.Id, shell.Name, shell.Program));
+
+        // Custom entries survive even when their program path is gone, so a
+        // temporarily unplugged drive does not silently drop a configured
+        // shell from the picker.
+        foreach (var custom in settings.CustomShells.Where(c => !string.IsNullOrWhiteSpace(c.Name)))
+            choices.Add(new ShellChoice(custom.Id, custom.Name,
+                string.IsNullOrEmpty(custom.Arguments) ? custom.Program : $"{custom.Program} {custom.Arguments}"));
+
+        ShellCombo.ItemsSource = choices;
+        SelectShellComboItem(settings.ShellId);
+        UpdateCustomShellVisibility();
+    }
+
+    private void SelectShellComboItem(string id)
+    {
+        var match = ((IEnumerable<ShellChoice>?)ShellCombo.ItemsSource)?.FirstOrDefault(c => c.Id == id);
+        if (match is not null)
+            ShellCombo.SelectedItem = match;
+    }
+
+    private void ShellCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // The initial population assignment fires this too; skip before both
+        // lists exist so nothing is persisted mid-setup.
+        if (_shellsWarmed && ShellDetail is not null)
+        {
+            if (ShellCombo.SelectedItem is ShellChoice choice)
+                AppSettings.Instance.ShellId = choice.Id;
+            UpdateCustomShellVisibility();
+        }
+        UpdateShellDetail();
+    }
+
+    private void UpdateShellDetail()
+    {
+        if (ShellDetail is null || !_shellsWarmed)
+            return;
+        var detail = ShellCombo.SelectedItem as ShellChoice;
+        ShellDetail.Text = detail?.Detail ?? "Interpreter used for new panes.";
+    }
+
+    private void UpdateCustomShellVisibility()
+    {
+        if (CustomShellEmpty is null || CustomShellList is null || AppSettings.Instance.CustomShells is not { } shells)
+            return;
+        var any = shells.Count > 0;
+        CustomShellEmpty.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
+        CustomShellList.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
+        if (!any && _shellsWarmed && ShellCombo.SelectedItem is ShellChoice { Id: var selectedId }
+            && selectedId != ShellRegistry.SystemDefaultId
+            && !ShellRegistry.HasDetected(selectedId))
+        {
+            // The removed custom shell was selected; fall back to system
+            // default. Pick the entry explicitly — the stale custom choice may
+            // still sit in ItemsSource until the list is rebuilt.
+            AppSettings.Instance.ShellId = ShellRegistry.SystemDefaultId;
+            var systemChoice = ((IEnumerable<ShellChoice>?)ShellCombo.ItemsSource)?
+                .FirstOrDefault(c => c.Id == ShellRegistry.SystemDefaultId);
+            if (systemChoice is not null)
+                ShellCombo.SelectedItem = systemChoice;
+        }
+    }
+
+    private void CustomShellAdd_Click(object sender, RoutedEventArgs e)
+    {
+        var settings = AppSettings.Instance;
+        var profile = new ShellProfile
+        {
+            Id = "custom-" + Guid.NewGuid().ToString("N"),
+            Name = "",
+            Program = "",
+            Arguments = "",
+        };
+        settings.CustomShells.Add(profile);
+        settings.SaveSoon(); // List identity did not change, so force persistence.
+        CustomShellList.Items.Refresh();
+        UpdateCustomShellVisibility();
+    }
+
+    private void CustomShellRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ShellProfile profile)
+            return;
+        var settings = AppSettings.Instance;
+        settings.CustomShells.Add(profile); // Touch the list so the setter persists.
+        settings.CustomShells.Remove(profile);
+        settings.SaveSoon();
+        CustomShellList.Items.Refresh();
+        UpdateCustomShellVisibility();
     }
 
     /// <summary>Attaches the font list the first time the Terminal page is
@@ -325,11 +441,38 @@ public partial class SettingsOverlay : OverlayControl
 
     private void EnsureThemeList()
     {
-        if (ThemeList.ItemsSource != null)
+        if (ThemeList.ItemsSource == null)
+            RebindThemeList();
+    }
+
+    /// <summary>Binds the card grid to the themes of the active appearance.
+    /// Called on first page visit and whenever the appearance flips, so the
+    /// offered cards always match the surrounding chrome.</summary>
+    private void RebindThemeList()
+    {
+        var themes = BuiltInThemes.ForAppearance(AppSettings.Instance.IsDarkAppearance);
+        ThemeList.ItemsSource = themes;
+        var currentTheme = themes.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
+        ThemeList.SelectedItem = currentTheme ?? themes.FirstOrDefault();
+    }
+
+    private bool _suppressAppearanceSync;
+
+    private void SyncAppearanceToggles()
+    {
+        _suppressAppearanceSync = true;
+        var dark = AppSettings.Instance.IsDarkAppearance;
+        AppearanceDarkOption.IsChecked = dark;
+        AppearanceLightOption.IsChecked = !dark;
+        _suppressAppearanceSync = false;
+    }
+
+    private void Appearance_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_suppressAppearanceSync || sender is not RadioButton { Tag: string tag })
             return;
-        ThemeList.ItemsSource = BuiltInThemes.All;
-        var currentTheme = BuiltInThemes.All.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
-        ThemeList.SelectedItem = currentTheme ?? BuiltInThemes.VexDark;
+        AppSettings.Instance.SetAppearance(
+            tag == "light" ? AppSettings.LightAppearance : AppSettings.DarkAppearance);
     }
 
     private void WarmFonts()

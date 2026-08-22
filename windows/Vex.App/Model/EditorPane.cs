@@ -78,7 +78,9 @@ public sealed class EditorPane : LeafPane
             FontSize = AppSettings.Instance.FontSize,
             Background = Brushes.Transparent,
             Foreground = (Brush)Application.Current.Resources["VexText"],
-            LineNumbersForeground = new SolidColorBrush(Color.FromRgb(100, 100, 100)),
+            // Line-number gutter: a mid-gray that holds contrast on both the
+            // dark and the light chrome; re-derived on appearance flips.
+            LineNumbersForeground = new SolidColorBrush(EditorGutterColor()),
             BorderThickness = new Thickness(0),
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -86,10 +88,8 @@ public sealed class EditorPane : LeafPane
             Padding = new Thickness(4, 4, 0, 0),
         };
 
-        // Apply syntax highlighting based on file extension.
-        var highlighting = ResolveHighlighting(_filePath);
-        if (highlighting != null)
-            editor.SyntaxHighlighting = highlighting;
+        // Apply syntax highlighting based on file extension and appearance.
+        ApplyHighlighting(editor);
 
         editor.GotFocus += (_, _) => RequestFocus();
 
@@ -161,6 +161,53 @@ public sealed class EditorPane : LeafPane
     private static IHighlightingDefinition? ResolveHighlighting(string filePath)
     {
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
-        return OneDarkHighlighting.ForExtension(ext);
+        return EditorHighlighting.ForExtension(ext);
+    }
+
+    /// <summary>(Re)applies the highlighting definition for the active
+    /// appearance; called at creation and on every appearance flip.</summary>
+    private void ApplyHighlighting(TextEditor editor)
+    {
+        var highlighting = ResolveHighlighting(_filePath);
+        editor.SyntaxHighlighting = highlighting;
+    }
+
+    private static Color EditorGutterColor()
+        => AppSettings.Instance.IsDarkAppearance
+            ? Color.FromRgb(0x76, 0x76, 0x7C)
+            : Color.FromRgb(0x8B, 0x8F, 0x98);
+
+    /// <summary>Live re-tint of open editors when the app switches between
+    /// dark and light: definitions are immutable once loaded, so the cache is
+    /// dropped and the One Light set loads on next lookup; the gutter brush
+    /// and the definition are then re-applied to every open editor.</summary>
+    internal static void OnAppearanceChanged()
+    {
+        EditorHighlighting.ResetCache();
+        if (Application.Current?.Dispatcher is null)
+            return;
+        Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            foreach (var project in SessionStore.Current.Projects)
+            foreach (var tab in project.Tabs)
+            foreach (var leaf in tab.Leaves.OfType<EditorPane>())
+            {
+                if (leaf.ViewIfCreated is TextEditor editor)
+                {
+                    // Null first so re-assigning the new definition always
+                    // invalidates AvalonEdit's rendered lines.
+                    editor.SyntaxHighlighting = null;
+                    ApplyHighlightingStatic(editor, leaf.FilePath);
+                    editor.LineNumbersForeground =
+                        new SolidColorBrush(EditorGutterColor());
+                }
+            }
+        });
+    }
+
+    private static void ApplyHighlightingStatic(TextEditor editor, string filePath)
+    {
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        editor.SyntaxHighlighting = EditorHighlighting.ForExtension(ext);
     }
 }

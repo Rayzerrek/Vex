@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:m="clr-namespace:Vex.App.Model"
         xmlns:local="clr-namespace:Vex.App"
-        Title="" Width="1120" Height="700" MinWidth="640" MinHeight="400"
+        Title="Vex" Width="1120" Height="700" MinWidth="640" MinHeight="400"
         Background="{StaticResource VexBackground}"
         Foreground="{StaticResource VexText}"
         FontFamily="Segoe UI" FontSize="13">
@@ -67,7 +67,7 @@
                                                     <Setter Property="Opacity" Value="1"/>
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding State}" Value="{x:Static m:PaneState.Exited}">
-                                                    <Setter Property="Fill" Value="#FF6B4B4B"/>
+                                                    <Setter Property="Fill" Value="{StaticResource VexPaneExited}"/>
                                                     <Setter Property="Opacity" Value="1"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
@@ -594,7 +594,7 @@
             <Grid x:Name="ContentArea" Grid.Column="1">
                 <ContentControl Content="{Binding SelectedProject.SelectedTab.DisplayRoot}"/>
                 <Canvas x:Name="DropOverlay" Visibility="Collapsed" Background="Transparent" Panel.ZIndex="50">
-                    <Border x:Name="SplitPreview" Background="#40FFFFFF" BorderBrush="#66FFFFFF"
+                    <Border x:Name="SplitPreview" Background="{StaticResource VexSplitPreview}" BorderBrush="{StaticResource VexSplitPreviewBorder}"
                             BorderThickness="1" CornerRadius="8" Opacity="0" Visibility="Collapsed"/>
                 </Canvas>
             </Grid>

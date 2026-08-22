@@ -8,15 +8,17 @@
              Visibility="Collapsed">
     <UserControl.Resources>
 
-        <!-- Settings-specific surfaces and accents. The accent ramp (blue →
-             violet) is reused from App.xaml and echoes the Deck toggles. -->
-        <SolidColorBrush x:Key="PanelSurface" Color="#F21B1E24"/>
-        <SolidColorBrush x:Key="SidebarSurface" Color="#F014171C"/>
-        <SolidColorBrush x:Key="CardSurface" Color="#FF20242B"/>
-        <SolidColorBrush x:Key="CardBorder" Color="#FF2A3037"/>
-        <SolidColorBrush x:Key="TrackSurface" Color="#FF3A414C"/>
-        <SolidColorBrush x:Key="NavHover" Color="#FF21262C"/>
-        <SolidColorBrush x:Key="NavSelected" Color="#FF2E343D"/>
+        <!-- Settings-specific surfaces and accents. All colors ride on
+             DynamicResource so the whole overlay re-tints with the active
+             appearance (dark or light chrome) without rebuilding. The accent
+             ramp (blue → violet) is reused from App.xaml. -->
+        <SolidColorBrush x:Key="PanelSurface" Color="{DynamicResource VexSettingsPanelColor}"/>
+        <SolidColorBrush x:Key="SidebarSurface" Color="{DynamicResource VexSettingsSidebarColor}"/>
+        <SolidColorBrush x:Key="CardSurface" Color="{DynamicResource VexCardColor}"/>
+        <SolidColorBrush x:Key="CardBorder" Color="{DynamicResource VexCardBorderColor}"/>
+        <SolidColorBrush x:Key="TrackSurface" Color="{DynamicResource VexTrackColor}"/>
+        <SolidColorBrush x:Key="NavHover" Color="{DynamicResource VexNavHoverColor}"/>
+        <SolidColorBrush x:Key="NavSelected" Color="{DynamicResource VexNavSelectedColor}"/>
         <LinearGradientBrush x:Key="AccentSolid" StartPoint="0,0" EndPoint="1,1">
             <GradientStop Color="{DynamicResource VexAccentBlueColor}" Offset="0"/>
             <GradientStop Color="{DynamicResource VexAccentPurpleColor}" Offset="1"/>
@@ -77,7 +79,7 @@
                     <ControlTemplate TargetType="CheckBox">
                         <Grid Width="42" Height="24" Background="Transparent">
                             <Border x:Name="track" Width="42" Height="24" CornerRadius="12" Background="{StaticResource TrackSurface}"/>
-                            <Ellipse x:Name="thumb" Width="18" Height="18" Fill="#FFEDEFF3"
+                            <Ellipse x:Name="thumb" Width="18" Height="18" Fill="{StaticResource VexToggleThumb}"
                                      HorizontalAlignment="Left" Margin="3,0,0,0"
                                      RenderTransformOrigin="0.5,0.5">
                                 <Ellipse.RenderTransform>
@@ -116,26 +118,31 @@
             </Setter>
         </Style>
 
-        <!-- Segmented option, placed inside a bordered track. -->
-        <Style x:Key="SettingsSegmented" TargetType="RadioButton">
-            <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Focusable" Value="False"/>
-            <Setter Property="Padding" Value="16,5"/>
+        <!-- Single-line input for custom shell rows: field with an accent
+             border on keyboard focus so edits read clearly. -->
+        <Style x:Key="SettingsInput" TargetType="TextBox">
+            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Background" Value="{StaticResource VexInput}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CaretBrush" Value="{StaticResource VexTextDim}"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="12"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="chrome" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="field" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="field" Property="BorderBrush" Value="{StaticResource VexAccentBlue}"/>
                             </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="chrome" Property="Background" Value="#FF3A414C"/>
-                                <Setter Property="Foreground" Value="{StaticResource VexText}"/>
-                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="field" Property="BorderBrush" Value="{StaticResource VexTrack}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -170,7 +177,7 @@
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
                                                 <Grid>
-                                                    <Ellipse x:Name="knob" Fill="#FFEDEFF3"/>
+                                                    <Ellipse x:Name="knob" Fill="{StaticResource VexToggleThumb}"/>
                                                     <Ellipse x:Name="halo" Fill="#338B939E" Opacity="0" RenderTransformOrigin="0.5,0.5">
                                                         <Ellipse.RenderTransform>
                                                             <ScaleTransform ScaleX="0.7" ScaleY="0.7"/>
@@ -240,7 +247,7 @@
 
     <Grid PreviewKeyDown="Overlay_PreviewKeyDown">
         <!-- Dimmed backdrop -->
-        <Border x:Name="Backdrop" Background="#80000000" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+        <Border x:Name="Backdrop" Background="{StaticResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
 
         <!-- Centered panel -->
         <Border x:Name="Panel"
@@ -350,19 +357,75 @@
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="240"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel VerticalAlignment="Center">
                                             <TextBlock Text="Shell" Style="{StaticResource RowTitle}"/>
-                                            <TextBlock Text="Interpreter used for new sessions." Style="{StaticResource RowDesc}"/>
+                                            <TextBlock x:Name="ShellDetail" Text="Interpreter used for new panes." Style="{StaticResource RowDesc}"/>
                                         </StackPanel>
-                                        <Border Grid.Column="1" Background="#FF1B1E24" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="2" VerticalAlignment="Center">
-                                            <StackPanel Orientation="Horizontal">
-                                                <RadioButton x:Name="ShellPowerShell" Style="{StaticResource SettingsSegmented}" GroupName="Shell" Tag="PowerShell" Content="PowerShell" Checked="Shell_Checked"/>
-                                                <RadioButton x:Name="ShellNushell" Style="{StaticResource SettingsSegmented}" GroupName="Shell" Tag="Nushell" Content="Nushell" Checked="Shell_Checked"/>
-                                            </StackPanel>
-                                        </Border>
+                                        <ComboBox x:Name="ShellCombo" Grid.Column="1"
+                                                  Style="{StaticResource DarkComboBox}"
+                                                  ItemContainerStyle="{StaticResource DarkComboBoxItem}"
+                                                  SelectionChanged="ShellCombo_SelectionChanged">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis"/>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
                                     </Grid>
+                                </Border>
+
+                                <TextBlock Text="CUSTOM SHELLS" Style="{StaticResource SettingsSectionTitle}"/>
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <StackPanel>
+                                        <TextBlock x:Name="CustomShellEmpty"
+                                                   Text="No custom shells yet — add any program with its arguments."
+                                                   Style="{StaticResource RowDesc}" Margin="0,0,0,10"/>
+                                        <ItemsControl x:Name="CustomShellList">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,0,0,8">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="118"/>
+                                                            <ColumnDefinition Width="8"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="8"/>
+                                                            <ColumnDefinition Width="170"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBox Style="{StaticResource SettingsInput}"
+                                                                 Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                                                 ToolTip="Name shown in the shell picker"/>
+                                                        <TextBox Grid.Column="2" Style="{StaticResource SettingsInput}"
+                                                                 Text="{Binding Program, UpdateSourceTrigger=PropertyChanged}"
+                                                                 ToolTip="Program path or command"/>
+                                                        <TextBox Grid.Column="4" Style="{StaticResource SettingsInput}"
+                                                                 Text="{Binding Arguments, UpdateSourceTrigger=PropertyChanged}"
+                                                                 ToolTip="Optional arguments"/>
+                                                        <Button Grid.Column="5" Style="{StaticResource GhostButton}"
+                                                                Width="28" Height="28" Padding="0" Margin="6,0,0,0"
+                                                                Click="CustomShellRemove_Click" ToolTip="Remove shell">
+                                                            <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="11"/>
+                                                        </Button>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                            <Button Style="{StaticResource GhostButton}" Click="CustomShellAdd_Click"
+                                                    ToolTip="Add a custom shell">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                                               Foreground="{StaticResource VexAccentBlue}" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="Add shell" FontSize="12" Margin="7,0,0,0"
+                                                               Foreground="{StaticResource VexText}" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </Button>
+                                            <TextBlock Text="Launched with these arguments in each new pane."
+                                                       Style="{StaticResource RowDesc}" VerticalAlignment="Center" Margin="14,0,0,0"/>
+                                        </StackPanel>
+                                    </StackPanel>
                                 </Border>
 
                                 <TextBlock Text="INTERFACE" Style="{StaticResource SettingsSectionTitle}"/>
@@ -389,7 +452,40 @@
                                 <TextBlock Text="Appearance" Style="{StaticResource PageTitle}"/>
                                 <TextBlock Text="Color themes for every terminal pane." Style="{StaticResource PageSubtitle}"/>
 
-                                <TextBlock Text="THEME" Style="{StaticResource SettingsSectionTitle}"/>
+                                <TextBlock Text="APPEARANCE" Style="{StaticResource SettingsSectionTitle}"/>
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="App appearance" Style="{StaticResource RowTitle}"/>
+                                            <TextBlock Text="Chooses which theme set is offered below." Style="{StaticResource RowDesc}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <RadioButton x:Name="AppearanceDarkOption" Tag="dark" GroupName="VexAppearance"
+                                                         Style="{StaticResource SettingsNavItem}"
+                                                         Checked="Appearance_Checked">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE793;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="Dark" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                            <RadioButton x:Name="AppearanceLightOption" Tag="light" GroupName="VexAppearance"
+                                                         Margin="10,0,0,0"
+                                                         Style="{StaticResource SettingsNavItem}"
+                                                         Checked="Appearance_Checked">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE706;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="Light" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <TextBlock Text="THEME" Style="{StaticResource SettingsSectionTitle}" Margin="2,14,0,8"/>
                                 <Border Style="{StaticResource SettingsCard}">
                                     <StackPanel>
                                         <TextBlock Text="Color theme" Style="{StaticResource RowTitle}"/>
@@ -426,7 +522,7 @@
                                                         </StackPanel.RenderTransform>
                                                         <Grid Width="120" Height="78">
                                                             <Border x:Name="ring" CornerRadius="11" BorderThickness="2" BorderBrush="Transparent" Padding="2">
-                                                                <Border x:Name="swatch" CornerRadius="9" Background="{Binding Background}" BorderBrush="#33FFFFFF" BorderThickness="1">
+                                                                <Border x:Name="swatch" CornerRadius="9" Background="{Binding Background}" BorderBrush="{StaticResource VexCardBorder}" BorderThickness="1">
                                                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,0,10">
                                                                         <Ellipse Width="9" Height="9" Fill="{Binding Red}" Margin="0,0,4,0"/>
                                                                         <Ellipse Width="9" Height="9" Fill="{Binding Green}" Margin="0,0,4,0"/>

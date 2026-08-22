@@ -1,0 +1,182 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OneLight-CSharp" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment"      foreground="#A0A1A7" fontStyle="italic"/>
+  <Color name="String"       foreground="#50A14F"/>
+  <Color name="Char"         foreground="#50A14F"/>
+  <Color name="Number"       foreground="#986801"/>
+  <Color name="Keyword"      foreground="#A626A4"/>
+  <Color name="StorageType"  foreground="#E45649"/>
+  <Color name="Type"         foreground="#C18401"/>
+  <Color name="Function"     foreground="#4078F2"/>
+  <Color name="Preprocessor" foreground="#A0A1A7"/>
+  <Color name="Attribute"    foreground="#C18401"/>
+
+  <RuleSet>
+    <!-- XML doc comment -->
+    <Span color="Comment" multiline="false">
+      <Begin>///</Begin>
+    </Span>
+
+    <!-- Block comment -->
+    <Span color="Comment" multiline="true">
+      <Begin>/\*</Begin>
+      <End>\*/</End>
+    </Span>
+
+    <!-- Line comment -->
+    <Span color="Comment">
+      <Begin>//</Begin>
+    </Span>
+
+    <!-- Verbatim string -->
+    <Span color="String" multiline="true">
+      <Begin>@"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="String">""</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Raw string literal (C# 11+) -->
+    <Span color="String" multiline="true">
+      <Begin>"""</Begin>
+      <End>"""</End>
+    </Span>
+
+    <!-- Interpolated string (simple) -->
+    <Span color="String">
+      <Begin>\$"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Regular string -->
+    <Span color="String">
+      <Begin>"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Char literal -->
+    <Span color="Char">
+      <Begin>'</Begin>
+      <End>'</End>
+      <RuleSet>
+        <Rule color="Char">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Preprocessor -->
+    <Span color="Preprocessor">
+      <Begin>\#</Begin>
+    </Span>
+
+    <!-- Numbers -->
+    <Rule color="Number">\b(0x[\da-fA-F_]+[uUlL]*|0b[01_]+[uUlL]*|\d[\d_]*\.?[\d_]*([eE][+-]?[\d_]+)?[fFdDmMuUlL]*)\b</Rule>
+
+    <!-- Attributes -->
+    <Rule color="Attribute">\[[A-Za-z][A-Za-z0-9]*\]</Rule>
+
+    <!-- Storage / declaration keywords -->
+    <Keywords color="StorageType">
+      <Word>class</Word>
+      <Word>struct</Word>
+      <Word>interface</Word>
+      <Word>enum</Word>
+      <Word>record</Word>
+      <Word>delegate</Word>
+      <Word>namespace</Word>
+      <Word>using</Word>
+      <Word>new</Word>
+      <Word>override</Word>
+      <Word>virtual</Word>
+      <Word>abstract</Word>
+      <Word>sealed</Word>
+      <Word>static</Word>
+      <Word>readonly</Word>
+      <Word>const</Word>
+      <Word>event</Word>
+      <Word>operator</Word>
+      <Word>extern</Word>
+      <Word>partial</Word>
+    </Keywords>
+
+    <!-- Access modifiers -->
+    <Keywords color="Keyword">
+      <Word>public</Word>
+      <Word>private</Word>
+      <Word>protected</Word>
+      <Word>internal</Word>
+      <Word>file</Word>
+    </Keywords>
+
+    <!-- Control flow -->
+    <Keywords color="Keyword">
+      <Word>if</Word>
+      <Word>else</Word>
+      <Word>for</Word>
+      <Word>foreach</Word>
+      <Word>while</Word>
+      <Word>do</Word>
+      <Word>switch</Word>
+      <Word>case</Word>
+      <Word>default</Word>
+      <Word>break</Word>
+      <Word>continue</Word>
+      <Word>return</Word>
+      <Word>throw</Word>
+      <Word>try</Word>
+      <Word>catch</Word>
+      <Word>finally</Word>
+      <Word>goto</Word>
+      <Word>yield</Word>
+      <Word>await</Word>
+      <Word>async</Word>
+      <Word>lock</Word>
+      <Word>checked</Word>
+      <Word>unchecked</Word>
+      <Word>unsafe</Word>
+      <Word>fixed</Word>
+    </Keywords>
+
+    <!-- Literals / values -->
+    <Keywords color="Number">
+      <Word>true</Word>
+      <Word>false</Word>
+      <Word>null</Word>
+      <Word>this</Word>
+      <Word>base</Word>
+      <Word>value</Word>
+      <Word>nameof</Word>
+      <Word>typeof</Word>
+      <Word>sizeof</Word>
+      <Word>default</Word>
+    </Keywords>
+
+    <!-- Built-in types -->
+    <Keywords color="Type">
+      <Word>void</Word>
+      <Word>bool</Word>
+      <Word>byte</Word>
+      <Word>sbyte</Word>
+      <Word>short</Word>
+      <Word>ushort</Word>
+      <Word>int</Word>
+      <Word>uint</Word>
+      <Word>long</Word>
+      <Word>ulong</Word>
+      <Word>float</Word>
+      <Word>double</Word>
+      <Word>decimal</Word>
+      <Word>char</Word>
+      <Word>string</Word>
+      <Word>object</Word>
+      <Word>dynamic</Word>
+      <Word>var</Word>
+    </Keywords>
+  </RuleSet>
+</SyntaxDefinition>
