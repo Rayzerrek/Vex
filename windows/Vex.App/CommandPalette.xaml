@@ -5,7 +5,7 @@
              xmlns:vex="clr-namespace:Vex.App"
              Visibility="Collapsed">
     <Grid>
-        <Border x:Name="Backdrop" Background="#66000000" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+        <Border x:Name="Backdrop" Background="{StaticResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
         <Border x:Name="Panel" Background="{StaticResource VexSurface}"
                 BorderBrush="{StaticResource VexBorder}"
                 BorderThickness="1"

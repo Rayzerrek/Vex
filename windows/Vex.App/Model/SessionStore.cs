@@ -11,6 +11,11 @@ public static class SessionStore
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Vex", "session.json");
 
+    /// <summary>The workspace this process loaded at startup; app-wide
+    /// services (e.g. appearance flips re-tinting open editors) walk live
+    /// panes through it instead of plumb­ing references through every view.</summary>
+    public static Workspace Current { get; private set; } = new();
+
     public static Workspace Load()
     {
         var workspace = new Workspace();
@@ -48,6 +53,7 @@ public static class SessionStore
         if (workspace.Projects.Count == 0)
             workspace.NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
 
+        Current = workspace;
         return workspace;
     }
 

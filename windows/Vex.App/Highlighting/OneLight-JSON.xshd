@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OneLight-JSON" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Key"          foreground="#E45649"/>
+  <Color name="String"       foreground="#50A14F"/>
+  <Color name="Number"       foreground="#986801"/>
+  <Color name="Keyword"      foreground="#0184BC"/>
+  <Color name="Comment"      foreground="#A0A1A7" fontStyle="italic"/>
+
+  <RuleSet>
+    <!-- JSONC line comment -->
+    <Span color="Comment">
+      <Begin>//</Begin>
+    </Span>
+
+    <!-- JSONC block comment -->
+    <Span color="Comment" multiline="true">
+      <Begin>/\*</Begin>
+      <End>\*/</End>
+    </Span>
+
+    <!-- Object key (property name in double quotes followed by colon) -->
+    <Rule color="Key">"[^"]*"\s*(?=:)</Rule>
+
+    <!-- String value -->
+    <Span color="String">
+      <Begin>"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Rule color="String">\\.</Rule>
+      </RuleSet>
+    </Span>
+
+    <!-- Numbers -->
+    <Rule color="Number">-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b</Rule>
+
+    <!-- Literals -->
+    <Keywords color="Keyword">
+      <Word>true</Word>
+      <Word>false</Word>
+      <Word>null</Word>
+    </Keywords>
+  </RuleSet>
+</SyntaxDefinition>

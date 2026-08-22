@@ -42,8 +42,10 @@ public partial class ThemeSwitcher : OverlayControl
 
     public void Show()
     {
-        if (ThemeList.ItemsSource == null)
-            ThemeList.ItemsSource = BuiltInThemes.All;
+        // Re-bind on every open: the visible set follows the active
+        // appearance (dark chrome shows dark themes only, light shows light).
+        var themes = BuiltInThemes.ForAppearance(AppSettings.Instance.IsDarkAppearance);
+        ThemeList.ItemsSource = themes;
 
         // Snapshot so Escape can revert a previewed theme.
         _openingTheme = AppSettings.Instance.ThemeName;
@@ -51,8 +53,10 @@ public partial class ThemeSwitcher : OverlayControl
         Visibility = Visibility.Visible;
         OpenPopup(this);
 
-        ThemeList.SelectedItem = BuiltInThemes.All.FirstOrDefault(t => t.Name == _openingTheme)
-            ?? BuiltInThemes.VexDark;
+        ThemeList.SelectedItem = themes.FirstOrDefault(t => t.Name == _openingTheme)
+            ?? themes.FirstOrDefault();
+        // SelectionChanged fires above and applies the resolved theme live,
+        // which also corrects a stale cross-appearance setting.
 
         AnimateOverlayOpen(Backdrop, Panel, PanelScale, PanelTranslate);
 
@@ -104,10 +108,9 @@ public partial class ThemeSwitcher : OverlayControl
 
     private void MoveSelection(int delta)
     {
-        var count = BuiltInThemes.All.Length;
-        if (count == 0)
+        if (ThemeList.Items.Count == 0)
             return;
-        var next = ((ThemeList.SelectedIndex + delta) % count + count) % count;
+        var next = ((ThemeList.SelectedIndex + delta) % ThemeList.Items.Count + ThemeList.Items.Count) % ThemeList.Items.Count;
         ThemeList.SelectedIndex = next;
     }
 

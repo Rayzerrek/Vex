@@ -100,11 +100,11 @@ public partial class MainWindow : Window
 
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(AppSettings.ThemeName))
+        if (e.PropertyName is nameof(AppSettings.ThemeName) or nameof(AppSettings.Appearance))
         {
             // The acrylic tint is painted by DWM, outside the XAML palette, so
             // it must be re-applied when the theme (and thus the chrome tint)
-            // changes.
+            // changes. The wash density differs per appearance too.
             ApplyBackdrop();
             return;
         }
@@ -128,12 +128,22 @@ public partial class MainWindow : Window
 
     private void ApplyBackdrop()
     {
-        // Acrylic/blur-behind with a theme-tinted graphite replaces the
-        // painted gradient when DWM accepts the backdrop; the XAML gradient
-        // stays as the fallback, since a transparent window without a
-        // backdrop is black.
-        if (WindowBackdrop.EnableAcrylic(this, ChromePalette.BackdropTint(AppSettings.Instance.ThemeName), alpha: 0x30))
-            Background = Brushes.Transparent;
+        // Dark chrome keeps the DWM blur-behind with a theme-tinted wash. The
+        // light chrome is fully opaque instead: translucent bright surfaces
+        // over a blurred desktop read muddy, and DWM skips recomposition on a
+        // tint change until the next move/resize — which showed up as a
+        // washed-out window after switching appearance until it was dragged.
+        if (AppSettings.Instance.IsDarkAppearance)
+        {
+            if (WindowBackdrop.EnableAcrylic(this,
+                    ChromePalette.BackdropTint(AppSettings.Instance.ThemeName), alpha: 0x30))
+                Background = Brushes.Transparent;
+        }
+        else
+        {
+            WindowBackdrop.Disable(this);
+            Background = (Brush)FindResource("VexBackground");
+        }
     }
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)

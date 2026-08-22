@@ -5,7 +5,7 @@
              xmlns:vex="clr-namespace:Vex.App"
              Visibility="Collapsed">
     <Grid>
-        <Border x:Name="Backdrop" Background="#66000000" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+        <Border x:Name="Backdrop" Background="{StaticResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
         <Border x:Name="Panel" Background="{StaticResource VexSurface}"
                 BorderBrush="{StaticResource VexBorder}"
                 BorderThickness="1"
@@ -69,7 +69,7 @@
                             <StackPanel Width="120" Cursor="Hand" Background="Transparent">
                                 <Grid Width="120" Height="78">
                                     <Border x:Name="ring" CornerRadius="11" BorderThickness="2" BorderBrush="Transparent" Padding="2">
-                                        <Border x:Name="swatch" CornerRadius="9" Background="{Binding Background}" BorderBrush="#33FFFFFF" BorderThickness="1">
+                                        <Border x:Name="swatch" CornerRadius="9" Background="{Binding Background}" BorderBrush="{StaticResource VexCardBorder}" BorderThickness="1">
                                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,0,10">
                                                 <Ellipse Width="9" Height="9" Fill="{Binding Blue}" Margin="0,0,4,0"/>
                                                 <Ellipse Width="9" Height="9" Fill="{Binding Green}" Margin="0,0,4,0"/>

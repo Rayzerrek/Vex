@@ -40,6 +40,13 @@ public static class PaletteProvider
 
         yield return new PaletteItem("Toggle Sidebar", "Show or hide the workspace sidebar", () => AppSettings.Instance.SidebarVisible = !AppSettings.Instance.SidebarVisible, "Workspace");
         yield return new PaletteItem("New Project", "Open a new project directory", () => uiAction("NewProject"), "Workspace");
+
+        var dark = AppSettings.Instance.IsDarkAppearance;
+        yield return new PaletteItem(
+            dark ? "Switch to Light Appearance" : "Switch to Dark Appearance",
+            "Flip the app between the light and dark theme sets",
+            () => AppSettings.Instance.SetAppearance(dark ? AppSettings.LightAppearance : AppSettings.DarkAppearance),
+            "App");
         yield return new PaletteItem("Theme Picker", "Browse color themes with a live preview · Ctrl+Shift+M", () => uiAction("ThemePicker"), "App");
         yield return new PaletteItem("Settings", "Open application settings", () => uiAction("Settings"), "App");
     }
