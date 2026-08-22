@@ -42,7 +42,13 @@
     <!-- Ahead-of-time compiled method bodies for the published exe: faster
          cold start than the default JIT tiering at process launch. -->
     <PublishReadyToRun>true</PublishReadyToRun>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Native libraries (ghostty-vt.dll, hostfxr, ...) ship beside the exe
+         instead of inside the bundle. Self-extracting them costs a
+         first-launch extraction pass into %TEMP% before the first frame.
+         NOTE: InvariantGlobalization is NOT usable here — WPF data bindings
+         call XmlLanguage.GetSpecificCulture(), which throws
+         InvalidOperationException when ICU cultures are unavailable. -->
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 

@@ -49,7 +49,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private int _rows;
     private bool _needsFullRedraw = true;
     private bool _disposed;
-    private bool _sessionStartRequested;
 
     // Per-row render caches: the row's last-painted content hash plus the
     // render version it was painted with. RedrawRow skips the DrawingVisual
@@ -337,12 +336,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // all row caches so the next pass repaints the surface.
         _renderVersion++;
 
-        var typeface = new Typeface(_fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
-        var probe = new FormattedText("M", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-            typeface, _fontSize, Brushes.White, _pixelsPerDip);
-        _baselineY = probe.Baseline;
+        // The glyph face was already resolved (and the font file parsed) by
+        // ApplyTypefaces; reusing it here avoids a second font-file parse on
+        // every rebuild.
+        var typeface = _normalTypeface;
+        _baselineY = _fontSize * _fontFamily.Baseline;
 
-        if (typeface.TryGetGlyphTypeface(out var glyph))
+        if (_normalGlyph is { } glyph)
         {
             var em = _fontSize;
             var map = glyph.CharacterToGlyphMap;
@@ -352,6 +352,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         }
         else
         {
+            var probe = new FormattedText("M", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                typeface, _fontSize, Brushes.White, _pixelsPerDip);
+            _baselineY = probe.Baseline;
             _cellWidth = Math.Max(1, probe.WidthIncludingTrailingWhitespace);
             _cellHeight = Math.Max(1, Math.Ceiling(probe.Height));
         }
@@ -385,13 +388,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         if (_session is null)
         {
-            if (_sessionStartRequested)
-            {
-                // Start only the pane the user activates. Restored split panes
-                // remain lightweight until selected, avoiding a burst of shell
-                // processes during startup.
-                StartSessionIfReady();
-            }
+            // Start the shell as soon as this pane has a grid — not on
+            // keyboard focus. Focus arrives only after the first frame plus
+            // a ContextIdle dispatch, which used to delay the prompt by
+            // hundreds of milliseconds; starting here warms the shell up
+            // behind the first painted frame like Windows Terminal. Only
+            // the selected tab's panes are realized, so this cannot spawn
+            // shells for background tabs.
+            StartSessionIfReady();
         }
         else
         {
@@ -1462,7 +1466,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnGotKeyboardFocus(KeyboardFocusChangedEventArgs e)
     {
         base.OnGotKeyboardFocus(e);
-        _sessionStartRequested = true;
         StartSessionIfReady();
         UpdateBlinkTimer();
         DrawCaret();
