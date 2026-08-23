@@ -93,31 +93,6 @@ public static class BuiltInThemes
         BrightWhite = "#FFFFFF"
     };
 
-    public static readonly TerminalTheme Dracula = new()
-    {
-        Name = "Dracula",
-        Background = "#282A36",
-        Foreground = "#F8F8F2",
-        Cursor = "#F8F8F2",
-        SelectionBackground = "#44475A",
-        Black = "#21222C",
-        Red = "#FF5555",
-        Green = "#50FA7B",
-        Yellow = "#F1FA8C",
-        Blue = "#BD93F9",
-        Magenta = "#FF79C6",
-        Cyan = "#8BE9FD",
-        White = "#F8F8F2",
-        BrightBlack = "#6272A4",
-        BrightRed = "#FF6E6E",
-        BrightGreen = "#69FF94",
-        BrightYellow = "#FFFFA5",
-        BrightBlue = "#D6ACFF",
-        BrightMagenta = "#FF92DF",
-        BrightCyan = "#A4FFFF",
-        BrightWhite = "#FFFFFF"
-    };
-
     public static readonly TerminalTheme SolarizedDark = new()
     {
         Name = "Solarized Dark",
@@ -141,56 +116,6 @@ public static class BuiltInThemes
         BrightMagenta = "#6C71C4",
         BrightCyan = "#93A1A1",
         BrightWhite = "#FDF6E3"
-    };
-
-    public static readonly TerminalTheme Nord = new()
-    {
-        Name = "Nord",
-        Background = "#2E3440",
-        Foreground = "#D8DEE9",
-        Cursor = "#D8DEE9",
-        SelectionBackground = "#434C5E",
-        Black = "#3B4252",
-        Red = "#BF616A",
-        Green = "#A3BE8C",
-        Yellow = "#EBCB8B",
-        Blue = "#81A1C1",
-        Magenta = "#B48EAD",
-        Cyan = "#88C0D0",
-        White = "#E5E9F0",
-        BrightBlack = "#4C566A",
-        BrightRed = "#BF616A",
-        BrightGreen = "#A3BE8C",
-        BrightYellow = "#EBCB8B",
-        BrightBlue = "#81A1C1",
-        BrightMagenta = "#B48EAD",
-        BrightCyan = "#8FBCBB",
-        BrightWhite = "#ECEFF4"
-    };
-
-    public static readonly TerminalTheme TokyoNight = new()
-    {
-        Name = "Tokyo Night",
-        Background = "#1A1B26",
-        Foreground = "#A9B1D6",
-        Cursor = "#C0CAF5",
-        SelectionBackground = "#33467C",
-        Black = "#15161E",
-        Red = "#F7768E",
-        Green = "#9ECE6A",
-        Yellow = "#E0AF68",
-        Blue = "#7AA2F7",
-        Magenta = "#BB9AF7",
-        Cyan = "#7DCFFF",
-        White = "#A9B1D6",
-        BrightBlack = "#414868",
-        BrightRed = "#F7768E",
-        BrightGreen = "#9ECE6A",
-        BrightYellow = "#E0AF68",
-        BrightBlue = "#7AA2F7",
-        BrightMagenta = "#BB9AF7",
-        BrightCyan = "#7DCFFF",
-        BrightWhite = "#C0CAF5"
     };
 
     public static readonly TerminalTheme CatppuccinMocha = new()
@@ -218,31 +143,6 @@ public static class BuiltInThemes
         BrightWhite = "#A6ADC8"
     };
 
-    public static readonly TerminalTheme GruvboxDark = new()
-    {
-        Name = "Gruvbox Dark",
-        Background = "#282828",
-        Foreground = "#EBDBB2",
-        Cursor = "#EBDBB2",
-        SelectionBackground = "#504945",
-        Black = "#282828",
-        Red = "#CC241D",
-        Green = "#98971A",
-        Yellow = "#D79921",
-        Blue = "#458588",
-        Magenta = "#B16286",
-        Cyan = "#689D6A",
-        White = "#A89984",
-        BrightBlack = "#928374",
-        BrightRed = "#FB4934",
-        BrightGreen = "#B8BB26",
-        BrightYellow = "#FABD2F",
-        BrightBlue = "#83A598",
-        BrightMagenta = "#D3869B",
-        BrightCyan = "#8EC07C",
-        BrightWhite = "#EBDBB2"
-    };
-
     public static readonly TerminalTheme RoséPine = new()
     {
         Name = "Rosé Pine",
@@ -266,56 +166,6 @@ public static class BuiltInThemes
         BrightMagenta = "#C4A7E7",
         BrightCyan = "#EBBCBA",
         BrightWhite = "#E0DEF4"
-    };
-
-    public static readonly TerminalTheme Kanagawa = new()
-    {
-        Name = "Kanagawa",
-        Background = "#1F1F28",
-        Foreground = "#DCDFE4",
-        Cursor = "#C8C093",
-        SelectionBackground = "#2D2D3E",
-        Black = "#090618",
-        Red = "#C34043",
-        Green = "#76946A",
-        Yellow = "#C0A36E",
-        Blue = "#7E9CD8",
-        Magenta = "#957FB8",
-        Cyan = "#6A9589",
-        White = "#C8C093",
-        BrightBlack = "#727169",
-        BrightRed = "#E82424",
-        BrightGreen = "#98BB6C",
-        BrightYellow = "#E6C384",
-        BrightBlue = "#7FB4CA",
-        BrightMagenta = "#938AA9",
-        BrightCyan = "#7AA89F",
-        BrightWhite = "#DCDFE4"
-    };
-
-    public static readonly TerminalTheme Everforest = new()
-    {
-        Name = "Everforest",
-        Background = "#2D353B",
-        Foreground = "#D3C6AA",
-        Cursor = "#D3C6AA",
-        SelectionBackground = "#475258",
-        Black = "#343F44",
-        Red = "#E67E80",
-        Green = "#A7C080",
-        Yellow = "#DBBC7F",
-        Blue = "#7FBBB3",
-        Magenta = "#D699B6",
-        Cyan = "#83C092",
-        White = "#D3C6AA",
-        BrightBlack = "#475258",
-        BrightRed = "#E67E80",
-        BrightGreen = "#A7C080",
-        BrightYellow = "#DBBC7F",
-        BrightBlue = "#7FBBB3",
-        BrightMagenta = "#D699B6",
-        BrightCyan = "#83C092",
-        BrightWhite = "#D3C6AA"
     };
 
     public static readonly TerminalTheme VexLight = new()
@@ -478,8 +328,7 @@ public static class BuiltInThemes
     private static readonly TerminalTheme[] _all =
     {
         // Dark appearance
-        VexDark, OneDark, Dracula, SolarizedDark, Nord, TokyoNight,
-        CatppuccinMocha, GruvboxDark, RoséPine, Kanagawa, Everforest,
+        VexDark, OneDark, SolarizedDark, CatppuccinMocha, RoséPine,
         // Light appearance
         VexLight, OneLight, SolarizedLight, GitHubLight, CatppuccinLatte, RoséPineDawn,
     };
