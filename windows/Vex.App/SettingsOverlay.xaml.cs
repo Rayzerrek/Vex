@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -331,6 +332,18 @@ public partial class SettingsOverlay : OverlayControl
     private void PopulateShellList()
     {
         var settings = AppSettings.Instance;
+        // Bind the custom-shell list once to the persisted list; add/remove
+        // mutate that same list and call Items.Refresh() rather than rebinding.
+        if (CustomShellList.ItemsSource is not List<ShellProfile>)
+            CustomShellList.ItemsSource = settings.CustomShells;
+
+        RebuildShellCombo();
+        UpdateCustomShellVisibility();
+    }
+
+    private List<ShellChoice> BuildShellChoices()
+    {
+        var settings = AppSettings.Instance;
         var choices = new List<ShellChoice>
         {
             new(ShellRegistry.SystemDefaultId, "System default",
@@ -345,10 +358,18 @@ public partial class SettingsOverlay : OverlayControl
         foreach (var custom in settings.CustomShells.Where(c => !string.IsNullOrWhiteSpace(c.Name)))
             choices.Add(new ShellChoice(custom.Id, custom.Name,
                 string.IsNullOrEmpty(custom.Arguments) ? custom.Program : $"{custom.Program} {custom.Arguments}"));
+        return choices;
+    }
 
-        ShellCombo.ItemsSource = choices;
+    /// <summary>Rebuilds the shell picker items and restores the current
+    /// selection; called after a custom shell is added or removed so the
+    /// picker stays in sync with the persisted list.</summary>
+    private void RebuildShellCombo()
+    {
+        var settings = AppSettings.Instance;
+        ShellCombo.ItemsSource = BuildShellChoices();
         SelectShellComboItem(settings.ShellId);
-        UpdateCustomShellVisibility();
+        UpdateShellDetail();
     }
 
     private void SelectShellComboItem(string id)
@@ -384,7 +405,10 @@ public partial class SettingsOverlay : OverlayControl
         if (CustomShellEmpty is null || CustomShellList is null || AppSettings.Instance.CustomShells is not { } shells)
             return;
         var any = shells.Count > 0;
-        CustomShellEmpty.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
+        // The empty-state prompt only reads well when the creation form is
+        // closed; once it is open it would crowd the form for no benefit.
+        var formOpen = CustomShellForm.Visibility == Visibility.Visible;
+        CustomShellEmpty.Visibility = any || formOpen ? Visibility.Collapsed : Visibility.Visible;
         CustomShellList.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
         if (!any && _shellsWarmed && ShellCombo.SelectedItem is ShellChoice { Id: var selectedId }
             && selectedId != ShellRegistry.SystemDefaultId
@@ -394,26 +418,107 @@ public partial class SettingsOverlay : OverlayControl
             // default. Pick the entry explicitly — the stale custom choice may
             // still sit in ItemsSource until the list is rebuilt.
             AppSettings.Instance.ShellId = ShellRegistry.SystemDefaultId;
-            var systemChoice = ((IEnumerable<ShellChoice>?)ShellCombo.ItemsSource)?
-                .FirstOrDefault(c => c.Id == ShellRegistry.SystemDefaultId);
-            if (systemChoice is not null)
-                ShellCombo.SelectedItem = systemChoice;
+            SelectShellComboItem(ShellRegistry.SystemDefaultId);
         }
     }
 
+    // ---- Custom shell creation form ----------------------------------------
+
+    /// <summary>Toggles the inline creation form: opening it clears the
+    /// fields, focuses the name box, and validates; closing it hides the form
+    /// without touching the persisted list.</summary>
     private void CustomShellAdd_Click(object sender, RoutedEventArgs e)
     {
+        if (CustomShellForm.Visibility == Visibility.Visible)
+        {
+            HideCustomShellForm();
+            return;
+        }
+
+        CustomShellNameBox.Text = "";
+        CustomShellProgramBox.Text = "";
+        CustomShellArgsBox.Text = "";
+        CustomShellForm.Visibility = Visibility.Visible;
+        UpdateCustomShellVisibility();
+        UpdateConfirmEnabled();
+        // Focus lands on the first field so typing can start immediately; the
+        // form is below the list, so scroll it into view if the pane is short.
+        CustomShellForm.BringIntoView();
+        CustomShellNameBox.Focus();
+    }
+
+    private void CustomShellCancel_Click(object sender, RoutedEventArgs e) => HideCustomShellForm();
+
+    private void HideCustomShellForm()
+    {
+        CustomShellForm.Visibility = Visibility.Collapsed;
+        CustomShellFormHint.Visibility = Visibility.Collapsed;
+        UpdateCustomShellVisibility();
+    }
+
+    private void CustomShellBrowse_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose a shell executable",
+            Filter = "Executables (*.exe;*.bat;*.cmd)|*.exe;*.bat;*.cmd|All files (*.*)|*.*",
+            CheckFileExists = true,
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+        CustomShellProgramBox.Text = dialog.FileName;
+        // Auto-suggest a display name from the file name when the field is
+        // still empty, the common case for a fresh form.
+        if (string.IsNullOrWhiteSpace(CustomShellNameBox.Text))
+            CustomShellNameBox.Text = System.IO.Path.GetFileNameWithoutExtension(dialog.FileName);
+        UpdateConfirmEnabled();
+    }
+
+    private void CustomShellForm_Changed(object sender, TextChangedEventArgs e) => UpdateConfirmEnabled();
+
+    /// <summary>Enables the confirm button only when the entry is usable and
+    /// surfaces a one-line hint so the user knows what is missing.</summary>
+    private void UpdateConfirmEnabled()
+    {
+        if (CustomShellConfirmBtn is null)
+            return;
+        var name = CustomShellNameBox.Text.Trim();
+        var program = CustomShellProgramBox.Text.Trim();
+
+        string? hint = null;
+        if (name.Length == 0 && program.Length == 0)
+            hint = "Enter a name and a program path.";
+        else if (name.Length == 0)
+            hint = "Enter a display name.";
+        else if (program.Length == 0)
+            hint = "Enter a program path or command.";
+
+        CustomShellFormHint.Text = hint ?? "";
+        CustomShellFormHint.Visibility = hint is null ? Visibility.Collapsed : Visibility.Visible;
+        CustomShellConfirmBtn.IsEnabled = hint is null;
+    }
+
+    private void CustomShellConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        var name = CustomShellNameBox.Text.Trim();
+        var program = CustomShellProgramBox.Text.Trim();
+        if (name.Length == 0 || program.Length == 0)
+            return;
+
         var settings = AppSettings.Instance;
         var profile = new ShellProfile
         {
             Id = "custom-" + Guid.NewGuid().ToString("N"),
-            Name = "",
-            Program = "",
-            Arguments = "",
+            Name = name,
+            Program = program,
+            Arguments = CustomShellArgsBox.Text.Trim(),
         };
         settings.CustomShells.Add(profile);
         settings.SaveSoon(); // List identity did not change, so force persistence.
+
+        HideCustomShellForm();
         CustomShellList.Items.Refresh();
+        RebuildShellCombo();
         UpdateCustomShellVisibility();
     }
 
@@ -422,10 +527,10 @@ public partial class SettingsOverlay : OverlayControl
         if ((sender as FrameworkElement)?.DataContext is not ShellProfile profile)
             return;
         var settings = AppSettings.Instance;
-        settings.CustomShells.Add(profile); // Touch the list so the setter persists.
         settings.CustomShells.Remove(profile);
         settings.SaveSoon();
         CustomShellList.Items.Refresh();
+        RebuildShellCombo();
         UpdateCustomShellVisibility();
     }
 
