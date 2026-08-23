@@ -150,6 +150,38 @@
             </Setter>
         </Style>
 
+        <!-- Filled accent button used for primary in-card actions like
+             confirming a new custom shell. Rides the same blue→violet
+             gradient as the toggle track and theme badges. -->
+        <Style x:Key="AccentButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource VexToggleThumb}"/>
+            <Setter Property="Background" Value="{StaticResource AccentSolid}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="14,7"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="bg" Background="{TemplateBinding Background}" CornerRadius="6"/>
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bg" Property="Opacity" Value="0.35"/>
+                                <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bg" Property="Opacity" Value="0.86"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Slider with a filled accent track and round thumb. -->
         <Style x:Key="SettingsSlider" TargetType="Slider">
             <Setter Property="Template">
@@ -380,39 +412,104 @@
                                 <Border Style="{StaticResource SettingsCard}">
                                     <StackPanel>
                                         <TextBlock x:Name="CustomShellEmpty"
-                                                   Text="No custom shells yet — add any program with its arguments."
-                                                   Style="{StaticResource RowDesc}" Margin="0,0,0,10"/>
-                                        <ItemsControl x:Name="CustomShellList">
+                                                   Text="No custom shells yet. Add any program — pwsh, bash, nu, even a remote tool — with its arguments."
+                                                   Style="{StaticResource RowDesc}" Margin="0,0,0,2"/>
+
+                                        <ItemsControl x:Name="CustomShellList" Margin="0,4,0,0">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <Grid Margin="0,0,0,8">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="118"/>
-                                                            <ColumnDefinition Width="8"/>
-                                                            <ColumnDefinition Width="*"/>
-                                                            <ColumnDefinition Width="8"/>
-                                                            <ColumnDefinition Width="170"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <TextBox Style="{StaticResource SettingsInput}"
-                                                                 Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
-                                                                 ToolTip="Name shown in the shell picker"/>
-                                                        <TextBox Grid.Column="2" Style="{StaticResource SettingsInput}"
-                                                                 Text="{Binding Program, UpdateSourceTrigger=PropertyChanged}"
-                                                                 ToolTip="Program path or command"/>
-                                                        <TextBox Grid.Column="4" Style="{StaticResource SettingsInput}"
-                                                                 Text="{Binding Arguments, UpdateSourceTrigger=PropertyChanged}"
-                                                                 ToolTip="Optional arguments"/>
-                                                        <Button Grid.Column="5" Style="{StaticResource GhostButton}"
-                                                                Width="28" Height="28" Padding="0" Margin="6,0,0,0"
-                                                                Click="CustomShellRemove_Click" ToolTip="Remove shell">
-                                                            <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="11"/>
-                                                        </Button>
-                                                    </Grid>
+                                                    <Border Background="{StaticResource TrackSurface}"
+                                                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                                                            CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <Border Width="32" Height="32" CornerRadius="8"
+                                                                    Background="#20FFFFFF" Margin="0,0,12,0"
+                                                                    VerticalAlignment="Center">
+                                                                <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                                                           Foreground="{StaticResource VexAccentBlue}"
+                                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                            </Border>
+                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Name}" Style="{StaticResource RowTitle}"
+                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                <TextBlock Style="{StaticResource RowDesc}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0">
+                                                                    <Run Text="{Binding Program}"/><Run Text=" "/><Run Text="{Binding Arguments}"/>
+                                                                </TextBlock>
+                                                            </StackPanel>
+                                                            <Button Grid.Column="2" Style="{StaticResource GhostButton}"
+                                                                    Width="30" Height="30" Padding="0" VerticalAlignment="Center"
+                                                                    Click="CustomShellRemove_Click" ToolTip="Remove shell">
+                                                                <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="11"/>
+                                                            </Button>
+                                                        </Grid>
+                                                    </Border>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+
+                                        <!-- Inline creation form: an expanding sub-card shown on
+                                             demand so adding a shell is a deliberate, validated step
+                                             rather than a row of blank fields. -->
+                                        <Border x:Name="CustomShellForm" Visibility="Collapsed"
+                                                Background="{StaticResource TrackSurface}"
+                                                BorderBrush="{StaticResource VexAccentBlue}" BorderThickness="1"
+                                                CornerRadius="8" Padding="14" Margin="0,4,0,10">
+                                            <StackPanel>
+                                                <TextBlock Text="New custom shell" Style="{StaticResource RowTitle}" Margin="0,0,0,12"/>
+                                                <Grid Margin="0,0,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="84"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Name" Style="{StaticResource RowDesc}" VerticalAlignment="Center"/>
+                                                    <TextBox Grid.Column="1" x:Name="CustomShellNameBox"
+                                                             Style="{StaticResource SettingsInput}"
+                                                             ToolTip="Name shown in the shell picker"
+                                                             TextChanged="CustomShellForm_Changed"/>
+                                                </Grid>
+                                                <Grid Margin="0,0,0,10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="84"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Program" Style="{StaticResource RowDesc}" VerticalAlignment="Center"/>
+                                                    <TextBox Grid.Column="1" x:Name="CustomShellProgramBox"
+                                                             Style="{StaticResource SettingsInput}"
+                                                             ToolTip="Path to the executable, or a command resolved via PATH"
+                                                             TextChanged="CustomShellForm_Changed"/>
+                                                    <Button Grid.Column="2" x:Name="CustomShellBrowseBtn"
+                                                            Style="{StaticResource GhostButton}" Content="Browse&#x2026;"
+                                                            Click="CustomShellBrowse_Click"
+                                                            Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                                </Grid>
+                                                <Grid Margin="0,0,0,12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="84"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Arguments" Style="{StaticResource RowDesc}" VerticalAlignment="Center"/>
+                                                    <TextBox Grid.Column="1" x:Name="CustomShellArgsBox"
+                                                             Style="{StaticResource SettingsInput}"
+                                                             ToolTip="Optional command-line arguments"/>
+                                                </Grid>
+                                                <TextBlock x:Name="CustomShellFormHint" Style="{StaticResource RowDesc}"
+                                                           Foreground="{StaticResource VexAccentPurple}" Margin="0,0,0,10" Visibility="Collapsed"/>
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <Button Style="{StaticResource GhostButton}" Content="Cancel"
+                                                            Click="CustomShellCancel_Click" Margin="0,0,8,0"/>
+                                                    <Button x:Name="CustomShellConfirmBtn" Style="{StaticResource AccentButton}"
+                                                            Content="Add shell" Click="CustomShellConfirm_Click"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                             <Button Style="{StaticResource GhostButton}" Click="CustomShellAdd_Click"
                                                     ToolTip="Add a custom shell">
                                                 <StackPanel Orientation="Horizontal">
@@ -422,7 +519,7 @@
                                                                Foreground="{StaticResource VexText}" VerticalAlignment="Center"/>
                                                 </StackPanel>
                                             </Button>
-                                            <TextBlock Text="Launched with these arguments in each new pane."
+                                            <TextBlock Text="Launches any program with its arguments in a new pane."
                                                        Style="{StaticResource RowDesc}" VerticalAlignment="Center" Margin="14,0,0,0"/>
                                         </StackPanel>
                                     </StackPanel>
