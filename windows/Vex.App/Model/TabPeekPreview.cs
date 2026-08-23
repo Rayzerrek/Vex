@@ -46,16 +46,16 @@ public sealed class TabPeekPreview : ObservableObject
 
     private static FrameworkElement BuildLeaf(LeafPane leaf, bool isActive)
     {
-        var dotColor = leaf.State switch
+        var dotBrush = leaf.State switch
         {
-            PaneState.Busy => "#7AA2F7",
-            PaneState.Exited => "#FF6B4B",
-            _ => "#4A5568",
+            PaneState.Busy => ResourceBrush("VexAccentBlue"),
+            PaneState.Exited => ResourceBrush("VexPaneExited"),
+            _ => ResourceBrush("VexTextDim"),
         };
 
         var dot = new Ellipse
         {
-            Width = 5, Height = 5, Fill = new SolidColorBrush(FastColor.ParseHex(dotColor)),
+            Width = 5, Height = 5, Fill = dotBrush,
             Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center,
         };
 
@@ -64,8 +64,8 @@ public sealed class TabPeekPreview : ObservableObject
             Text = leaf.Title,
             FontSize = 9,
             Foreground = isActive
-                ? new SolidColorBrush(FastColor.ParseHex("#E5E9F0"))
-                : new SolidColorBrush(FastColor.ParseHex("#6B7280")),
+                ? ResourceBrush("VexText")
+                : ResourceBrush("VexTextDim"),
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -76,18 +76,22 @@ public sealed class TabPeekPreview : ObservableObject
 
         var border = new Border
         {
-            Background = new SolidColorBrush(FastColor.ParseHex(
-                isActive ? "#2D3548" : "#1A1F2E")),
+            Background = isActive
+                ? ResourceBrush("VexPaneTitleBarFocused")
+                : ResourceBrush("VexSurface"),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(6, 4, 6, 4),
             BorderBrush = isActive
-                ? new SolidColorBrush(FastColor.ParseHex("#5A6B9E"))
-                : new SolidColorBrush(FastColor.ParseHex("#2A3040")),
+                ? ResourceBrush("VexFocusBorder")
+                : ResourceBrush("VexBorder"),
             BorderThickness = new Thickness(1),
             Child = panel,
         };
         return border;
     }
+
+    private static Brush ResourceBrush(string key)
+        => (Brush)Application.Current.FindResource(key);
 
     private static FrameworkElement BuildSplit(SplitPane split, LeafPane? active)
     {
