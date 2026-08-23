@@ -31,8 +31,6 @@ public static class ChromePalette
         var blue = Parse(theme.Blue);
         var magenta = Parse(theme.Magenta);
 
-        var accent = Mix(Mix(blue, magenta, 0.5), bg, 0.35);
-
         if (theme.IsDark)
             ApplyDark(res, bg, fg, blue, magenta);
         else
@@ -153,6 +151,7 @@ public static class ChromePalette
         Set(res, "VexTrackColor", Mix(bg, fg, 0.35));
         Set(res, "VexNavHoverColor", Mix(panelBase, fg, 0.08));
         Set(res, "VexNavSelectedColor", Mix(bg, fg, 0.18));
+        Set(res, "VexInputColor", Mix(panelBase, bg, 0.55));
         Set(res, "VexToggleThumbColor", FromHex("#EDEFF3"));
         Set(res, "VexOnAccentColor", FromHex("#EDEFF2"));
     }
@@ -169,50 +168,53 @@ public static class ChromePalette
 
     private static void ApplyLight(ResourceDictionary res, Color bg, Color fg, Color blue, Color magenta)
     {
-        var ink = Darken(fg, 0.20);
-        var dim = Mix(fg, bg, 0.25);
+        var canvas = Mix(bg, Colors.White, 0.28);
+        var surface = Mix(bg, Colors.White, 0.62);
+        var ink = Darken(fg, 0.12);
+        var dim = Mix(fg, bg, 0.32);
+        var accent = Mix(blue, magenta, 0.34);
 
-        Set(res, "VexBackgroundTopColor", Lighten(bg, 0.35));
-        Set(res, "VexBackgroundBottomColor", Darken(bg, 0.035));
-        Set(res, "VexSurfaceColor", FromHex("#FFFFFF"));
-        Set(res, "VexHoverColor", Darken(bg, 0.05));
-        Set(res, "VexBorderColor", Mix(bg, fg, 0.18));
+        Set(res, "VexBackgroundTopColor", canvas);
+        Set(res, "VexBackgroundBottomColor", Mix(bg, fg, 0.025));
+        Set(res, "VexSurfaceColor", surface);
+        Set(res, "VexHoverColor", Mix(bg, fg, 0.055));
+        Set(res, "VexBorderColor", Mix(bg, fg, 0.15));
         Set(res, "VexTextColor", ink);
         Set(res, "VexTextDimColor", dim);
-        Set(res, "VexAccentColor", Mix(Mix(blue, magenta, 0.5), bg, 0.20));
-        Set(res, "VexFocusBorderColor", Mix(blue, bg, 0.15));
+        Set(res, "VexAccentColor", Mix(accent, fg, 0.08));
+        Set(res, "VexFocusBorderColor", Mix(blue, fg, 0.10));
         // Sidebar sits a touch darker than the window behind it and the tab
         // strip matches the window top — both opaque.
-        Set(res, "VexSidebarColor", Mix(bg, fg, 0.045));
-        Set(res, "VexTabStripColor", Lighten(bg, 0.35));
-        Set(res, "VexPaneTitleBarColor", bg);
-        Set(res, "VexPaneTitleBarFocusedColor", Darken(bg, 0.03));
-        Set(res, "VexTabHoverColor", WithAlpha(fg, 0x08));
-        Set(res, "VexTabSelectedStartColor", WithAlpha(blue, 0x22));
-        Set(res, "VexTabSelectedEndColor", WithAlpha(magenta, 0x22));
-        Set(res, "VexAccentGradientStartColor", WithAlpha(blue, 0x50));
-        Set(res, "VexAccentGradientEndColor", WithAlpha(magenta, 0x50));
+        Set(res, "VexSidebarColor", Mix(bg, fg, 0.035));
+        Set(res, "VexTabStripColor", canvas);
+        Set(res, "VexPaneTitleBarColor", Mix(bg, Colors.White, 0.18));
+        Set(res, "VexPaneTitleBarFocusedColor", Mix(bg, fg, 0.035));
+        Set(res, "VexTabHoverColor", WithAlpha(fg, 0x0D));
+        Set(res, "VexTabSelectedStartColor", WithAlpha(blue, 0x2C));
+        Set(res, "VexTabSelectedEndColor", WithAlpha(magenta, 0x24));
+        Set(res, "VexAccentGradientStartColor", WithAlpha(blue, 0x68));
+        Set(res, "VexAccentGradientEndColor", WithAlpha(magenta, 0x68));
 
         // Overlay chrome: scrims, pressed states, drag previews, settings
         // surfaces. All opaque or near-opaque so overlays read crisply.
         Set(res, "VexBackdropScrimColor", FromArgb(0x28, 0x14, 0x16, 0x1A));
-        Set(res, "VexPressFillColor", Darken(bg, 0.09));
+        Set(res, "VexPressFillColor", Mix(bg, fg, 0.10));
         Set(res, "VexSidebarToggleBgColor", WithAlpha(fg, 0x06));
         Set(res, "VexSidebarToggleBorderColor", WithAlpha(fg, 0x1E));
         Set(res, "VexSplitPreviewColor", WithAlpha(blue, 0x1A));
         Set(res, "VexSplitPreviewBorderColor", WithAlpha(blue, 0x55));
         Set(res, "VexPaneExitedColor", FromHex("#D93025"));
 
-        Set(res, "VexSettingsPanelColor", FromHex("#FFFFFF"));
-        Set(res, "VexSettingsSidebarColor", FromHex("#F3F4F6"));
-        Set(res, "VexCardColor", FromHex("#FFFFFF"));
-        Set(res, "VexCardBorderColor", Mix(bg, fg, 0.14));
-        Set(res, "VexTrackColor", Darken(bg, 0.08));
-        Set(res, "VexNavHoverColor", Darken(bg, 0.04));
-        Set(res, "VexNavSelectedColor", Darken(bg, 0.075));
-        Set(res, "VexInputColor", FromHex("#F5F6F8"));
+        Set(res, "VexSettingsPanelColor", surface);
+        Set(res, "VexSettingsSidebarColor", Mix(bg, fg, 0.035));
+        Set(res, "VexCardColor", Mix(bg, Colors.White, 0.76));
+        Set(res, "VexCardBorderColor", Mix(bg, fg, 0.13));
+        Set(res, "VexTrackColor", Mix(bg, fg, 0.10));
+        Set(res, "VexNavHoverColor", Mix(bg, fg, 0.045));
+        Set(res, "VexNavSelectedColor", Mix(bg, fg, 0.08));
+        Set(res, "VexInputColor", Mix(bg, Colors.White, 0.48));
         Set(res, "VexToggleThumbColor", Colors.White);
-        Set(res, "VexOnAccentColor", FromHex("#1B1E24"));
+        Set(res, "VexOnAccentColor", ContrastText(accent));
 
         // Unused on the opaque light chrome; kept consistent anyway.
         Set(res, "VexAccentBlueColor", blue);
@@ -254,4 +256,9 @@ public static class ChromePalette
 
     private static Color Lighten(Color c, double t) => Mix(c, Colors.White, t);
     private static Color Darken(Color c, double t) => Mix(c, Colors.Black, t);
+
+    private static Color ContrastText(Color background)
+        => (0.2126 * background.R + 0.7152 * background.G + 0.0722 * background.B) / 255.0 > 0.56
+            ? FromHex("#1B1E24")
+            : Colors.White;
 }

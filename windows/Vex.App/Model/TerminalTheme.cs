@@ -505,7 +505,7 @@ public static class BuiltInThemes
     /// first theme, so a stale setting can never re-tint the app dark.</summary>
     public static TerminalTheme ResolveInAppearance(string? name, bool dark)
     {
-        if (name == "Custom")
+        if (name == "Custom" && Custom.IsDark == dark)
             return Custom;
         var matches = ForAppearance(dark);
         return matches.FirstOrDefault(t => t.Name == name) ?? matches[0];

@@ -13,15 +13,6 @@ namespace Vex.App;
 /// </summary>
 public static class TextHighlighter
 {
-    private static readonly Brush HighlightBrush = CreateFrozenBrush(Color.FromRgb(0x7F, 0xC4, 0xFF));
-
-    private static Brush CreateFrozenBrush(Color color)
-    {
-        var brush = new SolidColorBrush(color);
-        brush.Freeze();
-        return brush;
-    }
-
     public static readonly DependencyProperty HighlightProperty =
         DependencyProperty.RegisterAttached(
             "Highlight",
@@ -74,7 +65,7 @@ public static class TextHighlighter
                 var run = new Run(text[runStart..i]);
                 if (inMatch)
                 {
-                    run.Foreground = HighlightBrush;
+                    run.SetResourceReference(TextElement.ForegroundProperty, "VexAccentBlue");
                     run.FontWeight = FontWeights.Bold;
                 }
                 textBlock.Inlines.Add(run);
