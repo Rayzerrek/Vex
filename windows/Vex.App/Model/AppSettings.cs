@@ -14,11 +14,35 @@ public class AppSettings : ObservableObject
     private static AppSettings? _instance;
     public static AppSettings Instance => _instance ??= Load();
 
-    private readonly DispatcherTimer _saveDebounce;
+    /// <summary>Preloads settings on a background thread so the UI thread can
+    /// continue WPF initialization in parallel. After this returns,
+    /// <see cref="Instance"/> returns the pre-loaded instance without any
+    /// further I/O.</summary>
+    public static void Preload()
+    {
+        if (_instance is null)
+            _instance = Load();
+    }
+
+    private DispatcherTimer _saveDebounce = null!;
+    private bool _saveDebounceInitialized;
     private bool _savePending;
 
     public AppSettings()
     {
+        // The DispatcherTimer is created lazily on first Save() call (see
+        // EnsureSaveDebounce) so that deserialization can happen on a
+        // background thread without binding the timer to the wrong dispatcher.
+    }
+
+    /// <summary>Creates the debounced-save timer on the UI thread's
+    /// dispatcher. Called on first Save() rather than in the constructor so
+    /// that Preload() can deserialize on a background thread.</summary>
+    private void EnsureSaveDebounce()
+    {
+        if (_saveDebounceInitialized)
+            return;
+        _saveDebounceInitialized = true;
         // Coalesce disk writes: a font-size drag or theme toggle can fire
         // dozens of setter changes a second, and each would otherwise hit the
         // disk synchronously on the UI thread.
@@ -37,6 +61,7 @@ public class AppSettings : ObservableObject
     {
         if (!_savePending)
             return;
+        EnsureSaveDebounce();
         _saveDebounce.Stop();
         _savePending = false;
         WriteSettings(waitForWrite: true);
@@ -220,6 +245,7 @@ public class AppSettings : ObservableObject
 
     private void Save()
     {
+        EnsureSaveDebounce();
         _savePending = true;
         _saveDebounce.Stop();
         _saveDebounce.Start();

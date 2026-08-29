@@ -36,6 +36,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     // width, reused across redraws.  A row can have at most (cols+1)/2 runs
     // (alternating background runs), so the text-run pool is sized to that.
     private TerminalSession? _session;
+    private bool _sessionStarting;
     private TerminalPalette _palette = new(BuiltInThemes.VexDark);
     private FontFamily _fontFamily = new("Cascadia Mono");
     private double _fontSize = 13;
@@ -406,7 +407,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void StartSessionIfReady()
     {
-        if (_session is not null || _cols < 20 || _rows < 5 || RenderSelfTest.ReportPath is not null)
+        if (_session is not null || _sessionStarting || _cols < 20 || _rows < 5 || RenderSelfTest.ReportPath is not null)
             return;
 
         StartSession();
@@ -487,35 +488,65 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void StartSession()
     {
-        if (_session is not null)
+        if (_session is not null || _sessionStarting)
             return;
 
-        var session = new TerminalSession();
-        session.OutputReceived += OnSessionOutput;
-        session.Exited += OnSessionExited;
+        _sessionStarting = true;
+        var cols = (short)_cols;
+        var rows = (short)_rows;
+        var workingDirectory = _workingDirectory;
+
         // Resolve the configured shell profile at spawn time; null means the
         // system default (or a configured shell that vanished), which ConPTY
         // starts bare. Arguments ride along for custom shells.
         var resolved = ShellRegistry.Resolve(AppSettings.Instance.ShellId);
         var shellProgram = SelfTestShell ?? resolved?.Program ?? TerminalSession.DefaultShell();
         var shellArguments = SelfTestShell is null ? resolved?.Arguments : null;
-        try
+
+        // ConPTY creation and process spawning are P/Invoke calls that do not
+        // need the UI thread. Running them on a background thread keeps the
+        // UI responsive while the shell process is being created — typically
+        // 50–200 ms of pipe/ConPTY/process setup that would otherwise freeze
+        // the first frame.
+        _ = Task.Run(() =>
         {
-            session.Start(_workingDirectory, (short)_cols, (short)_rows, shellProgram, shellArguments);
-        }
-        catch (Win32Exception)
-        {
-            // Custom shells are free-form text, so the program can be gone or
-            // mistyped; fall back to the OS default instead of throwing out of
-            // layout and leaving the pane dead.
-            Diag($"shell '{shellProgram}' failed to launch; falling back to default");
-            session.Dispose();
-            session = new TerminalSession();
-            session.OutputReceived += OnSessionOutput;
-            session.Exited += OnSessionExited;
-            session.Start(_workingDirectory, (short)_cols, (short)_rows, TerminalSession.DefaultShell());
-        }
-        _session = session;
+            TerminalSession session;
+            try
+            {
+                session = CreateAndStartSession(workingDirectory, cols, rows, shellProgram, shellArguments);
+            }
+            catch (Win32Exception)
+            {
+                Diag($"shell '{shellProgram}' failed to launch; falling back to default");
+                session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
+            }
+
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                _sessionStarting = false;
+                // The control may have been disposed while the session was
+                // starting (e.g. the tab was closed). Dispose the orphan.
+                if (_disposed)
+                {
+                    session.Dispose();
+                    return;
+                }
+                _session = session;
+                // Apply any grid size that changed while the session was
+                // starting.
+                if (_cols != cols || _rows != rows)
+                    session.Resize((short)_cols, (short)_rows);
+            });
+        });
+    }
+
+    private TerminalSession CreateAndStartSession(string workingDirectory, short cols, short rows, string? shell, string? arguments)
+    {
+        var session = new TerminalSession();
+        session.OutputReceived += OnSessionOutput;
+        session.Exited += OnSessionExited;
+        session.Start(workingDirectory, cols, rows, shell, arguments);
+        return session;
     }
 
     /// <summary>PID of the ConPTY shell process; null before the session starts.</summary>
@@ -561,6 +592,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         });
     }
 
+    /// <summary>Maximum bytes to feed to the VT emulator in a single pump
+    /// cycle. A large output burst (e.g. <c>cat</c> of a big file) can queue
+    /// thousands of chunks; processing them all in one pass monopolizes the
+    /// UI thread. The budget caps each pass and yields back to the message
+    /// loop so input, layout, and animations stay responsive.</summary>
+    private const int PumpByteBudget = 256 * 1024;
+
     private void PumpOutput()
     {
         List<ArraySegment<byte>> toProcess;
@@ -586,13 +624,25 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         }
 
+        var bytesFed = 0;
+        var consumed = 0;
         foreach (var c in toProcess)
         {
             if (c.Array is not { } buffer)
+            {
+                consumed++;
                 continue;
+            }
+
+            // Stop feeding once the budget is reached; return the remaining
+            // chunks to the pending list and reschedule another pump.
+            if (bytesFed + c.Count > PumpByteBudget && bytesFed > 0)
+                break;
+
             try
             {
                 _terminal.Feed(buffer, c.Offset, c.Count);
+                bytesFed += c.Count;
             }
             catch (Exception e)
             {
@@ -607,8 +657,21 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             {
                 System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
             }
+            consumed++;
+        }
+
+        // Return any unconsumed chunks to the pending list so they are
+        // processed in the next pump cycle.
+        if (consumed < toProcess.Count)
+        {
+            lock (_outputLock)
+            {
+                for (var i = consumed; i < toProcess.Count; i++)
+                    _pendingOutput.Add(toProcess[i]);
+            }
         }
         toProcess.Clear();
+
         FlushRedraw();
 
         var scheduleAgain = false;

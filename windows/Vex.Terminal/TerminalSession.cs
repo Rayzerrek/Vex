@@ -21,6 +21,7 @@ public sealed class TerminalSession : IDisposable
     private FileStream? _ptyInput;
     private IntPtr _processHandle;
     private IntPtr _threadHandle;
+    private RegisteredWaitHandle? _exitWaitHandle;
     private int _exitedRaised;
     private bool _disposed;
 
@@ -250,16 +251,28 @@ public sealed class TerminalSession : IDisposable
 
     private void StartExitWaiter()
     {
-        var waiter = new Thread(() =>
+        // Use a thread-pool registered wait instead of a dedicated OS thread
+        // per terminal pane. The registered wait uses the thread pool's
+        // I/O completion port infrastructure, so dozens of panes do not each
+        // reserve a full thread stack just to block in WaitForSingleObject.
+        var waitHandle = new ProcessWaitHandle(_processHandle);
+        _exitWaitHandle = ThreadPool.RegisterWaitForSingleObject(
+            waitHandle,
+            (_, _) => RaiseExitedOnce(),
+            null,
+            Timeout.Infinite,
+            executeOnlyOnce: true);
+    }
+
+    /// <summary>Wraps a raw process handle in a WaitHandle so it can be used
+    /// with ThreadPool.RegisterWaitForSingleObject. Does not own the handle;
+    /// TerminalSession.Dispose closes it.</summary>
+    private sealed class ProcessWaitHandle : WaitHandle
+    {
+        public ProcessWaitHandle(IntPtr processHandle)
         {
-            NativeMethods.WaitForSingleObject(_processHandle, NativeMethods.INFINITE);
-            RaiseExitedOnce();
-        })
-        {
-            IsBackground = true,
-            Name = "Vex-pty-exit-waiter",
-        };
-        waiter.Start();
+            SafeWaitHandle = new SafeWaitHandle(processHandle, ownsHandle: false);
+        }
     }
 
     private void RaiseExitedOnce()
@@ -279,6 +292,11 @@ public sealed class TerminalSession : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+
+        // Unregister the wait before closing the handle to avoid a race
+        // where the callback fires after disposal.
+        _exitWaitHandle?.Unregister(null);
+        _exitWaitHandle = null;
 
         if (_processHandle != IntPtr.Zero)
             NativeMethods.TerminateProcess(_processHandle, 1);

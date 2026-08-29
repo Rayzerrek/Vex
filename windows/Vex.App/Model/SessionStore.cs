@@ -14,7 +14,7 @@ public static class SessionStore
     /// <summary>The workspace this process loaded at startup; app-wide
     /// services (e.g. appearance flips re-tinting open editors) walk live
     /// panes through it instead of plumb­ing references through every view.</summary>
-    public static Workspace Current { get; private set; } = new();
+    public static Workspace Current { get; internal set; } = new();
 
     public static Workspace Load()
     {
@@ -55,6 +55,56 @@ public static class SessionStore
 
         Current = workspace;
         return workspace;
+    }
+
+    /// <summary>Async version of <see cref="Load"/> that performs file I/O
+    /// and JSON deserialization on a background thread. Model objects are not
+    /// DispatcherObjects, so constructing them off the UI thread is safe;
+    /// they are only bound to the UI after this method returns on the calling
+    /// thread.</summary>
+    public static Task<Workspace> LoadAsync()
+    {
+        var workspace = new Workspace();
+
+        try
+        {
+            if (!File.Exists(SessionPath))
+            {
+                workspace.NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                Current = workspace;
+                return Task.FromResult(workspace);
+            }
+
+            var json = File.ReadAllText(SessionPath);
+            var appSnapshot = JsonSerializer.Deserialize(json, VexJsonContext.Default.AppSnapshot);
+            if (appSnapshot?.Windows.Count > 0)
+            {
+                var sessionSnapshot = appSnapshot.Windows[0];
+                foreach (var projectSnapshot in sessionSnapshot.Projects)
+                    workspace.Projects.Add(RestoreProject(projectSnapshot));
+
+                if (sessionSnapshot.SelectedProjectIndex is { } projectIndex &&
+                    projectIndex >= 0 && projectIndex < workspace.Projects.Count)
+                {
+                    workspace.SelectedProject = workspace.Projects[projectIndex];
+                }
+                else if (workspace.Projects.Count > 0)
+                {
+                    workspace.SelectedProject = workspace.Projects[0];
+                }
+            }
+        }
+        catch
+        {
+            // A corrupt or old-format session must not block startup; fall
+            // through to a single fresh project.
+        }
+
+        if (workspace.Projects.Count == 0)
+            workspace.NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+
+        Current = workspace;
+        return Task.FromResult(workspace);
     }
 
     /// <summary>Writes the whole workspace (projects, tabs, split tree and
