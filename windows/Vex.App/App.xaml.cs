@@ -7,7 +7,7 @@ namespace Vex.App;
 /// </summary>
 public partial class App : Application
 {
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
@@ -18,6 +18,22 @@ public partial class App : Application
         System.Windows.Media.Animation.Timeline.DesiredFrameRateProperty.OverrideMetadata(
             typeof(System.Windows.Media.Animation.Timeline),
             new PropertyMetadata(240));
+
+        // Required for ported TUI applications (vim, agy, pi, etc.) to
+        // output VT sequences properly under ConPTY.
+        Environment.SetEnvironmentVariable("TERM", "xterm-256color");
+        Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
+
+        // Parallel preload: kick off settings and session file reads
+        // simultaneously on background threads. The two file reads were
+        // previously serial on the UI thread, blocking the first frame.
+        // Running them in parallel cuts the I/O wait roughly in half, and
+        // moving the deserialization off the UI thread means WPF can start
+        // its rendering pipeline sooner.
+        var settingsTask = Task.Run(Vex.App.Model.AppSettings.Preload);
+        var sessionTask = Task.Run(Vex.App.Model.SessionStore.LoadAsync);
+
+        await settingsTask.ConfigureAwait(true);
 
         // Chrome colors follow the active terminal theme (sidebar, tab strip,
         // pane chrome, accents). Resolve the stored appearance first so the
@@ -45,10 +61,14 @@ public partial class App : Application
             }
         };
 
-        // Required for ported TUI applications (vim, agy, pi, etc.) to
-        // output VT sequences properly under ConPTY.
-        Environment.SetEnvironmentVariable("TERM", "xterm-256color");
-        Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
+        // Await the session data (it started in parallel with settings, so
+        // it may already be done by now). Creating the window after both
+        // are ready avoids a flash of empty content.
+        var workspace = await sessionTask.ConfigureAwait(true);
+
+        // Create and show the main window with the pre-loaded workspace.
+        var window = new MainWindow(workspace);
+        window.Show();
     }
 }
 

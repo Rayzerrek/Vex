@@ -98,6 +98,45 @@ public partial class MainWindow : Window
         AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
     }
 
+    /// <summary>Creates the window with a pre-loaded workspace (from async
+    /// startup). Skips the synchronous SessionStore.Load() call that the
+    /// parameterless constructor performs.</summary>
+    public MainWindow(Workspace workspace)
+    {
+        _workspace = workspace;
+        SessionStore.Current = workspace;
+        InitializeComponent();
+        DataContext = _workspace;
+        PreviewKeyDown += MainWindow_PreviewKeyDown;
+        PreviewMouseDown += MainWindow_PreviewMouseDown;
+        PreviewMouseMove += MainWindow_PreviewMouseMove;
+        PreviewMouseLeftButtonUp += MainWindow_PreviewMouseLeftButtonUp;
+        StateChanged += MainWindow_StateChanged;
+        UpdateLayoutForWindowState();
+
+        _workspace.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(Workspace.SelectedProject))
+                FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
+        };
+        FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
+
+        SidebarContent.RenderTransform = _sidebarContentTranslate;
+
+        if (!AppSettings.Instance.SidebarVisible)
+        {
+            SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
+            SidebarPanel.Visibility = Visibility.Collapsed;
+            SidebarPanel.Opacity = 0;
+        }
+
+        ContentRendered += (_, _) => Dispatcher.BeginInvoke(
+            () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
+            DispatcherPriority.ContextIdle);
+
+        AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
+    }
+
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(AppSettings.ThemeName) or nameof(AppSettings.Appearance))
