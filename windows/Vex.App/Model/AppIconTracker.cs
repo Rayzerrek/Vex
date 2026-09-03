@@ -5,38 +5,59 @@ using Vex.Terminal;
 namespace Vex.App.Model;
 
 /// <summary>
-/// One shared timer polls every live pane's process tree so tab icons track
-/// the app running inside each pane. Panes register on view creation and
-/// unregister on dispose; the timer stops when the last pane goes away.
+/// One shared background tracker polls every live pane's process tree so tab icons track
+/// the app running inside each pane. Uses ThreadPool Timer and HalfDebouncer rather than
+/// DispatcherTimer so it has zero UI-dispatch overhead and zero impact on application startup.
 /// </summary>
 public static class AppIconTracker
 {
     private static readonly List<TerminalPane> Panes = new();
-    private static DispatcherTimer? _timer;
+    private static readonly object Lock = new();
+    private static Timer? _timer;
     private static int _tickInFlight;
+    private static HalfDebouncer? _triggerDebouncer;
 
     public static void Register(TerminalPane pane)
     {
-        Panes.Add(pane);
-        _timer ??= StartTimer();
+        lock (Lock)
+        {
+            Panes.Add(pane);
+            _timer ??= StartTimer();
+        }
+        TriggerDebounced();
     }
 
     public static void Unregister(TerminalPane pane)
     {
-        Panes.Remove(pane);
-        if (Panes.Count == 0)
+        lock (Lock)
         {
-            _timer?.Stop();
-            _timer = null;
+            Panes.Remove(pane);
+            if (Panes.Count == 0)
+            {
+                _timer?.Dispose();
+                _timer = null;
+                _triggerDebouncer?.Dispose();
+                _triggerDebouncer = null;
+            }
         }
     }
 
-    private static DispatcherTimer StartTimer()
+    public static void TriggerDebounced()
     {
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
-        timer.Tick += (_, _) => Tick();
-        timer.Start();
-        return timer;
+        lock (Lock)
+        {
+            if (Panes.Count == 0)
+                return;
+            _triggerDebouncer ??= new HalfDebouncer(TimeSpan.FromMilliseconds(500), () => _ = TickAsync(), leadingEdge: false);
+            _triggerDebouncer.Trigger();
+        }
+    }
+
+    private static Timer StartTimer()
+    {
+        // 2500ms initial quiet period: allow the app to finish startup and initial
+        // frame rendering completely before the first periodic process-tree snapshot.
+        return new Timer(_ => _ = TickAsync(), null, TimeSpan.FromMilliseconds(2500), TimeSpan.FromSeconds(2.0));
     }
 
     private static void Tick() => _ = TickAsync();
@@ -51,6 +72,14 @@ public static class AppIconTracker
 
         try
         {
+            TerminalPane[] panesSnapshot;
+            lock (Lock)
+            {
+                if (Panes.Count == 0)
+                    return;
+                panesSnapshot = Panes.ToArray();
+            }
+
             var index = await Task.Run(() =>
             {
                 var entries = ProcessTree.Snapshot();
@@ -59,9 +88,20 @@ public static class AppIconTracker
 
             if (index is not null)
             {
-                // A copy: a pane may unregister mid-tick when its shell exits.
-                foreach (var pane in Panes.ToArray())
-                    pane.RefreshAppIcon(index);
+                var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                if (dispatcher != null && !dispatcher.CheckAccess())
+                {
+                    _ = dispatcher.BeginInvoke(() =>
+                    {
+                        foreach (var pane in panesSnapshot)
+                            pane.RefreshAppIcon(index);
+                    }, DispatcherPriority.Background);
+                }
+                else
+                {
+                    foreach (var pane in panesSnapshot)
+                        pane.RefreshAppIcon(index);
+                }
             }
         }
         catch

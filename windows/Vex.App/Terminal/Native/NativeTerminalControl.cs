@@ -149,6 +149,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     {
         _workingDirectory = workingDirectory;
         Focusable = true;
+        FocusVisualStyle = null;
         Cursor = Cursors.IBeam;
         // Grayscale antialiasing so glyphs blend against the translucent
         // surface; ClearType subpixel AA fringes when a run has no solid
@@ -241,38 +242,66 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private static readonly Dictionary<string, TerminalPalette> PaletteCache = new();
     private static readonly Dictionary<string, TypefaceSet> TypefaceCache = new();
 
+    /// <summary>
+    /// Prewarms the theme palette (frozen brushes) and OpenType typeface/glyph caches
+    /// on a background task during startup so the first terminal pane realizes instantly
+    /// on the UI thread with zero font-parsing latency.
+    /// </summary>
+    public static void Prewarm(string? themeName, string? fontFamily)
+    {
+        try
+        {
+            var theme = BuiltInThemes.Resolve(themeName);
+            PaletteFor(theme);
+            TypefacesFor(fontFamily ?? "Cascadia Mono");
+        }
+        catch
+        {
+            // Best-effort prewarm
+        }
+    }
+
     private static TerminalPalette PaletteFor(TerminalTheme theme)
     {
         // All panes share one palette per theme. A TerminalPalette builds 256
         // frozen brushes, so constructing one per pane per settings change
         // multiplied every slider tick by the pane count.
-        if (!PaletteCache.TryGetValue(theme.Name, out var palette))
-            PaletteCache[theme.Name] = palette = new TerminalPalette(theme);
-        return palette;
+        lock (PaletteCache)
+        {
+            if (!PaletteCache.TryGetValue(theme.Name, out var palette))
+                PaletteCache[theme.Name] = palette = new TerminalPalette(theme);
+            return palette;
+        }
     }
 
     /// <summary>Evicts a theme's cached palette so the next render rebuilds it
     /// from the current theme values. Used by the theme editor after mutating
     /// <see cref="BuiltInThemes.Custom"/>.</summary>
     public static void InvalidatePaletteCache(string themeName)
-        => PaletteCache.Remove(themeName);
+    {
+        lock (PaletteCache)
+            PaletteCache.Remove(themeName);
+    }
 
     private static TypefaceSet TypefacesFor(string familySource)
     {
-        if (TypefaceCache.TryGetValue(familySource, out var set))
+        lock (TypefaceCache)
+        {
+            if (TypefaceCache.TryGetValue(familySource, out var set))
+                return set;
+            var family = new FontFamily(familySource);
+            var normal = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            var bold = new Typeface(family, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+            var italic = new Typeface(family, FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
+            var boldItalic = new Typeface(family, FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
+            normal.TryGetGlyphTypeface(out var normalGlyph);
+            bold.TryGetGlyphTypeface(out var boldGlyph);
+            italic.TryGetGlyphTypeface(out var italicGlyph);
+            boldItalic.TryGetGlyphTypeface(out var boldItalicGlyph);
+            set = new TypefaceSet(normal, bold, italic, boldItalic, normalGlyph, boldGlyph, italicGlyph, boldItalicGlyph);
+            TypefaceCache[familySource] = set;
             return set;
-        var family = new FontFamily(familySource);
-        var normal = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
-        var bold = new Typeface(family, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
-        var italic = new Typeface(family, FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
-        var boldItalic = new Typeface(family, FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
-        normal.TryGetGlyphTypeface(out var normalGlyph);
-        bold.TryGetGlyphTypeface(out var boldGlyph);
-        italic.TryGetGlyphTypeface(out var italicGlyph);
-        boldItalic.TryGetGlyphTypeface(out var boldItalicGlyph);
-        set = new TypefaceSet(normal, bold, italic, boldItalic, normalGlyph, boldGlyph, italicGlyph, boldItalicGlyph);
-        TypefaceCache[familySource] = set;
-        return set;
+        }
     }
 
     private void ApplyTypefaces(string familySource)
@@ -371,7 +400,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         var cols = Math.Max(2, (int)(ActualWidth / _cellWidth));
         var rows = Math.Max(1, (int)(ActualHeight / _cellHeight));
-        if (cols == _cols && rows == _rows && _session is not null)
+        if (cols == _cols && rows == _rows && (_session is not null || _sessionStarting))
             return;
 
         _cols = cols;

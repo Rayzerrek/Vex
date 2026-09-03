@@ -33,6 +33,16 @@ public partial class App : Application
         var settingsTask = Task.Run(Vex.App.Model.AppSettings.Preload);
         var sessionTask = Task.Run(Vex.App.Model.SessionStore.LoadAsync);
 
+        // Prewarm font metrics, OpenType glyph tables, and theme palette on a
+        // background task as soon as settings load. Runs completely in parallel
+        // with session restore and chrome color setup, eliminating font parsing
+        // and brush allocation stalls on the UI thread during MainWindow creation.
+        var prewarmTask = settingsTask.ContinueWith(_ =>
+        {
+            var s = Vex.App.Model.AppSettings.Instance;
+            Vex.App.Terminal.Native.NativeTerminalControl.Prewarm(s.ThemeName, s.FontFamily);
+        }, TaskScheduler.Default);
+
         await settingsTask.ConfigureAwait(true);
 
         // Chrome colors follow the active terminal theme (sidebar, tab strip,

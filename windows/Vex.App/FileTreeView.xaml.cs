@@ -17,12 +17,19 @@ public partial class FileTreeView : UserControl
         DataContextChanged += (_, _) => RequestTreeWhenVisible();
     }
 
+    private bool _treeRequested;
+
     private void RequestTreeWhenVisible()
     {
-        if (!IsVisible || DataContext is not Model.Project project)
+        if (!IsVisible || DataContext is not Model.Project project || _treeRequested)
             return;
 
-        Dispatcher.BeginInvoke(project.EnsureFileTree, DispatcherPriority.ContextIdle);
+        _treeRequested = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _treeRequested = false;
+            project.EnsureFileTree();
+        }, DispatcherPriority.ContextIdle);
     }
 
     private void TreeRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)

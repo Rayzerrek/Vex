@@ -443,7 +443,6 @@
 
             <!-- Left sidebar -->
             <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource VexSidebar}"
-                    BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,1,0"
                     ClipToBounds="True">
                 <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
                     <DockPanel>
