@@ -74,6 +74,7 @@ public sealed class EditorPane : LeafPane
             Text = GetContent(),
             IsReadOnly = false,
             ShowLineNumbers = true,
+            FocusVisualStyle = null,
             FontFamily = new FontFamily(AppSettings.Instance.FontFamily),
             FontSize = AppSettings.Instance.FontSize,
             Background = Brushes.Transparent,

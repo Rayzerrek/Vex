@@ -230,7 +230,7 @@ public class AppSettings : ObservableObject
         {
             _savePending = false;
             WriteSettings();
-        });
+        }, leadingEdge: false);
         _saveDebouncer.Trigger();
     }
 

@@ -15,7 +15,7 @@ public partial class FileSearchView : UserControl
     private bool _rebuildQueued;
     private bool _indexDirty = true;
     private CancellationTokenSource? _searchCts;
-    private long _lastSearchTimestamp;
+    private HalfDebouncer<string>? _searchDebouncer;
 
     public FileSearchView()
     {
@@ -30,8 +30,13 @@ public partial class FileSearchView : UserControl
         _root = workingDirectory;
         _engine = new FileSearchEngine(workingDirectory);
         _indexDirty = true;
-        SearchBox.Text = "";
-        ScheduleSearch();
+        _searchDebouncer?.Cancel();
+        _searchCts?.Cancel();
+        _searchCts = null;
+        if (!string.IsNullOrEmpty(SearchBox.Text))
+            SearchBox.Text = "";
+        else
+            ScheduleSearch();
     }
 
     private void SearchBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -75,42 +80,31 @@ public partial class FileSearchView : UserControl
 
         if (_engine == null || string.IsNullOrWhiteSpace(query))
         {
+            _searchDebouncer?.Cancel();
             _searchCts?.Cancel();
             _searchCts = null;
             ApplySearchResults(new List<FileSearchResult>());
             return;
         }
 
+        // Half-debounce: the initial keystroke after quiet executes immediately (0ms latency),
+        // rapid subsequent keystrokes within typing burst (120ms) coalesce to trailing edge off UI thread.
+        _searchDebouncer ??= new HalfDebouncer<string>(TimeSpan.FromMilliseconds(120), PerformSearch, leadingEdge: true);
+        _searchDebouncer.Trigger(query);
+    }
+
+    private void PerformSearch(string query)
+    {
         _searchCts?.Cancel();
         var cts = new CancellationTokenSource();
         _searchCts = cts;
 
         var engine = _engine;
-        var now = Stopwatch.GetTimestamp();
-        var elapsedMs = Stopwatch.GetElapsedTime(_lastSearchTimestamp, now).TotalMilliseconds;
-        _lastSearchTimestamp = now;
+        if (engine == null)
+            return;
 
-        // Half-debounce: the initial keystroke after a quiet period (>300ms) or
-        // a 1-character query executes immediately so the user gets instant
-        // feedback (0ms latency). Rapid subsequent keystrokes within the typing
-        // burst are debounced by 120ms off the UI thread to keep the message
-        // loop and rendering thread free from repeated fuzzy-search passes.
-        var delay = (elapsedMs > 300 || query.Length == 1) ? 0 : 120;
-
-        _ = Task.Run(async () =>
+        _ = Task.Run(() =>
         {
-            if (delay > 0)
-            {
-                try
-                {
-                    await Task.Delay(delay, cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-            }
-
             if (cts.IsCancellationRequested)
                 return;
 
