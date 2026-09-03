@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -8,21 +9,17 @@ namespace Vex.App;
 
 public partial class FileSearchView : UserControl
 {
-    private readonly DispatcherTimer _debounce;
     private FileSearchEngine? _engine;
     private string _root = "";
     private List<FileSearchResult> _allResults = new();
     private bool _rebuildQueued;
     private bool _indexDirty = true;
+    private CancellationTokenSource? _searchCts;
+    private long _lastSearchTimestamp;
 
     public FileSearchView()
     {
         InitializeComponent();
-
-        // Typing runs the query immediately; rebuilding the on-disk index is
-        // deferred and only happens once the user stops typing for a moment.
-        _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        _debounce.Tick += (_, _) => RebuildIndex();
     }
 
     /// <summary>Fired when the user activates a result (Enter or double-click).</summary>
@@ -34,7 +31,7 @@ public partial class FileSearchView : UserControl
         _engine = new FileSearchEngine(workingDirectory);
         _indexDirty = true;
         SearchBox.Text = "";
-        UpdateResults();
+        ScheduleSearch();
     }
 
     private void SearchBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -49,7 +46,6 @@ public partial class FileSearchView : UserControl
 
     private async Task RebuildIndexAsync()
     {
-        _debounce.Stop();
         if (_engine == null || _rebuildQueued)
             return;
 
@@ -69,32 +65,82 @@ public partial class FileSearchView : UserControl
         }
 
         if (engine == _engine && root == _root)
-            UpdateResults();
+            ScheduleSearch();
     }
 
-    private void UpdateResults()
+    private void ScheduleSearch()
     {
         var query = SearchBox.Text;
         SearchHint.Visibility = string.IsNullOrEmpty(query) ? Visibility.Visible : Visibility.Collapsed;
 
         if (_engine == null || string.IsNullOrWhiteSpace(query))
         {
-            _allResults = new List<FileSearchResult>();
-            ResultList.ItemsSource = null;
-            ResultList.Visibility = Visibility.Collapsed;
+            _searchCts?.Cancel();
+            _searchCts = null;
+            ApplySearchResults(new List<FileSearchResult>());
             return;
         }
 
-        _allResults = _engine.Search(query);
-        ResultList.ItemsSource = _allResults;
-        ResultList.Visibility = _allResults.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (_allResults.Count > 0)
+        _searchCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+
+        var engine = _engine;
+        var now = Stopwatch.GetTimestamp();
+        var elapsedMs = Stopwatch.GetElapsedTime(_lastSearchTimestamp, now).TotalMilliseconds;
+        _lastSearchTimestamp = now;
+
+        // Half-debounce: the initial keystroke after a quiet period (>300ms) or
+        // a 1-character query executes immediately so the user gets instant
+        // feedback (0ms latency). Rapid subsequent keystrokes within the typing
+        // burst are debounced by 120ms off the UI thread to keep the message
+        // loop and rendering thread free from repeated fuzzy-search passes.
+        var delay = (elapsedMs > 300 || query.Length == 1) ? 0 : 120;
+
+        _ = Task.Run(async () =>
+        {
+            if (delay > 0)
+            {
+                try
+                {
+                    await Task.Delay(delay, cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+
+            if (cts.IsCancellationRequested)
+                return;
+
+            var results = engine.Search(query);
+
+            if (cts.IsCancellationRequested)
+                return;
+
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+            {
+                if (cts.IsCancellationRequested)
+                    return;
+
+                ApplySearchResults(results);
+            });
+        }, cts.Token);
+    }
+
+    private void ApplySearchResults(List<FileSearchResult> results)
+    {
+        _allResults = results;
+        ResultList.ItemsSource = results;
+        ResultList.Visibility = results.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (results.Count > 0)
             ResultList.SelectedIndex = 0;
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        UpdateResults();
+        ScheduleSearch();
     }
 
     private void SearchBox_PreviewKeyDown(object sender, KeyEventArgs e)

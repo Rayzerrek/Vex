@@ -1,7 +1,6 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Windows.Threading;
 
 namespace Vex.App.Model;
 
@@ -24,35 +23,17 @@ public class AppSettings : ObservableObject
             _instance = Load();
     }
 
-    private DispatcherTimer _saveDebounce = null!;
-    private bool _saveDebounceInitialized;
+    private HalfDebouncer? _saveDebouncer;
+    private readonly object _writeLock = new();
+    private long _writeVersion;
+    private long _lastWrittenVersion;
     private bool _savePending;
 
     public AppSettings()
     {
-        // The DispatcherTimer is created lazily on first Save() call (see
-        // EnsureSaveDebounce) so that deserialization can happen on a
-        // background thread without binding the timer to the wrong dispatcher.
-    }
-
-    /// <summary>Creates the debounced-save timer on the UI thread's
-    /// dispatcher. Called on first Save() rather than in the constructor so
-    /// that Preload() can deserialize on a background thread.</summary>
-    private void EnsureSaveDebounce()
-    {
-        if (_saveDebounceInitialized)
-            return;
-        _saveDebounceInitialized = true;
-        // Coalesce disk writes: a font-size drag or theme toggle can fire
-        // dozens of setter changes a second, and each would otherwise hit the
-        // disk synchronously on the UI thread.
-        _saveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
-        _saveDebounce.Tick += (_, _) =>
-        {
-            _saveDebounce.Stop();
-            _savePending = false;
-            WriteSettings();
-        };
+        // HalfDebouncer is instantiated lazily on the first Save() call,
+        // so Preload() can deserialize on a background thread without
+        // creating or allocating any timers.
     }
 
     /// <summary>Persists any pending change; called on window close so the
@@ -61,8 +42,7 @@ public class AppSettings : ObservableObject
     {
         if (!_savePending)
             return;
-        EnsureSaveDebounce();
-        _saveDebounce.Stop();
+        _saveDebouncer?.Cancel();
         _savePending = false;
         WriteSettings(waitForWrite: true);
     }
@@ -245,10 +225,13 @@ public class AppSettings : ObservableObject
 
     private void Save()
     {
-        EnsureSaveDebounce();
         _savePending = true;
-        _saveDebounce.Stop();
-        _saveDebounce.Start();
+        _saveDebouncer ??= new HalfDebouncer(TimeSpan.FromMilliseconds(400), () =>
+        {
+            _savePending = false;
+            WriteSettings();
+        });
+        _saveDebouncer.Trigger();
     }
 
     /// <summary>Schedules a debounced save for changes the property setters
@@ -262,12 +245,34 @@ public class AppSettings : ObservableObject
             var dir = Path.GetDirectoryName(SettingsPath);
             if (dir != null)
                 Directory.CreateDirectory(dir);
-            var json = JsonSerializer.Serialize(this, VexJsonContext.Default.AppSettings);
+
+            // AppSettings has UI-bound collections (e.g. CustomShells).
+            // When invoked from a background timer thread, marshal serialization to the
+            // UI thread to guarantee a thread-safe, consistent snapshot.
+            string json;
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                json = dispatcher.Invoke(() => JsonSerializer.Serialize(this, VexJsonContext.Default.AppSettings));
+            }
+            else
+            {
+                json = JsonSerializer.Serialize(this, VexJsonContext.Default.AppSettings);
+            }
+
+            var version = Interlocked.Increment(ref _writeVersion);
             var write = Task.Run(() =>
             {
                 try
                 {
-                    File.WriteAllText(SettingsPath, json);
+                    lock (_writeLock)
+                    {
+                        if (version < _lastWrittenVersion)
+                            return;
+
+                        File.WriteAllText(SettingsPath, json);
+                        _lastWrittenVersion = version;
+                    }
                 }
                 catch
                 {
