@@ -120,7 +120,7 @@ public static class ChromePalette
         Set(res, "VexTextDimColor", Mix(fg, bg, 0.45));
         Set(res, "VexAccentColor", Mix(Mix(blue, magenta, 0.5), bg, 0.35));
         Set(res, "VexFocusBorderColor", Mix(bg, blue, 0.50));
-        Set(res, "VexSidebarColor", WithAlpha(bg, 0x30));
+        Set(res, "VexSidebarColor", WithAlpha(bg, 0x40));
         Set(res, "VexTabStripColor", WithAlpha(bg, 0x40));
         // The pane title bar carries the terminal's own background, so each
         // pane reads as one tinted block; focus lifts it slightly and the
@@ -183,9 +183,9 @@ public static class ChromePalette
         Set(res, "VexTextDimColor", dim);
         Set(res, "VexAccentColor", Mix(accent, fg, 0.08));
         Set(res, "VexFocusBorderColor", Mix(blue, fg, 0.10));
-        // Sidebar sits a touch darker than the window behind it and the tab
-        // strip matches the window top — both opaque.
-        Set(res, "VexSidebarColor", Mix(bg, fg, 0.035));
+        // Sidebar and tab strip share one surface so the chrome reads as
+        // a single frame — both opaque.
+        Set(res, "VexSidebarColor", canvas);
         Set(res, "VexTabStripColor", canvas);
         Set(res, "VexPaneTitleBarColor", Mix(bg, Colors.White, 0.18));
         Set(res, "VexPaneTitleBarFocusedColor", Mix(bg, fg, 0.035));
