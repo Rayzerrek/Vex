@@ -1,65 +1,55 @@
 # Vex
 
-**Vex** is a native Windows terminal workspace built with WPF and Windows ConPTY. It brings low-latency terminal sessions, tabbed multi-project management, split views, a file tree, and a built-in editor into a single desktop workspace.
-
----
+Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, split panes, file tree, file search, and a built-in editor.
 
 ## Features
 
-- ConPTY Terminal Sessions: Native Windows Pseudoconsole integration supporting PowerShell Core (`pwsh.exe`) and PowerShell (`powershell.exe`).
-- Split Panes & Tabs: Split active panes vertically or horizontally, rename tabs, and navigate between sessions.
-- Multi-Project Sidebar: Workspace management for switching between multiple open project folders.
-- File Tree Explorer: Browse project directories and open files directly within workspace panes.
-- Built-in Code Editor: Edit source files with syntax highlighting and file saving (`Ctrl+S`).
-- Command Palette: Quick action overlay accessible via `Ctrl+P`.
-- Settings Overlay: Configure shell defaults and workspace preferences.
-- Workspace Session Persistence: Automatically saves and restores projects, tabs, and layout state on restart.
+- Terminal: ConPTY + libghostty-vt emulation, WPF rendering. URL underline with Ctrl+Click, keyboard selection, Ctrl+Backspace word delete.
+- Shells: auto-detects PowerShell 7, Nushell, Windows PowerShell, cmd, Git Bash, WSL; plus custom shells (program + args) in Settings.
+- Tabs & panes: split right/down, focus mode, drag reorder, custom titles, tab peek preview, pane state indicators.
+- Workspace: multi-project sidebar, lazy file tree, quick file search, session restore (projects, tabs, splits, focus).
+- Editor: AvalonEdit, lazy file load, dark/light syntax themes, dirty indicator, `Ctrl+S` to save.
+- Themes: Dark/Light appearance (follows OS), 11 built-in terminal themes + custom theme editor, live picker.
 
----
+## Shortcuts
 
-## Architecture & Project Structure
+| Action | Keys |
+|---|---|
+| Command palette | `Ctrl+Shift+P` |
+| Theme picker | `Ctrl+Shift+M` |
+| Tab peek | `Ctrl+Shift+Space` |
+| New tab / close | `Ctrl+Shift+T` / `Ctrl+Shift+W` |
+| Split right / down | `Ctrl+Shift+R` / `Ctrl+Shift+D` |
+| Save file (editor) | `Ctrl+S` |
+
+Plain `Ctrl+<key>` goes to the terminal (TUI apps keep their own bindings).
+
+## Structure
 
 ```text
 windows/
-  Vex.slnx              Visual Studio Solution File
-  Vex.App/              WPF Shell: sidebar, tabs, split views, file tree, editor, command palette
-  Vex.Terminal/         ConPTY interop and process lifecycle management
-Vendor/
-  XtermSharp/           Vendored xterm terminal emulation library with WPF rendering
+  Vex.slnx            solution
+  Vex.App/            WPF shell: sidebar, tabs, splits, tree, search, editor, overlays
+  Vex.Terminal/       ConPTY process lifecycle
+  Vex.Libghostty/     libghostty-vt wrapper + WPF rendering
+  Vex.Setup/          WiX installer
+Vendor/libghostty/    ghostty-vt native lib
 ```
 
-### Technical Stack
-
-| Area | Solution / Technology |
-|---|---|
-| UI Framework | WPF on .NET 8 |
-| PTY Layer | Windows ConPTY (`kernel32.dll` APIs) |
-| Terminal Renderer | XtermSharp (vendored) + WPF Native DrawingContext |
-| Default Shell | `pwsh.exe` (PowerShell Core) with fallback to `powershell.exe` |
-
----
+Config: `%LocalAppData%\Vex\settings.json`, `%LocalAppData%\Vex\session.json`.
 
 ## Requirements
 
-- Operating System: Windows 10 (Build 1809 or later, required for ConPTY) or Windows 11.
-- SDK: .NET 8.0 SDK or higher.
-- Runtime: WebView2 Runtime (pre-installed on Windows 10/11).
-
----
+- Windows 10 1809+ / Windows 11
+- .NET 10 SDK
 
 ## Build and Run
 
 ```powershell
-# Build the solution
 dotnet build windows/Vex.slnx
-
-# Run the desktop application
 dotnet run --project windows/Vex.App
 ```
 
----
-
 ## License
 
-Distributed under the [GPL-3.0 License](LICENSE).
-
+[GPL-3.0](LICENSE)
