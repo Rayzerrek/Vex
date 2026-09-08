@@ -8,7 +8,7 @@ using Vex.App.Model;
 
 namespace Vex.App;
 
-public partial class CommandPalette : OverlayControl
+public sealed partial class CommandPalette : OverlayControl
 {
     private List<PaletteItem> _allItems = new();
 

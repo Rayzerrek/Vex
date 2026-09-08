@@ -97,7 +97,7 @@ public sealed class Project : ObservableObject
                 var line = File.ReadAllLines(gitPath).FirstOrDefault()?.Trim();
                 if (line != null && line.StartsWith("gitdir:", StringComparison.OrdinalIgnoreCase))
                 {
-                    var target = line.Substring(7).Trim();
+                    var target = line.AsSpan(7).Trim().ToString();
                     var realGitDir = Path.IsPathRooted(target)
                         ? target
                         : Path.GetFullPath(Path.Combine(workingDirectory, target));
@@ -122,10 +122,10 @@ public sealed class Project : ObservableObject
 
             var headContent = File.ReadAllText(headPath).Trim();
             if (headContent.StartsWith("ref: refs/heads/", StringComparison.OrdinalIgnoreCase))
-                return headContent.Substring("ref: refs/heads/".Length).Trim();
+                return headContent.AsSpan("ref: refs/heads/".Length).Trim().ToString();
 
             // Detached HEAD: short commit SHA
-            return headContent.Length > 7 ? headContent.Substring(0, 7) : headContent;
+            return headContent.Length > 7 ? headContent[..7] : headContent;
         }
         catch
         {

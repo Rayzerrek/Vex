@@ -2,7 +2,7 @@ using System.IO;
 
 namespace Vex.App.Model;
 
-public class FileTreeNode : ObservableObject
+public sealed class FileTreeNode : ObservableObject
 {
     private bool _isExpanded;
     private bool _isPopulated;

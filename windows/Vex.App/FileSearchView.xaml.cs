@@ -7,7 +7,7 @@ using Vex.App.Model;
 
 namespace Vex.App;
 
-public partial class FileSearchView : UserControl
+public sealed partial class FileSearchView : UserControl
 {
     private FileSearchEngine? _engine;
     private string _root = "";

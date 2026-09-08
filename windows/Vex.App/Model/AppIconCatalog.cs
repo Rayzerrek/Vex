@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Media;
@@ -19,28 +20,28 @@ internal static partial class AppIconCatalog
     internal static readonly IReadOnlySet<string> ExcludedShells = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "pwsh", "powershell", "cmd", "nu", "bash", "sh", "zsh", "fish", "conhost", "wslhost",
-    };
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Hosts that run other apps (node claude.js, wsl nvim, ...); their own
     /// name never identifies the app, only their command line or the OSC
     /// title does — the process tree cannot see inside a script or a VM.
     /// </summary>
-    private static readonly HashSet<string> ShimHosts = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenSet<string> ShimHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "node", "nodejs", "deno", "wsl", "bunx", "tsx", "ts-node",
-    };
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Command-line path segments that say nothing about the real app
     /// (global npm layouts, launcher dirs); skipped when scanning shims.
     /// </summary>
-    private static readonly HashSet<string> CommandLineNoise = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenSet<string> CommandLineNoise = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "npm", "npx", "node_modules", "bin", "lib", "cli", "scripts", "cmd",
-    };
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly IReadOnlyDictionary<string, Func<AppIcon>> ProcessIconFactories =
+    private static readonly FrozenDictionary<string, Func<AppIcon>> ProcessIconFactories =
         new Dictionary<string, Func<AppIcon>>(StringComparer.OrdinalIgnoreCase)
         {
             // Editors, terminals, shells and git tooling.
@@ -108,28 +109,66 @@ internal static partial class AppIconCatalog
             ["powershell"] = () => AppIcon.Badge("P", Color.FromRgb(0x53, 0x91, 0xFE)),
             ["cmd"] = () => AppIcon.Badge(">", Color.FromRgb(0x00, 0x78, 0xD4)),
             ["wsl"] = () => AppIcon.Badge("W", HashColor("wsl")),
-        };
+        }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     private static readonly (Regex Pattern, Func<AppIcon> Factory)[] TitleRules =
     {
-        (new Regex(@"\bnvim\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("neovim")),
-        (new Regex(@"\blazyvim\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("lazyvim")),
-        (new Regex(@"\bvim\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("vim")),
-        (new Regex(@"\blazygit\b", RegexOptions.IgnoreCase), () => AppIcon.Badge("lg", Color.FromRgb(0x00, 0xAA, 0xDD))),
-        (new Regex(@"\bhtop\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("htop")),
-        (new Regex(@"\bbtop\b", RegexOptions.IgnoreCase), () => AppIcon.Badge("bt", Color.FromRgb(0x00, 0xA8, 0x96))),
-        (new Regex(@"\btmux\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("tmux")),
-        (new Regex(@"claude", RegexOptions.IgnoreCase), () => AppIcon.Glyph("claudecode")),
-        (new Regex(@"\bpi\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("pi")),
-        (new Regex(@"antigravity", RegexOptions.IgnoreCase), () => AppIcon.Glyph("antigravity")),
-        (new Regex(@"\bcodex\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("codex")),
-        (new Regex(@"\b(opencode|open-code)\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("opencode")),
-        (new Regex(@"\bdeepseek\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("deepseek")),
-        (new Regex(@"\bqwen\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("qwen")),
-        (new Regex(@"\baider\b", RegexOptions.IgnoreCase), () => AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6))),
-        (new Regex(@"\bgemini\b", RegexOptions.IgnoreCase), () => AppIcon.Glyph("googlegemini")),
-        (new Regex(@"\bssh\b", RegexOptions.IgnoreCase), () => AppIcon.Badge("S", Color.FromRgb(0x2B, 0x8C, 0xBE))),
+        (TitleNvim(), () => AppIcon.Glyph("neovim")),
+        (TitleLazyvim(), () => AppIcon.Glyph("lazyvim")),
+        (TitleVim(), () => AppIcon.Glyph("vim")),
+        (TitleLazygit(), () => AppIcon.Badge("lg", Color.FromRgb(0x00, 0xAA, 0xDD))),
+        (TitleHtop(), () => AppIcon.Glyph("htop")),
+        (TitleBtop(), () => AppIcon.Badge("bt", Color.FromRgb(0x00, 0xA8, 0x96))),
+        (TitleTmux(), () => AppIcon.Glyph("tmux")),
+        (TitleClaude(), () => AppIcon.Glyph("claudecode")),
+        (TitlePi(), () => AppIcon.Glyph("pi")),
+        (TitleAntigravity(), () => AppIcon.Glyph("antigravity")),
+        (TitleCodex(), () => AppIcon.Glyph("codex")),
+        (TitleOpencode(), () => AppIcon.Glyph("opencode")),
+        (TitleDeepseek(), () => AppIcon.Glyph("deepseek")),
+        (TitleQwen(), () => AppIcon.Glyph("qwen")),
+        (TitleAider(), () => AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6))),
+        (TitleGemini(), () => AppIcon.Glyph("googlegemini")),
+        (TitleSsh(), () => AppIcon.Badge("S", Color.FromRgb(0x2B, 0x8C, 0xBE))),
     };
+
+    // Source-generated matchers for the OSC title/command-line fallback path.
+    // Same patterns and case-insensitivity as before, plus CultureInvariant so
+    // matching ASCII tool names never depends on the current UI culture.
+    [GeneratedRegex(@"\bnvim\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleNvim();
+    [GeneratedRegex(@"\blazyvim\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleLazyvim();
+    [GeneratedRegex(@"\bvim\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleVim();
+    [GeneratedRegex(@"\blazygit\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleLazygit();
+    [GeneratedRegex(@"\bhtop\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleHtop();
+    [GeneratedRegex(@"\bbtop\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleBtop();
+    [GeneratedRegex(@"\btmux\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleTmux();
+    [GeneratedRegex(@"claude", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleClaude();
+    [GeneratedRegex(@"\bpi\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitlePi();
+    [GeneratedRegex(@"antigravity", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleAntigravity();
+    [GeneratedRegex(@"\bcodex\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleCodex();
+    [GeneratedRegex(@"\b(opencode|open-code)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleOpencode();
+    [GeneratedRegex(@"\bdeepseek\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleDeepseek();
+    [GeneratedRegex(@"\bqwen\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleQwen();
+    [GeneratedRegex(@"\baider\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleAider();
+    [GeneratedRegex(@"\bgemini\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleGemini();
+    [GeneratedRegex(@"\bssh\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TitleSsh();
 
     private static AppIcon? GetKnownProcessIcon(string name) =>
         ProcessIconFactories.TryGetValue(name, out var factory) ? factory() : null;

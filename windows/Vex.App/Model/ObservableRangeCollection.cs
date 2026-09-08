@@ -8,7 +8,7 @@ namespace Vex.App.Model;
 /// An <see cref="ObservableCollection{T}"/> that supports bulk replacements
 /// to avoid multiple CollectionChanged notifications during large directory loads.
 /// </summary>
-public class ObservableRangeCollection<T> : ObservableCollection<T>
+public sealed class ObservableRangeCollection<T> : ObservableCollection<T>
 {
     private static readonly PropertyChangedEventArgs CountProp = new(nameof(Count));
     private static readonly PropertyChangedEventArgs ItemProp = new("Item[]");

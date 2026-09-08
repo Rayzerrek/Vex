@@ -2,18 +2,18 @@ using System.Text.Json.Serialization;
 
 namespace Vex.App.Model;
 
-public class AppSnapshot
+public sealed class AppSnapshot
 {
     public List<SessionSnapshot> Windows { get; set; } = new();
 }
 
-public class SessionSnapshot
+public sealed class SessionSnapshot
 {
     public List<ProjectSnapshot> Projects { get; set; } = new();
     public int? SelectedProjectIndex { get; set; }
 }
 
-public class ProjectSnapshot
+public sealed class ProjectSnapshot
 {
     public string Name { get; set; } = "";
     public string WorkingDirectory { get; set; } = "";
@@ -21,7 +21,7 @@ public class ProjectSnapshot
     public int? SelectedTabIndex { get; set; }
 }
 
-public class TabSnapshot
+public sealed class TabSnapshot
 {
     public string Title { get; set; } = "";
     public bool HasCustomTitle { get; set; }
@@ -36,18 +36,18 @@ public class PaneSnapshot
 {
 }
 
-public class TerminalPaneSnapshot : PaneSnapshot
+public sealed class TerminalPaneSnapshot : PaneSnapshot
 {
     public bool IsFocused { get; set; }
 }
 
-public class EditorPaneSnapshot : PaneSnapshot
+public sealed class EditorPaneSnapshot : PaneSnapshot
 {
     public string FilePath { get; set; } = "";
     public bool IsFocused { get; set; }
 }
 
-public class SplitPaneSnapshot : PaneSnapshot
+public sealed class SplitPaneSnapshot : PaneSnapshot
 {
     public string Orientation { get; set; } = "Horizontal";
     public double Ratio { get; set; } = 0.5;

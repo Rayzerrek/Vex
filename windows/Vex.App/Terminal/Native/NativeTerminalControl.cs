@@ -64,10 +64,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     // Detected-URL state. Rows are scanned once per painted content (keyed by
     // the same hash the row cache uses); hit-testing and underline drawing
-    // read the cached spans between redraws.
-    private static readonly Regex LinkRegex = new(
-        @"[a-z][a-z0-9+.\-]*://[^\s<>\u0000-\u001f""']+|www\.[^\s<>\u0000-\u001f""']+",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    // read the cached spans between redraws. Source-generated: no Regex
+    // construction at startup and no per-row match-object overhead.
+    [GeneratedRegex(@"[a-z][a-z0-9+.\-]*://[^\s<>\u0000-\u001f""']+|www\.[^\s<>\u0000-\u001f""']+",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex LinkPattern();
     private int[] _rowLinkHashes = Array.Empty<int>();
     private LinkSpan[][] _rowLinks = Array.Empty<LinkSpan[]>();
     private string?[] _rowLinkTexts = Array.Empty<string?>();
@@ -981,7 +982,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // double-drawing the run with a 1px horizontal offset. Note: a
             // null glyphFace (FormattedText fallback) also needs this, so the
             // check is "did we NOT get a real bold face".
-            var syntheticBold = flags.HasFlag(CellFlags.Bold) && !ReferenceEquals(glyphFace, _boldGlyph);
+            var syntheticBold = (flags & CellFlags.Bold) != 0 && !ReferenceEquals(glyphFace, _boldGlyph);
 
             var contentLength = contentEnd;
             // Read the trimmed run directly from the run builder; no per-run
@@ -1140,9 +1141,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             run.StartCol = startCol;
             run.Length = cellsSpanned;
             run.Foreground = fg;
-            run.HasDecoration = flags.HasFlag(CellFlags.Underline) || flags.HasFlag(CellFlags.Strikethrough);
-            run.Underline = flags.HasFlag(CellFlags.Underline);
-            run.CrossedOut = flags.HasFlag(CellFlags.Strikethrough);
+            run.HasDecoration = (flags & (CellFlags.Underline | CellFlags.Strikethrough)) != 0;
+            run.Underline = (flags & CellFlags.Underline) != 0;
+            run.CrossedOut = (flags & CellFlags.Strikethrough) != 0;
         }
     }
 
@@ -1265,14 +1266,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // Gate: a URL must contain either ":" (scheme) or "www". Two
         // vectorized scans replace a full regex pass for the common
         // link-free row.
-        if (span.IndexOf(':') < 0 && span.IndexOf("www") < 0)
+        if (span.IndexOf(':') < 0 && span.IndexOf("www", StringComparison.Ordinal) < 0)
         {
             _rowLinkTexts[rowIndex] = null;
             return Array.Empty<LinkSpan>();
         }
 
         var count = 0;
-        foreach (var match in LinkRegex.EnumerateMatches(span))
+        foreach (var match in LinkPattern().EnumerateMatches(span))
         {
             var start = match.Index;
             var end = TrimLinkEnd(span, start, match.Index + match.Length);
@@ -1371,8 +1372,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private Typeface ResolveTypeface(CellFlags flags)
     {
-        var bold = flags.HasFlag(CellFlags.Bold);
-        var italic = flags.HasFlag(CellFlags.Italic);
+        var bold = (flags & CellFlags.Bold) != 0;
+        var italic = (flags & CellFlags.Italic) != 0;
         return (bold, italic) switch
         {
             (true, true) => _boldItalicTypeface,
@@ -1384,8 +1385,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private GlyphTypeface? ResolveGlyphTypeface(CellFlags flags)
     {
-        var bold = flags.HasFlag(CellFlags.Bold);
-        var italic = flags.HasFlag(CellFlags.Italic);
+        var bold = (flags & CellFlags.Bold) != 0;
+        var italic = (flags & CellFlags.Italic) != 0;
         if (bold && _boldGlyph is { } boldFace)
         {
             // Bold falls back to the regular face when the family lacks a

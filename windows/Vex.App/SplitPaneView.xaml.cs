@@ -15,7 +15,7 @@ namespace Vex.App;
 /// pane sizes are enforced on the grid definitions rather than in code, so a
 /// drag costs nothing beyond the splitter's own hit-testing.
 /// </summary>
-public partial class SplitPaneView : UserControl
+public sealed partial class SplitPaneView : UserControl
 {
     // Small enough that a pane can be split again (nested splits) even on a
     // half-width pane of a modest window; terminals simply get fewer columns.

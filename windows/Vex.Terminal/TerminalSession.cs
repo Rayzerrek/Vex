@@ -103,7 +103,7 @@ public sealed class TerminalSession : IDisposable
         _ptyOutput = new FileStream(new SafeFileHandle(outputOurSide, ownsHandle: true), FileAccess.Read, BufferSize, isAsync: false);
 
         var shellExe = shell is null ? DefaultShell() : shell;
-        var commandLine = shellExe.StartsWith("\"") ? shellExe : $"\"{shellExe}\"";
+        var commandLine = shellExe.StartsWith('"') ? shellExe : $"\"{shellExe}\"";
         if (!string.IsNullOrEmpty(arguments))
             commandLine += $" {arguments}";
 
