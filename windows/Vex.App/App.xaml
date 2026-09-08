@@ -38,7 +38,7 @@
         <SolidColorBrush x:Key="VexPaneTitleBar" Color="{DynamicResource VexPaneTitleBarColor}"/>
         <SolidColorBrush x:Key="VexPaneTitleBarFocused" Color="{DynamicResource VexPaneTitleBarFocusedColor}"/>
         <SolidColorBrush x:Key="VexTabStrip" Color="{DynamicResource VexTabStripColor}"/>
-        <LinearGradientBrush x:Key="VexTabSelected" StartPoint="0,0" EndPoint="1,1">
+        <LinearGradientBrush x:Key="VexTabSelected" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="{DynamicResource VexTabSelectedStartColor}" Offset="0"/>
             <GradientStop Color="{DynamicResource VexTabSelectedEndColor}" Offset="1"/>
         </LinearGradientBrush>

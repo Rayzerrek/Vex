@@ -89,9 +89,13 @@ public partial class MainWindow : Window
         // Session restoration assigns the initial selection before bindings
         // create its terminal view. Focus it after the first frame so exactly
         // one shell starts, and the window is immediately ready for typing.
-        ContentRendered += (_, _) => Dispatcher.BeginInvoke(
-            () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
-            DispatcherPriority.ContextIdle);
+        ContentRendered += (_, _) =>
+        {
+            Model.StartupMark.Note("content rendered");
+            Dispatcher.BeginInvoke(
+                () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
+                DispatcherPriority.ContextIdle);
+        };
 
         // Sidebar visibility is a single source of truth: any change (toolbar
         // button, keyboard, or the settings toggle) animates the panel.
@@ -130,9 +134,13 @@ public partial class MainWindow : Window
             SidebarPanel.Opacity = 0;
         }
 
-        ContentRendered += (_, _) => Dispatcher.BeginInvoke(
-            () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
-            DispatcherPriority.ContextIdle);
+        ContentRendered += (_, _) =>
+        {
+            Model.StartupMark.Note("content rendered");
+            Dispatcher.BeginInvoke(
+                () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
+                DispatcherPriority.ContextIdle);
+        };
 
         AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
     }
@@ -413,6 +421,9 @@ public partial class MainWindow : Window
 
     private void AnimateSidebar(double target, bool fadeOut = false)
     {
+        // Freeze VT/conpty resizes until the animation settles; otherwise
+        // every frame reflows the terminal buffer (see ResizeSuspended).
+        NativeTerminalControl.ResizeSuspended = true;
         _sidebarAnimationClosing = fadeOut;
         _sidebarAnimationFromWidth = SidebarColumn.ActualWidth;
         _sidebarAnimationToWidth = target;
@@ -472,6 +483,7 @@ public partial class MainWindow : Window
 
         CompositionTarget.Rendering -= SidebarAnimation_Rendering;
         _sidebarAnimationClock = null;
+        NativeTerminalControl.ResizeSuspended = false;
 
         if (_sidebarAnimationClosing)
         {
@@ -1202,6 +1214,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         CompositionTarget.Rendering -= SidebarAnimation_Rendering;
+        NativeTerminalControl.ResizeSuspended = false;
         AppSettings.Instance.Flush(); // persist the debounced settings write
         SessionStore.Save(_workspace); // persist projects, tabs and divider positions
         base.OnClosed(e);
