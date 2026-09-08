@@ -10,7 +10,7 @@ internal static class FastColor
 {
     public static Color ParseHex(ReadOnlySpan<char> hex, byte alpha = 0xFF)
     {
-        if (hex.StartsWith("#"))
+        if (hex.StartsWith('#'))
             hex = hex[1..];
 
         if (hex.Length == 6)

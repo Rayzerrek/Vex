@@ -91,8 +91,19 @@ public static class ProcessTree
                 if (levelBest is { } lb)
                     best = lb;
                 // A deeper level exists only if some node in it is not excluded;
-                // otherwise the deepest non-excluded candidate stands.
-                if (next.Any(k => !excludedNames.Contains(k.Name)))
+                // otherwise the deepest non-excluded candidate stands. Manual
+                // loop: this runs per BFS level on every poll cycle, so it
+                // avoids the LINQ enumerator and closure allocation.
+                var deeper = false;
+                foreach (var k in next)
+                {
+                    if (!excludedNames.Contains(k.Name))
+                    {
+                        deeper = true;
+                        break;
+                    }
+                }
+                if (deeper)
                     frontier = new Queue<(string Name, uint Pid)>(next);
                 else
                     break;

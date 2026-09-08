@@ -7,7 +7,7 @@ using System.Windows.Threading;
 
 namespace Vex.App;
 
-public partial class FileTreeView : UserControl
+public sealed partial class FileTreeView : UserControl
 {
     public FileTreeView()
     {

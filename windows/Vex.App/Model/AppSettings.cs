@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace Vex.App.Model;
 
-public class AppSettings : ObservableObject
+public sealed class AppSettings : ObservableObject
 {
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

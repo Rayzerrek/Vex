@@ -6,7 +6,7 @@ using Vex.App.Model;
 
 namespace Vex.App;
 
-public partial class TabPeek : OverlayControl
+public sealed partial class TabPeek : OverlayControl
 {
     private Project? _project;
 

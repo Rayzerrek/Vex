@@ -1,6 +1,6 @@
 namespace Vex.App.Model;
 
-public class TerminalTheme
+public sealed class TerminalTheme
 {
     public string Name { get; set; } = "";
     public string Background { get; set; } = "";

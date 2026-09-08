@@ -115,9 +115,9 @@ public sealed class TerminalPalette
     public void Resolve(ColorTag fgTag, int fgValue, ColorTag bgTag, int bgValue,
         CellFlags flags, out Brush? foreground, out Brush? background)
     {
-        var bold = flags.HasFlag(CellFlags.Bold);
+        var bold = (flags & CellFlags.Bold) != 0;
 
-        if (flags.HasFlag(CellFlags.Inverse))
+        if ((flags & CellFlags.Inverse) != 0)
         {
             (fgTag, bgTag) = (bgTag, fgTag);
             (fgValue, bgValue) = (bgValue, fgValue);
@@ -131,7 +131,7 @@ public sealed class TerminalPalette
 
         background = bgTag == ColorTag.None ? null : ResolveColor(bgTag, bgValue, bold);
 
-        if (flags.HasFlag(CellFlags.Invisible))
+        if ((flags & CellFlags.Invisible) != 0)
         {
             // Same color as the background keeps selection+search readable-ish
             // while staying invisible on the plain surface.
@@ -141,7 +141,7 @@ public sealed class TerminalPalette
 
         foreground = fgTag == ColorTag.None ? Foreground : ResolveColor(fgTag, fgValue, bold);
 
-        if (flags.HasFlag(CellFlags.Faint) && foreground is SolidColorBrush solid)
+        if ((flags & CellFlags.Faint) != 0 && foreground is SolidColorBrush solid)
         {
             if (!_dimCache.TryGetValue(fgValue, out var dim))
             {

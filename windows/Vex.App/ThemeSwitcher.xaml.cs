@@ -9,7 +9,7 @@ using Vex.App.Terminal.Native;
 
 namespace Vex.App;
 
-public partial class ThemeSwitcher : OverlayControl
+public sealed partial class ThemeSwitcher : OverlayControl
 {
     private string _openingTheme = "";
     private bool _editorOpen;
@@ -251,7 +251,7 @@ public partial class ThemeSwitcher : OverlayControl
 
         try
         {
-            var json = JsonSerializer.Serialize(theme, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(theme, VexJsonContext.Default.TerminalTheme);
             Clipboard.SetText(json);
         }
         catch { /* clipboard may be locked; ignore */ }

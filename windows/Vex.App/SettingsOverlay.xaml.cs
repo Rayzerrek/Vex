@@ -37,7 +37,7 @@ public sealed class SliderFillConverter : IMultiValueConverter
         => throw new NotSupportedException();
 }
 
-public partial class SettingsOverlay : OverlayControl
+public sealed partial class SettingsOverlay : OverlayControl
 {
     private const double AnimDuration = 280;
     private const double PageDuration = 130;
