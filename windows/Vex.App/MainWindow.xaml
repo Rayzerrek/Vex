@@ -590,7 +590,7 @@
 
             <!-- Main content: the active tab's pane layout, with a
                  drag-to-split preview overlay on top. -->
-            <Grid x:Name="ContentArea" Grid.Column="1">
+            <Grid x:Name="ContentArea" Grid.Column="1" Background="{StaticResource VexTabStrip}">
                 <ContentControl Content="{Binding SelectedProject.SelectedTab.DisplayRoot}"/>
                 <Canvas x:Name="DropOverlay" Visibility="Collapsed" Background="Transparent" Panel.ZIndex="50">
                     <Border x:Name="SplitPreview" Background="{StaticResource VexSplitPreview}" BorderBrush="{StaticResource VexSplitPreviewBorder}"

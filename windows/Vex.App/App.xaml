@@ -16,7 +16,7 @@
              not a saturated frame. -->
         <Color x:Key="VexFocusBorderColor">#FF4C6B9C</Color>
         <!-- Translucent chrome overlays so the acrylic backdrop shows through. -->
-        <Color x:Key="VexSidebarColor">#30111317</Color>
+        <Color x:Key="VexSidebarColor">#40111317</Color>
         <Color x:Key="VexTabStripColor">#40111317</Color>
         <Color x:Key="VexPaneTitleBarColor">#FF1E2026</Color>
         <Color x:Key="VexPaneTitleBarFocusedColor">#FF262932</Color>
