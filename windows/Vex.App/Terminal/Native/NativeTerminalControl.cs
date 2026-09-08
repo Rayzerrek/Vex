@@ -82,6 +82,12 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private ulong _lastScrollOffset;
     private bool _resizeScheduled;
 
+    // While the sidebar animates, the window width changes every frame and
+    // each size event would resize the VT emulator (buffer reflow) plus the
+    // ConPTY session. MainWindow sets this for the animation duration; the
+    // final width then triggers exactly one recalc afterwards.
+    internal static bool ResizeSuspended { get; set; }
+
     private GlyphTypeface? _normalGlyph;
     private GlyphTypeface? _boldGlyph;
     private GlyphTypeface? _italicGlyph;
@@ -254,6 +260,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var theme = BuiltInThemes.Resolve(themeName);
             PaletteFor(theme);
             TypefacesFor(fontFamily ?? "Cascadia Mono");
+            // Touch the native VT library off the UI thread so the first
+            // GhosttyTerminal does not pay LoadLibrary inside the first frame.
+            System.Runtime.InteropServices.NativeLibrary.TryLoad("ghostty-vt", out _);
         }
         catch
         {
@@ -396,6 +405,12 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void RecalculateGridSize()
     {
         if (!IsLoaded || ActualWidth < 150 || ActualHeight < 80)
+            return;
+        // Coalesced away while the sidebar animates: reflowing the VT buffer
+        // and resizing ConPTY once per animation frame guarantees jank. The
+        // animation's final width raises another size event after resume, so
+        // exactly one recalc still happens.
+        if (ResizeSuspended)
             return;
 
         var cols = Math.Max(2, (int)(ActualWidth / _cellWidth));
@@ -655,6 +670,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         var bytesFed = 0;
         var consumed = 0;
+        // Time budget alongside the byte budget below: VT feed cost per byte
+        // varies, and a single huge burst must not monopolize the UI thread
+        // past one frame. Leftovers reschedule another pump; order is kept.
+        var pumpWatch = System.Diagnostics.Stopwatch.StartNew();
         foreach (var c in toProcess)
         {
             if (c.Array is not { } buffer)
@@ -666,6 +685,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // Stop feeding once the budget is reached; return the remaining
             // chunks to the pending list and reschedule another pump.
             if (bytesFed + c.Count > PumpByteBudget && bytesFed > 0)
+                break;
+            if (consumed > 0 && pumpWatch.Elapsed.TotalMilliseconds > 8)
                 break;
 
             try
@@ -982,14 +1003,16 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
             if (map is not null)
             {
-                // Pending GlyphRun segment state. Per-segment arrays are
-                // required: WPF's retained-mode DrawingContext keeps a
-                // reference to the glyph/advance arrays until the render
-                // thread consumes the visual, so reusing them across runs
-                // corrupts already-queued runs (stale characters, jumbled
-                // glyphs).
-                var segIndices = new ushort[contentLength];
-                var segAdvances = new double[contentLength];
+                // Pending GlyphRun segment state. The flushed per-segment
+                // copies below must stay freshly allocated: WPF's
+                // retained-mode DrawingContext keeps a reference to the
+                // glyph/advance arrays until the render thread consumes the
+                // visual, so reusing those across runs corrupts already-queued
+                // runs (stale characters, jumbled glyphs). The staging area
+                // here is internal to this run and safe to reuse.
+                EnsureSegScratch(contentLength);
+                var segIndices = _segIndicesScratch;
+                var segAdvances = _segAdvancesScratch;
                 var segUnits = 0;
                 var segStartCol = startCol;
 
@@ -1148,6 +1171,22 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     }
 
     private TextRun[] _textRuns = Array.Empty<TextRun>();
+
+    // Staging buffers for the pending GlyphRun segment inside FlushRun. Only
+    // the flushed per-segment copies are handed to the DrawingContext (which
+    // retains them); the staging area itself is reused across runs to avoid
+    // two array allocations per text run per row per frame.
+    private ushort[] _segIndicesScratch = Array.Empty<ushort>();
+    private double[] _segAdvancesScratch = Array.Empty<double>();
+
+    private void EnsureSegScratch(int required)
+    {
+        if (_segIndicesScratch.Length < required)
+        {
+            _segIndicesScratch = new ushort[required];
+            _segAdvancesScratch = new double[required];
+        }
+    }
 
     private readonly record struct LinkSpan(int StartCol, int EndCol, int TextStart, int TextLength);
 

@@ -83,11 +83,16 @@ public abstract class LeafPane : PaneNode, IDisposable
     /// Fades a pane's view in the first time it is realized, so a split or a
     /// new tab reads as a soft reveal instead of a hard pop. Later re-shows
     /// (switching back to a tab) skip the fade: the view has already been
-    /// revealed once and the terminal stays live in the tree.
+    /// revealed once and the terminal stays live in the tree. Panes realized
+    /// in the first seconds of the process (session restore) also skip it:
+    /// fading every restored pane forces extra composition frames exactly
+    /// when the first frame is most expensive.
     /// </summary>
     private static void PrepareEntrance(object view)
     {
         if (view is not FrameworkElement element)
+            return;
+        if (TimeSinceProcessStart() < TimeSpan.FromSeconds(3))
             return;
         element.Opacity = 0;
         RoutedEventHandler onLoaded = null!;
@@ -101,6 +106,12 @@ public abstract class LeafPane : PaneNode, IDisposable
                 });
         };
         element.Loaded += onLoaded;
+    }
+
+    private static TimeSpan TimeSinceProcessStart()
+    {
+        try { return DateTime.UtcNow - System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime(); }
+        catch { return TimeSpan.MaxValue; }
     }
 
     /// <summary>The view when it already exists; unlike <see cref="View"/>,

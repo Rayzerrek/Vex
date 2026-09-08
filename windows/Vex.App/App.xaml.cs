@@ -10,14 +10,16 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        Model.StartupMark.Note("OnStartup begin");
 
         // WPF throttles Storyboard/timeline animations to 60 FPS no matter the
-        // display (a null DesiredFrameRate falls back to 60). Raise the ceiling
-        // so every animation samples once per rendered frame — i.e. at the
-        // monitor's native refresh rate on 120/144/240 Hz panels.
+        // display (a null DesiredFrameRate falls back to 60). 120 covers
+        // 60/120 Hz panels at one sample per frame; 240 doubled timeline-clock
+        // pressure on the UI thread (which also feeds VT output and builds
+        // GlyphRuns), starving the terminal pump during animations.
         System.Windows.Media.Animation.Timeline.DesiredFrameRateProperty.OverrideMetadata(
             typeof(System.Windows.Media.Animation.Timeline),
-            new PropertyMetadata(240));
+            new PropertyMetadata(120));
 
         // Required for ported TUI applications (vim, agy, pi, etc.) to
         // output VT sequences properly under ConPTY.
@@ -44,6 +46,7 @@ public partial class App : Application
         }, TaskScheduler.Default);
 
         await settingsTask.ConfigureAwait(true);
+        Model.StartupMark.Note("settings ready");
 
         // Chrome colors follow the active terminal theme (sidebar, tab strip,
         // pane chrome, accents). Resolve the stored appearance first so the
@@ -75,10 +78,12 @@ public partial class App : Application
         // it may already be done by now). Creating the window after both
         // are ready avoids a flash of empty content.
         var workspace = await sessionTask.ConfigureAwait(true);
+        Model.StartupMark.Note("session ready");
 
         // Create and show the main window with the pre-loaded workspace.
         var window = new MainWindow(workspace);
         window.Show();
+        Model.StartupMark.Note("window shown");
     }
 }
 
