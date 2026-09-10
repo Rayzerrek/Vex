@@ -1,21 +1,21 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
-  --color-background: #111210;
-  --color-surface: #171815;
-  --color-surface-strong: #1d1f1a;
-  --color-text: #e8e6df;
-  --color-muted: #96978f;
-  --color-faint: #62645e;
-  --color-line: #30322c;
-  --color-accent: #d0e46b;
-  --color-accent-strong: #e1ed91;
+  --color-background: #fafaf8;
+  --color-surface: #ffffff;
+  --color-text: #191918;
+  --color-muted: #6f6e69;
+  --color-faint: #a8a6a0;
+  --color-line: #e7e5de;
+  --color-accent: #191918;
+  --color-accent-strong: #000000;
 
-  --font-sans: "Helvetica Neue", "Segoe UI", sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-
-  --breakpoint-narrow: 680px;
-  --breakpoint-wide: 900px;
+  --font-sans: ui-sans-serif, -apple-system, "Helvetica Neue", "Segoe UI",
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas,
+    "Liberation Mono", monospace;
 
   --animate-blink: blink 1.2s steps(1) infinite;
 
@@ -33,13 +33,24 @@
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
   font-family: var(--font-sans);
   color: var(--color-text);
   background: var(--color-background);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+.dark {
+  --color-background: #0e1013;
+  --color-surface: #191b20;
+  --color-text: #e6e8eb;
+  --color-muted: #868d96;
+  --color-faint: #5b636e;
+  --color-line: #2a2f37;
+  --color-accent: #e6e8eb;
+  --color-accent-strong: #ffffff;
 }
 
 * {
@@ -59,8 +70,13 @@ a {
   color: inherit;
 }
 
+::selection {
+  background: var(--color-text);
+  color: var(--color-background);
+}
+
 :focus-visible {
-  outline: 1px solid var(--color-accent);
+  outline: 1px solid var(--color-text);
   outline-offset: 4px;
 }
 
@@ -74,11 +90,19 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
-.theme-workspace,
-.theme-workspace * {
-  transition-property: color, background-color, border-color, box-shadow;
-  transition-duration: 220ms;
-  transition-timing-function: ease-out;
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise {
+  animation: rise 0.6s ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {

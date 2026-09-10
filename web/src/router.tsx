@@ -5,7 +5,6 @@ import {
 } from "@tanstack/react-router";
 import { DownloadPage, HomePage } from "./app.tsx";
 import { RootLayout } from "./root-layout.tsx";
-import { ThemeWorkspace } from "./theme-workspace.tsx";
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -21,13 +20,7 @@ const downloadRoute = createRoute({
   component: DownloadPage
 });
 
-const themesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/themes",
-  component: ThemeWorkspace
-});
-
-const routeTree = rootRoute.addChildren([homeRoute, downloadRoute, themesRoute]);
+const routeTree = rootRoute.addChildren([homeRoute, downloadRoute]);
 
 export const router = createRouter({ routeTree });
 
