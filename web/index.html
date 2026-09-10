@@ -4,15 +4,27 @@
     <meta charset="UTF-8" />
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cg transform='skewX(-14)' fill='%23d0e46b'%3E%3Crect x='2' y='6' width='5' height='12'/%3E%3Crect x='11' width='5' height='18'/%3E%3C/g%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cg transform='skewX(-14)' fill='%23191918'%3E%3Crect x='2' y='6' width='5' height='12'/%3E%3Crect x='11' width='5' height='18'/%3E%3C/g%3E%3C/svg%3E"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#111210" />
+    <meta name="theme-color" content="#fafaf8" />
     <meta
       name="description"
       content="Vex is a focused native terminal workspace for Windows."
     />
     <title>Vex</title>
+    <script>
+      try {
+        var t = localStorage.getItem("vex-theme");
+        if (
+          t === "dark" ||
+          (!t &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches)
+        ) {
+          document.documentElement.classList.add("dark");
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
