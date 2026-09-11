@@ -41,6 +41,28 @@ public enum MouseInputAction
     Motion = 2,
 }
 
+/// <summary>libghostty's GhosttyMouseTrackingMode: which DEC tracking mode
+/// (9/1000/1002/1003) the mouse encoder should report events under.</summary>
+public enum MouseTrackingMode
+{
+    None = 0,
+    X10 = 1,
+    Normal = 2,
+    Button = 3,
+    Any = 4,
+}
+
+/// <summary>libghostty's GhosttyMouseFormat: which wire format (X10/UTF-8/
+/// SGR/URXVT/SGR-pixels) the mouse encoder should emit.</summary>
+public enum MouseFormat
+{
+    X10 = 0,
+    Utf8 = 1,
+    Sgr = 2,
+    Urxvt = 3,
+    SgrPixels = 4,
+}
+
 public enum MouseInputButton
 {
     Left = 1,
@@ -122,6 +144,8 @@ public sealed class GhosttyTerminal : IDisposable
     private IntPtr _mouseEncoder;
     private IntPtr _mouseEvent;
     private int _mouseAnyButtonPressed = -1;
+    private MouseTrackingMode _lastEncodedTracking = (MouseTrackingMode)(-1);
+    private MouseFormat _lastEncodedFormat = (MouseFormat)(-1);
     private GCHandle _selfHandle;
     private uint[] _codepoints = new uint[MaxGraphemes];
     private bool _disposed;
@@ -668,12 +692,39 @@ public sealed class GhosttyTerminal : IDisposable
         }
     }
 
+    /// <summary>Mouse tracking mode read from the live DEC private mode bits.
+    /// This deliberately avoids libghostty's cached last-transition flag: that
+    /// cache collapses to "none" when an application resets one tracking mode
+    /// while another is still set (e.g. 1000h 1002h 1000l), which would make
+    /// every encoded report empty even though the app still tracks the mouse.
+    /// Single lock acquisition; the encoding hot path uses the Locked variant
+    /// to avoid re-entering the monitor per mode read.</summary>
+    public MouseTrackingMode TrackingMode
+    {
+        get
+        {
+            lock (_vtLock)
+                return TrackingModeLocked;
+        }
+    }
+
+    /// <summary>Mouse report wire format, from the live format mode bits
+    /// (1005/1006/1015/1016).</summary>
+    public MouseFormat Format
+    {
+        get
+        {
+            lock (_vtLock)
+                return FormatLocked;
+        }
+    }
+
     public bool MouseTracking
     {
         get
         {
             lock (_vtLock)
-                return TryGet(TerminalData.MouseTracking, out bool tracking) && tracking;
+                return TrackingModeLocked != MouseTrackingMode.None;
         }
     }
 
@@ -700,6 +751,20 @@ public sealed class GhosttyTerminal : IDisposable
         var config = new GhosttyTerminalModeConfig { mode = mode, value = false };
         return Native.ghostty_terminal_get(_terminal, TerminalData.Mode, (IntPtr)(&config)) == Result.Success && config.value;
     }
+
+    private MouseTrackingMode TrackingModeLocked =>
+        GetMode(1003) ? MouseTrackingMode.Any
+        : GetMode(1002) ? MouseTrackingMode.Button
+        : GetMode(1000) ? MouseTrackingMode.Normal
+        : GetMode(9) ? MouseTrackingMode.X10
+        : MouseTrackingMode.None;
+
+    private MouseFormat FormatLocked =>
+        GetMode(1016) ? MouseFormat.SgrPixels
+        : GetMode(1015) ? MouseFormat.Urxvt
+        : GetMode(1005) ? MouseFormat.Utf8
+        : GetMode(1006) ? MouseFormat.Sgr
+        : MouseFormat.X10;
 
     // ---- Scroll -------------------------------------------------------------
 
@@ -733,15 +798,33 @@ public sealed class GhosttyTerminal : IDisposable
     // ---- Mouse input -------------------------------------------------------
 
     /// <summary>Encodes a pointer event using the exact tracking mode and
-    /// wire format requested by the terminal application. A successful event
-    /// can produce zero bytes when its current mode filters that event.</summary>
+    /// wire format requested by the terminal application. The encoder is
+    /// driven from the live mode bits — the same state the host's routing
+    /// decisions read — so routing and encoding can never disagree; the
+    /// cached last-transition flag that setopt_from_terminal relied on
+    /// collapses to "none" when an app resets one tracking mode while
+    /// another is still set, silently emitting zero bytes for every event.
+    /// setopt is dirty-checked since modes change rarely. A successful event
+    /// can still produce zero bytes when its current mode filters that
+    /// event.</summary>
     public unsafe int EncodeMouse(MouseInputAction action, MouseInputButton? button,
         MouseInputModifiers modifiers, double x, double y, bool anyButtonPressed,
         byte[] output)
     {
         lock (_vtLock)
         {
-            Native.ghostty_mouse_encoder_setopt_from_terminal(_mouseEncoder, _terminal);
+            var tracking = TrackingModeLocked;
+            if (_lastEncodedTracking != tracking)
+            {
+                _lastEncodedTracking = tracking;
+                Native.ghostty_mouse_encoder_setopt(_mouseEncoder, MouseEncoderOption.Event, (IntPtr)(&tracking));
+            }
+            var format = FormatLocked;
+            if (_lastEncodedFormat != format)
+            {
+                _lastEncodedFormat = format;
+                Native.ghostty_mouse_encoder_setopt(_mouseEncoder, MouseEncoderOption.Format, (IntPtr)(&format));
+            }
 
             var pressedValue = anyButtonPressed ? 1 : 0;
             if (_mouseAnyButtonPressed != pressedValue)

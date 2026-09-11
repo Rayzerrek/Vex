@@ -2203,7 +2203,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             var button = steps > 0 ? MouseInputButton.WheelUp : MouseInputButton.WheelDown;
             for (var i = 0; i < Math.Abs(steps); i++)
+            {
                 SendMouse(MouseInputAction.Press, button, e.GetPosition(this));
+                SendMouse(MouseInputAction.Release, button, e.GetPosition(this));
+            }
             e.Handled = true;
             return;
         }

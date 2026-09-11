@@ -124,6 +124,23 @@ public sealed partial class NativeTerminalControl
         return Encoding.Latin1.GetString(output, 0, len).Replace("\x1b", "<ESC>");
     }
 
+    /// <summary>The live tracking-mode snapshot the WPF mouse handlers route
+    /// on, refreshed the same way FlushRedraw does.</summary>
+    internal bool SelfTestMouseTracking
+    {
+        get { _mouseTracking = _terminal.MouseTracking; return _mouseTracking; }
+    }
+
+    /// <summary>Sends one mouse event through the exact SendMouse path the
+    /// WPF handlers use (same encoder, same coordinate scaling, same PTY
+    /// write), addressed in grid cells for live scenarios.</summary>
+    internal void SelfTestMouse(MouseInputAction action, MouseInputButton? button, double col, double row)
+    {
+        SendMouse(action, button, new System.Windows.Point(
+            col * _cellWidth + _cellWidth / 2,
+            row * _cellHeight + _cellHeight / 2));
+    }
+
     internal int[] SelfTestWheelSteps(params int[] deltas)
     {
         _wheelDeltaRemainder = 0;
