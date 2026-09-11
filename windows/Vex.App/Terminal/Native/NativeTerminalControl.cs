@@ -105,6 +105,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private bool _cursorBlinkSetting = true;
     private bool _selectionActive;
     private bool _selectionDragged;
+    private bool _mouseSelectionOverride;
+    private bool _mouseTracking;
     private bool _kbSelectionActive;
     private int _kbAnchorCol, _kbAnchorRow;
     private int _kbFocusCol, _kbFocusRow;
@@ -158,6 +160,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         Focusable = true;
         FocusVisualStyle = null;
         Cursor = Cursors.IBeam;
+        MouseDown += OnTerminalMouseDown;
+        MouseUp += OnTerminalMouseUp;
         // Grayscale antialiasing so glyphs blend against the translucent
         // surface; ClearType subpixel AA fringes when a run has no solid
         // background behind it.
@@ -761,6 +765,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             _terminal.UpdateFrame();
             var dirty = _terminal.FrameDirty;
+            _mouseTracking = _terminal.MouseTracking;
             var scrollbar = _terminal.Scrollbar;
             var viewportMoved = scrollbar.Offset != _lastScrollOffset;
             _lastScrollOffset = scrollbar.Offset;
@@ -1981,12 +1986,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         }
 
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && _terminal.MouseTracking)
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && _mouseTracking)
         {
             // Shift overrides app mouse capture, as in xterm; it starts a
             // fresh selection at the pointer instead of extending.
             _selectionActive = true;
             _selectionDragged = false;
+            _mouseSelectionOverride = true;
             _terminal.SelectionPress(col, row, pos.X, pos.Y);
             CaptureMouse();
             FlushRedraw();
@@ -1996,9 +2002,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         // Applications that capture the mouse get their events instead of
         // selection.
-        if (_terminal.MouseTracking)
+        if (_mouseTracking)
         {
-            SendMouse(0, col, row, release: false, motion: false);
+            SetReportedButton(MouseInputButton.Left, true);
+            SendMouse(MouseInputAction.Press, MouseInputButton.Left, pos);
+            CaptureMouse();
             e.Handled = true;
             return;
         }
@@ -2036,20 +2044,33 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         }
 
-        SetScrollbarHovered(IsOverScrollbar(pos));
+        var overScrollbar = IsOverScrollbar(pos);
+        SetScrollbarHovered(overScrollbar);
 
         // Hand cursor over detected links, except while dragging a selection
         // or the scrollbar thumb (where the pointer means something else).
-        if (!_scrollbarDragging && !IsOverScrollbar(pos) && e.LeftButton != MouseButtonState.Pressed)
+        if (!_scrollbarDragging && !overScrollbar && e.LeftButton != MouseButtonState.Pressed)
         {
             var (hoverCol, hoverRow) = CellFromPoint(pos);
-            Cursor = IsOverLink(hoverCol, hoverRow) ? Cursors.Hand : Cursors.IBeam;
+            Cursor = IsOverLink(hoverCol, hoverRow) && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
+                ? Cursors.Hand
+                : _mouseTracking && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)
+                    ? Cursors.Arrow
+                    : Cursors.IBeam;
         }
 
-        if (_terminal.MouseTracking && e.LeftButton == MouseButtonState.Pressed)
+        // The overlay scrollbar owns unbuttoned hover at the right edge. A
+        // drag that started in the terminal remains captured by the TUI.
+        if (overScrollbar && _reportedMouseButtons == 0 && !_mouseSelectionOverride)
         {
-            var (col, row) = CellFromPoint(pos);
-            SendMouse(0, col, row, release: false, motion: true);
+            e.Handled = true;
+            return;
+        }
+
+        if (_mouseTracking && !_mouseSelectionOverride)
+        {
+            SendMouse(MouseInputAction.Motion, PressedButton(e), pos);
+            e.Handled = true;
             return;
         }
         if (IsMouseCaptured && e.LeftButton == MouseButtonState.Pressed && _selectionActive)
@@ -2076,10 +2097,22 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         }
 
-        if (_terminal.MouseTracking)
+        if (_mouseSelectionOverride)
         {
             var (col, row) = CellFromPoint(e.GetPosition(this));
-            SendMouse(0, col, row, release: true, motion: false);
+            _terminal.SelectionRelease(col, row);
+            if (!_selectionDragged)
+                ClearSelection();
+            else
+                FlushRedraw();
+            _selectionDragged = false;
+            _mouseSelectionOverride = false;
+        }
+        else if (_mouseTracking || IsReportedButton(MouseInputButton.Left))
+        {
+            var pos = e.GetPosition(this);
+            SetReportedButton(MouseInputButton.Left, false);
+            SendMouse(MouseInputAction.Release, MouseInputButton.Left, pos);
             e.Handled = true;
         }
         else if (_selectionActive)
@@ -2092,21 +2125,59 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 FlushRedraw();
             _selectionDragged = false;
         }
-        if (IsMouseCaptured)
-            ReleaseMouseCapture();
+        ReleaseMouseIfNoButtons();
     }
 
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseRightButtonDown(e);
-        if (_terminal.MouseTracking)
+        Focus();
+        if (_mouseTracking)
         {
-            var (col, row) = CellFromPoint(e.GetPosition(this));
-            SendMouse(2, col, row, release: false, motion: false);
+            var pos = e.GetPosition(this);
+            SetReportedButton(MouseInputButton.Right, true);
+            SendMouse(MouseInputAction.Press, MouseInputButton.Right, pos);
+            CaptureMouse();
             e.Handled = true;
             return;
         }
         PasteClipboard();
+        e.Handled = true;
+    }
+
+    protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
+    {
+        base.OnMouseRightButtonUp(e);
+        if (!_mouseTracking && !IsReportedButton(MouseInputButton.Right))
+            return;
+        SetReportedButton(MouseInputButton.Right, false);
+        SendMouse(MouseInputAction.Release, MouseInputButton.Right, e.GetPosition(this));
+        ReleaseMouseIfNoButtons();
+        e.Handled = true;
+    }
+
+    private void OnTerminalMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle)
+            return;
+        Focus();
+        if (!_mouseTracking)
+            return;
+        SetReportedButton(MouseInputButton.Middle, true);
+        SendMouse(MouseInputAction.Press, MouseInputButton.Middle, e.GetPosition(this));
+        CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void OnTerminalMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle)
+            return;
+        if (!_mouseTracking && !IsReportedButton(MouseInputButton.Middle))
+            return;
+        SetReportedButton(MouseInputButton.Middle, false);
+        SendMouse(MouseInputAction.Release, MouseInputButton.Middle, e.GetPosition(this));
+        ReleaseMouseIfNoButtons();
         e.Handled = true;
     }
 
@@ -2119,71 +2190,84 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
-        if (_terminal.MouseTracking)
+        if (!_mouseTracking && _terminal.IsAlternateScreen)
+            return; // viewport scrollback does not exist on the alt screen
+
+        var steps = ConsumeWheelSteps(e.Delta);
+        if (_mouseTracking)
         {
-            var (col, row) = CellFromPoint(e.GetPosition(this));
-            SendMouse(e.Delta > 0 ? 4 : 5, col, row, release: false, motion: false);
+            var button = steps > 0 ? MouseInputButton.WheelUp : MouseInputButton.WheelDown;
+            for (var i = 0; i < Math.Abs(steps); i++)
+                SendMouse(MouseInputAction.Press, button, e.GetPosition(this));
             e.Handled = true;
             return;
         }
-        if (_terminal.IsAlternateScreen)
-            return; // viewport scrollback does not exist on the alt screen
-        var lines = Math.Max(1, SystemParameters.WheelScrollLines) * (e.Delta / 120);
+        var lines = Math.Max(1, SystemParameters.WheelScrollLines) * steps;
         if (lines != 0)
+        {
             _terminal.ScrollBy(-lines);
-        FlushRedraw();
+            FlushRedraw();
+        }
         e.Handled = true;
     }
 
-    /// <summary>SGR mouse report (1006): ESC [ &lt; b ; x+1 ; y+1 M/m. Built
-    /// into a reusable buffer: mouse-motion reports can fire dozens of times
-    /// per second while dragging, so per-event string and byte-array
-    /// allocations would be pure GC churn.</summary>
-    private readonly byte[] _mouseReport = new byte[24];
+    private readonly byte[] _mouseReport = new byte[128];
+    private int _reportedMouseButtons;
+    private int _wheelDeltaRemainder;
 
-    private void SendMouse(int button, int col, int row, bool release, bool motion)
+    private int ConsumeWheelSteps(int delta)
     {
-        var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
-        var alt = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
-        var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
-
-        var code = button;
-        if (motion)
-            code += 32;
-        else if (button >= 4)
-            code += 64; // wheel
-        if (shift)
-            code += 4;
-        if (alt)
-            code += 8;
-        if (ctrl)
-            code += 16;
-
-        var len = 0;
-        _mouseReport[len++] = 0x1B;
-        _mouseReport[len++] = (byte)'[';
-        _mouseReport[len++] = (byte)'<';
-        len = AppendDecimal(_mouseReport, len, code);
-        _mouseReport[len++] = (byte)';';
-        len = AppendDecimal(_mouseReport, len, col + 1);
-        _mouseReport[len++] = (byte)';';
-        len = AppendDecimal(_mouseReport, len, row + 1);
-        _mouseReport[len++] = (byte)(release ? 'm' : 'M');
-        _session?.Write(_mouseReport.AsSpan(0, len));
+        _wheelDeltaRemainder += delta;
+        var steps = _wheelDeltaRemainder / 120;
+        _wheelDeltaRemainder %= 120;
+        return steps;
     }
 
-    private static int AppendDecimal(byte[] buffer, int offset, int value)
+    private void SendMouse(MouseInputAction action, MouseInputButton? button, Point position)
     {
-        Span<byte> digits = stackalloc byte[4];
-        var count = 0;
-        do
-        {
-            digits[count++] = (byte)('0' + value % 10);
-            value /= 10;
-        } while (value > 0);
-        for (var i = count - 1; i >= 0; i--)
-            buffer[offset++] = digits[i];
-        return offset;
+        var keyboard = Keyboard.Modifiers;
+        var modifiers = MouseInputModifiers.None;
+        if (keyboard.HasFlag(ModifierKeys.Shift)) modifiers |= MouseInputModifiers.Shift;
+        if (keyboard.HasFlag(ModifierKeys.Control)) modifiers |= MouseInputModifiers.Control;
+        if (keyboard.HasFlag(ModifierKeys.Alt)) modifiers |= MouseInputModifiers.Alt;
+
+        // The native encoder takes integer geometry while WPF renders in
+        // fractional DIPs. Scale into the same coordinate space supplied to
+        // ghostty_terminal_resize so cell-edge clicks cannot drift a column.
+        var nativeCellWidth = Math.Max(1, (int)_cellWidth);
+        var nativeCellHeight = Math.Max(1, (int)_cellHeight);
+        var nativeX = position.X * nativeCellWidth / _cellWidth;
+        var nativeY = position.Y * nativeCellHeight / _cellHeight;
+        var len = _terminal.EncodeMouse(action, button, modifiers,
+            nativeX, nativeY, _reportedMouseButtons != 0, _mouseReport);
+        if (len > 0)
+            _session?.Write(_mouseReport.AsSpan(0, len));
+    }
+
+    private void SetReportedButton(MouseInputButton button, bool pressed)
+    {
+        var bit = 1 << (int)button;
+        if (pressed)
+            _reportedMouseButtons |= bit;
+        else
+            _reportedMouseButtons &= ~bit;
+    }
+
+    private bool IsReportedButton(MouseInputButton button)
+        => (_reportedMouseButtons & (1 << (int)button)) != 0;
+
+    private MouseInputButton? PressedButton(MouseEventArgs e)
+    {
+        if (e.LeftButton == MouseButtonState.Pressed) return MouseInputButton.Left;
+        if (e.MiddleButton == MouseButtonState.Pressed) return MouseInputButton.Middle;
+        if (e.RightButton == MouseButtonState.Pressed) return MouseInputButton.Right;
+        return null;
+    }
+
+    private void ReleaseMouseIfNoButtons()
+    {
+        if (_reportedMouseButtons == 0 && IsMouseCaptured)
+            ReleaseMouseCapture();
     }
 
     private (int Col, int Row) CellFromPoint(Point point)

@@ -89,8 +89,27 @@ public sealed partial class FileSearchView : UserControl
 
         // Half-debounce: the initial keystroke after quiet executes immediately (0ms latency),
         // rapid subsequent keystrokes within typing burst (120ms) coalesce to trailing edge off UI thread.
-        _searchDebouncer ??= new HalfDebouncer<string>(TimeSpan.FromMilliseconds(120), PerformSearch, leadingEdge: true);
+        _searchDebouncer ??= new HalfDebouncer<string>(TimeSpan.FromMilliseconds(120), QueueSearch, leadingEdge: true);
         _searchDebouncer.Trigger(query);
+    }
+
+    private void QueueSearch(string query)
+    {
+        // The leading edge runs inline on the UI thread; the trailing edge
+        // comes from HalfDebouncer's timer. Marshal only that trailing call so
+        // CTS replacement and view state stay single-threaded without adding
+        // latency to the first keystroke.
+        if (Dispatcher.CheckAccess())
+        {
+            PerformSearch(query);
+            return;
+        }
+
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+        {
+            if (query == SearchBox.Text)
+                PerformSearch(query);
+        });
     }
 
     private void PerformSearch(string query)

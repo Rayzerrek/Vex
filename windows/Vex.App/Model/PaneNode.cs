@@ -157,12 +157,15 @@ public sealed class TerminalPane : LeafPane
     private readonly string _workingDirectory;
     private string _lastTitle = "";
     private Action<string>? _titleRawHandler;
+    private bool _iconTrackingRegistered;
+    private uint _lastIconPid;
+    private string? _lastIconProcessName;
+    private string? _lastIconTitle;
 
     public TerminalPane(string workingDirectory)
     {
         _workingDirectory = workingDirectory;
         Title = "Terminal";
-        AppIconTracker.Register(this);
     }
 
     /// <summary>
@@ -179,13 +182,28 @@ public sealed class TerminalPane : LeafPane
         var process = ProcessTree.DeepestDescendant(index, (uint)pid, AppIconCatalog.ExcludedShells);
         if (process is not { } deepest)
             return;
-        var commandLine = AppIconCatalog.IsShimHost(deepest.Name)
+
+        if (_lastIconPid == deepest.Pid &&
+            string.Equals(_lastIconProcessName, deepest.Name, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(_lastIconTitle, _lastTitle, StringComparison.Ordinal))
+            return;
+
+        var isShim = AppIconCatalog.IsShimHost(deepest.Name);
+        var commandLine = isShim
             ? ProcessCommandLine.Get(deepest.Pid)
             : null;
         // Assign null as well as a resolved icon. Otherwise a shell icon (most
         // often Nushell) survives after a node-hosted app starts but its
         // command line is temporarily unreadable.
         AppIcon = AppIconCatalog.Resolve(deepest.Name, commandLine, _lastTitle);
+        // A shim command line can be temporarily unreadable. Do not cache
+        // that miss: the next poll must retry instead of leaving no icon.
+        if (!isShim || commandLine is not null)
+        {
+            _lastIconPid = deepest.Pid;
+            _lastIconProcessName = deepest.Name;
+            _lastIconTitle = _lastTitle;
+        }
     }
 
     private bool _focusPendingLoaded;
@@ -236,6 +254,11 @@ public sealed class TerminalPane : LeafPane
     protected override object CreateView()
     {
         var view = new Terminal.Native.NativeTerminalControl(_workingDirectory);
+        if (!_iconTrackingRegistered)
+        {
+            _iconTrackingRegistered = true;
+            AppIconTracker.Register(this);
+        }
         _titleRawHandler = rawTitle =>
         {
             _lastTitle = rawTitle;
@@ -286,7 +309,11 @@ public sealed class TerminalPane : LeafPane
 
     public override void Dispose()
     {
-        AppIconTracker.Unregister(this);
+        if (_iconTrackingRegistered)
+        {
+            _iconTrackingRegistered = false;
+            AppIconTracker.Unregister(this);
+        }
         if (_titleRawHandler is { } handler && ViewIfCreated is Terminal.Native.NativeTerminalControl control)
             control.TitleRawChanged -= handler;
         base.Dispose();

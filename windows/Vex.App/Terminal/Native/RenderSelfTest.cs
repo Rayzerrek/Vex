@@ -739,6 +739,32 @@ internal static class RenderSelfTest
             ? "PASS selection: keyboard band painted"
             : $"FAIL selection: keyboard band not painted (lum={kbLum})");
 
+        // Mouse input must follow the mode negotiated by the TUI rather than
+        // always emitting SGR. These asymmetric cases catch both a hard-coded
+        // encoder and forwarding drag events in mode 1000.
+        var mouseSgr = control.SelfTestMouseReport("\x1b[?1000h\x1b[?1006h",
+            MouseInputAction.Press, MouseInputButton.Left, anyButtonPressed: true);
+        var mouseUrxvt = control.SelfTestMouseReport("\x1b[?1000h\x1b[?1015h",
+            MouseInputAction.Press, MouseInputButton.Left, anyButtonPressed: true);
+        var mouseFilteredMotion = control.SelfTestMouseReport("\x1b[?1000h\x1b[?1006h",
+            MouseInputAction.Motion, MouseInputButton.Left, anyButtonPressed: true);
+        var mouseAnyMotion = control.SelfTestMouseReport("\x1b[?1003h\x1b[?1006h",
+            MouseInputAction.Motion, null, col: 7);
+        Report(control, $"mouse sgr='{mouseSgr}' urxvt='{mouseUrxvt}' normal-motion='{mouseFilteredMotion}' any-motion='{mouseAnyMotion}'");
+        Report(control, mouseSgr == "<ESC>[<0;6;3M" && mouseUrxvt == "<ESC>[32;6;3M"
+            ? "PASS mouse: negotiated SGR and URXVT formats"
+            : "FAIL mouse: negotiated format encoding wrong");
+        Report(control, mouseFilteredMotion.Length == 0 && mouseAnyMotion == "<ESC>[<35;8;3M"
+            ? "PASS mouse: tracking modes filter motion correctly"
+            : "FAIL mouse: tracking mode filtering wrong");
+        var wheelForward = control.SelfTestWheelSteps(40, 40, 40);
+        var wheelReverse = control.SelfTestWheelSteps(-60, -60);
+        Report(control, wheelForward.SequenceEqual(new[] { 0, 0, 1 }) &&
+                        wheelReverse.SequenceEqual(new[] { 0, -1 })
+            ? "PASS mouse: precision wheel deltas accumulate"
+            : "FAIL mouse: precision wheel accumulation wrong");
+        Report(control, control.SelfTestBenchMouseEncoding(10_000));
+
         // URL detection: a printed link resolves at its cells (and nowhere
         // else), and its underline paints the cell bottom rows — the
         // ctrl+click target for the mouse handler.
