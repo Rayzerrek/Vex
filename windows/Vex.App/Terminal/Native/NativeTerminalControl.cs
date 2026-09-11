@@ -35,7 +35,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     // Per-row run caches: one glyph-index array per row, sized to the row
     // width, reused across redraws.  A row can have at most (cols+1)/2 runs
     // (alternating background runs), so the text-run pool is sized to that.
-    private TerminalSession? _session;
+    private volatile TerminalSession? _session;
     private bool _sessionStarting;
     private TerminalPalette _palette = new(BuiltInThemes.VexDark);
     private FontFamily _fontFamily = new("Cascadia Mono");
@@ -49,8 +49,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private Typeface _boldItalicTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
     private int _cols;
     private int _rows;
-    private bool _needsFullRedraw = true;
-    private bool _disposed;
+    private volatile bool _needsFullRedraw = true;
+    private volatile bool _disposed;
 
     // Per-row render caches: the row's last-painted content hash plus the
     // render version it was painted with. RedrawRow skips the DrawingVisual
@@ -96,10 +96,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private double _baselineY;
 
     private readonly object _outputLock = new();
-    private List<ArraySegment<byte>> _pendingOutput = new();
-    private List<ArraySegment<byte>> _processingOutput = new();
-    private bool _pumpScheduled;
-    private bool _pumpRunning;
+    private bool _redrawScheduled;
 
     private bool _caretBlinkVisible = true;
     private bool _cursorBlinkSetting = true;
@@ -170,10 +167,31 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _terminal = new GhosttyTerminal(80, 24);
         _terminal.TitleChanged += title =>
         {
-            TitleRawChanged?.Invoke(title);
-            TitleChanged?.Invoke(title);
+            // Feed now runs on the PTY reader thread, so titles arrive off
+            // the UI thread; titles feed data-bound properties and must hop.
+            if (Dispatcher.CheckAccess())
+            {
+                TitleRawChanged?.Invoke(title);
+                TitleChanged?.Invoke(title);
+            }
+            else
+            {
+                var snapshot = title;
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    TitleRawChanged?.Invoke(snapshot);
+                    TitleChanged?.Invoke(snapshot);
+                });
+            }
         };
-        _terminal.WritePty += (data, len) => _session?.Write(data.AsSpan(0, len));
+        // Runs on the PTY reader thread during Feed (query responses) and is
+        // written straight into ConPTY: DSR/OSC answers no longer wait for a
+        // UI-thread pump, which is what tripped Neovim's 100 ms
+        // "Did not detect DSR response" timeout. Responses go through
+        // WriteResponseToPty, not a raw Write: ConPTY parses each input
+        // write as one key encoding and drops ESC-prefixed chunks that are
+        // not valid keys (DSR, OSC/DA reports), so they are fragmented.
+        _terminal.WritePty += (data, len) => WriteResponseToPty(data, len);
 
         _children = new VisualCollection(this)
         {
@@ -570,6 +588,18 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
             }
 
+            // Publish immediately on this thread: the reader loop inside Start
+            // already delivers child output (and the emulator already answers
+            // queries via WritePty) before the dispatcher continuation below
+            // runs. Publishing late dropped those early responses.
+            if (_disposed)
+            {
+                session.Dispose();
+                _ = Dispatcher.BeginInvoke(() => _sessionStarting = false);
+                return;
+            }
+            _session = session;
+
             _ = Dispatcher.BeginInvoke(() =>
             {
                 _sessionStarting = false;
@@ -577,10 +607,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 // starting (e.g. the tab was closed). Dispose the orphan.
                 if (_disposed)
                 {
+                    _session = null;
                     session.Dispose();
                     return;
                 }
-                _session = session;
                 // Apply any grid size that changed while the session was
                 // starting.
                 if (_cols != cols || _rows != rows)
@@ -603,142 +633,70 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void OnSessionOutput(ArraySegment<byte> chunk)
     {
-        if (DiagPath is not null && chunk.Array is { } diagBuffer)
-            Diag($"chunk {Convert.ToBase64String(diagBuffer, chunk.Offset, chunk.Count)}");
-        lock (_outputLock)
+        if (chunk.Array is not { } buffer)
+            return;
+        if (DiagPath is not null)
+            Diag($"chunk {Convert.ToBase64String(buffer, chunk.Offset, chunk.Count)}");
+        try
         {
-            if (_pendingOutput.Count < 10000)
-                _pendingOutput.Add(chunk);
-            else if (chunk.Array is { } droppedBuffer)
-                System.Buffers.ArrayPool<byte>.Shared.Return(droppedBuffer);
-            if (_pumpScheduled)
-                return;
-            _pumpScheduled = true;
+            // Feed on this PTY reader thread, not on the UI thread. The
+            // emulator answers queries (DSR, OSC color reports, DA) through
+            // WritePty synchronously inside Feed, so responses reach ConPTY
+            // in microseconds instead of waiting behind a UI-thread pump and
+            // a full render pass — the wait Neovim's 100 ms
+            // "Did not detect DSR response" timeout tripped on. Order is
+            // preserved: chunks arrive here in pipe order and Feed serializes
+            // them through the terminal lock.
+            lock (_terminal.SyncRoot)
+            {
+                if (_disposed)
+                    return;
+                try
+                {
+                    _terminal.Feed(buffer, chunk.Offset, chunk.Count);
+                }
+                catch (Exception e)
+                {
+                    // Guard against malformed input states; the next redraw
+                    // repaints everything from the emulator state.
+                    var tail = Convert.ToHexString(buffer, Math.Max(0, chunk.Count - 24), Math.Min(24, chunk.Count));
+                    Diag($"feed-EXCEPTION {e.GetType().Name}: {e.Message} chunk={chunk.Count} tail={tail}");
+                    _needsFullRedraw = true;
+                }
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
         }
 
-        ScheduleOutputPump();
+        ScheduleRedraw();
     }
 
-    private void ScheduleOutputPump()
+    private void ScheduleRedraw()
     {
-        // Defer to the next idle frame (below Render priority) and coalesce
-        // all chunks that arrive during that frame into a single feed batch.
-        // This bounds emulation cost to one pass per rendered frame and keeps
-        // typing/scroll responsive even under heavy output.
+        // Coalesce all output that arrives during a frame into one render
+        // pass. Feeding already happened above, so a redundant pass only
+        // repaints rows the emulator marked dirty since the last snapshot.
+        lock (_outputLock)
+        {
+            if (_redrawScheduled)
+                return;
+            _redrawScheduled = true;
+        }
+
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
-            if (_pumpRunning)
-                return; // a pump is already draining; it will re-queue if needed
-            _pumpRunning = true;
-            try
+            lock (_outputLock)
             {
-                PumpOutput();
+                _redrawScheduled = false;
             }
-            finally
-            {
-                _pumpRunning = false;
-            }
+            // Output that arrives during the flush sets the flag again and
+            // schedules its own pass; the emulator state it fed is picked up
+            // there, so no update is lost.
+            if (!_disposed)
+                FlushRedraw();
         });
-    }
-
-    /// <summary>Maximum bytes to feed to the VT emulator in a single pump
-    /// cycle. A large output burst (e.g. <c>cat</c> of a big file) can queue
-    /// thousands of chunks; processing them all in one pass monopolizes the
-    /// UI thread. The budget caps each pass and yields back to the message
-    /// loop so input, layout, and animations stay responsive.</summary>
-    private const int PumpByteBudget = 256 * 1024;
-
-    private void PumpOutput()
-    {
-        List<ArraySegment<byte>> toProcess;
-        lock (_outputLock)
-        {
-            toProcess = _pendingOutput;
-            _pendingOutput = _processingOutput;
-            _processingOutput = toProcess;
-        }
-
-        if (_disposed)
-        {
-            foreach (var c in toProcess)
-            {
-                if (c.Array is { } buffer)
-                    System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-            }
-            toProcess.Clear();
-            lock (_outputLock)
-            {
-                _pumpScheduled = false;
-            }
-            return;
-        }
-
-        var bytesFed = 0;
-        var consumed = 0;
-        // Time budget alongside the byte budget below: VT feed cost per byte
-        // varies, and a single huge burst must not monopolize the UI thread
-        // past one frame. Leftovers reschedule another pump; order is kept.
-        var pumpWatch = System.Diagnostics.Stopwatch.StartNew();
-        foreach (var c in toProcess)
-        {
-            if (c.Array is not { } buffer)
-            {
-                consumed++;
-                continue;
-            }
-
-            // Stop feeding once the budget is reached; return the remaining
-            // chunks to the pending list and reschedule another pump.
-            if (bytesFed + c.Count > PumpByteBudget && bytesFed > 0)
-                break;
-            if (consumed > 0 && pumpWatch.Elapsed.TotalMilliseconds > 8)
-                break;
-
-            try
-            {
-                _terminal.Feed(buffer, c.Offset, c.Count);
-                bytesFed += c.Count;
-            }
-            catch (Exception e)
-            {
-                // Guard against malformed input states. Keep draining the
-                // batch so every pooled buffer is returned and schedule a
-                // full redraw.
-                var tail = Convert.ToHexString(buffer, Math.Max(0, c.Count - 24), Math.Min(24, c.Count));
-                Diag($"feed-EXCEPTION {e.GetType().Name}: {e.Message} chunk={c.Count} tail={tail}");
-                _needsFullRedraw = true;
-            }
-            finally
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-            }
-            consumed++;
-        }
-
-        // Return any unconsumed chunks to the pending list so they are
-        // processed in the next pump cycle.
-        if (consumed < toProcess.Count)
-        {
-            lock (_outputLock)
-            {
-                for (var i = consumed; i < toProcess.Count; i++)
-                    _pendingOutput.Add(toProcess[i]);
-            }
-        }
-        toProcess.Clear();
-
-        FlushRedraw();
-
-        var scheduleAgain = false;
-        lock (_outputLock)
-        {
-            if (_pendingOutput.Count > 0)
-                scheduleAgain = true;
-            else
-                _pumpScheduled = false;
-        }
-        if (scheduleAgain)
-            ScheduleOutputPump();
     }
 
     private void OnSessionExited(int exitCode)
@@ -751,6 +709,53 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             FlushRedraw();
             ProcessExited?.Invoke(exitCode);
         });
+    }
+
+    /// <summary>
+    /// Writes one emulator response (DSR, OSC/DA report, ...) into ConPTY.
+    /// ConPTY parses each input write as a single key encoding and drops
+    /// ESC-prefixed chunks that are not valid keys — an atomically written
+    /// <c>ESC[0n</c> never reaches the child, which is exactly Neovim's
+    /// "Did not detect DSR response" warning. Fragmenting at every ESC makes
+    /// each chunk decode to plain key events (a lone ESC, then ordinary
+    /// characters) that the child reassembles into the response bytes.
+    /// Keystroke/mouse/paste input must stay atomic (arrows are <c>ESC[A</c>)
+    /// and never goes through here.
+    /// </summary>
+    private void WriteResponseToPty(byte[] data, int length)
+    {
+        var session = _session;
+        if (session is null || length <= 0)
+            return;
+        var start = 0;
+        for (var i = 0; i < length; i++)
+        {
+            if (data[i] != 0x1B)
+                continue;
+            if (i > start)
+            {
+                session.Write(data.AsSpan(start, i - start));
+                ResponseGap();
+            }
+            session.Write(data.AsSpan(i, 1));
+            start = i + 1;
+            if (start < length)
+                ResponseGap();
+        }
+        if (start < length)
+            session.Write(data.AsSpan(start, length - start));
+    }
+
+    private static void ResponseGap()
+    {
+        // Let ConPTY's input thread consume the previous chunk before the
+        // next lands: back-to-back writes can merge into one pipe read and
+        // get swallowed as a unit again. A ~2 ms busy-wait is deterministic
+        // (Thread.Sleep is bound by the 15.6 ms timer granularity) and
+        // negligible next to Neovim's 100 ms DSR budget; responses are rare.
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        while (watch.Elapsed.TotalMilliseconds < 2)
+            Thread.SpinWait(200);
     }
 
     // ---- Rendering --------------------------------------------------------
@@ -2283,12 +2288,25 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     {
         if (_disposed)
             return;
+        // Publish first: the reader thread checks this under the terminal
+        // lock and stops feeding, so the emulator below cannot be freed
+        // mid-feed.
         _disposed = true;
         _blinkTimer.Stop();
         _scrollbarAnimTimer.Stop();
         AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
-        _session?.Dispose();
-        _terminal.Dispose();
+        var session = _session;
+        _session = null;
+        if (session is not null)
+        {
+            session.OutputReceived -= OnSessionOutput;
+            session.Exited -= OnSessionExited;
+            session.Dispose();
+        }
+        lock (_terminal.SyncRoot)
+        {
+            _terminal.Dispose();
+        }
     }
 
     // FocusTerminal is called by the workspace when the pane gets activated.

@@ -99,7 +99,10 @@ public sealed class FrameRow
 
 /// <summary>
 /// Managed wrapper over one libghostty-vt terminal plus its render state.
-/// All calls must be serialized on a single thread (the WPF UI thread).
+/// All native calls are serialized through <see cref="SyncRoot"/>: VT input
+/// is fed on the PTY reader thread so query responses (DSR, OSC color
+/// reports, DA) go back to the child immediately, while the WPF UI thread
+/// only takes the lock to snapshot render state.
 /// </summary>
 public sealed class GhosttyTerminal : IDisposable
 {
@@ -123,16 +126,54 @@ public sealed class GhosttyTerminal : IDisposable
     private uint[] _codepoints = new uint[MaxGraphemes];
     private bool _disposed;
 
+    // Serializes every native terminal call. Feed runs on the PTY reader
+    // thread while snapshots (UpdateFrame, modes, mouse, selection) run on
+    // the UI thread. Callbacks (WritePty, TitleChanged) fire on the feeding
+    // thread while the lock is held; C# monitors are re-entrant, so they may
+    // safely re-enter locked accessors on the same thread. Lock ordering is
+    // always terminal-lock before session-write-lock, never the reverse.
+    private readonly object _vtLock = new();
+    public object SyncRoot => _vtLock;
+
     // OSC 133 (FTCS shell-integration) filter state. Vex does not implement
     // shell integration, and ghostty-vt's "fresh line" handling of OSC 133;A
     // moves the cursor when it is not at column 0. A shell (nushell) sends
     // these markers on every prompt redraw, so after a full-screen TUI exits
     // the mid-line marker forces a line feed and the prompt is drawn twice.
     // Stripping the sequence makes the emulator ignore it like an unknown OSC.
-    private enum FeedState { Normal, EscapeSeen, InOsc, InOscEscapeSeen }
+    //
+    // The same filter also drops bare DCS query payloads. ConPTY eats the DCS
+    // wrapper (introducer and terminator) of client queries such as nvim's
+    // XTGETTCAP (`ESC P + q 4D73 ST`) and DECRQSS (`ESC P $ q m ST`), so only
+    // the middles (`+q4D73`, `$qm`) reach the emulator — which would print
+    // them as visible garbage. The payloads are matched against known probes
+    // (whitelist, never a bare prefix) so ordinary text is never eaten.
+    private enum FeedState { Normal, EscapeSeen, InOsc, InOscEscapeSeen, InCsi, InDcs, InDcsEsc, PlusSeen, InPlusQuery, DollarSeen, DollarQSeen }
     private FeedState _feedState;
     private readonly byte[] _oscBuf = new byte[1024];
     private int _oscLen;
+    private readonly byte[] _plusBuf = new byte[256];
+    private int _plusLen;
+
+    /// <summary>
+    /// Hex-encoded capability names of XTGETTCAP probes worth hiding when
+    /// ConPTY delivers them without their DCS wrapper. Compared
+    /// case-insensitively; every `;`-separated token of a candidate must be
+    /// listed, otherwise the candidate is ordinary text and passes through.
+    /// </summary>
+    private static readonly HashSet<string> s_strippedCaps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "5463", // Tc
+        "524742", // RGB
+        "4D73", // Ms
+        "536D756C78", // Smulx (extended underline)
+        "53796E63", // Sync (synchronized output)
+        "73657472676266", // setrgbf
+        "73657472676262", // setrgbb
+        "536574756C63", // Setulc (underline color)
+        "544E", // TN
+        "436F", // Co
+    };
 
     public event Action<string>? TitleChanged;
     public event Action<byte[], int>? WritePty;
@@ -209,13 +250,25 @@ public sealed class GhosttyTerminal : IDisposable
 
     public unsafe void Feed(byte[] data, int offset, int count)
     {
+        lock (_vtLock)
+        {
+            FeedLocked(data, offset, count);
+        }
+    }
+
+    private unsafe void FeedLocked(byte[] data, int offset, int count)
+    {
         if (count <= 0 || _disposed)
             return;
 
-        // Fast path: no ESC byte and no half-parsed OSC pending, so the
-        // chunk goes straight to the emulator without the pooled-array copy
-        // the filter below needs.
-        if (_feedState == FeedState.Normal && Array.IndexOf(data, (byte)0x1B, offset, count) < 0)
+        // Fast path: no ESC byte, no query introducer, and no half-parsed
+        // sequence pending, so the chunk goes straight to the emulator
+        // without the pooled-array copy the filter below needs. Only `+q`
+        // and `$q` pairs (ConPTY-stripped DCS payloads carry no ESC to key
+        // off) force the slow path — lone `+`/`$` (`a+b`, `$env:`) would pass
+        // through the filter unchanged anyway. A trailing `+`/`$` also takes
+        // the slow path so a pair split across Feed calls is still caught.
+        if (_feedState == FeedState.Normal && !NeedsSlowPath(data, offset, count))
         {
             fixed (byte* p = data)
                 Native.ghostty_terminal_vt_write(_terminal, (IntPtr)(p + offset), (nuint)count);
@@ -236,6 +289,10 @@ public sealed class GhosttyTerminal : IDisposable
                     case FeedState.Normal:
                         if (b == 0x1B)
                             _feedState = FeedState.EscapeSeen;
+                        else if (b == (byte)'+')
+                            _feedState = FeedState.PlusSeen;
+                        else if (b == (byte)'$')
+                            _feedState = FeedState.DollarSeen;
                         else
                             buffer[written++] = b;
                         break;
@@ -244,6 +301,25 @@ public sealed class GhosttyTerminal : IDisposable
                         {
                             _feedState = FeedState.InOsc;
                             _oscLen = 0;
+                        }
+                        else if (b == (byte)'P' || b == (byte)'X' || b == (byte)'^' || b == (byte)'_')
+                        {
+                            // DCS/SOS/PM/APC: arbitrary payload that may itself
+                            // contain `+q`/`$q` (XTGETTCAP, DECRQSS). Pass it
+                            // through untouched until its terminator so the
+                            // bare-payload matcher below never fires inside a
+                            // real sequence.
+                            buffer[written++] = 0x1B;
+                            buffer[written++] = b;
+                            _feedState = FeedState.InDcs;
+                        }
+                        else if (b == (byte)'[')
+                        {
+                            // CSI: params/intermediates may contain `+`/`$`
+                            // (DECRQM `$p`); same passthrough requirement.
+                            buffer[written++] = 0x1B;
+                            buffer[written++] = b;
+                            _feedState = FeedState.InCsi;
                         }
                         else
                         {
@@ -291,6 +367,128 @@ public sealed class GhosttyTerminal : IDisposable
                             if (_oscLen < _oscBuf.Length)
                                 _oscBuf[_oscLen++] = b;
                             _feedState = FeedState.InOsc;
+                        }
+                        break;
+                    case FeedState.PlusSeen:
+                        if (b == (byte)'q')
+                        {
+                            _feedState = FeedState.InPlusQuery;
+                            _plusLen = 0;
+                        }
+                        else
+                        {
+                            // Ordinary text (`a+b`, `C++`): emit the held `+`
+                            // and reprocess this byte as Normal.
+                            buffer[written++] = (byte)'+';
+                            _feedState = FeedState.Normal;
+                            i--;
+                        }
+                        break;
+                    case FeedState.InPlusQuery:
+                        if (IsQueryByte(b) && _plusLen < _plusBuf.Length)
+                        {
+                            _plusBuf[_plusLen++] = b;
+                        }
+                        else if (_plusLen >= _plusBuf.Length)
+                        {
+                            // Pathological run: fail open and emit verbatim.
+                            buffer[written++] = (byte)'+';
+                            buffer[written++] = (byte)'q';
+                            for (var j = 0; j < _plusLen; j++)
+                                buffer[written++] = _plusBuf[j];
+                            buffer[written++] = b;
+                            _feedState = FeedState.Normal;
+                        }
+                        else if (IsStrippedQuery(_plusBuf, _plusLen))
+                        {
+                            // A ConPTY-stripped XTGETTCAP probe: drop it, then
+                            // reprocess the terminating byte as Normal (it is
+                            // usually the ESC of whatever the app sent next).
+                            _feedState = FeedState.Normal;
+                            i--;
+                        }
+                        else
+                        {
+                            // Not a known probe: emit everything verbatim.
+                            buffer[written++] = (byte)'+';
+                            buffer[written++] = (byte)'q';
+                            for (var j = 0; j < _plusLen; j++)
+                                buffer[written++] = _plusBuf[j];
+                            _feedState = FeedState.Normal;
+                            i--;
+                        }
+                        break;
+                    case FeedState.DollarSeen:
+                        if (b == (byte)'q')
+                        {
+                            _feedState = FeedState.DollarQSeen;
+                        }
+                        else
+                        {
+                            // Ordinary text (`$env:`, `$100`): emit the held
+                            // `$` and reprocess this byte as Normal.
+                            buffer[written++] = (byte)'$';
+                            _feedState = FeedState.Normal;
+                            i--;
+                        }
+                        break;
+                    case FeedState.DollarQSeen:
+                        if (b == (byte)'m')
+                        {
+                            // nvim's undercurl DECRQSS probe (`ESC P $ q m`)
+                            // without its DCS wrapper: drop it. Anything else
+                            // after `$q` (shell `$query`, …) is text.
+                            _feedState = FeedState.Normal;
+                        }
+                        else
+                        {
+                            buffer[written++] = (byte)'$';
+                            buffer[written++] = (byte)'q';
+                            _feedState = FeedState.Normal;
+                            i--;
+                        }
+                        break;
+                    case FeedState.InCsi:
+                        if (b == 0x1B)
+                        {
+                            // ESC aborts CSI and starts a new sequence.
+                            _feedState = FeedState.EscapeSeen;
+                        }
+                        else
+                        {
+                            buffer[written++] = b;
+                            if (b >= 0x40 && b <= 0x7E)
+                                _feedState = FeedState.Normal;
+                        }
+                        break;
+                    case FeedState.InDcs:
+                        if (b == 0x07) // BEL terminates some DCS uses
+                        {
+                            buffer[written++] = b;
+                            _feedState = FeedState.Normal;
+                        }
+                        else if (b == 0x1B) // possible ST (ESC \) terminator
+                        {
+                            _feedState = FeedState.InDcsEsc;
+                        }
+                        else
+                        {
+                            buffer[written++] = b;
+                        }
+                        break;
+                    case FeedState.InDcsEsc:
+                        if (b == 0x5C) // ST terminator: ESC \
+                        {
+                            buffer[written++] = 0x1B;
+                            buffer[written++] = 0x5C;
+                            _feedState = FeedState.Normal;
+                        }
+                        else
+                        {
+                            // A lone ESC inside the payload, not a terminator.
+                            buffer[written++] = 0x1B;
+                            buffer[written++] = b;
+                            _feedState = FeedState.InDcs;
                         }
                         break;
                 }
@@ -346,44 +544,156 @@ public sealed class GhosttyTerminal : IDisposable
         return num == 133;
     }
 
+    private static bool IsQueryByte(byte b) =>
+        (b >= (byte)'0' && b <= (byte)'9')
+        || (b >= (byte)'A' && b <= (byte)'F')
+        || (b >= (byte)'a' && b <= (byte)'f')
+        || b == (byte)';';
+
+    /// <summary>
+    /// Single vectorized pass deciding whether the chunk needs the byte loop
+    /// below: any ESC, any `+q`/`$q` pair, or a trailing `+`/`$` that could
+    /// pair across the Feed boundary. Everything else is filter-neutral.
+    /// Scanning for `q` (rare) instead of `+`/`$` (common in code and shells)
+    /// keeps the scan to one pass with almost no scalar steps.
+    /// </summary>
+    private static bool NeedsSlowPath(byte[] data, int offset, int count)
+    {
+        var span = data.AsSpan(offset, count);
+        if (span.IsEmpty)
+            return false;
+        if (span[^1] is (byte)'+' or (byte)'$')
+            return true;
+        var i = 0;
+        while (i < span.Length)
+        {
+            var j = span[i..].IndexOfAny((byte)0x1B, (byte)'q');
+            if (j < 0)
+                return false;
+            i += j;
+            if (span[i] == 0x1B)
+                return true;
+            // A `q` only matters when directly preceded by `+`/`$`. A pair
+            // split across chunks is already covered: the previous chunk
+            // ended with `+`/`$`, which forced the slow path above.
+            if (i > 0 && span[i - 1] is (byte)'+' or (byte)'$')
+                return true;
+            i++;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// True when the buffered `+q…` payload is a known XTGETTCAP probe: every
+    /// `;`-separated token must be a listed capability. Anything else is
+    /// ordinary text (`a+q1B`, base64, …) and must pass through untouched.
+    /// </summary>
+    private static bool IsStrippedQuery(byte[] buf, int len)
+    {
+        if (len == 0)
+            return false;
+        var start = 0;
+        for (var i = 0; i <= len; i++)
+        {
+            if (i == len || buf[i] == (byte)';')
+            {
+                if (i == start)
+                    return false;
+                if (!IsKnownCap(buf, start, i - start))
+                    return false;
+                start = i + 1;
+            }
+        }
+        return true;
+    }
+
+    private static bool IsKnownCap(byte[] buf, int offset, int length)
+    {
+        // Queries are rare (a few per TUI startup), so a short string per
+        // token against the case-insensitive set is fine.
+        var token = Encoding.ASCII.GetString(buf, offset, length);
+        return s_strippedCaps.Contains(token);
+    }
+
     public void Reset()
     {
-        _feedState = FeedState.Normal;
-        Native.ghostty_terminal_reset(_terminal);
+        lock (_vtLock)
+        {
+            // Pending one-byte candidates (`+`, `$`, half OSC/DCS payloads)
+            // are dropped with the state; Reset has no callers today and the
+            // most that can vanish is an unflushed probe fragment.
+            _feedState = FeedState.Normal;
+            _oscLen = 0;
+            _plusLen = 0;
+            Native.ghostty_terminal_reset(_terminal);
+        }
     }
 
     // ---- Geometry / colors ------------------------------------------------
 
     public void Resize(int cols, int rows, int cellWidthPx, int cellHeightPx)
     {
-        _cols = cols;
-        _rows = rows;
-        _cellWidthPx = cellWidthPx;
-        _cellHeightPx = cellHeightPx;
-        Check(Native.ghostty_terminal_resize(_terminal, (ushort)cols, (ushort)rows, (uint)cellWidthPx, (uint)cellHeightPx), "resize");
-        ConfigureMouseEncoderSize();
+        lock (_vtLock)
+        {
+            _cols = cols;
+            _rows = rows;
+            _cellWidthPx = cellWidthPx;
+            _cellHeightPx = cellHeightPx;
+            Check(Native.ghostty_terminal_resize(_terminal, (ushort)cols, (ushort)rows, (uint)cellWidthPx, (uint)cellHeightPx), "resize");
+            ConfigureMouseEncoderSize();
+        }
     }
 
     public unsafe void SetDefaultColors(GhosttyColorRgb foreground, GhosttyColorRgb background,
         GhosttyColorRgb cursor, GhosttyColorRgb[] palette256)
     {
-        SetOption(TerminalOption.ColorForeground, foreground);
-        SetOption(TerminalOption.ColorBackground, background);
-        SetOption(TerminalOption.ColorCursor, cursor);
-        fixed (GhosttyColorRgb* palette = palette256)
-            Check(Native.ghostty_terminal_set(_terminal, TerminalOption.ColorPalette, (IntPtr)palette), "set palette");
+        lock (_vtLock)
+        {
+            SetOption(TerminalOption.ColorForeground, foreground);
+            SetOption(TerminalOption.ColorBackground, background);
+            SetOption(TerminalOption.ColorCursor, cursor);
+            fixed (GhosttyColorRgb* palette = palette256)
+                Check(Native.ghostty_terminal_set(_terminal, TerminalOption.ColorPalette, (IntPtr)palette), "set palette");
+        }
     }
 
     // ---- Modes ------------------------------------------------------------
 
-    public bool IsAlternateScreen =>
-        TryGet(TerminalData.ActiveScreen, out TerminalScreen screen) && screen == TerminalScreen.Alternate;
+    public bool IsAlternateScreen
+    {
+        get
+        {
+            lock (_vtLock)
+                return TryGet(TerminalData.ActiveScreen, out TerminalScreen screen) && screen == TerminalScreen.Alternate;
+        }
+    }
 
-    public bool MouseTracking => TryGet(TerminalData.MouseTracking, out bool tracking) && tracking;
+    public bool MouseTracking
+    {
+        get
+        {
+            lock (_vtLock)
+                return TryGet(TerminalData.MouseTracking, out bool tracking) && tracking;
+        }
+    }
 
-    public bool ApplicationCursor => GetMode(1);
+    public bool ApplicationCursor
+    {
+        get
+        {
+            lock (_vtLock)
+                return GetMode(1);
+        }
+    }
 
-    public bool BracketedPaste => GetMode(2004);
+    public bool BracketedPaste
+    {
+        get
+        {
+            lock (_vtLock)
+                return GetMode(2004);
+        }
+    }
 
     private unsafe bool GetMode(ushort mode)
     {
@@ -393,8 +703,14 @@ public sealed class GhosttyTerminal : IDisposable
 
     // ---- Scroll -------------------------------------------------------------
 
-    public (ulong Total, ulong Offset, ulong Len) Scrollbar =>
-        TryGet(TerminalData.Scrollbar, out GhosttyTerminalScrollbar sb) ? (sb.total, sb.offset, sb.len) : (0, 0, 0);
+    public (ulong Total, ulong Offset, ulong Len) Scrollbar
+    {
+        get
+        {
+            lock (_vtLock)
+                return TryGet(TerminalData.Scrollbar, out GhosttyTerminalScrollbar sb) ? (sb.total, sb.offset, sb.len) : (0, 0, 0);
+        }
+    }
 
     public void ScrollToTop() => Scroll(Native.ScrollViewportTag.Top, 0);
 
@@ -423,32 +739,35 @@ public sealed class GhosttyTerminal : IDisposable
         MouseInputModifiers modifiers, double x, double y, bool anyButtonPressed,
         byte[] output)
     {
-        Native.ghostty_mouse_encoder_setopt_from_terminal(_mouseEncoder, _terminal);
-
-        var pressedValue = anyButtonPressed ? 1 : 0;
-        if (_mouseAnyButtonPressed != pressedValue)
+        lock (_vtLock)
         {
-            _mouseAnyButtonPressed = pressedValue;
-            byte pressed = anyButtonPressed ? (byte)1 : (byte)0;
-            Native.ghostty_mouse_encoder_setopt(_mouseEncoder, MouseEncoderOption.AnyButtonPressed, (IntPtr)(&pressed));
+            Native.ghostty_mouse_encoder_setopt_from_terminal(_mouseEncoder, _terminal);
+
+            var pressedValue = anyButtonPressed ? 1 : 0;
+            if (_mouseAnyButtonPressed != pressedValue)
+            {
+                _mouseAnyButtonPressed = pressedValue;
+                byte pressed = anyButtonPressed ? (byte)1 : (byte)0;
+                Native.ghostty_mouse_encoder_setopt(_mouseEncoder, MouseEncoderOption.AnyButtonPressed, (IntPtr)(&pressed));
+            }
+
+            Native.ghostty_mouse_event_set_action(_mouseEvent, action);
+            if (button is { } value)
+                Native.ghostty_mouse_event_set_button(_mouseEvent, value);
+            else
+                Native.ghostty_mouse_event_clear_button(_mouseEvent);
+            Native.ghostty_mouse_event_set_mods(_mouseEvent, modifiers);
+            Native.ghostty_mouse_event_set_position(_mouseEvent, new Native.GhosttyMousePosition
+            {
+                x = (float)x,
+                y = (float)y,
+            });
+
+            var result = Native.ghostty_mouse_encoder_encode(
+                _mouseEncoder, _mouseEvent, output, (nuint)output.Length, out var written);
+            Check(result, "mouse_encoder_encode");
+            return checked((int)written);
         }
-
-        Native.ghostty_mouse_event_set_action(_mouseEvent, action);
-        if (button is { } value)
-            Native.ghostty_mouse_event_set_button(_mouseEvent, value);
-        else
-            Native.ghostty_mouse_event_clear_button(_mouseEvent);
-        Native.ghostty_mouse_event_set_mods(_mouseEvent, modifiers);
-        Native.ghostty_mouse_event_set_position(_mouseEvent, new Native.GhosttyMousePosition
-        {
-            x = (float)x,
-            y = (float)y,
-        });
-
-        var result = Native.ghostty_mouse_encoder_encode(
-            _mouseEncoder, _mouseEvent, output, (nuint)output.Length, out var written);
-        Check(result, "mouse_encoder_encode");
-        return checked((int)written);
     }
 
     private unsafe void ConfigureMouseEncoderSize()
@@ -477,6 +796,16 @@ public sealed class GhosttyTerminal : IDisposable
     /// switch, resize, terminal-wide change) re-reads every row.
     /// </summary>
     public unsafe void UpdateFrame()
+    {
+        // The whole snapshot is one critical section: the reader thread may
+        // feed concurrently, and render_state_update reads the terminal.
+        lock (_vtLock)
+        {
+            UpdateFrameLocked();
+        }
+    }
+
+    private unsafe void UpdateFrameLocked()
     {
         Check(Native.ghostty_render_state_update(_renderState, _terminal), "render_state_update");
 
@@ -667,101 +996,122 @@ public sealed class GhosttyTerminal : IDisposable
 
     // ---- Selection -----------------------------------------------------------
 
-    public bool HasSelection => TryGetBuffer(TerminalData.Selection, s_selectionScratch);
+    public bool HasSelection
+    {
+        get
+        {
+            lock (_vtLock)
+                return TryGetBuffer(TerminalData.Selection, s_selectionScratch);
+        }
+    }
 
     public unsafe void SelectionPress(int viewportCol, int viewportRow, double xPx, double yPx)
     {
-        var point = new Native.GhosttyPoint
+        lock (_vtLock)
         {
-            tag = (int)Native.PointTag.Viewport,
-            value = { coordinate = new Native.GhosttyPointCoordinate { x = (ushort)viewportCol, y = (uint)viewportRow } },
-        };
-        // A point that no longer maps to the grid (resize, alt-screen switch)
-        // must skip the press, not crash the app.
-        if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) != Result.Success)
-            return;
+            var point = new Native.GhosttyPoint
+            {
+                tag = (int)Native.PointTag.Viewport,
+                value = { coordinate = new Native.GhosttyPointCoordinate { x = (ushort)viewportCol, y = (uint)viewportRow } },
+            };
+            // A point that no longer maps to the grid (resize, alt-screen switch)
+            // must skip the press, not crash the app.
+            if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) != Result.Success)
+                return;
 
-        SetEventOption(_pressEvent, SelectionGestureEventOption.Ref, gridRef);
-        SetEventOption(_pressEvent, SelectionGestureEventOption.TimeNs, NowNs());
-        var position = new Native.GhosttySurfacePosition { x = xPx, y = yPx };
-        SetEventOption(_pressEvent, SelectionGestureEventOption.Position, position);
+            SetEventOption(_pressEvent, SelectionGestureEventOption.Ref, gridRef);
+            SetEventOption(_pressEvent, SelectionGestureEventOption.TimeNs, NowNs());
+            var position = new Native.GhosttySurfacePosition { x = xPx, y = yPx };
+            SetEventOption(_pressEvent, SelectionGestureEventOption.Position, position);
 
-        var snapshot = GhosttySelectionScratch();
-        var result = Native.ghostty_selection_gesture_event(_gesture, _terminal, _pressEvent, (IntPtr)(&snapshot));
-        if (result == Result.Success)
-            Check(Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, (IntPtr)(&snapshot)), "set selection");
+            var snapshot = GhosttySelectionScratch();
+            var result = Native.ghostty_selection_gesture_event(_gesture, _terminal, _pressEvent, (IntPtr)(&snapshot));
+            if (result == Result.Success)
+                Check(Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, (IntPtr)(&snapshot)), "set selection");
+        }
     }
-
     public unsafe void SelectionDrag(int viewportCol, int viewportRow, double xPx, double yPx)
     {
-        var point = new Native.GhosttyPoint
+        lock (_vtLock)
         {
-            tag = (int)Native.PointTag.Viewport,
-            value = { coordinate = new Native.GhosttyPointCoordinate { x = (ushort)viewportCol, y = (uint)viewportRow } },
-        };
-        if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) != Result.Success)
-            return;
+            var point = new Native.GhosttyPoint
+            {
+                tag = (int)Native.PointTag.Viewport,
+                value = { coordinate = new Native.GhosttyPointCoordinate { x = (ushort)viewportCol, y = (uint)viewportRow } },
+            };
+            if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) != Result.Success)
+                return;
 
-        SetEventOption(_dragEvent, SelectionGestureEventOption.Ref, gridRef);
-        var geometry = new Native.GhosttySelectionGestureGeometry
-        {
-            columns = (uint)_cols,
-            cellWidth = (uint)Math.Max(1, _cellWidthPx),
-            paddingLeft = 0,
-            screenHeight = (uint)Math.Max(1, _rows * _cellHeightPx),
-        };
-        SetEventOption(_dragEvent, SelectionGestureEventOption.Geometry, geometry);
-        var position = new Native.GhosttySurfacePosition { x = xPx, y = yPx };
-        SetEventOption(_dragEvent, SelectionGestureEventOption.Position, position);
+            SetEventOption(_dragEvent, SelectionGestureEventOption.Ref, gridRef);
+            var geometry = new Native.GhosttySelectionGestureGeometry
+            {
+                columns = (uint)_cols,
+                cellWidth = (uint)Math.Max(1, _cellWidthPx),
+                paddingLeft = 0,
+                screenHeight = (uint)Math.Max(1, _rows * _cellHeightPx),
+            };
+            SetEventOption(_dragEvent, SelectionGestureEventOption.Geometry, geometry);
+            var position = new Native.GhosttySurfacePosition { x = xPx, y = yPx };
+            SetEventOption(_dragEvent, SelectionGestureEventOption.Position, position);
 
-        var snapshot = GhosttySelectionScratch();
-        var result = Native.ghostty_selection_gesture_event(_gesture, _terminal, _dragEvent, (IntPtr)(&snapshot));
-        if (result == Result.Success)
-            Check(Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, (IntPtr)(&snapshot)), "set selection");
+            var snapshot = GhosttySelectionScratch();
+            var result = Native.ghostty_selection_gesture_event(_gesture, _terminal, _dragEvent, (IntPtr)(&snapshot));
+            if (result == Result.Success)
+                Check(Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, (IntPtr)(&snapshot)), "set selection");
+        }
     }
 
     public unsafe void SelectionRelease(int viewportCol, int viewportRow)
     {
-        var point = new Native.GhosttyPoint
+        lock (_vtLock)
         {
-            tag = (int)Native.PointTag.Viewport,
-            value = { coordinate = new Native.GhosttyPointCoordinate { x = (ushort)viewportCol, y = (uint)viewportRow } },
-        };
-        if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) == Result.Success)
-            SetEventOption(_releaseEvent, SelectionGestureEventOption.Ref, gridRef);
-        else
-            SetEventOption(_releaseEvent, SelectionGestureEventOption.Ref, IntPtr.Zero);
+            var point = new Native.GhosttyPoint
+            {
+                tag = (int)Native.PointTag.Viewport,
+                value = { coordinate = new Native.GhosttyPointCoordinate { x = (ushort)viewportCol, y = (uint)viewportRow } },
+            };
+            if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) == Result.Success)
+                SetEventOption(_releaseEvent, SelectionGestureEventOption.Ref, gridRef);
+            else
+                SetEventOption(_releaseEvent, SelectionGestureEventOption.Ref, IntPtr.Zero);
 
-        var snapshot = GhosttySelectionScratch();
-        Native.ghostty_selection_gesture_event(_gesture, _terminal, _releaseEvent, (IntPtr)(&snapshot));
+            var snapshot = GhosttySelectionScratch();
+            Native.ghostty_selection_gesture_event(_gesture, _terminal, _releaseEvent, (IntPtr)(&snapshot));
+        }
     }
 
     public unsafe void ClearSelection()
     {
-        Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, IntPtr.Zero);
-        Native.ghostty_selection_gesture_reset(_gesture, _terminal);
+        lock (_vtLock)
+        {
+            Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, IntPtr.Zero);
+            Native.ghostty_selection_gesture_reset(_gesture, _terminal);
+        }
     }
 
     public unsafe string? GetSelectedText()
     {
-        var options = new Native.GhosttyTerminalSelectionFormatOptions
+        lock (_vtLock)
         {
-            size = (nuint)Marshal.SizeOf<Native.GhosttyTerminalSelectionFormatOptions>(),
-            emit = (int)Native.FormatterFormat.Plain,
-            unwrap = true,
-            trim = true,
-            selection = IntPtr.Zero,
-        };
-        var result = Native.ghostty_terminal_selection_format_alloc(_terminal, IntPtr.Zero, options, out var ptr, out var len);
-        if (result != Result.Success || ptr == IntPtr.Zero)
-            return null;
-        try
-        {
-            return Encoding.UTF8.GetString((byte*)ptr, (int)len);
-        }
-        finally
-        {
-            Native.ghostty_free(IntPtr.Zero, ptr, len);
+            var options = new Native.GhosttyTerminalSelectionFormatOptions
+            {
+                size = (nuint)Marshal.SizeOf<Native.GhosttyTerminalSelectionFormatOptions>(),
+                emit = (int)Native.FormatterFormat.Plain,
+                unwrap = true,
+                trim = true,
+                selection = IntPtr.Zero,
+            };
+            var result = Native.ghostty_terminal_selection_format_alloc(_terminal, IntPtr.Zero, options, out var ptr, out var len);
+            if (result != Result.Success || ptr == IntPtr.Zero)
+                return null;
+            try
+            {
+                return Encoding.UTF8.GetString((byte*)ptr, (int)len);
+            }
+            finally
+            {
+                Native.ghostty_free(IntPtr.Zero, ptr, len);
+            }
         }
     }
 
@@ -880,22 +1230,25 @@ public sealed class GhosttyTerminal : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-            return;
-        _disposed = true;
-        Native.ghostty_mouse_event_free(_mouseEvent);
-        Native.ghostty_mouse_encoder_free(_mouseEncoder);
-        Native.ghostty_selection_gesture_event_free(_releaseEvent);
-        Native.ghostty_selection_gesture_event_free(_dragEvent);
-        Native.ghostty_selection_gesture_event_free(_pressEvent);
-        Native.ghostty_selection_gesture_free(_gesture, _terminal);
-        Native.ghostty_render_state_row_cells_free(_rowCells);
-        Native.ghostty_render_state_row_iterator_free(_rowIterator);
-        Native.ghostty_render_state_free(_renderState);
-        Native.ghostty_terminal_free(_terminal);
-        _terminal = IntPtr.Zero;
-        if (_selfHandle.IsAllocated)
-            _selfHandle.Free();
+        lock (_vtLock)
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            Native.ghostty_mouse_event_free(_mouseEvent);
+            Native.ghostty_mouse_encoder_free(_mouseEncoder);
+            Native.ghostty_selection_gesture_event_free(_releaseEvent);
+            Native.ghostty_selection_gesture_event_free(_dragEvent);
+            Native.ghostty_selection_gesture_event_free(_pressEvent);
+            Native.ghostty_selection_gesture_free(_gesture, _terminal);
+            Native.ghostty_render_state_row_cells_free(_rowCells);
+            Native.ghostty_render_state_row_iterator_free(_rowIterator);
+            Native.ghostty_render_state_free(_renderState);
+            Native.ghostty_terminal_free(_terminal);
+            _terminal = IntPtr.Zero;
+            if (_selfHandle.IsAllocated)
+                _selfHandle.Free();
+        }
     }
 }
 
