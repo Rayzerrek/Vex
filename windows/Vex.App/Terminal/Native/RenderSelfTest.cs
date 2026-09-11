@@ -43,6 +43,11 @@ internal static class RenderSelfTest
     /// working directory is the pane's own.</summary>
     public static string? LiveFile { get; } = Environment.GetEnvironmentVariable("VEX_LIVE_FILE");
 
+    /// <summary>With VEX_LIVE=1, run the nvim mouse round-trip instead: mouse
+    /// tracking must engage from nvim's own output, a press-drag-release must
+    /// select in nvim's Visual mode, and D must delete the selection.</summary>
+    public static bool MouseLiveMode { get; } = Environment.GetEnvironmentVariable("VEX_LIVE_MOUSE") == "1";
+
     public static void Run(NativeTerminalControl control)
     {
         if (string.IsNullOrEmpty(ReportPath))
@@ -68,6 +73,8 @@ internal static class RenderSelfTest
                     {
                         if (PromptMode)
                             RunLivePrompt(control);
+                        else if (MouseLiveMode)
+                            RunLiveMouse(control);
                         else if (StressMode)
                             RunStress(control);
                         else if (!string.IsNullOrEmpty(LiveFile))
@@ -346,6 +353,99 @@ internal static class RenderSelfTest
             var (delay, act) = steps.Peek();
             Report(control, $"live step remaining={steps.Count} delay={delay}");
             // The pump timer has driven the previous step long enough.
+            timer.Stop();
+            var fire = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(Math.Max(50, delay)),
+            };
+            fire.Tick += (_, _) =>
+            {
+                fire.Stop();
+                steps.Dequeue();
+                act();
+                timer.Start();
+            };
+            fire.Start();
+        };
+        timer.Start();
+    }
+
+    /// <summary>
+    /// Live mouse round-trip — the reported regression: open nvim, drag a
+    /// selection with the mouse (reported through the app's real SendMouse
+    /// path), then press D. nvim must enter Visual mode from the reported
+    /// events and delete the selection. Also asserts tracking engaged from
+    /// nvim's own output, so a TUI that never enables the mouse (or a build
+    /// whose tracking detection is broken) is reported as such.
+    /// </summary>
+    private static void RunLiveMouse(NativeTerminalControl control)
+    {
+        var dir = string.IsNullOrEmpty(LiveDir) ? Path.GetTempPath() : LiveDir;
+        Report(control, $"live-mouse start cols={control.SelfTestCols} rows={control.SelfTestRows}");
+        try
+        {
+            control.SelfTestStabilizeCaret();
+            control.SelfTestStartSession();
+        }
+        catch (Exception e)
+        {
+            Report(control, $"live-mouse setup EXCEPTION {e.GetType().Name}: {e.Message}");
+            return;
+        }
+
+        var testFile = Path.Combine(dir, "vex-live-mouse.txt");
+        File.WriteAllText(testFile, "apple banana cherry\n");
+
+        var steps = new Queue<(int DelayMs, Action Act)>();
+        steps.Enqueue((2000, () => control.SelfTestType($"nvim --clean -i NONE '{testFile}'\r")));
+        // nvim must have negotiated mouse tracking from its own startup
+        // output (mode 1002 + 1006 on nvim 0.10+).
+        steps.Enqueue((2500, () =>
+        {
+            Shot(control, Path.Combine(dir, "mouse-01-open.png"));
+            Report(control, $"live-mouse tracking={control.SelfTestMouseTracking} {control.SelfTestCursorInfo()}");
+            Report(control, control.SelfTestMouseTracking
+                ? "PASS mouse: nvim tracking engaged"
+                : "FAIL mouse: nvim tracking never engaged (nvim <0.10 or detection broken)");
+        }));
+        // Press at 'b' of banana (col 6), drag to its last 'a' (col 11),
+        // release: nvim should highlight "banana" in Visual mode.
+        steps.Enqueue((300, () => control.SelfTestMouse(MouseInputAction.Press, MouseInputButton.Left, col: 6, row: 0)));
+        steps.Enqueue((100, () => control.SelfTestMouse(MouseInputAction.Motion, MouseInputButton.Left, col: 9, row: 0)));
+        steps.Enqueue((100, () => control.SelfTestMouse(MouseInputAction.Motion, MouseInputButton.Left, col: 11, row: 0)));
+        steps.Enqueue((200, () => control.SelfTestMouse(MouseInputAction.Release, MouseInputButton.Left, col: 11, row: 0)));
+        steps.Enqueue((600, () =>
+        {
+            Shot(control, Path.Combine(dir, "mouse-02-selected.png"));
+            Report(control, $"live-mouse row0='{control.SelfTestRowText(0)}'");
+        }));
+        // The user's exact action: D over the visual selection deletes it.
+        steps.Enqueue((200, () => control.SelfTestType("D")));
+        steps.Enqueue((800, () =>
+        {
+            Shot(control, Path.Combine(dir, "mouse-03-deleted.png"));
+            var row0 = control.SelfTestRowText(0) ?? "";
+            Report(control, $"live-mouse after-D row0='{row0}'");
+            Report(control, !row0.Contains("banana") && row0.Contains("apple")
+                ? "PASS mouse: nvim deleted the mouse selection on D"
+                : "FAIL mouse: selection not deleted by D");
+            Report(control, "live-mouse done");
+            Application.Current.Shutdown();
+        }));
+
+        var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(100),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (steps.Count == 0)
+            {
+                timer.Stop();
+                return;
+            }
+            var (delay, act) = steps.Peek();
+            Report(control, $"live-mouse step remaining={steps.Count} delay={delay}");
             timer.Stop();
             var fire = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
             {
@@ -757,6 +857,18 @@ internal static class RenderSelfTest
         Report(control, mouseFilteredMotion.Length == 0 && mouseAnyMotion == "<ESC>[<35;8;3M"
             ? "PASS mouse: tracking modes filter motion correctly"
             : "FAIL mouse: tracking mode filtering wrong");
+
+        // A TUI that resets one tracking mode while another is still set
+        // (e.g. 1000h 1002h 1000l) must keep reporting: routing reads the
+        // live mode bits and the encoder must agree with them. The cached
+        // last-transition flag this used to rely on collapses to "none"
+        // here, silently emitting zero bytes for every event.
+        var mouseDivergent = control.SelfTestMouseReport("\x1b[?1002h\x1b[?1000h\x1b[?1006h\x1b[?1000l",
+            MouseInputAction.Press, MouseInputButton.Left, anyButtonPressed: true);
+        Report(control, $"mouse divergent tracking={control.SelfTestMouseTracking} report='{mouseDivergent}'");
+        Report(control, control.SelfTestMouseTracking && mouseDivergent == "<ESC>[<0;6;3M"
+            ? "PASS mouse: mixed tracking-mode reset keeps reporting"
+            : "FAIL mouse: mixed tracking-mode reset went silent");
         var wheelForward = control.SelfTestWheelSteps(40, 40, 40);
         var wheelReverse = control.SelfTestWheelSteps(-60, -60);
         Report(control, wheelForward.SequenceEqual(new[] { 0, 0, 1 }) &&

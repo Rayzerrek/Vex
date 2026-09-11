@@ -471,9 +471,6 @@ internal static class Native
     internal static extern void ghostty_mouse_encoder_setopt(IntPtr encoder, MouseEncoderOption option, IntPtr value);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void ghostty_mouse_encoder_setopt_from_terminal(IntPtr encoder, IntPtr terminal);
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Result ghostty_mouse_encoder_encode(IntPtr encoder, IntPtr mouseEvent, byte[] output, nuint outputSize, out nuint outputLength);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
