@@ -14,6 +14,10 @@ dotnet run --project windows/Vex.App
 
 Build, run the app, exercise the change.
 
+```sh
+dotnet test windows/Vex.Libghostty.Tests
+```
+
 ## Conventions
 
 - Match the style of the file you're editing.

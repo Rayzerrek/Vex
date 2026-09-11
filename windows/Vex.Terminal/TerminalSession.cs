@@ -25,6 +25,11 @@ public sealed class TerminalSession : IDisposable
     private int _exitedRaised;
     private bool _disposed;
 
+    // Input-pipe writes come from two threads now: the UI thread (keystrokes,
+    // mouse reports, pastes) and the PTY reader thread (synchronous terminal
+    // query responses such as DSR). FileStream writes must not interleave.
+    private readonly object _writeLock = new();
+
     /// <summary>Raw bytes produced by the child process, as read from the PTY.</summary>
     public event Action<ArraySegment<byte>>? OutputReceived;
 
@@ -115,12 +120,15 @@ public sealed class TerminalSession : IDisposable
 
     public void Write(ReadOnlySpan<byte> data)
     {
-        if (_ptyInput is null || _disposed)
-            return;
         try
         {
-            _ptyInput.Write(data);
-            _ptyInput.Flush();
+            lock (_writeLock)
+            {
+                if (_ptyInput is null || _disposed)
+                    return;
+                _ptyInput.Write(data);
+                _ptyInput.Flush();
+            }
         }
         catch (IOException)
         {
@@ -306,8 +314,15 @@ public sealed class TerminalSession : IDisposable
             _pseudoConsole = IntPtr.Zero;
         }
 
-        _ptyInput?.Dispose();
+        // Serialize with concurrent Write calls from the UI and PTY threads
+        // so a query response cannot land on a half-closed pipe.
+        lock (_writeLock)
+        {
+            _ptyInput?.Dispose();
+            _ptyInput = null;
+        }
         _ptyOutput?.Dispose();
+        _ptyOutput = null;
 
         if (_processHandle != IntPtr.Zero)
             NativeMethods.CloseHandle(_processHandle);
