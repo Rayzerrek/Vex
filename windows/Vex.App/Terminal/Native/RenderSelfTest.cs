@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Vex.App.Model;
 using Vex.Libghostty;
 
 namespace Vex.App.Terminal.Native;
@@ -478,6 +479,8 @@ internal static class RenderSelfTest
         // A steady caret so bitmaps from different captures are comparable.
         control.SelfTestStabilizeCaret();
 
+        CheckIndexedThemeContrast(control);
+
         // 300 lines: the long-session stress case (scrollback + full redraws).
         var sb = new StringBuilder(300 * 60);
         for (var i = 1; i <= 300; i++)
@@ -779,6 +782,26 @@ internal static class RenderSelfTest
         Report(control, control.SelfTestBenchLinkScan(100));
 
         Report(control, "done");
+    }
+
+    private static void CheckIndexedThemeContrast(NativeTerminalControl control)
+    {
+        foreach (var theme in new[] { BuiltInThemes.VexDark, BuiltInThemes.VexLight })
+        {
+            var palette = new TerminalPalette(theme);
+            palette.Resolve(ColorTag.Palette, 0, ColorTag.None, 0, CellFlags.None,
+                out var black, out _);
+            palette.Resolve(ColorTag.Palette, 1, ColorTag.None, 0, CellFlags.None,
+                out var red, out _);
+
+            var blackColor = ((SolidColorBrush)black!).Color;
+            var redColor = ((SolidColorBrush)red!).Color;
+            var defaultColor = ((SolidColorBrush)palette.Foreground).Color;
+            var expectedRed = FastColor.ParseHex(theme.Red);
+            Report(control, blackColor == defaultColor && redColor == expectedRed
+                ? $"PASS theme-contrast({theme.Name}): unreadable indexed color repaired"
+                : $"FAIL theme-contrast({theme.Name}): black={blackColor} red={redColor}");
+        }
     }
 
     private static byte[] Capture(NativeTerminalControl control)

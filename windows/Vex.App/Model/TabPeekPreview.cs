@@ -6,20 +6,20 @@ using System.Windows.Shapes;
 namespace Vex.App.Model;
 
 /// <summary>
-/// Lightweight, dependency-free preview of a single <see cref="WorkspaceTab"/>,
-/// built once when the Tab Peek overlay opens. The split tree is flattened into
-/// a <see cref="MiniNode"/> graph that the XAML renders as nested boxes — no
-/// terminal controls are created and no framebuffers are captured, so opening
-/// the overlay is O(panes) and stays off the render hot path.
+/// Lightweight preview of a single <see cref="WorkspaceTab"/>, built once when
+/// the overview opens. A visited tab contributes its last rendered image;
+/// otherwise the split tree is rendered as nested boxes without creating any
+/// terminal controls.
 /// </summary>
 public sealed class TabPeekPreview : ObservableObject
 {
     public WorkspaceTab Tab { get; }
     public string Title { get; }
     public int PaneCount { get; }
+    public ImageSource? Preview => Tab.Preview;
 
-    /// <summary>A UI element (nested StackPanels/Borders) representing the
-    /// split layout. Built once on construction and reused across renders.
+    /// <summary>A UI element representing the split layout, used as the
+    /// fallback until the tab has a rendered preview.
     /// </summary>
     public FrameworkElement Layout { get; }
 

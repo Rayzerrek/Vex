@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 namespace Vex.App.Model;
 
@@ -14,6 +15,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     private PaneNode _root;
     private LeafPane? _activeLeaf;
     private bool _isFocusMode;
+    private ImageSource? _preview;
 
     public WorkspaceTab(string title, string workingDirectory)
     {
@@ -73,6 +75,14 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     }
 
     public bool HasCustomTitle { get; set; }
+
+    /// <summary>Last rendered view of this tab, captured as it is left or
+    /// immediately before Tab Peek opens. Null until the tab has been shown.</summary>
+    public ImageSource? Preview
+    {
+        get => _preview;
+        internal set => Set(ref _preview, value);
+    }
 
     public PaneNode Root
     {
