@@ -179,11 +179,19 @@ public sealed class Project : ObservableObject
 
     public ObservableCollection<WorkspaceTab> Tabs { get; } = new();
 
+    /// <summary>Raised before the selected tab leaves the visual tree, giving
+    /// the window a chance to retain its current rendered preview.</summary>
+    public event Action<WorkspaceTab>? TabDeactivating;
+
     public WorkspaceTab? SelectedTab
     {
         get => _selectedTab;
         set
         {
+            if (ReferenceEquals(_selectedTab, value))
+                return;
+            if (_selectedTab is { } previous)
+                TabDeactivating?.Invoke(previous);
             if (Set(ref _selectedTab, value))
             {
                 // A new window/tab should be ready to type into immediately;

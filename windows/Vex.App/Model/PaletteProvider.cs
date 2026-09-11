@@ -11,6 +11,7 @@ public static class PaletteProvider
         
         if (workspace.SelectedProject?.SelectedTab != null)
         {
+            yield return new PaletteItem("Show All Tabs", "Open visual tab overview · Ctrl+Shift+Space", () => uiAction("TabPeek"), "Terminal");
             yield return new PaletteItem("Close Tab", "Close current terminal tab · Middle-click / Ctrl+Shift+W", () => {
                 var project = workspace.SelectedProject;
                 project.CloseTab(project.SelectedTab!);

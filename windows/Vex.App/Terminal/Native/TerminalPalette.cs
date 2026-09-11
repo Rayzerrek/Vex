@@ -141,6 +141,22 @@ public sealed class TerminalPalette
 
         foreground = fgTag == ColorTag.None ? Foreground : ResolveColor(fgTag, fgValue, bold);
 
+        // ConsoleColor-based Windows/.NET applications emit the 16 indexed
+        // ANSI colors rather than RGB. Some use Black/White as if those names
+        // always implied contrast; that becomes black-on-black in dark themes
+        // or white-on-white in light themes. Preserve explicit RGB and every
+        // readable indexed color, but replace a nearly invisible indexed
+        // foreground with the theme's default foreground when it is clearer.
+        if (fgTag == ColorTag.Palette && foreground is SolidColorBrush indexed
+            && (background ?? Background) is SolidColorBrush effectiveBackground
+            && Foreground is SolidColorBrush defaultForeground
+            && ContrastRatio(indexed.Color, effectiveBackground.Color) < 1.8
+            && ContrastRatio(defaultForeground.Color, effectiveBackground.Color)
+                > ContrastRatio(indexed.Color, effectiveBackground.Color))
+        {
+            foreground = Foreground;
+        }
+
         if ((flags & CellFlags.Faint) != 0 && foreground is SolidColorBrush solid)
         {
             if (!_dimCache.TryGetValue(fgValue, out var dim))
@@ -170,5 +186,23 @@ public sealed class TerminalPalette
     {
         var c = ((SolidColorBrush)brush).Color;
         return (c.R << 16) | (c.G << 8) | c.B;
+    }
+
+    private static double ContrastRatio(Color a, Color b)
+    {
+        static double Luminance(Color c)
+        {
+            static double Linear(byte channel)
+            {
+                var value = channel / 255.0;
+                return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+            }
+
+            return 0.2126 * Linear(c.R) + 0.7152 * Linear(c.G) + 0.0722 * Linear(c.B);
+        }
+
+        var first = Luminance(a);
+        var second = Luminance(b);
+        return (Math.Max(first, second) + 0.05) / (Math.Min(first, second) + 0.05);
     }
 }

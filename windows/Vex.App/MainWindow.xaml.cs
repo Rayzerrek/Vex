@@ -4,6 +4,7 @@ using System.Windows.Data;
 using System.Diagnostics;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Vex.App.Model;
 using Vex.App.Terminal.Native;
@@ -100,6 +101,7 @@ public sealed partial class MainWindow : Window
         // Sidebar visibility is a single source of truth: any change (toolbar
         // button, keyboard, or the settings toggle) animates the panel.
         AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
+        HookTabPreviewCapture();
     }
 
     /// <summary>Creates the window with a pre-loaded workspace (from async
@@ -143,6 +145,54 @@ public sealed partial class MainWindow : Window
         };
 
         AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
+        HookTabPreviewCapture();
+    }
+
+    private void HookTabPreviewCapture()
+    {
+        foreach (var project in _workspace.Projects)
+            HookProject(project);
+        _workspace.Projects.CollectionChanged += (_, e) =>
+        {
+            if (e.NewItems is null)
+                return;
+            foreach (Project project in e.NewItems)
+                HookProject(project);
+        };
+    }
+
+    private void HookProject(Project project)
+    {
+        project.TabDeactivating += tab =>
+        {
+            if (ReferenceEquals(project, _workspace.SelectedProject))
+                CaptureTabPreview(tab);
+        };
+    }
+
+    private void CaptureTabPreview(WorkspaceTab tab)
+    {
+        if (!ContentArea.IsLoaded || ContentArea.ActualWidth <= 0 || ContentArea.ActualHeight <= 0)
+            return;
+
+        const int previewWidth = 360;
+        const int previewHeight = 220;
+        var drawing = new DrawingVisual();
+        using (var context = drawing.RenderOpen())
+        {
+            var brush = new VisualBrush(ContentArea)
+            {
+                Stretch = Stretch.UniformToFill,
+                AlignmentX = AlignmentX.Center,
+                AlignmentY = AlignmentY.Center,
+            };
+            context.DrawRectangle(brush, null, new Rect(0, 0, previewWidth, previewHeight));
+        }
+
+        var bitmap = new RenderTargetBitmap(previewWidth, previewHeight, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(drawing);
+        bitmap.Freeze();
+        tab.Preview = bitmap;
     }
 
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -368,6 +418,7 @@ public sealed partial class MainWindow : Window
             if (action == "NewProject") NewProject_Click(this, new RoutedEventArgs());
             else if (action == "Settings") Settings_Click(this, new RoutedEventArgs());
             else if (action == "ThemePicker") ToggleThemeSwitcher();
+            else if (action == "TabPeek") ToggleTabPeek();
         });
         PaletteOverlay.Show(items);
     }
@@ -385,7 +436,11 @@ public sealed partial class MainWindow : Window
         if (_tabPeek is { Visibility: Visibility.Visible })
             _tabPeek.Hide();
         else if (_workspace.SelectedProject is { } project)
+        {
+            if (project.SelectedTab is { } selected)
+                CaptureTabPreview(selected);
             TabPeek.Show(project);
+        }
     }
 
     private void NewProject_Click(object sender, RoutedEventArgs e)
