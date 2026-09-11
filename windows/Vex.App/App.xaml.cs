@@ -41,8 +41,10 @@ public sealed partial class App : Application
         // and brush allocation stalls on the UI thread during MainWindow creation.
         var prewarmTask = settingsTask.ContinueWith(_ =>
         {
+            Model.StartupMark.Note("terminal prewarm begin");
             var s = Vex.App.Model.AppSettings.Instance;
             Vex.App.Terminal.Native.NativeTerminalControl.Prewarm(s.ThemeName, s.FontFamily);
+            Model.StartupMark.Note("terminal prewarm ready");
         }, TaskScheduler.Default);
 
         await settingsTask.ConfigureAwait(true);
@@ -56,6 +58,7 @@ public sealed partial class App : Application
         ChromePalette.Apply(Vex.App.Model.AppSettings.Instance.ThemeName);
         Vex.App.Model.EditorHighlighting.SetAppearance(
             Vex.App.Model.AppSettings.Instance.IsDarkAppearance);
+        Model.StartupMark.Note("appearance ready");
         Vex.App.Model.AppSettings.Instance.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is not (nameof(Vex.App.Model.AppSettings.ThemeName)
@@ -81,9 +84,10 @@ public sealed partial class App : Application
         Model.StartupMark.Note("session ready");
 
         // Create and show the main window with the pre-loaded workspace.
+        Model.StartupMark.Note("window construction begin");
         var window = new MainWindow(workspace);
+        Model.StartupMark.Note("window constructed");
         window.Show();
         Model.StartupMark.Note("window shown");
     }
 }
-

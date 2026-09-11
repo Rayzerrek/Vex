@@ -85,6 +85,27 @@ internal static class Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyMousePosition
+    {
+        public float x;
+        public float y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GhosttyMouseEncoderSize
+    {
+        public nuint size;
+        public uint screenWidth;
+        public uint screenHeight;
+        public uint cellWidth;
+        public uint cellHeight;
+        public uint paddingTop;
+        public uint paddingBottom;
+        public uint paddingRight;
+        public uint paddingLeft;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct GhosttyPointCoordinate
     {
         public ushort x;
@@ -386,6 +407,15 @@ internal static class Native
         Anchor = 4,
     }
 
+    internal enum MouseEncoderOption : int
+    {
+        Event = 0,
+        Format = 1,
+        Size = 2,
+        AnyButtonPressed = 3,
+        TrackLastCell = 4,
+    }
+
     // --- Callbacks ------------------------------------------------------
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -428,6 +458,44 @@ internal static class Native
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void ghostty_terminal_scroll_viewport(IntPtr terminal, GhosttyTerminalScrollViewport behavior);
+
+    // --- Mouse input ----------------------------------------------------
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_mouse_encoder_new(IntPtr allocator, out IntPtr encoder);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_encoder_free(IntPtr encoder);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_encoder_setopt(IntPtr encoder, MouseEncoderOption option, IntPtr value);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_encoder_setopt_from_terminal(IntPtr encoder, IntPtr terminal);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_mouse_encoder_encode(IntPtr encoder, IntPtr mouseEvent, byte[] output, nuint outputSize, out nuint outputLength);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_mouse_event_new(IntPtr allocator, out IntPtr mouseEvent);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_event_free(IntPtr mouseEvent);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_event_set_action(IntPtr mouseEvent, MouseInputAction action);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_event_set_button(IntPtr mouseEvent, MouseInputButton button);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_event_clear_button(IntPtr mouseEvent);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_event_set_mods(IntPtr mouseEvent, MouseInputModifiers modifiers);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_mouse_event_set_position(IntPtr mouseEvent, GhosttyMousePosition position);
 
     // --- Render state ---------------------------------------------------
 

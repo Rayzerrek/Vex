@@ -34,6 +34,33 @@ public enum CursorShape
     BlockHollow = 3,
 }
 
+public enum MouseInputAction
+{
+    Press = 0,
+    Release = 1,
+    Motion = 2,
+}
+
+public enum MouseInputButton
+{
+    Left = 1,
+    Right = 2,
+    Middle = 3,
+    WheelUp = 4,
+    WheelDown = 5,
+    WheelLeft = 6,
+    WheelRight = 7,
+}
+
+[Flags]
+public enum MouseInputModifiers : ushort
+{
+    None = 0,
+    Shift = 1,
+    Control = 2,
+    Alt = 4,
+}
+
 public readonly record struct CursorState(
     int X, int Y, bool Visible, bool Blinking, CursorShape Shape);
 
@@ -89,6 +116,9 @@ public sealed class GhosttyTerminal : IDisposable
     private IntPtr _pressEvent;
     private IntPtr _dragEvent;
     private IntPtr _releaseEvent;
+    private IntPtr _mouseEncoder;
+    private IntPtr _mouseEvent;
+    private int _mouseAnyButtonPressed = -1;
     private GCHandle _selfHandle;
     private uint[] _codepoints = new uint[MaxGraphemes];
     private bool _disposed;
@@ -144,6 +174,15 @@ public sealed class GhosttyTerminal : IDisposable
         Check(Native.ghostty_selection_gesture_event_new(IntPtr.Zero, out _pressEvent, SelectionGestureEventType.Press), "event_new press");
         Check(Native.ghostty_selection_gesture_event_new(IntPtr.Zero, out _dragEvent, SelectionGestureEventType.Drag), "event_new drag");
         Check(Native.ghostty_selection_gesture_event_new(IntPtr.Zero, out _releaseEvent, SelectionGestureEventType.Release), "event_new release");
+        Check(Native.ghostty_mouse_encoder_new(IntPtr.Zero, out _mouseEncoder), "mouse_encoder_new");
+        Check(Native.ghostty_mouse_event_new(IntPtr.Zero, out _mouseEvent), "mouse_event_new");
+
+        byte trackLastCell = 1;
+        unsafe
+        {
+            Native.ghostty_mouse_encoder_setopt(_mouseEncoder, MouseEncoderOption.TrackLastCell, (IntPtr)(&trackLastCell));
+        }
+        ConfigureMouseEncoderSize();
 
         var grid = new GhosttySelectionGestureBehaviors
         {
@@ -322,6 +361,7 @@ public sealed class GhosttyTerminal : IDisposable
         _cellWidthPx = cellWidthPx;
         _cellHeightPx = cellHeightPx;
         Check(Native.ghostty_terminal_resize(_terminal, (ushort)cols, (ushort)rows, (uint)cellWidthPx, (uint)cellHeightPx), "resize");
+        ConfigureMouseEncoderSize();
     }
 
     public unsafe void SetDefaultColors(GhosttyColorRgb foreground, GhosttyColorRgb background,
@@ -372,6 +412,56 @@ public sealed class GhosttyTerminal : IDisposable
         else if (tag == Native.ScrollViewportTag.Row)
             behavior.value.row = (nuint)value;
         Native.ghostty_terminal_scroll_viewport(_terminal, behavior);
+    }
+
+    // ---- Mouse input -------------------------------------------------------
+
+    /// <summary>Encodes a pointer event using the exact tracking mode and
+    /// wire format requested by the terminal application. A successful event
+    /// can produce zero bytes when its current mode filters that event.</summary>
+    public unsafe int EncodeMouse(MouseInputAction action, MouseInputButton? button,
+        MouseInputModifiers modifiers, double x, double y, bool anyButtonPressed,
+        byte[] output)
+    {
+        Native.ghostty_mouse_encoder_setopt_from_terminal(_mouseEncoder, _terminal);
+
+        var pressedValue = anyButtonPressed ? 1 : 0;
+        if (_mouseAnyButtonPressed != pressedValue)
+        {
+            _mouseAnyButtonPressed = pressedValue;
+            byte pressed = anyButtonPressed ? (byte)1 : (byte)0;
+            Native.ghostty_mouse_encoder_setopt(_mouseEncoder, MouseEncoderOption.AnyButtonPressed, (IntPtr)(&pressed));
+        }
+
+        Native.ghostty_mouse_event_set_action(_mouseEvent, action);
+        if (button is { } value)
+            Native.ghostty_mouse_event_set_button(_mouseEvent, value);
+        else
+            Native.ghostty_mouse_event_clear_button(_mouseEvent);
+        Native.ghostty_mouse_event_set_mods(_mouseEvent, modifiers);
+        Native.ghostty_mouse_event_set_position(_mouseEvent, new Native.GhosttyMousePosition
+        {
+            x = (float)x,
+            y = (float)y,
+        });
+
+        var result = Native.ghostty_mouse_encoder_encode(
+            _mouseEncoder, _mouseEvent, output, (nuint)output.Length, out var written);
+        Check(result, "mouse_encoder_encode");
+        return checked((int)written);
+    }
+
+    private unsafe void ConfigureMouseEncoderSize()
+    {
+        var size = new Native.GhosttyMouseEncoderSize
+        {
+            size = (nuint)Marshal.SizeOf<Native.GhosttyMouseEncoderSize>(),
+            screenWidth = (uint)Math.Max(1, _cols * _cellWidthPx),
+            screenHeight = (uint)Math.Max(1, _rows * _cellHeightPx),
+            cellWidth = (uint)Math.Max(1, _cellWidthPx),
+            cellHeight = (uint)Math.Max(1, _cellHeightPx),
+        };
+        Native.ghostty_mouse_encoder_setopt(_mouseEncoder, MouseEncoderOption.Size, (IntPtr)(&size));
     }
 
     // ---- Frame --------------------------------------------------------------
@@ -793,6 +883,8 @@ public sealed class GhosttyTerminal : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        Native.ghostty_mouse_event_free(_mouseEvent);
+        Native.ghostty_mouse_encoder_free(_mouseEncoder);
         Native.ghostty_selection_gesture_event_free(_releaseEvent);
         Native.ghostty_selection_gesture_event_free(_dragEvent);
         Native.ghostty_selection_gesture_event_free(_pressEvent);

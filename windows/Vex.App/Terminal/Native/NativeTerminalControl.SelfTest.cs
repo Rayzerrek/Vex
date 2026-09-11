@@ -109,6 +109,51 @@ public sealed partial class NativeTerminalControl
         FlushRedraw();
     }
 
+    /// <summary>Configures a terminal mouse mode, encodes one event through
+    /// libghostty, and returns the wire bytes in an escaped readable form.</summary>
+    internal string SelfTestMouseReport(string modes, MouseInputAction action,
+        MouseInputButton? button, bool anyButtonPressed = false, int col = 5)
+    {
+        _terminal.Feed("\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l" +
+                       "\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l" + modes);
+        var output = new byte[128];
+        var nativeCellWidth = Math.Max(1, (int)_cellWidth);
+        var nativeCellHeight = Math.Max(1, (int)_cellHeight);
+        var len = _terminal.EncodeMouse(action, button, MouseInputModifiers.None,
+            nativeCellWidth * col + 1, nativeCellHeight * 2 + 1, anyButtonPressed, output);
+        return Encoding.Latin1.GetString(output, 0, len).Replace("\x1b", "<ESC>");
+    }
+
+    internal int[] SelfTestWheelSteps(params int[] deltas)
+    {
+        _wheelDeltaRemainder = 0;
+        var steps = new int[deltas.Length];
+        for (var i = 0; i < deltas.Length; i++)
+            steps[i] = ConsumeWheelSteps(deltas[i]);
+        return steps;
+    }
+
+    internal string SelfTestBenchMouseEncoding(int iterations)
+    {
+        _terminal.Feed("\x1b[?1003h\x1b[?1006h");
+        var output = new byte[128];
+        var cellWidth = Math.Max(1, (int)_cellWidth);
+        var cellHeight = Math.Max(1, (int)_cellHeight);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var bytes = 0;
+        for (var i = 0; i < iterations; i++)
+        {
+            bytes += _terminal.EncodeMouse(MouseInputAction.Motion, null, MouseInputModifiers.None,
+                cellWidth * (i % Math.Max(1, _cols)) + 1, cellHeight * 2 + 1,
+                anyButtonPressed: false, output);
+        }
+        watch.Stop();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        _terminal.Feed("\x1b[?1003l\x1b[?1006l");
+        return $"mouse-encode x{iterations} ms={watch.Elapsed.TotalMilliseconds:F2} allocKB={allocated / 1024.0:F1} bytes={bytes}";
+    }
+
     /// <summary>Runs the link scan over every visible row repeatedly and
     /// reports wall time plus allocations — the scan's own cost, without
     /// the render pass the flood scenario includes.</summary>
