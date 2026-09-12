@@ -787,12 +787,15 @@ public sealed class GhosttyTerminal : IDisposable
 
     private void Scroll(Native.ScrollViewportTag tag, nint value)
     {
-        var behavior = new Native.GhosttyTerminalScrollViewport { tag = (int)tag, value = default };
-        if (tag == Native.ScrollViewportTag.Delta)
-            behavior.value.delta = value;
-        else if (tag == Native.ScrollViewportTag.Row)
-            behavior.value.row = (nuint)value;
-        Native.ghostty_terminal_scroll_viewport(_terminal, behavior);
+        lock (_vtLock)
+        {
+            var behavior = new Native.GhosttyTerminalScrollViewport { tag = (int)tag, value = default };
+            if (tag == Native.ScrollViewportTag.Delta)
+                behavior.value.delta = value;
+            else if (tag == Native.ScrollViewportTag.Row)
+                behavior.value.row = (nuint)value;
+            Native.ghostty_terminal_scroll_viewport(_terminal, behavior);
+        }
     }
 
     // ---- Mouse input -------------------------------------------------------
