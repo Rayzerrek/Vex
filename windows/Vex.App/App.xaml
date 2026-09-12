@@ -65,7 +65,7 @@
         <!-- Variant chrome: overlays, pressed states, drag previews, settings
              surfaces. Defaults mirror the dark variant; ChromePalette rewrites
              every key at startup and on every appearance/theme switch. -->
-        <Color x:Key="VexBackdropScrimColor">#66000000</Color>
+        <Color x:Key="VexBackdropScrimColor">#CC050607</Color>
         <Color x:Key="VexPressFillColor">#FF3A3A42</Color>
         <Color x:Key="VexSidebarToggleBgColor">#14181A1F</Color>
         <Color x:Key="VexSidebarToggleBorderColor">#2630373E</Color>

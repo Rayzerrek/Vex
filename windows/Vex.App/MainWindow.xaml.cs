@@ -96,6 +96,17 @@ public sealed partial class MainWindow : Window
             Dispatcher.BeginInvoke(
                 () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
                 DispatcherPriority.ContextIdle);
+
+            // Build the lazily-created overlays (command palette, settings)
+            // once the UI is fully idle. Loading their XAML on the user's
+            // first Ctrl+Shift+P / settings click added a visible hitch;
+            // paying it after the first frame keeps startup untouched and
+            // the first overlay open instant.
+            Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
+            {
+                _ = PaletteOverlay;
+                _ = SettingsOverlay;
+            });
         };
 
         // Sidebar visibility is a single source of truth: any change (toolbar
@@ -142,6 +153,17 @@ public sealed partial class MainWindow : Window
             Dispatcher.BeginInvoke(
                 () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
                 DispatcherPriority.ContextIdle);
+
+            // Build the lazily-created overlays (command palette, settings)
+            // once the UI is fully idle. Loading their XAML on the user's
+            // first Ctrl+Shift+P / settings click added a visible hitch;
+            // paying it after the first frame keeps startup untouched and
+            // the first overlay open instant.
+            Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
+            {
+                _ = PaletteOverlay;
+                _ = SettingsOverlay;
+            });
         };
 
         AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
@@ -345,6 +367,8 @@ public sealed partial class MainWindow : Window
                 _paletteOverlay = new CommandPalette();
                 _paletteOverlay.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
                 _paletteOverlay.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                _paletteOverlay.Hidden += () =>
+                    _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
                 PalettePopup.Child = _paletteOverlay;
             }
             return _paletteOverlay;
@@ -478,7 +502,7 @@ public sealed partial class MainWindow : Window
     {
         // Freeze VT/conpty resizes until the animation settles; otherwise
         // every frame reflows the terminal buffer (see ResizeSuspended).
-        NativeTerminalControl.ResizeSuspended = true;
+        NativeTerminalControl.SuspendResizes();
         _sidebarAnimationClosing = fadeOut;
         _sidebarAnimationFromWidth = SidebarColumn.ActualWidth;
         _sidebarAnimationToWidth = target;
@@ -538,7 +562,11 @@ public sealed partial class MainWindow : Window
 
         CompositionTarget.Rendering -= SidebarAnimation_Rendering;
         _sidebarAnimationClock = null;
-        NativeTerminalControl.ResizeSuspended = false;
+        // Resume with an explicit recalc: the final width equals the last
+        // animated frame, so no SizeChanged fires after this point — without
+        // the resume event the grid would stay at the pre-animation size
+        // (a fullscreen TUI like nvim would then cover only part of the pane).
+        NativeTerminalControl.ResumeResizes();
 
         if (_sidebarAnimationClosing)
         {
@@ -1269,7 +1297,7 @@ public sealed partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         CompositionTarget.Rendering -= SidebarAnimation_Rendering;
-        NativeTerminalControl.ResizeSuspended = false;
+        NativeTerminalControl.ResumeResizes();
         AppSettings.Instance.Flush(); // persist the debounced settings write
         SessionStore.Save(_workspace); // persist projects, tabs and divider positions
         base.OnClosed(e);

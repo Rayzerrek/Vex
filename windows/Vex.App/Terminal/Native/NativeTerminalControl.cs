@@ -85,9 +85,29 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     // While the sidebar animates, the window width changes every frame and
     // each size event would resize the VT emulator (buffer reflow) plus the
-    // ConPTY session. MainWindow sets this for the animation duration; the
-    // final width then triggers exactly one recalc afterwards.
-    internal static bool ResizeSuspended { get; set; }
+    // ConPTY session. MainWindow suspends resizes for the animation duration
+    // and calls ResumeResizes() when it settles.
+    internal static bool ResizeSuspended { get; private set; }
+
+    /// <summary>Raised on the UI thread when resize suspension ends. Every
+    /// live control then recalculates its grid exactly once — necessary
+    /// because the suspension swallows all intermediate size events and the
+    /// final width usually equals the last animated frame, which fires no
+    /// SizeChanged at all. Without this the grid (and the ConPTY size behind
+    /// it) stays at the pre-animation dimensions: a fullscreen TUI like nvim
+    /// then covers only part of the control and the rest renders as bare
+    /// background.</summary>
+    private static event Action? ResizeSuspensionEnded;
+
+    internal static void SuspendResizes() => ResizeSuspended = true;
+
+    internal static void ResumeResizes()
+    {
+        if (!ResizeSuspended)
+            return;
+        ResizeSuspended = false;
+        ResizeSuspensionEnded?.Invoke();
+    }
 
     private GlyphTypeface? _normalGlyph;
     private GlyphTypeface? _boldGlyph;
@@ -212,6 +232,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         ApplySettings();
         AppSettings.Instance.PropertyChanged += OnSettingsChanged;
+        // Suspension end (sidebar animation settle) must force one grid
+        // recalculation even when no SizeChanged follows — see the event
+        // declaration above.
+        ResizeSuspensionEnded += OnResizeSuspensionEnded;
 
         RenderSelfTest.Run(this);
 
@@ -2287,6 +2311,16 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     // ---- Dispose ------------------------------------------------------------
 
+    private void OnResizeSuspensionEnded()
+    {
+        if (_disposed)
+            return;
+        if (Dispatcher.CheckAccess())
+            RecalculateGridSize();
+        else
+            _ = Dispatcher.BeginInvoke(RecalculateGridSize);
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -2298,6 +2332,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _blinkTimer.Stop();
         _scrollbarAnimTimer.Stop();
         AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
+        ResizeSuspensionEnded -= OnResizeSuspensionEnded;
         var session = _session;
         _session = null;
         if (session is not null)
