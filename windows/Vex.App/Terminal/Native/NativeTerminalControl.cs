@@ -43,6 +43,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private double _cellWidth = 8;
     private double _cellHeight = 16;
     private double _pixelsPerDip = 1.0;
+    private int _nativeCellWidth = 8;
+    private int _nativeCellHeight = 16;
     private Typeface _normalTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
     private Typeface _boldTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
     private Typeface _italicTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
@@ -122,6 +124,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private bool _cursorBlinkSetting = true;
     private bool _selectionActive;
     private bool _selectionDragged;
+    private bool _selectionGestureActive;
     private bool _mouseSelectionOverride;
     private bool _mouseTracking;
     private bool _kbSelectionActive;
@@ -455,24 +458,31 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         // Coalesced away while the sidebar animates: reflowing the VT buffer
         // and resizing ConPTY once per animation frame guarantees jank. The
-        // animation's final width raises another size event after resume, so
-        // exactly one recalc still happens.
+        // resume event forces exactly one recalc after the animation settles.
         if (ResizeSuspended)
             return;
 
         var cols = Math.Max(2, (int)(ActualWidth / _cellWidth));
         var rows = Math.Max(1, (int)(ActualHeight / _cellHeight));
-        if (cols == _cols && rows == _rows && (_session is not null || _sessionStarting))
+        var nativeCellWidth = Math.Max(1, (int)Math.Round(_cellWidth * _pixelsPerDip));
+        var nativeCellHeight = Math.Max(1, (int)Math.Round(_cellHeight * _pixelsPerDip));
+        var gridChanged = cols != _cols || rows != _rows;
+        if (!gridChanged && nativeCellWidth == _nativeCellWidth && nativeCellHeight == _nativeCellHeight
+            && (_session is not null || _sessionStarting))
             return;
 
         _cols = cols;
         _rows = rows;
+        _nativeCellWidth = nativeCellWidth;
+        _nativeCellHeight = nativeCellHeight;
         Diag($"grid {cols}x{rows} session={_session is not null}");
         EnsureRowVisuals();
-        _terminal.Resize(cols, rows, (int)_cellWidth, (int)_cellHeight);
-        // After resize, snap viewport to bottom so shells like nushell
-        // don't appear scrolled up due to buffer reflow.
-        _terminal.ScrollToBottom();
+        _terminal.Resize(cols, rows, nativeCellWidth, nativeCellHeight);
+        // After a grid resize, snap viewport to bottom so shells like nushell
+        // don't appear scrolled up due to buffer reflow. A DPI-only geometry
+        // update must preserve the user's scrollback position.
+        if (gridChanged)
+            _terminal.ScrollToBottom();
         _needsFullRedraw = true;
         // UpdateFrame must run before the repaint so FrameRows reflects the
         // new geometry; RedrawAll against the stale frame reads out of bounds
@@ -490,7 +500,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // shells for background tabs.
             StartSessionIfReady();
         }
-        else
+        else if (gridChanged)
         {
             _session.Resize((short)cols, (short)rows);
         }
@@ -564,10 +574,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         base.OnDpiChanged(oldDpi, newDpi);
         _pixelsPerDip = newDpi.PixelsPerDip;
         // Glyph rasterization scales with pixels-per-dip even when the DIP
-        // cell size does not, so the cached row pixels are stale.
+        // cell size does not, so the cached row pixels and native mouse
+        // geometry are stale.
         _renderVersion++;
         _needsFullRedraw = true;
-        RedrawAll();
+        RecalculateGridSize();
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -1603,11 +1614,12 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void SetScrollbarHovered(bool hovered)
     {
-        if (_scrollbarHovered == hovered)
+        var targetWidth = hovered || _scrollbarDragging ? ScrollbarWideWidth : ScrollbarThinWidth;
+        if (_scrollbarHovered == hovered && _scrollbarTargetWidth == targetWidth)
             return;
         _scrollbarHovered = hovered;
         Cursor = hovered ? Cursors.Arrow : Cursors.IBeam;
-        _scrollbarTargetWidth = hovered || _scrollbarDragging ? ScrollbarWideWidth : ScrollbarThinWidth;
+        _scrollbarTargetWidth = targetWidth;
         if (Math.Abs(_scrollbarTargetWidth - _scrollbarWidth) < 0.2)
             DrawScrollbar();
         else if (!_scrollbarAnimTimer.IsEnabled)
@@ -1886,8 +1898,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var rowY = _kbAnchorRow * _cellHeight + _cellHeight * 0.5;
         var focusX = _kbFocusCol * _cellWidth + _cellWidth * 0.8;
         var focusY = _kbFocusRow * _cellHeight + _cellHeight * 0.5;
-        _terminal.SelectionPress(_kbAnchorCol, _kbAnchorRow, pressX, rowY);
-        _terminal.SelectionDrag(_kbFocusCol, _kbFocusRow, focusX, focusY);
+        var nativePress = NativePoint(new Point(pressX, rowY));
+        var nativeFocus = NativePoint(new Point(focusX, focusY));
+        _terminal.SelectionPress(_kbAnchorCol, _kbAnchorRow, nativePress.X, nativePress.Y);
+        _terminal.SelectionDrag(_kbFocusCol, _kbFocusRow, nativeFocus.X, nativeFocus.Y);
         _terminal.SelectionRelease(_kbFocusCol, _kbFocusRow);
         FlushRedraw();
     }
@@ -2021,8 +2035,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // fresh selection at the pointer instead of extending.
             _selectionActive = true;
             _selectionDragged = false;
+            _selectionGestureActive = true;
             _mouseSelectionOverride = true;
-            _terminal.SelectionPress(col, row, pos.X, pos.Y);
+            var nativePos = NativePoint(pos);
+            _terminal.SelectionPress(col, row, nativePos.X, nativePos.Y);
             CaptureMouse();
             FlushRedraw();
             e.Handled = true;
@@ -2046,7 +2062,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // derives word selection on the second press.
             _selectionActive = true;
             _selectionDragged = false;
-            _terminal.SelectionPress(col, row, pos.X, pos.Y);
+            _selectionGestureActive = true;
+            var nativePos = NativePoint(pos);
+            _terminal.SelectionPress(col, row, nativePos.X, nativePos.Y);
             CaptureMouse();
             FlushRedraw();
             e.Handled = true;
@@ -2055,7 +2073,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         _selectionActive = true;
         _selectionDragged = false;
-        _terminal.SelectionPress(col, row, pos.X, pos.Y);
+        _selectionGestureActive = true;
+        var selectionPos = NativePoint(pos);
+        _terminal.SelectionPress(col, row, selectionPos.X, selectionPos.Y);
         CaptureMouse();
         FlushRedraw();
     }
@@ -2106,7 +2126,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             var (col, row) = CellFromPoint(pos);
             _selectionDragged = true;
-            _terminal.SelectionDrag(col, row, pos.X, pos.Y);
+            var nativePos = NativePoint(pos);
+            _terminal.SelectionDrag(col, row, nativePos.X, nativePos.Y);
             FlushRedraw();
         }
     }
@@ -2129,6 +2150,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         if (_mouseSelectionOverride)
         {
             var (col, row) = CellFromPoint(e.GetPosition(this));
+            _selectionGestureActive = false;
             _terminal.SelectionRelease(col, row);
             if (!_selectionDragged)
                 ClearSelection();
@@ -2147,6 +2169,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         else if (_selectionActive)
         {
             var (col, row) = CellFromPoint(e.GetPosition(this));
+            _selectionGestureActive = false;
             _terminal.SelectionRelease(col, row);
             if (!_selectionDragged)
                 ClearSelection();
@@ -2155,6 +2178,37 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _selectionDragged = false;
         }
         ReleaseMouseIfNoButtons();
+    }
+
+    protected override void OnLostMouseCapture(MouseEventArgs e)
+    {
+        base.OnLostMouseCapture(e);
+
+        var position = Mouse.GetPosition(this);
+        if (_selectionGestureActive)
+        {
+            var (col, row) = CellFromPoint(position);
+            var wasDragged = _selectionDragged;
+            _selectionGestureActive = false;
+            _terminal.SelectionRelease(col, row);
+            _mouseSelectionOverride = false;
+            _selectionDragged = false;
+            if (wasDragged)
+                FlushRedraw();
+            else
+                ClearSelection();
+        }
+
+        _scrollbarDragging = false;
+        SetScrollbarHovered(false);
+        foreach (var button in new[] { MouseInputButton.Left, MouseInputButton.Middle, MouseInputButton.Right })
+        {
+            if (!IsReportedButton(button))
+                continue;
+            SetReportedButton(button, false);
+            SendMouse(MouseInputAction.Release, button, position);
+        }
+        DrawScrollbar();
     }
 
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
@@ -2266,12 +2320,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // The native encoder takes integer geometry while WPF renders in
         // fractional DIPs. Scale into the same coordinate space supplied to
         // ghostty_terminal_resize so cell-edge clicks cannot drift a column.
-        var nativeCellWidth = Math.Max(1, (int)_cellWidth);
-        var nativeCellHeight = Math.Max(1, (int)_cellHeight);
-        var nativeX = position.X * nativeCellWidth / _cellWidth;
-        var nativeY = position.Y * nativeCellHeight / _cellHeight;
+        var nativePosition = NativePoint(position);
         var len = _terminal.EncodeMouse(action, button, modifiers,
-            nativeX, nativeY, _reportedMouseButtons != 0, _mouseReport);
+            nativePosition.X, nativePosition.Y, _reportedMouseButtons != 0, _mouseReport);
         if (len > 0)
             _session?.Write(_mouseReport.AsSpan(0, len));
     }
@@ -2301,6 +2352,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         if (_reportedMouseButtons == 0 && IsMouseCaptured)
             ReleaseMouseCapture();
     }
+
+    private Point NativePoint(Point point)
+        => new(point.X * _nativeCellWidth / _cellWidth,
+            point.Y * _nativeCellHeight / _cellHeight);
 
     private (int Col, int Row) CellFromPoint(Point point)
     {

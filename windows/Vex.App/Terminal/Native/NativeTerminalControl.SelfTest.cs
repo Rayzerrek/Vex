@@ -1,4 +1,5 @@
 using System.Text;
+using System.Windows;
 using System.Windows.Media;
 using Vex.Libghostty;
 
@@ -203,8 +204,10 @@ public sealed partial class NativeTerminalControl
         var pressY = pressRow * _cellHeight + _cellHeight * 0.5;
         var dragX = dragCol * _cellWidth + _cellWidth * 0.8;
         var dragY = dragRow * _cellHeight + _cellHeight * 0.5;
-        _terminal.SelectionPress(pressCol, pressRow, pressX, pressY);
-        _terminal.SelectionDrag(dragCol, dragRow, dragX, dragY);
+        var nativePress = NativePoint(new Point(pressX, pressY));
+        var nativeDrag = NativePoint(new Point(dragX, dragY));
+        _terminal.SelectionPress(pressCol, pressRow, nativePress.X, nativePress.Y);
+        _terminal.SelectionDrag(dragCol, dragRow, nativeDrag.X, nativeDrag.Y);
         _terminal.SelectionRelease(dragCol, dragRow);
         FlushRedraw();
     }
@@ -223,8 +226,10 @@ public sealed partial class NativeTerminalControl
         var pressY = pressRow * _cellHeight + _cellHeight * 0.5;
         var dragX = dragCol * _cellWidth + _cellWidth * 0.8;
         var dragY = dragRow * _cellHeight + _cellHeight * 0.5;
-        _terminal.SelectionPress(pressCol, pressRow, pressX, pressY);
-        _terminal.SelectionDrag(dragCol, dragRow, dragX, dragY);
+        var nativePress = NativePoint(new Point(pressX, pressY));
+        var nativeDrag = NativePoint(new Point(dragX, dragY));
+        _terminal.SelectionPress(pressCol, pressRow, nativePress.X, nativePress.Y);
+        _terminal.SelectionDrag(dragCol, dragRow, nativeDrag.X, nativeDrag.Y);
         _terminal.SelectionRelease(dragCol, dragRow);
         FlushRedraw();
     }
