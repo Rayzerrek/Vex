@@ -12,6 +12,10 @@ public sealed partial class CommandPalette : OverlayControl
 {
     private List<PaletteItem> _allItems = new();
 
+    /// <summary>Raised after the palette closed (including Escape and backdrop
+    /// clicks), so the window can hand keyboard focus back to the terminal.</summary>
+    public event Action? Hidden;
+
     public CommandPalette()
     {
         InitializeComponent();
@@ -36,7 +40,7 @@ public sealed partial class CommandPalette : OverlayControl
         }, System.Windows.Threading.DispatcherPriority.Input);
     }
 
-    public void Hide() => HideWithAnimation(Backdrop, Panel);
+    public void Hide() => HideWithAnimation(Backdrop, Panel, () => Hidden?.Invoke());
 
     private void AnimateOpen() => AnimateOverlayOpen(Backdrop, Panel, PanelScale, PanelTranslate);
 
@@ -110,9 +114,17 @@ public sealed partial class CommandPalette : OverlayControl
         }
     }
 
-    private void ResultList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    private void ResultList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        ExecuteSelected();
+        // Single click activates a command (VS Code palette behavior); the
+        // old double-click requirement hid the primary interaction.
+        if (ItemsControl.ContainerFromElement(ResultList, e.OriginalSource as DependencyObject)
+            is ListBoxItem { } container)
+        {
+            container.IsSelected = true;
+            ExecuteSelected();
+            e.Handled = true;
+        }
     }
 
     private void ExecuteSelected()

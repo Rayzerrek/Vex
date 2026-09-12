@@ -135,7 +135,13 @@ public static class ChromePalette
 
         // Overlay chrome: scrims, pressed states, drag previews, settings
         // surfaces. Derived from the theme so overlays never clash with it.
-        Set(res, "VexBackdropScrimColor", FromArgb(0x66, 0x00, 0x00, 0x00));
+        // The modal backdrop is one near-opaque wash in the chrome's base
+        // color: the dark window is deliberately non-uniform (acrylic chrome
+        // at ~25% alpha against a ~90%-opaque terminal pane), so a thin scrim
+        // showed the blurred desktop through half of it and a flat color
+        // through the other half. One themed wash dims every surface alike.
+        var scrimBase = Darken(bg, 0.62);
+        Set(res, "VexBackdropScrimColor", FromArgb(0xCC, scrimBase.R, scrimBase.G, scrimBase.B));
         Set(res, "VexPressFillColor", Mix(bg, fg, 0.32));
         Set(res, "VexSidebarToggleBgColor", WithAlpha(Darken(bg, 0.70), 0x2E));
         Set(res, "VexSidebarToggleBorderColor", WithAlpha(Mix(bg, fg, 0.35), 0x46));

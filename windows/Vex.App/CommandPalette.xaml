@@ -65,7 +65,7 @@
                              BorderThickness="0"
                              Padding="0,4"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             MouseDoubleClick="ResultList_MouseDoubleClick">
+                             PreviewMouseLeftButtonDown="ResultList_PreviewMouseLeftButtonDown">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Style.Setters>

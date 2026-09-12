@@ -69,8 +69,9 @@ public abstract class OverlayControl : UserControl
     }
 
     /// <summary>Fade-out + collapse + popup close, the standard dismissal for
-    /// the quick overlays; no-op when already hidden.</summary>
-    protected void HideWithAnimation(FrameworkElement backdrop, FrameworkElement panel)
+    /// the quick overlays; no-op when already hidden. <paramref name="onHidden"/>
+    /// runs after the popup closed, so callers can restore focus.</summary>
+    protected void HideWithAnimation(FrameworkElement backdrop, FrameworkElement panel, Action? onHidden = null)
     {
         if (Visibility != Visibility.Visible)
             return;
@@ -78,6 +79,7 @@ public abstract class OverlayControl : UserControl
         {
             Visibility = Visibility.Collapsed;
             ClosePopup(this);
+            onHidden?.Invoke();
         });
     }
 }
