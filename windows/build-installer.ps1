@@ -1,55 +1,73 @@
-# Vex Terminal Workspace - Build & Package Script
-# Generates a standalone self-contained release build and Windows Installer (.msi)
+# Builds the release artifacts for Vex: a self-contained win-x64 zip and an MSI.
+#
+# The zip must contain every file `dotnet publish` produces except debug
+# symbols. Native WPF DLLs (wpfgfx_cor3, PresentationNative_cor3, ...) live
+# beside the exe rather than inside the single-file bundle, so omitting them
+# produces an executable that throws DllNotFoundException on first paint.
 
 $ErrorActionPreference = "Stop"
+
 $ScriptDir = $PSScriptRoot
-$RootDir = Split-Path $ScriptDir -Parent
 $PublishDir = Join-Path $ScriptDir "publish"
 $AppPublishDir = Join-Path $PublishDir "app"
-$InstallerOutputDir = Join-Path $PublishDir "installer"
-
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host " Building Vex Terminal Workspace Installer" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-
-# 1. Clean previous build artifacts
-if (Test-Path $PublishDir) {
-    Write-Host "[1/4] Cleaning previous publish artifacts..." -ForegroundColor Yellow
-    Remove-Item -Path $PublishDir -Recurse -Force
-}
-New-Item -ItemType Directory -Path $AppPublishDir -Force | Out-Null
-New-Item -ItemType Directory -Path $InstallerOutputDir -Force | Out-Null
-
-# 2. Publish Vex.App as self-contained win-x64 executable package
-Write-Host "[2/4] Publishing Vex.App (win-x64 self-contained)..." -ForegroundColor Yellow
 $AppProj = Join-Path $ScriptDir "Vex.App\Vex.App.csproj"
-dotnet publish $AppProj -c Release -o $AppPublishDir
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "dotnet publish failed!"
-}
-
-# 3. Build WiX MSI Installer package
-Write-Host "[3/4] Building WiX MSI Installer package..." -ForegroundColor Yellow
 $SetupProj = Join-Path $ScriptDir "Vex.Setup\Vex.Setup.wixproj"
-dotnet build $SetupProj -c Release -p:TargetDir="$AppPublishDir\"
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "dotnet build Vex.Setup.wixproj failed!"
+$MsiSource = Join-Path $ScriptDir "Vex.Setup\bin\Release\VexSetup.msi"
+
+function Write-Step([string]$Message) {
+    Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
-# 4. Copy generated MSI to publish folder and Desktop
-$MsiSource = Join-Path $ScriptDir "Vex.Setup\bin\Release\VexSetup.msi"
-$DesktopTarget = Join-Path ([Environment]::GetFolderPath("Desktop")) "Vex.msi"
+# Read the version from the csproj so it has one source of truth; AppInfo
+# resolves the same property from the built assembly.
+Write-Step "Reading version"
+$version = ([xml](Get-Content $AppProj)).Project.PropertyGroup.Version |
+    Where-Object { $_ } | Select-Object -First 1
+if (-not $version) { throw "No <Version> found in $AppProj" }
+Write-Host "    version $version"
 
-if (Test-Path $MsiSource) {
-    $MsiTarget = Join-Path $InstallerOutputDir "Vex.msi"
-    Copy-Item -Path $MsiSource -Destination $MsiTarget -Force
-    Copy-Item -Path $MsiSource -Destination $DesktopTarget -Force
-    Write-Host "========================================" -ForegroundColor Green
-    Write-Host " SUCCESS! Installer generated at:" -ForegroundColor Green
-    Write-Host " $MsiTarget" -ForegroundColor White
-    Write-Host " Copied to Desktop:" -ForegroundColor Green
-    Write-Host " $DesktopTarget" -ForegroundColor White
-    Write-Host "========================================" -ForegroundColor Green
-} else {
-    Write-Error "Installer file not found at expected location: $MsiSource"
+$baseName = "Vex-$version-win-x64"
+$zipPath = Join-Path $PublishDir "$baseName.zip"
+$msiPath = Join-Path $PublishDir "$baseName.msi"
+
+if (Test-Path $PublishDir) { Remove-Item $PublishDir -Recurse -Force }
+New-Item -ItemType Directory -Path $AppPublishDir -Force | Out-Null
+
+# WiX caches the harvested payload under the setup project's obj directory and
+# reuses it when only the publish output changed, producing an MSI with no
+# files in it. Clearing that cache forces a real re-harvest.
+$SetupDir = Join-Path $ScriptDir "Vex.Setup"
+foreach ($stale in @("obj", "bin")) {
+    $path = Join-Path $SetupDir $stale
+    if (Test-Path $path) { Remove-Item $path -Recurse -Force }
+}
+
+Write-Step "Publishing Vex.App (win-x64, self-contained)"
+dotnet publish $AppProj -c Release -o $AppPublishDir
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+
+Write-Step "Packing $baseName.zip"
+# Symbols make the archive several times larger and are of no use to someone
+# running a release build. Everything else is required, native DLLs included.
+# Packing happens before the MSI build, which drops its own .wixpdb and .msi
+# into the publish directory.
+$payload = Get-ChildItem $AppPublishDir -Recurse -File |
+    Where-Object { $_.Extension -ne ".pdb" }
+Compress-Archive -Path $payload.FullName -DestinationPath $zipPath -Force
+
+Write-Step "Building MSI"
+dotnet build $SetupProj -c Release -p:TargetDir="$AppPublishDir\"
+if ($LASTEXITCODE -ne 0) { throw "dotnet build Vex.Setup.wixproj failed" }
+if (-not (Test-Path $MsiSource)) { throw "MSI not produced at $MsiSource" }
+Copy-Item $MsiSource $msiPath
+
+Write-Step "Writing checksum"
+# Filename only: `sha256sum -c` and `Get-FileHash` both need a path relative to
+# the checksum file. An absolute path from the build machine is unusable.
+$hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+"$hash  $baseName.zip" | Set-Content "$zipPath.sha256" -NoNewline -Encoding ascii
+
+Write-Step "Done"
+Get-ChildItem $PublishDir -File | ForEach-Object {
+    Write-Host ("    {0}  ({1:N1} MB)" -f $_.Name, ($_.Length / 1MB))
 }

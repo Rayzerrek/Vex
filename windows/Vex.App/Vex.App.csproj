@@ -9,8 +9,6 @@
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
     <Resource Include="Assets\app-5.png" />
-    <None Remove="Assets\**\*" />
-    <None Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,9 +32,10 @@
     <Description>ConPTY terminal workspace with split panes, file tree, and editor.</Description>
     <Company>Vex</Company>
     <Authors>Vex</Authors>
-    <Version>1.2.1</Version>
-    <FileVersion>1.2.1.0</FileVersion>
-    <AssemblyVersion>1.2.1.0</AssemblyVersion>
+    <!-- Single source of truth for the app version. The SDK derives
+         FileVersion and AssemblyVersion from this, and AppInfo reads it back
+         from the assembly for the UI, so nothing else needs updating. -->
+    <Version>1.3.0</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <!-- Ahead-of-time compiled method bodies for the published exe: faster
