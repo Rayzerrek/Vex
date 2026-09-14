@@ -1,0 +1,52 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build:
+    name: build and test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # .NET 10 is GA (LTS), so no dotnet-quality flag: setting it to
+      # "preview" would make the channel resolve to nothing.
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore windows/Vex.slnx
+
+      - name: Build
+        run: dotnet build windows/Vex.slnx --no-restore -c Release
+
+      # Vex.Libghostty.Tests loads ghostty-vt.dll, which is checked in under
+      # Vendor/ and copied to the test output by Vex.Libghostty.csproj.
+      # Plain `--logger trx` lets each test project write its own uniquely
+      # named file; an explicit LogFileName would make them overwrite.
+      - name: Test
+        run: dotnet test windows/Vex.slnx --no-build -c Release --logger trx --results-directory artifacts/test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-test-results
+          path: artifacts/test-results
+          if-no-files-found: ignore

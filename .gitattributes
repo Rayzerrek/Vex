@@ -1,0 +1,27 @@
+# Normalize line endings in the repository. Every text file is stored with LF;
+# Git converts to CRLF only in the working tree on Windows if the user has
+# core.autocrlf=true. Without this, a Windows checkout rewrites files on
+# commit and produces diffs where every line looks changed.
+* text=auto eol=lf
+
+# Batch and PowerShell scripts must keep CRLF, or cmd.exe and some PowerShell
+# hosts mis-parse their last line.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets. Marking these stops Git from attempting text conversion and
+# from printing binary blobs in diffs and merge conflicts.
+*.dll binary
+*.exe binary
+*.msi binary
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.zip binary
+
+# Lockfiles: generated, and merging them line by line is never meaningful.
+*pnpm-lock.yaml -diff

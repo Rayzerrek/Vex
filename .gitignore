@@ -23,3 +23,6 @@ skills-lock.json
 **/.amp/portals/
 
 windows/publish/
+
+# Test output
+/artifacts/
