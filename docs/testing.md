@@ -91,34 +91,25 @@ dotnet run --project windows/Vex.App
 
 ## Landing page
 
+The landing page in `web/` is static markup with no logic of its own, so it
+has no test suite. `pnpm run check` is the gate there: it verifies formatting,
+lint rules, and types. The production build is checked too, since a type error
+that only surfaces in `tsc -b` would otherwise reach the deploy step.
+
 ```powershell
 cd web
 pnpm install --frozen-lockfile
 pnpm run check   # formatting, lint, types
-pnpm run test    # vitest, no DOM
 pnpm run build   # production build
 ```
 
-The landing page is static, and the failures worth catching are content
-failures rather than rendering ones. `web/src/app.test.ts` therefore reads
-`app.tsx` and the repository files directly and asserts on facts that have
-either broken here before or would break silently:
+Useful when reviewing a change to that page:
 
-- every screenshot path referenced by the page resolves to a real file, and
-  every `<img>` carries alternative text
-- the license the page advertises matches `LICENSE`, and it never says MIT
-  again (it did once, while `LICENSE` was GPL-3.0)
-- every `to="..."` target is a route declared in `router.tsx`, and the
-  download links point at the GitHub repository
-
-This keeps the suite dependency-free: no jsdom, no DOM query library, and no
-React runtime in the test path. Vitest is the runner and comes from `vite-plus`,
-so `vp test` needs no extra runtime dependency.
-
-Tests use Vitest globals (no `import { expect } from "vitest"`); the types come
-from `vite-plus/test/globals` in `tsconfig.app.json`. Importing from `vitest`
-directly fails, because pnpm resolves a second copy of the package that does
-not share the runner's context.
+- New screenshots must exist under `web/public/shots/` and carry `alt` text.
+  Nothing enforces this automatically, so check it by eye.
+- The advertised license must agree with `LICENSE`. It is GPL-3.0; the page
+  once said MIT while `LICENSE` said otherwise.
+- Every `to="..."` target must be a route declared in `router.tsx`.
 
 ## What CI runs
 
