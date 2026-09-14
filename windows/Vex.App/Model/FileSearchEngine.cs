@@ -29,9 +29,18 @@ public sealed class FileSearchResult
 /// </summary>
 public sealed class FileSearchEngine
 {
-    private static readonly char[] PathSeparators = { '/', '\\' };
     private readonly string _root;
-    private List<(string FullPath, string RelativePath)> _indexedFiles = new();
+    private List<IndexedFile> _indexedFiles = new();
+
+    private sealed class IndexedFile
+    {
+        public required string FullPath { get; init; }
+        public required string RelativePath { get; init; }
+        public required string NormalizedPath { get; init; }
+        public required string FileName { get; init; }
+        public required string DirectoryPart { get; init; }
+        public required int NameStart { get; init; }
+    }
 
     public FileSearchEngine(string root)
     {
@@ -43,7 +52,7 @@ public sealed class FileSearchEngine
     /// a background thread.</summary>
     public void RebuildIndex()
     {
-        var files = new List<(string FullPath, string RelativePath)>();
+        var files = new List<IndexedFile>();
         try
         {
             var rootDir = new DirectoryInfo(_root);
@@ -60,7 +69,7 @@ public sealed class FileSearchEngine
         _indexedFiles = files;
     }
 
-    private void Walk(DirectoryInfo dir, int rootPrefixLen, List<(string FullPath, string RelativePath)> files)
+    private void Walk(DirectoryInfo dir, int rootPrefixLen, List<IndexedFile> files)
     {
         IEnumerable<FileSystemInfo> entries;
         try
@@ -89,106 +98,98 @@ public sealed class FileSearchEngine
             {
                 var full = entry.FullName;
                 var rel = full.Length >= rootPrefixLen ? full[rootPrefixLen..] : name;
-                files.Add((full, rel));
+                var fileName = Path.GetFileName(rel);
+                files.Add(new IndexedFile
+                {
+                    FullPath = full,
+                    RelativePath = rel,
+                    NormalizedPath = Normalize(rel),
+                    FileName = fileName,
+                    DirectoryPart = Path.GetDirectoryName(rel) ?? "",
+                    NameStart = rel.Length - fileName.Length,
+                });
             }
         }
     }
 
-    /// <summary>Runs a fuzzy query over the current index. Cheap enough to
-    /// call on the UI thread for each keystroke; the index is the expensive
-    /// part. Returns up to <paramref name="limit"/> best matches, empty when
-    /// the query is blank.</summary>
-    public List<FileSearchResult> Search(string query, int limit = 50)
+    /// <summary>Runs a fuzzy query over the current index. Returns up to
+    /// <paramref name="limit"/> best matches, empty when the query is blank.
+    /// Work stops early when <paramref name="cancellationToken"/> is cancelled.</summary>
+    public List<FileSearchResult> Search(string query, int limit = 50, CancellationToken cancellationToken = default)
     {
-        var results = new List<FileSearchResult>(Math.Min(limit, 50));
-        if (string.IsNullOrWhiteSpace(query))
-            return results;
+        if (string.IsNullOrWhiteSpace(query) || limit <= 0)
+            return new List<FileSearchResult>();
 
+        var normalizedQuery = Normalize(query);
+        var best = new PriorityQueue<(IndexedFile File, double Score), double>(limit);
         var files = _indexedFiles;
         for (var i = 0; i < files.Count; i++)
         {
-            var (full, rel) = files[i];
-            if (!TryScore(rel, query, out var score, out var positions))
+            if ((i & 255) == 0 && cancellationToken.IsCancellationRequested)
+                return new List<FileSearchResult>();
+
+            var file = files[i];
+            if (!TryScore(file, normalizedQuery, out var score))
                 continue;
 
-            var fileName = Path.GetFileName(rel);
-            var nameStart = rel.Length - fileName.Length;
-
-            // Extract match positions in the file name without LINQ allocations
-            var nameMatchCount = 0;
-            for (var p = 0; p < positions.Length; p++)
+            if (best.Count < limit)
             {
-                if (positions[p] >= nameStart)
-                    nameMatchCount++;
+                best.Enqueue((file, score), score);
             }
-
-            var namePositions = new int[nameMatchCount];
-            var dest = 0;
-            for (var p = 0; p < positions.Length; p++)
+            else if (best.TryPeek(out _, out var lowestScore) && score > lowestScore)
             {
-                if (positions[p] >= nameStart)
-                    namePositions[dest++] = positions[p] - nameStart;
+                best.Dequeue();
+                best.Enqueue((file, score), score);
             }
+        }
 
+        var results = new List<FileSearchResult>(best.Count);
+        while (best.TryDequeue(out var match, out _))
+        {
+            var file = match.File;
             results.Add(new FileSearchResult
             {
-                FullPath = full,
-                RelativePath = rel,
-                FileName = fileName,
-                DirectoryPart = Path.GetDirectoryName(rel) ?? "",
-                MatchPositions = namePositions,
-                Score = score,
+                FullPath = file.FullPath,
+                RelativePath = file.RelativePath,
+                FileName = file.FileName,
+                DirectoryPart = file.DirectoryPart,
+                MatchPositions = GetNameMatchPositions(file, normalizedQuery),
+                Score = match.Score,
             });
         }
 
         results.Sort((a, b) => b.Score.CompareTo(a.Score));
-        if (results.Count > limit)
-            results.RemoveRange(limit, results.Count - limit);
         return results;
     }
 
     /// <summary>
     /// Scores a candidate path against the query using subsequence matching.
-    /// Fast-path returns false before allocating positions array for non-matches.
+    /// The indexed lowercase path keeps this loop allocation-free and avoids
+    /// Unicode case conversion for every character of every query.
     /// </summary>
-    private static bool TryScore(string text, string query, out double score, out int[] positions)
+    private static bool TryScore(IndexedFile file, string query, out double score)
     {
         score = 0;
-        positions = Array.Empty<int>();
 
+        var text = file.RelativePath;
+        var normalizedText = file.NormalizedPath;
         var qLen = query.Length;
         var tLen = text.Length;
         if (tLen < qLen)
             return false;
 
-        // Subsequence pre-check
         var qIdx = 0;
-        for (var t = 0; t < tLen && qIdx < qLen; t++)
-        {
-            if (char.ToLowerInvariant(text[t]) == char.ToLowerInvariant(query[qIdx]))
-                qIdx++;
-        }
-
-        if (qIdx < qLen)
-            return false;
-
-        var pos = new int[qLen];
-        var idx = 0;
-        for (var i = 0; i < qLen; i++)
-        {
-            var ch = char.ToLowerInvariant(query[i]);
-            while (idx < tLen && char.ToLowerInvariant(text[idx]) != ch)
-                idx++;
-            pos[i] = idx++;
-        }
-
         double s = 0;
         var last = -1;
-        var lastSlash = text.LastIndexOfAny(PathSeparators);
-
-        for (var i = 0; i < pos.Length; i++)
+        var first = -1;
+        for (var p = 0; p < tLen && qIdx < qLen; p++)
         {
-            var p = pos[i];
+            if (normalizedText[p] != query[qIdx])
+                continue;
+
+            if (first < 0)
+                first = p;
+
             // Consecutive matches chain bonuses (fzf's consecutive bonus).
             if (last >= 0 && p == last + 1)
                 s += 8;
@@ -206,17 +207,58 @@ public sealed class FileSearchEngine
             }
 
             // Matches in the file name weigh more than in directory part
-            if (p > lastSlash)
+            if (p >= file.NameStart)
                 s += 6;
 
             last = p;
+            qIdx++;
         }
 
+        if (qIdx < qLen)
+            return false;
+
         s += Math.Max(0, 40 - tLen) * 0.25;
-        s -= pos[0] * 0.05;
+        s -= first * 0.05;
 
         score = s;
-        positions = pos;
         return true;
+    }
+
+    private static int[] GetNameMatchPositions(IndexedFile file, string query)
+    {
+        var count = 0;
+        var qIdx = 0;
+        for (var p = 0; p < file.NormalizedPath.Length && qIdx < query.Length; p++)
+        {
+            if (file.NormalizedPath[p] != query[qIdx])
+                continue;
+
+            if (p >= file.NameStart)
+                count++;
+            qIdx++;
+        }
+
+        var positions = new int[count];
+        var dest = 0;
+        qIdx = 0;
+        for (var p = 0; p < file.NormalizedPath.Length && qIdx < query.Length; p++)
+        {
+            if (file.NormalizedPath[p] != query[qIdx])
+                continue;
+
+            if (p >= file.NameStart)
+                positions[dest++] = p - file.NameStart;
+            qIdx++;
+        }
+        return positions;
+    }
+
+    private static string Normalize(string value)
+    {
+        return string.Create(value.Length, value, static (chars, source) =>
+        {
+            for (var i = 0; i < chars.Length; i++)
+                chars[i] = char.ToLowerInvariant(source[i]);
+        });
     }
 }

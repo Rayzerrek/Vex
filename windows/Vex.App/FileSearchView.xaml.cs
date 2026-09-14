@@ -88,8 +88,8 @@ public sealed partial class FileSearchView : UserControl
         }
 
         // Half-debounce: the initial keystroke after quiet executes immediately (0ms latency),
-        // rapid subsequent keystrokes within typing burst (120ms) coalesce to trailing edge off UI thread.
-        _searchDebouncer ??= new HalfDebouncer<string>(TimeSpan.FromMilliseconds(120), QueueSearch, leadingEdge: true);
+        // while rapid subsequent keystrokes briefly coalesce to avoid competing index scans.
+        _searchDebouncer ??= new HalfDebouncer<string>(TimeSpan.FromMilliseconds(35), QueueSearch, leadingEdge: true);
         _searchDebouncer.Trigger(query);
     }
 
@@ -127,7 +127,7 @@ public sealed partial class FileSearchView : UserControl
             if (cts.IsCancellationRequested)
                 return;
 
-            var results = engine.Search(query);
+            var results = engine.Search(query, cancellationToken: cts.Token);
 
             if (cts.IsCancellationRequested)
                 return;
