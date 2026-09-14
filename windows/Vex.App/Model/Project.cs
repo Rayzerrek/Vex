@@ -38,6 +38,8 @@ public sealed class Project : ObservableObject
         Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
         var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
+        if (tab is not null)
+            tab.IsActive = true;
     }
 
     /// <summary>Restores a project from a saved session; tabs are wired up
@@ -53,6 +55,8 @@ public sealed class Project : ObservableObject
             Tabs.Add(tab);
         }
         _selectedTab = Tabs.FirstOrDefault();
+        if (_selectedTab is not null)
+            _selectedTab.IsActive = true;
     }
 
     private void WireTabEvents(WorkspaceTab tab)
@@ -191,13 +195,21 @@ public sealed class Project : ObservableObject
             if (ReferenceEquals(_selectedTab, value))
                 return;
             if (_selectedTab is { } previous)
+            {
+                // Drop the attention flag only once the tab is genuinely left;
+                // IsActive also gates whether a ring raises it at all.
+                previous.IsActive = false;
                 TabDeactivating?.Invoke(previous);
+            }
             if (Set(ref _selectedTab, value))
             {
                 // A new window/tab should be ready to type into immediately;
                 // focus its active pane once it's rendered.
                 if (value is not null)
+                {
+                    value.IsActive = true;
                     Dispatcher.CurrentDispatcher.BeginInvoke(() => value.ActiveLeaf?.Focus());
+                }
             }
         }
     }
