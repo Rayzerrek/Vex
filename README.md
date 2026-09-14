@@ -30,8 +30,15 @@ full list, including copy, paste, selection, and scroll keys, is in
 
 ## Install
 
-Download the installer from [Releases](https://github.com/Rayzerrek/Vex/releases),
-or build from source below.
+Download from [Releases](https://github.com/Rayzerrek/Vex/releases):
+
+- `Vex-<version>-win-x64.msi` — installer, adds Vex to the Start menu and
+  creates a desktop shortcut.
+- `Vex-<version>-win-x64.zip` — portable, self-contained. Unpack anywhere and
+  run `Vex.App.exe`; no .NET install required. Keep the files together, since
+  the executable loads `ghostty-vt.dll` and the native WPF libraries beside it.
+
+Both are built by `windows/build-installer.ps1`.
 
 ## Documentation
 
@@ -68,11 +75,14 @@ dotnet build windows/Vex.slnx
 dotnet run --project windows/Vex.App
 ```
 
-To build the self-contained executable and the MSI installer:
+To build the release artifacts (self-contained zip plus MSI):
 
 ```powershell
 pwsh windows/build-installer.ps1
 ```
+
+Both land in `windows/publish/`, named after the `<Version>` in
+`windows/Vex.App/Vex.App.csproj`.
 
 ## Third-party components
 
