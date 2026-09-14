@@ -105,8 +105,8 @@ internal static partial class AppIconCatalog
             ["sh"] = () => AppIcon.Glyph("gnubash"),
             ["zsh"] = () => AppIcon.Glyph("zsh"),
             ["nu"] = () => AppIcon.Glyph("nushell"),
-            ["pwsh"] = () => AppIcon.Badge("P", Color.FromRgb(0x53, 0x91, 0xFE)),
-            ["powershell"] = () => AppIcon.Badge("P", Color.FromRgb(0x53, 0x91, 0xFE)),
+            ["pwsh"] = () => AppIcon.Glyph("powershell"),
+            ["powershell"] = () => AppIcon.Glyph("powershell"),
             ["cmd"] = () => AppIcon.Badge(">", Color.FromRgb(0x00, 0x78, 0xD4)),
             ["wsl"] = () => AppIcon.Badge("W", HashColor("wsl")),
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
