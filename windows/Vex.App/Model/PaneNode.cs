@@ -214,10 +214,18 @@ public sealed class TerminalPane : LeafPane
 
     public override void Focus()
     {
-        if (View is not ITerminalView tv)
+        // Never realize the view just to focus it. Panes are realized by the
+        // workspace data template, and CreateView() below re-applies focus
+        // when the model already marked the pane focused. Realizing a WPF
+        // control from the model would also crash any caller off the UI
+        // thread (unit tests included) and spawn a ConPTY session eagerly.
+        if (ViewIfCreated is not ITerminalView tv || ViewIfCreated is not System.Windows.FrameworkElement element)
             return;
-        var element = (System.Windows.FrameworkElement)View;
+        FocusView(tv, element);
+    }
 
+    private void FocusView(ITerminalView tv, System.Windows.FrameworkElement element)
+    {
         if (element.IsKeyboardFocused)
             return;
 
@@ -309,6 +317,11 @@ public sealed class TerminalPane : LeafPane
                     break;
             }
         };
+        // The template realizes panes after the model already ran Focus(),
+        // so a fresh split pane or focus-mode target only takes keyboard
+        // focus if its first realization applies the pending focus itself.
+        if (IsFocused)
+            FocusView(view, view);
         return view;
     }
 
