@@ -316,7 +316,7 @@
                         </StackPanel>
 
                         <StackPanel DockPanel.Dock="Bottom" Margin="18,0">
-                            <TextBlock Text="Vex 1.2.1" FontSize="11" Foreground="{StaticResource VexTextDim}"/>
+                            <TextBlock x:Name="SidebarVersionText" FontSize="11" Foreground="{StaticResource VexTextDim}"/>
                         </StackPanel>
 
                         <StackPanel>
@@ -763,7 +763,7 @@
                                                RenderOptions.BitmapScalingMode="HighQuality"/>
                                         <TextBlock Text="Vex" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource VexText}"
                                                    HorizontalAlignment="Center" Margin="0,16,0,4"/>
-                                        <TextBlock Text="Version 1.2.1" FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
+                                        <TextBlock x:Name="AboutVersionText" FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
                                         <TextBlock Text="Split panes, a file tree and an editor over ConPTY sessions."
                                                    FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"
                                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,0" MaxWidth="340"/>
