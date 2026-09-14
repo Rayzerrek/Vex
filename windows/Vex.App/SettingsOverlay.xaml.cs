@@ -84,6 +84,11 @@ public sealed partial class SettingsOverlay : OverlayControl
         };
 
         DataContext = AppSettings.Instance;
+
+        // Assembled here rather than hardcoded in XAML so a version bump only
+        // touches the csproj; the two forms differ by prefix and wording.
+        SidebarVersionText.Text = AppInfo.VersionLabel;
+        AboutVersionText.Text = $"Version {AppInfo.Version}";
     }
 
     /// <summary>Fired once the closing animation finishes and the overlay is

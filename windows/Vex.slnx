@@ -3,5 +3,6 @@
   <Project Path="Vex.Setup/Vex.Setup.wixproj" />
   <Project Path="Vex.Libghostty/Vex.Libghostty.csproj" />
   <Project Path="Vex.Libghostty.Tests/Vex.Libghostty.Tests.csproj" />
+  <Project Path="Vex.App.Tests/Vex.App.Tests.csproj" />
   <Project Path="Vex.Terminal/Vex.Terminal.csproj" />
 </Solution>
