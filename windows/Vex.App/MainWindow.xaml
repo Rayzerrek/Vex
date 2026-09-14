@@ -328,9 +328,12 @@
               Background="{StaticResource VexTabStrip}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
+                <!-- Tabs own the flexible column: with a few dozen tabs the
+                     strip must shrink and scroll, never push the caption
+                     buttons out of the window. -->
+                <ColumnDefinition Width="*" MinWidth="0"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
@@ -347,8 +350,11 @@
                      ItemsSource="{Binding SelectedProject.Tabs}"
                      SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
                      Background="Transparent" BorderThickness="0"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                     ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                     ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                     ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                     ScrollViewer.CanContentScroll="False"
+                     PreviewMouseWheel="TabStrip_PreviewMouseWheel"
+                     SelectionChanged="TabStrip_SelectionChanged">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate>
                         <StackPanel Orientation="Horizontal"/>
@@ -362,7 +368,9 @@
                         <Setter Property="Margin" Value="2,4"/>
                         <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
                         <Setter Property="MaxWidth" Value="220"/>
-                        <Setter Property="MinWidth" Value="100"/>
+                        <!-- Narrow enough that a busy strip keeps every tab
+                             (and the new-tab button) on screen. -->
+                        <Setter Property="MinWidth" Value="84"/>
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ListBoxItem">
