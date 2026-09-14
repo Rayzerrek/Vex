@@ -146,6 +146,29 @@ public sealed class FileSearchEngineTests : IDisposable
     }
 
     [Fact]
+    public void Limit_KeepsBestMatchesRatherThanFirstIndexedMatches()
+    {
+        var engine = Indexed(
+            "axbxc.cs",
+            "aybyc.cs",
+            "abc.cs");
+
+        var result = engine.Search("abc", limit: 1).Single();
+
+        Assert.Equal("abc.cs", result.FileName);
+    }
+
+    [Fact]
+    public void CancelledSearch_ReturnsWithoutResults()
+    {
+        var engine = Indexed("match.cs");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Empty(engine.Search("match", cancellationToken: cancellation.Token));
+    }
+
+    [Fact]
     public void RelativePath_UsesForwardSlashFreeSeparatorFromRoot()
     {
         var engine = Indexed("src/nested/deep.cs");
