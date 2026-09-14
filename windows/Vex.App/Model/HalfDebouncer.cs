@@ -4,10 +4,17 @@ namespace Vex.App.Model;
 
 /// <summary>
 /// High-performance half-debouncer (leading + trailing debounce):
-/// - Leading edge: The first trigger executes immediately (zero latency).
-/// - Coalescing: Subsequent triggers within the time window are debounced.
-/// - Trailing edge: When calls stop and the quiet period elapses, the trailing
-///   execution runs to process the latest state.
+/// - Leading edge: The first trigger executes immediately (zero latency), and
+///   on its own it does not schedule a trailing run — a lone call is already
+///   fully served. This is what keeps the first keystroke instant.
+/// - Coalescing: A second trigger inside the time window marks trailing work
+///   as pending and restarts the window; further triggers only restart it.
+/// - Trailing edge: Once the window elapses quietly, the pending execution
+///   runs once with the latest state.
+///
+/// With <c>leadingEdge: false</c> every trigger behaves as a coalesced one, so
+/// the action runs only from the trailing edge (or an explicit
+/// <see cref="Flush"/>).
 ///
 /// Uses <see cref="Timer"/> from the thread pool rather than WPF's
 /// DispatcherTimer so it has zero thread affinity, incurs zero UI-dispatch
