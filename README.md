@@ -40,7 +40,6 @@ or build from source below.
 - [docs/shortcuts.md](docs/shortcuts.md) — every keyboard and mouse binding.
 - [docs/testing.md](docs/testing.md) — test layers and the renderer self-test harness.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — building, testing, and commit conventions.
-- [CHANGELOG.md](CHANGELOG.md) — release history.
 
 ## Structure
 
