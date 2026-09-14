@@ -1,13 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link } from "@tanstack/react-router";
 
 const frame = "mx-auto w-[min(100%_-_48px,640px)]";
 
 const sectionTitle =
   "mt-20 border-b border-line pb-3 font-mono text-[11px] tracking-[0.08em] text-faint";
-
-const rowLink =
-  "group flex items-baseline gap-4 border-b border-line py-4 no-underline transition-colors duration-150 hover:bg-surface focus-visible:bg-surface";
 
 const downloadOptions = [
   {
@@ -56,7 +52,7 @@ function useTheme() {
     try {
       localStorage.setItem("vex-theme", next ? "dark" : "light");
     } catch {
-      // Storage unavailable; theme still applies for this visit.
+      // xd
     }
   };
 
@@ -64,9 +60,11 @@ function useTheme() {
 }
 
 export function HomePage() {
+  const { dark, toggle } = useTheme();
+
   return (
     <div className="min-h-dvh bg-background text-text">
-      <SiteHeader />
+      <SiteHeader dark={dark} toggle={toggle} />
       <main className={`${frame} pb-24`}>
         <section className="rise pt-16 max-narrow:pt-12" id="top">
           <h1 className="max-w-[560px] text-[32px] font-medium leading-[1.25] tracking-[-0.02em] max-narrow:text-[28px]">
@@ -77,12 +75,12 @@ export function HomePage() {
             built around ConPTY, split panes, and projects that stay open.
           </p>
           <p className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-[14px]">
-            <Link
+            <a
               className="underline decoration-line underline-offset-4 transition-colors hover:decoration-text"
-              to="/download"
+              href="/#download"
             >
               Download
-            </Link>
+            </a>
             <a
               className="underline decoration-line underline-offset-4 transition-colors hover:decoration-text"
               href="https://github.com/Rayzerrek/Vex"
@@ -91,9 +89,9 @@ export function HomePage() {
             </a>
             <a
               className="underline decoration-line underline-offset-4 transition-colors hover:decoration-text"
-              href="/#workspace"
+              href="/#features"
             >
-              Workspace
+              Features
             </a>
           </p>
         </section>
@@ -101,44 +99,51 @@ export function HomePage() {
         <figure className="mt-10">
           <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgba(25,25,24,0.06),0_24px_48px_-24px_rgba(25,25,24,0.25)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_24px_48px_-24px_rgba(0,0,0,0.7)]">
             <img
-              className="block w-full dark:hidden"
-              src="/shots/vex-light.png"
-              alt="Vex on Windows with the sidebar open, a file tree, and a Nushell terminal listing the project"
+              className="block aspect-[16/9] w-full object-cover object-top"
+              src={dark ? "/shots/vex-dark.png" : "/shots/vex-light.png"}
+              alt="Vex on Windows with the sidebar open, a file tree, and a terminal listing the project"
               loading="eager"
-            />
-            <img
-              className="hidden w-full dark:block"
-              src="/shots/vex-dark.png"
-              alt="Vex on Windows in dark appearance with the sidebar open, a file tree, and a Nushell terminal listing the project"
-              loading="eager"
+              fetchPriority="high"
+              decoding="async"
             />
           </div>
           <figcaption className="mt-3 font-mono text-[11px] tracking-[0.04em] text-faint">
-            vex on windows — sidebar, file tree, nushell. follows this page into
-            dark.
+            vex on windows — sidebar, file tree, terminal.
           </figcaption>
         </figure>
 
-        <section id="workspace">
-          <h2 className={sectionTitle}>Workspace</h2>
+        <section id="features">
+          <h2 className="mt-20 max-w-[500px] text-[22px] font-medium leading-[1.35] tracking-[-0.02em]">
+            Everything stays in reach.
+          </h2>
+          <p className="mt-3 max-w-[500px] text-[14px] leading-[1.7] text-muted">
+            Vex keeps the parts of terminal work that usually get scattered
+            across windows in one quiet, keyboard-first surface.
+          </p>
           <div>
-            {principles.map(({ title, copy, meta }) => (
-              <article key={title} className="border-b border-line py-4">
-                <div className="flex items-baseline justify-between gap-4">
+            {principles.map(({ title, copy, meta }, index) => (
+              <article
+                key={title}
+                className="grid grid-cols-[32px_1fr_auto] gap-4 border-b border-line py-6 max-narrow:grid-cols-[24px_1fr] max-narrow:gap-3"
+              >
+                <span className="font-mono text-[11px] text-faint">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <div>
                   <h3 className="text-[15px] font-medium tracking-[-0.01em]">
                     {title}
                   </h3>
-                  <span className="shrink-0 font-mono text-[11px] text-faint">
-                    {meta}
-                  </span>
+                  <p className="mt-2 max-w-[520px] text-[14px] leading-[1.7] text-muted">
+                    {copy}
+                  </p>
                 </div>
-                <p className="mt-1.5 max-w-[520px] text-[14px] leading-[1.7] text-muted">
-                  {copy}
-                </p>
+                <span className="pt-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-faint max-narrow:col-start-2 max-narrow:row-start-1 max-narrow:justify-self-end">
+                  {meta}
+                </span>
               </article>
             ))}
           </div>
-          <figure className="mt-8">
+          <figure className="mt-12">
             <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgba(25,25,24,0.06),0_24px_48px_-24px_rgba(25,25,24,0.25)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_24px_48px_-24px_rgba(0,0,0,0.7)]">
               <img
                 className="block w-full"
@@ -188,29 +193,7 @@ export function HomePage() {
 
         <section id="download">
           <h2 className={sectionTitle}>Download</h2>
-          <div>
-            {downloadOptions.map(({ href, title, detail, meta }) => (
-              <a
-                className={rowLink}
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                key={href}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-medium tracking-[-0.01em]">
-                    {title}
-                  </span>
-                  <span className="mt-1 block text-[14px] leading-[1.6] text-muted">
-                    {detail}
-                  </span>
-                </span>
-                <span className="shrink-0 font-mono text-[11px] text-faint transition-colors group-hover:text-text">
-                  {meta} →
-                </span>
-              </a>
-            ))}
-          </div>
+          <DownloadChoices compact />
         </section>
       </main>
       <SiteFooter />
@@ -218,84 +201,66 @@ export function HomePage() {
   );
 }
 
-export function DownloadPage() {
+function DownloadChoices({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="min-h-dvh bg-background text-text">
-      <SiteHeader />
-      <main className={`${frame} pb-24 pt-16 max-narrow:pt-12`}>
-        <h1 className="max-w-[560px] text-[32px] font-medium leading-[1.25] tracking-[-0.02em] max-narrow:text-[28px]">
-          Start with Vex.
-        </h1>
-        <p className="mt-5 max-w-[520px] text-[15px] leading-[1.7] text-muted">
-          A native terminal workspace for Windows developers. Pick the installer
-          or build it yourself — both are GPL-3.0 licensed.
-        </p>
-        <div className="mt-8 border-t border-line">
-          {downloadOptions.map(({ href, title, detail, meta }) => (
-            <a
-              className={rowLink}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              key={href}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block text-[15px] font-medium tracking-[-0.01em]">
-                  {title}
-                </span>
-                <span className="mt-1 block text-[14px] leading-[1.6] text-muted">
-                  {detail}
-                </span>
-              </span>
-              <span className="shrink-0 font-mono text-[11px] text-faint transition-colors group-hover:text-text">
-                {meta} →
-              </span>
-            </a>
-          ))}
-        </div>
-        <p className="mt-8 text-[14px]">
-          <Link
-            className="underline decoration-line underline-offset-4 transition-colors hover:decoration-text"
-            to="/"
-          >
-            Back to Vex
-          </Link>
-        </p>
-      </main>
-      <SiteFooter />
+    <div
+      className={`${compact ? "mt-2" : "mt-8"} grid grid-cols-2 gap-3 max-narrow:grid-cols-1`}
+    >
+      {downloadOptions.map(({ href, title, detail, meta }) => (
+        <a
+          className="group flex min-h-[164px] flex-col border border-line bg-surface p-5 no-underline transition-colors duration-150 hover:border-faint max-narrow:min-h-0 max-narrow:p-4"
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          key={href}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <h3 className="text-[17px] font-medium tracking-[-0.02em]">
+              {title}
+            </h3>
+            <span className="font-mono text-[16px] text-faint transition-transform duration-150 group-hover:translate-x-1 group-hover:text-text">
+              ↗
+            </span>
+          </div>
+          <p className="mt-2 flex-1 text-[14px] leading-[1.6] text-muted">
+            {detail}
+          </p>
+          <span className="mt-5 border-t border-line pt-3 font-mono text-[11px] text-faint">
+            {meta}
+          </span>
+        </a>
+      ))}
     </div>
   );
 }
 
-function SiteHeader() {
-  const { dark, toggle } = useTheme();
-
+function SiteHeader({ dark, toggle }: { dark: boolean; toggle: () => void }) {
   return (
     <header className={`${frame} flex h-14 items-center justify-between`}>
-      <Link
+      <a
         className="flex items-center gap-2 text-[15px] font-semibold tracking-[-0.02em] no-underline"
-        to="/"
+        href="/"
         aria-label="Vex home"
       >
         <Mark />
         <span>vex</span>
-      </Link>
+      </a>
       <nav
         className="flex items-center gap-5 text-[14px] text-muted"
         aria-label="Main navigation"
       >
         <a
           className="no-underline transition-colors duration-150 hover:text-text max-narrow:hidden"
-          href="/#workspace"
+          href="/#features"
         >
-          workspace
+          features
         </a>
-        <Link
+        <a
           className="no-underline transition-colors duration-150 hover:text-text"
-          to="/download"
+          href="/#download"
         >
           download
-        </Link>
+        </a>
         <a
           className="no-underline transition-colors duration-150 hover:text-text"
           href="https://github.com/Rayzerrek/Vex"
@@ -330,9 +295,6 @@ function SiteFooter() {
       className={`${frame} flex items-center justify-between border-t border-line py-5 text-[13px] text-faint max-narrow:flex-col max-narrow:items-start max-narrow:gap-1`}
     >
       <span>© 2026 Vex.</span>
-      <span className="font-mono text-[11px] tracking-[0.04em]">
-        native terminal workspace
-      </span>
     </footer>
   );
 }
