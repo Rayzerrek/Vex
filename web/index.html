@@ -18,8 +18,7 @@
         var t = localStorage.getItem("vex-theme");
         if (
           t === "dark" ||
-          (!t &&
-            window.matchMedia("(prefers-color-scheme: dark)").matches)
+          (!t && window.matchMedia("(prefers-color-scheme: dark)").matches)
         ) {
           document.documentElement.classList.add("dark");
         }

@@ -12,10 +12,11 @@
   --color-accent: #191918;
   --color-accent-strong: #000000;
 
-  --font-sans: ui-sans-serif, -apple-system, "Helvetica Neue", "Segoe UI",
-    sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas,
-    "Liberation Mono", monospace;
+  --font-sans:
+    ui-sans-serif, -apple-system, "Helvetica Neue", "Segoe UI", sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Liberation Mono",
+    monospace;
 
   --animate-blink: blink 1.2s steps(1) infinite;
 
