@@ -17,6 +17,3 @@ vp dev
 vp check
 vp build
 ```
-
-Oxlint and Oxfmt configuration lives in `vite.config.ts`. It is based on the
-shared rules in `~/oxrules`.

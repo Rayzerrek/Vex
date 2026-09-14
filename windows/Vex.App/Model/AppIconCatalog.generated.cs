@@ -1,8 +1,9 @@
 // Auto-generated from the simple-icons catalog (https://simple-icons.org; icons
 // CC0/MIT from simple-icons contributors, brand colors from brand guidelines),
 // plus brand marks for agent CLIs not on simple-icons (pi, antigravity, codex,
-// opencode, deepseek). Regenerate with the icon generator script in the repo
-// tools (see the sibling partial for detection, do not hand-edit glyphs).
+// opencode, deepseek). This is a curated snapshot, not produced by a script in
+// this repo; to refresh glyphs, re-export from simple-icons and paste the new
+// entries here (see the sibling partial for detection, do not hand-edit glyphs).
 using System.Windows.Media;
 
 namespace Vex.App.Model;
