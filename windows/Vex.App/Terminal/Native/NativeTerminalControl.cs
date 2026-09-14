@@ -1598,7 +1598,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     }
 
     private bool IsOverScrollbar(Point point)
-        => IsScrollbarVisible() && point.X >= ActualWidth - ScrollbarHitWidth;
+        => ScrollbarOwnsPointer && IsScrollbarVisible() && point.X >= ActualWidth - ScrollbarHitWidth;
+
+    /// <summary>Whether the overlay scrollbar may act on the pointer. It must
+    /// stand down for an app that captured the mouse, otherwise a TUI loses
+    /// clicks and motion in its rightmost columns; Shift overrides the app,
+    /// matching xterm and Windows Terminal.</summary>
+    private bool ScrollbarOwnsPointer
+        => !_mouseTracking || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
 
     /// <summary>
     /// Thumb geometry. The scrollable extent is the scrollback above the
@@ -2017,8 +2024,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         var pos = e.GetPosition(this);
 
-        // The scrollbar overlays the right edge; clicks there scroll instead
-        // of selecting or forwarding to the app's mouse mode.
+        // The scrollbar overlays the right edge. It yields to an app that
+        // captured the mouse (Shift still reaches it) so a TUI never loses
+        // clicks in its rightmost columns.
         if (IsOverScrollbar(pos) && TryGetScrollbarGeometry(out var thumbY, out var thumbH, out _))
         {
             if (pos.Y >= thumbY && pos.Y <= thumbY + thumbH)
@@ -2293,11 +2301,15 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
-        if (!_mouseTracking && _terminal.IsAlternateScreen)
-            return; // viewport scrollback does not exist on the alt screen
 
         var steps = ConsumeWheelSteps(e.Delta);
-        if (_mouseTracking)
+
+        // Shift always addresses Vex's own scrollback, matching xterm and
+        // Windows Terminal. Without the override an app that captured the
+        // mouse owns the wheel outright, leaving no way to scroll back into
+        // output the app has already scrolled past.
+        var shiftScrollsLocally = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+        if (_mouseTracking && !shiftScrollsLocally)
         {
             var button = steps > 0 ? MouseInputButton.WheelUp : MouseInputButton.WheelDown;
             for (var i = 0; i < Math.Abs(steps); i++)
@@ -2308,7 +2320,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             e.Handled = true;
             return;
         }
-        var lines = Math.Max(1, SystemParameters.WheelScrollLines) * steps;
+
+        if (_terminal.IsAlternateScreen)
+            return; // viewport scrollback does not exist on the alt screen
+
+        // The system setting uses -1 for "scroll a page at a time".
+        var configured = SystemParameters.WheelScrollLines;
+        var lines = (configured < 0 ? Math.Max(1, _rows - 1) : Math.Max(1, configured)) * steps;
         if (lines != 0)
         {
             _terminal.ScrollBy(-lines);
