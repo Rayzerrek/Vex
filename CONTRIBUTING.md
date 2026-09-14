@@ -63,6 +63,28 @@ Every pull request must pass both workflows in `.github/workflows/`:
 `pnpm run check` also enforces formatting. Run it before pushing; CI fails on
 unformatted files.
 
+## Releasing
+
+Pushing a version tag builds the installer and publishes the release:
+
+```sh
+git tag -a v1.3.0 -m "Vex 1.3.0"
+git push origin v1.3.0
+```
+
+`.github/workflows/release.yml` then checks that the tag matches `<Version>` in
+`windows/Vex.App/Vex.App.csproj` and `Version` in `Vex.Setup/Package.wxs`, runs
+the test suite, builds the zip and MSI, verifies the payload, and attaches all
+three assets to the release.
+
+If the job fails after the tag is pushed, re-run it against that tag from the
+Actions tab (`workflow_dispatch` accepts a tag). Uploading is idempotent, so a
+re-run repairs a partially published release instead of failing on it.
+
+The version check exists because releases used to be a manual step that nothing
+enforced: a version bump could sit unreleased indefinitely, and the tag and the
+project version could disagree without anything noticing.
+
 ## Guidelines
 
 - Keep changes surgical. Every changed line should trace to the issue or

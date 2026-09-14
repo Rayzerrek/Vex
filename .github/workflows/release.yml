@@ -1,0 +1,168 @@
+name: Release
+
+# Publishing is tag-driven: pushing v1.3.0 builds the installer and publishes
+# the release for it. Before this workflow existed a release was a manual step
+# that nothing enforced, so a version bump could sit unreleased indefinitely —
+# 1.3.0 did exactly that, with the tag still at v1.2.1.
+#
+# workflow_dispatch re-runs an existing tag, which is the recovery path when a
+# release job fails after the tag has already been pushed.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release, e.g. v1.3.0"
+        required: true
+        type: string
+
+# contents: write is required to create the release and upload its assets.
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    name: build installer and publish release
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      # The tag names the release; Vex.App.csproj names the artifacts. If they
+      # disagree the release ships files labelled with a version that is not
+      # the one it is tagged as, which is how the version drift that stalled
+      # 1.3.0 went unnoticed.
+      - name: Check the tag matches the project version
+        shell: pwsh
+        run: |
+          $expected = $env:TAG -replace '^v', ''
+          $csproj = [xml](Get-Content windows/Vex.App/Vex.App.csproj)
+          $version = $csproj.Project.PropertyGroup.Version |
+            Where-Object { $_ } | Select-Object -First 1
+          Write-Host "tag=$env:TAG csproj=$version"
+
+          if ($version -ne $expected) {
+            throw "tag $env:TAG does not match <Version>$version</Version> in Vex.App.csproj"
+          }
+
+          # WiX needs a four-part version, so Package.wxs keeps its own copy.
+          # That is a second place a release can drift, so check it too.
+          $wxs = (Select-String -Path windows/Vex.Setup/Package.wxs `
+            -Pattern 'Version="([0-9]+(?:\.[0-9]+)+)"').Matches[0].Groups[1].Value
+          if ($wxs -ne "$expected.0") {
+            throw "Package.wxs Version=$wxs does not match $expected.0"
+          }
+
+      - name: Restore
+        run: dotnet restore windows/Vex.slnx
+
+      - name: Build
+        run: dotnet build windows/Vex.slnx --no-restore -c Release
+
+      # Never publish artifacts that have not passed the suite.
+      - name: Test
+        run: dotnet test windows/Vex.slnx --no-build -c Release
+
+      - name: Build the zip and the MSI
+        shell: pwsh
+        run: pwsh -NoProfile -File windows/build-installer.ps1
+
+      # The 1.2.1 zip could not start: it omitted the native WPF libraries,
+      # which live beside the exe instead of inside the single-file bundle.
+      # Nothing caught that before it shipped, so assert the payload here —
+      # this runs headless, unlike launching the app.
+      - name: Verify the release payload
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+          $zip = Get-ChildItem windows/publish/Vex-*-win-x64.zip
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          $names = $archive.Entries | ForEach-Object { $_.FullName }
+          $archive.Dispose()
+          Write-Host "zip has $($names.Count) entries"
+
+          $required = @(
+            'Vex.App.exe'
+            'ghostty-vt.dll'
+            'wpfgfx_cor3.dll'
+            'PresentationNative_cor3.dll'
+            'D3DCompiler_47_cor3.dll'
+            'PenImc_cor3.dll'
+            'vcruntime140_cor3.dll'
+          )
+          $missing = $required | Where-Object { $_ -notin $names }
+          if ($missing) { throw "zip is missing: $($missing -join ', ')" }
+
+          $symbols = $names | Where-Object { $_ -like '*.pdb' }
+          if ($symbols) { throw "zip carries debug symbols: $($symbols -join ', ')" }
+
+          # WiX reuses a stale harvest when Vex.Setup/obj survives a republish,
+          # which silently produced a 64 KB MSI with no files in it.
+          $msi = Get-ChildItem windows/publish/Vex-*-win-x64.msi
+          $minBytes = 10MB
+          if ($msi.Length -lt $minBytes) {
+            throw "MSI is only $([int]($msi.Length / 1KB)) KB; the payload is probably empty"
+          }
+          Write-Host "payload OK: zip $([int]($zip.Length / 1MB)) MB, msi $([int]($msi.Length / 1MB)) MB"
+
+      # Idempotent so a re-run after a failed upload repairs the release rather
+      # than failing on "release already exists".
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = Get-ChildItem windows/publish/Vex-*-win-x64.zip,
+                                      windows/publish/Vex-*-win-x64.msi,
+                                      windows/publish/Vex-*-win-x64.zip.sha256
+          $paths = $assets.FullName
+
+          # Actions runs pwsh with $ErrorActionPreference = 'stop'. Toggle off
+          # native-command error promotion explicitly so the expected non-zero
+          # exit from a missing release is a value, not a terminating error.
+          $promote = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
+          gh release view $env:TAG *> $null
+          $exists = $LASTEXITCODE -eq 0
+          $PSNativeCommandUseErrorActionPreference = $promote
+
+          if ($exists) {
+            Write-Host "release $env:TAG exists; uploading assets"
+            gh release upload $env:TAG @paths --clobber
+          } else {
+            # No --target: the tag already exists and GitHub rejects
+            # target_commitish for an existing tag.
+            gh release create $env:TAG --title "Vex $($env:TAG -replace '^v', '')" `
+              --verify-tag --generate-notes @paths
+          }
+          if ($LASTEXITCODE -ne 0) { throw "publishing the release failed" }
+
+          gh release view $env:TAG --json assets `
+            --jq '.assets[] | "\(.name)  \(.size) bytes"' | ForEach-Object { Write-Host "    $_" }
+
+      - name: Summarize
+        shell: pwsh
+        run: |
+          "### Vex $($env:TAG -replace '^v', '')" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem windows/publish/Vex-* -File | ForEach-Object {
+            "- ``$($_.Name)`` — $([int]($_.Length / 1MB)) MB" >> $env:GITHUB_STEP_SUMMARY
+          }
