@@ -81,6 +81,7 @@ public static class ChromePalette
         ("VexBorder", "VexBorderColor"),
         ("VexText", "VexTextColor"),
         ("VexTextDim", "VexTextDimColor"),
+        ("VexTextPlaceholder", "VexTextPlaceholderColor"),
         ("VexAccent", "VexAccentColor"),
         ("VexFocusBorder", "VexFocusBorderColor"),
         ("VexSidebar", "VexSidebarColor"),
@@ -117,7 +118,11 @@ public static class ChromePalette
         // theme instead of disappearing into it.
         Set(res, "VexBorderColor", Mix(bg, fg, 0.30));
         Set(res, "VexTextColor", fg);
-        Set(res, "VexTextDimColor", Mix(fg, bg, 0.45));
+        // Placeholders sit on opaque input surfaces rather than the acrylic
+        // chrome, so they take a step of contrast back toward the text.
+        var dim = Mix(fg, bg, 0.45);
+        Set(res, "VexTextDimColor", dim);
+        Set(res, "VexTextPlaceholderColor", Mix(dim, fg, 0.5));
         Set(res, "VexAccentColor", Mix(Mix(blue, magenta, 0.5), bg, 0.35));
         Set(res, "VexFocusBorderColor", Mix(bg, blue, 0.50));
         Set(res, "VexSidebarColor", WithAlpha(bg, 0x40));
@@ -187,6 +192,7 @@ public static class ChromePalette
         Set(res, "VexBorderColor", Mix(bg, fg, 0.15));
         Set(res, "VexTextColor", ink);
         Set(res, "VexTextDimColor", dim);
+        Set(res, "VexTextPlaceholderColor", Mix(dim, fg, 0.5));
         Set(res, "VexAccentColor", Mix(accent, fg, 0.08));
         Set(res, "VexFocusBorderColor", Mix(blue, fg, 0.10));
         // Sidebar and tab strip share one surface so the chrome reads as

@@ -125,7 +125,10 @@
             <Setter Property="Background" Value="{StaticResource VexInput}"/>
             <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CaretBrush" Value="{StaticResource VexTextDim}"/>
+            <!-- An explicit Style replaces the app-level TextBox one, so the
+                 caret has to be set here too; VexTextDim left it barely
+                 visible against the input surface. -->
+            <Setter Property="CaretBrush" Value="{StaticResource VexText}"/>
             <Setter Property="Padding" Value="6,4"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="FontSize" Value="12"/>
@@ -428,7 +431,7 @@
                                                                 <ColumnDefinition Width="Auto"/>
                                                             </Grid.ColumnDefinitions>
                                                             <Border Width="32" Height="32" CornerRadius="8"
-                                                                    Background="#20FFFFFF" Margin="0,0,12,0"
+                                                                    Background="{StaticResource VexHover}" Margin="0,0,12,0"
                                                                     VerticalAlignment="Center">
                                                                 <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                                                            Foreground="{StaticResource VexAccentBlue}"
