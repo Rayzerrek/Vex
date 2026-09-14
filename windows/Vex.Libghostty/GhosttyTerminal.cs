@@ -74,6 +74,150 @@ public enum MouseInputButton
     WheelRight = 7,
 }
 
+public enum TerminalKeyAction
+{
+    Release = 0,
+    Press = 1,
+    Repeat = 2,
+}
+
+[Flags]
+public enum TerminalKeyModifiers : ushort
+{
+    None = 0,
+    Shift = 1 << 0,
+    Control = 1 << 1,
+    Alt = 1 << 2,
+    Super = 1 << 3,
+    CapsLock = 1 << 4,
+    NumLock = 1 << 5,
+    RightShift = 1 << 6,
+    RightControl = 1 << 7,
+    RightAlt = 1 << 8,
+    RightSuper = 1 << 9,
+}
+
+public enum TerminalKey
+{
+    Unidentified = 0,
+    Backquote = 1,
+    Backslash = 2,
+    BracketLeft = 3,
+    BracketRight = 4,
+    Comma = 5,
+    Digit0 = 6,
+    Digit1 = 7,
+    Digit2 = 8,
+    Digit3 = 9,
+    Digit4 = 10,
+    Digit5 = 11,
+    Digit6 = 12,
+    Digit7 = 13,
+    Digit8 = 14,
+    Digit9 = 15,
+    Equal = 16,
+    A = 20,
+    B = 21,
+    C = 22,
+    D = 23,
+    E = 24,
+    F = 25,
+    G = 26,
+    H = 27,
+    I = 28,
+    J = 29,
+    K = 30,
+    L = 31,
+    M = 32,
+    N = 33,
+    O = 34,
+    P = 35,
+    Q = 36,
+    R = 37,
+    S = 38,
+    T = 39,
+    U = 40,
+    V = 41,
+    W = 42,
+    X = 43,
+    Y = 44,
+    Z = 45,
+    Minus = 46,
+    Period = 47,
+    Quote = 48,
+    Semicolon = 49,
+    Slash = 50,
+    AltLeft = 51,
+    AltRight = 52,
+    Backspace = 53,
+    CapsLock = 54,
+    ContextMenu = 55,
+    ControlLeft = 56,
+    ControlRight = 57,
+    Enter = 58,
+    MetaLeft = 59,
+    MetaRight = 60,
+    ShiftLeft = 61,
+    ShiftRight = 62,
+    Space = 63,
+    Tab = 64,
+    Delete = 68,
+    End = 69,
+    Home = 71,
+    Insert = 72,
+    PageDown = 73,
+    PageUp = 74,
+    ArrowDown = 75,
+    ArrowLeft = 76,
+    ArrowRight = 77,
+    ArrowUp = 78,
+    NumLock = 79,
+    Numpad0 = 80,
+    Numpad1 = 81,
+    Numpad2 = 82,
+    Numpad3 = 83,
+    Numpad4 = 84,
+    Numpad5 = 85,
+    Numpad6 = 86,
+    Numpad7 = 87,
+    Numpad8 = 88,
+    Numpad9 = 89,
+    NumpadAdd = 90,
+    NumpadDecimal = 95,
+    NumpadDivide = 96,
+    NumpadEnter = 97,
+    NumpadMultiply = 104,
+    NumpadSubtract = 107,
+    Escape = 120,
+    F1 = 121,
+    F2 = 122,
+    F3 = 123,
+    F4 = 124,
+    F5 = 125,
+    F6 = 126,
+    F7 = 127,
+    F8 = 128,
+    F9 = 129,
+    F10 = 130,
+    F11 = 131,
+    F12 = 132,
+    F13 = 133,
+    F14 = 134,
+    F15 = 135,
+    F16 = 136,
+    F17 = 137,
+    F18 = 138,
+    F19 = 139,
+    F20 = 140,
+    F21 = 141,
+    F22 = 142,
+    F23 = 143,
+    F24 = 144,
+    PrintScreen = 148,
+    ScrollLock = 149,
+    Pause = 150,
+}
+
 [Flags]
 public enum MouseInputModifiers : ushort
 {
@@ -144,6 +288,8 @@ public sealed class GhosttyTerminal : IDisposable
     private IntPtr _releaseEvent;
     private IntPtr _mouseEncoder;
     private IntPtr _mouseEvent;
+    private IntPtr _keyEncoder;
+    private IntPtr _keyEvent;
     private int _mouseAnyButtonPressed = -1;
     private MouseTrackingMode _lastEncodedTracking = (MouseTrackingMode)(-1);
     private MouseFormat _lastEncodedFormat = (MouseFormat)(-1);
@@ -247,6 +393,8 @@ public sealed class GhosttyTerminal : IDisposable
         Check(Native.ghostty_selection_gesture_event_new(IntPtr.Zero, out _releaseEvent, SelectionGestureEventType.Release), "event_new release");
         Check(Native.ghostty_mouse_encoder_new(IntPtr.Zero, out _mouseEncoder), "mouse_encoder_new");
         Check(Native.ghostty_mouse_event_new(IntPtr.Zero, out _mouseEvent), "mouse_event_new");
+        Check(Native.ghostty_key_encoder_new(IntPtr.Zero, out _keyEncoder), "key_encoder_new");
+        Check(Native.ghostty_key_event_new(IntPtr.Zero, out _keyEvent), "key_event_new");
 
         byte trackLastCell = 1;
         unsafe
@@ -743,6 +891,43 @@ public sealed class GhosttyTerminal : IDisposable
         }
     }
 
+    public byte KittyKeyboardFlags
+    {
+        get
+        {
+            lock (_vtLock)
+                return TryGet(TerminalData.KittyKeyboardFlags, out byte flags) ? flags : (byte)0;
+        }
+    }
+
+    /// <summary>Encodes one physical key event using libghostty's current
+    /// legacy, xterm, application-cursor/keypad, and Kitty keyboard modes.</summary>
+    public unsafe int EncodeKey(TerminalKey key, TerminalKeyAction action, TerminalKeyModifiers modifiers,
+        ReadOnlySpan<byte> utf8, uint unshiftedCodepoint, Span<byte> output)
+    {
+        lock (_vtLock)
+        {
+            Native.ghostty_key_encoder_setopt_from_terminal(_keyEncoder, _terminal);
+            Native.ghostty_key_event_set_key(_keyEvent, key);
+            Native.ghostty_key_event_set_action(_keyEvent, (Native.KeyAction)action);
+            Native.ghostty_key_event_set_mods(_keyEvent, modifiers);
+            Native.ghostty_key_event_set_consumed_mods(_keyEvent, TerminalKeyModifiers.None);
+            Native.ghostty_key_event_set_composing(_keyEvent, false);
+            Native.ghostty_key_event_set_unshifted_codepoint(_keyEvent, unshiftedCodepoint);
+
+            fixed (byte* textPtr = utf8)
+            fixed (byte* outputPtr = output)
+            {
+                Native.ghostty_key_event_set_utf8(_keyEvent, (IntPtr)textPtr, (nuint)utf8.Length);
+                var result = Native.ghostty_key_encoder_encode(
+                    _keyEncoder, _keyEvent, (IntPtr)outputPtr, (nuint)output.Length, out var written);
+                Native.ghostty_key_event_set_utf8(_keyEvent, IntPtr.Zero, 0);
+                Check(result, "key_encoder_encode");
+                return checked((int)written);
+            }
+        }
+    }
+
     public bool BracketedPaste
     {
         get
@@ -1017,7 +1202,9 @@ public sealed class GhosttyTerminal : IDisposable
         // style: erases with a color set ("clear" in TUI apps) write cells
         // whose content is a palette index or RGB and whose style is the
         // default. Paint those like any other background.
-        // Packed cell layout: content_tag = bits 0-1, content = bits 2-25.
+        // Packed cell layout for the pinned ghostty@f64f4aca ABI:
+        // content_tag = bits 0-1, content = bits 2-25. Decoding this in
+        // managed code avoids another P/Invoke for every blank grid cell.
         var contentTag = (int)(raw & 0b11);
         if (cell.BgTag == ColorTag.None && contentTag == 2)
         {
@@ -1334,6 +1521,8 @@ public sealed class GhosttyTerminal : IDisposable
             if (_disposed)
                 return;
             _disposed = true;
+            Native.ghostty_key_event_free(_keyEvent);
+            Native.ghostty_key_encoder_free(_keyEncoder);
             Native.ghostty_mouse_event_free(_mouseEvent);
             Native.ghostty_mouse_encoder_free(_mouseEncoder);
             Native.ghostty_selection_gesture_event_free(_releaseEvent);

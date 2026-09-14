@@ -62,7 +62,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     // at once. The cache is index-aligned with _rowVisuals: rows are never
     // shifted, only re-rendered in place.
     private int _renderVersion = 1;
-    private int[] _rowHashes = Array.Empty<int>();
+    private ulong[] _rowHashes = Array.Empty<ulong>();
     private int[] _rowVersions = Array.Empty<int>();
 
     // Detected-URL state. Rows are scanned once per painted content (keyed by
@@ -72,7 +72,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     [GeneratedRegex(@"[a-z][a-z0-9+.\-]*://[^\s<>\u0000-\u001f""']+|www\.[^\s<>\u0000-\u001f""']+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex LinkPattern();
-    private int[] _rowLinkHashes = Array.Empty<int>();
+    private ulong[] _rowLinkHashes = Array.Empty<ulong>();
     private LinkSpan[][] _rowLinks = Array.Empty<LinkSpan[]>();
     private string?[] _rowLinkTexts = Array.Empty<string?>();
     private char[] _linkText = Array.Empty<char>();
@@ -85,6 +85,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     // maps to different content.
     private ulong _lastScrollOffset;
     private bool _resizeScheduled;
+    private readonly Dictionary<Key, TerminalKeyModifiers> _terminalKeysDown = new();
+    private PendingTextKey? _pendingTextKey;
+
+    private readonly record struct PendingTextKey(Key WpfKey, TerminalKey Key, TerminalKeyAction Action, TerminalKeyModifiers Modifiers);
 
     // While the sidebar animates, the window width changes every frame and
     // each size event would resize the VT emulator (buffer reflow) plus the
@@ -555,10 +559,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             // Version 0 never matches the current _renderVersion, so the
             // cells are all repainted on the next pass after a resize.
-            _rowHashes = new int[_rows];
+            _rowHashes = new ulong[_rows];
             _rowVersions = new int[_rows];
             _rowLinks = new LinkSpan[_rows][];
-            _rowLinkHashes = new int[_rows];
+            _rowLinkHashes = new ulong[_rows];
             _rowLinkTexts = new string?[_rows];
         }
     }
@@ -906,7 +910,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         // Skip the re-render when this row's cells are unchanged since it was
         // last drawn — the common case after a redundant full redraw.
-        var hash = RowHash(frameRow);
+        var hash = RowHash(frameRow, _cols);
         if (!force && _rowVersions[row] == _renderVersion && _rowHashes[row] == hash)
             return;
         _rowVersions[row] = _renderVersion;
@@ -1263,12 +1267,12 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     /// cell's text is hashed so two different clusters of the same length
     /// cannot collide.
     /// </summary>
-    private int RowHash(FrameRow row)
+    internal static ulong RowHash(FrameRow row, int cols)
     {
         const ulong prime = 1099511628211;
         ulong hash = 14695981039346656037;
         var cells = row.Cells;
-        for (var col = 0; col < _cols && col < cells.Length; col++)
+        for (var col = 0; col < cols && col < cells.Length; col++)
         {
             ref readonly var cell = ref cells[col];
             var text = cell.Text;
@@ -1276,11 +1280,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 hash = (hash ^ text[i]) * prime;
             hash = (hash ^ (ulong)(uint)text.Length) * prime;
             hash = (hash ^ (ulong)(cell.Wide ? 1u : 0u)) * prime;
+            hash = (hash ^ (ulong)(cell.Tail ? 1u : 0u)) * prime;
             hash = (hash ^ (ulong)(byte)cell.Flags) * prime;
-            hash = (hash ^ (ulong)(uint)cell.FgValue ^ (uint)cell.FgTag) * prime;
-            hash = (hash ^ (ulong)(uint)cell.BgValue ^ (uint)cell.BgTag) * prime;
+            hash = (hash ^ (ulong)(uint)cell.FgValue) * prime;
+            hash = (hash ^ (ulong)(uint)cell.FgTag) * prime;
+            hash = (hash ^ (ulong)(uint)cell.BgValue) * prime;
+            hash = (hash ^ (ulong)(uint)cell.BgTag) * prime;
         }
-        return (int)(hash ^ (hash >> 32));
+        return hash;
     }
 
     /// <summary>
@@ -1696,6 +1703,16 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnLostKeyboardFocus(KeyboardFocusChangedEventArgs e)
     {
         base.OnLostKeyboardFocus(e);
+        if (_session is not null)
+        {
+            foreach (var (key, modifiers) in _terminalKeysDown)
+            {
+                if (TerminalKeyMap.TryMap(key, out var terminalKey))
+                    SendTerminalKey(key, terminalKey, TerminalKeyAction.Release, modifiers, ReadOnlySpan<byte>.Empty);
+            }
+        }
+        _terminalKeysDown.Clear();
+        _pendingTextKey = null;
         UpdateBlinkTimer();
         DrawCaret();
     }
@@ -1822,11 +1839,90 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             }
         }
 
-        if (TerminalKeyMap.Map(key, mods, _terminal.ApplicationCursor) is { } bytes)
+        if (!TerminalKeyMap.TryMap(key, out var terminalKey))
+            return;
+
+        var terminalModifiers = CurrentTerminalModifiers(mods);
+        var action = e.IsRepeat ? TerminalKeyAction.Repeat : TerminalKeyAction.Press;
+        var isTextKey = TerminalKeyMap.IsTextKey(key);
+        var reportAllKeys = (_terminal.KittyKeyboardFlags & 0b01000) != 0;
+
+        // WPF delivers layout/IME text after KeyDown. In Kitty's report-all
+        // mode defer text-producing keys to TextInput so the native encoder
+        // can attach the actual composed UTF-8 text instead of guessing from
+        // a physical key on a potentially non-US layout.
+        if (isTextKey && reportAllKeys &&
+            (mods & (ModifierKeys.Control | ModifierKeys.Alt)) == 0)
         {
-            _session.Write(bytes);
-            e.Handled = true;
+            _pendingTextKey = new PendingTextKey(key, terminalKey, action, terminalModifiers);
+            return;
         }
+
+        // In legacy mode ordinary text still belongs to TextInput. Ctrl/Alt
+        // chords are key events, however, because the encoder must apply the
+        // terminal's disambiguation and meta-prefix modes.
+        if (isTextKey && (mods & (ModifierKeys.Control | ModifierKeys.Alt)) == 0)
+            return;
+
+        // Preserve Vex's shell-friendly Ctrl+Backspace behavior in legacy
+        // mode. Kitty has an unambiguous Backspace+Ctrl representation and
+        // must go through the native encoder instead.
+        if (key == Key.Back && mods == ModifierKeys.Control && _terminal.KittyKeyboardFlags == 0)
+        {
+            ReadOnlySpan<byte> ctrlBackspace = stackalloc byte[] { 0x17 };
+            _session.Write(ctrlBackspace);
+            e.Handled = true;
+            return;
+        }
+
+        if (SendTerminalKey(key, terminalKey, action, terminalModifiers, ReadOnlySpan<byte>.Empty))
+            e.Handled = true;
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        base.OnKeyUp(e);
+        if (_session is null)
+            return;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (!_terminalKeysDown.Remove(key, out var modifiers) ||
+            !TerminalKeyMap.TryMap(key, out var terminalKey))
+            return;
+
+        if (SendTerminalKey(key, terminalKey, TerminalKeyAction.Release, modifiers, ReadOnlySpan<byte>.Empty))
+            e.Handled = true;
+    }
+
+    private TerminalKeyModifiers CurrentTerminalModifiers(ModifierKeys modifiers)
+    {
+        var result = TerminalKeyMap.MapModifiers(modifiers);
+        if (Keyboard.IsKeyToggled(Key.CapsLock)) result |= TerminalKeyModifiers.CapsLock;
+        if (Keyboard.IsKeyToggled(Key.NumLock)) result |= TerminalKeyModifiers.NumLock;
+        if (Keyboard.IsKeyDown(Key.RightShift)) result |= TerminalKeyModifiers.RightShift;
+        if (Keyboard.IsKeyDown(Key.RightCtrl)) result |= TerminalKeyModifiers.RightControl;
+        if (Keyboard.IsKeyDown(Key.RightAlt)) result |= TerminalKeyModifiers.RightAlt;
+        if (Keyboard.IsKeyDown(Key.RWin)) result |= TerminalKeyModifiers.RightSuper;
+        return result;
+    }
+
+    private bool SendTerminalKey(Key wpfKey, TerminalKey key, TerminalKeyAction action,
+        TerminalKeyModifiers modifiers, ReadOnlySpan<byte> utf8)
+    {
+        var session = _session;
+        if (session is null)
+            return false;
+
+        Span<byte> output = stackalloc byte[512];
+        var written = _terminal.EncodeKey(
+            key, action, modifiers, utf8, TerminalKeyMap.UnshiftedCodepoint(wpfKey), output);
+        if (written == 0)
+            return false;
+
+        session.Write(output[..written]);
+        if (action is TerminalKeyAction.Press or TerminalKeyAction.Repeat)
+            _terminalKeysDown[wpfKey] = modifiers;
+        return true;
     }
 
     protected override void OnTextInput(TextCompositionEventArgs e)
@@ -1836,6 +1932,24 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             Diag($"text '{e.Text.Replace("\r", "<CR>")}' session={_session is not null}");
         if (_session is null || string.IsNullOrEmpty(e.Text))
             return;
+
+        if (_pendingTextKey is { } pending)
+        {
+            _pendingTextKey = null;
+            if (e.Text.Length <= 32)
+            {
+                Span<byte> text = stackalloc byte[Encoding.UTF8.GetMaxByteCount(e.Text.Length)];
+                var textLength = Encoding.UTF8.GetBytes(e.Text, text);
+                SendTerminalKey(pending.WpfKey, pending.Key, pending.Action, pending.Modifiers, text[..textLength]);
+            }
+            else
+            {
+                SendTerminalKey(pending.WpfKey, pending.Key, pending.Action, pending.Modifiers, Encoding.UTF8.GetBytes(e.Text));
+            }
+            e.Handled = true;
+            return;
+        }
+
         // Short single-line text (the overwhelmingly common case) encodes
         // into a stack buffer; the pooled fallback covers multi-line pastes
         // via IME. Avoids a byte[] allocation per keystroke.

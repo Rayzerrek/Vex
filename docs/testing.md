@@ -33,6 +33,7 @@ under `Vendor/libghostty/` and copied to the test output by
 | Area | File |
 |---|---|
 | DCS stripping by ConPTY | `FeedFilterTests` |
+| Legacy/xterm/Kitty keyboard encoding | `KeyboardTests` |
 | Mouse tracking modes and wire encoding | `MouseTests` |
 | Ad-hoc encoder inspection | `Probe` |
 

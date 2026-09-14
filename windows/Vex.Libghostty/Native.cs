@@ -351,6 +351,13 @@ internal static class Native
         WideSpacerTail = 2,
     }
 
+    internal enum KeyAction : int
+    {
+        Release = 0,
+        Press = 1,
+        Repeat = 2,
+    }
+
     internal enum StyleColorTag : int
     {
         None = 0,
@@ -493,6 +500,47 @@ internal static class Native
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void ghostty_mouse_event_set_position(IntPtr mouseEvent, GhosttyMousePosition position);
+
+    // --- Keyboard input -------------------------------------------------
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_key_encoder_new(IntPtr allocator, out IntPtr encoder);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_encoder_free(IntPtr encoder);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_encoder_setopt_from_terminal(IntPtr encoder, IntPtr terminal);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_key_encoder_encode(IntPtr encoder, IntPtr keyEvent, IntPtr output, nuint outputSize, out nuint outputLength);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_key_event_new(IntPtr allocator, out IntPtr keyEvent);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_event_free(IntPtr keyEvent);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_event_set_action(IntPtr keyEvent, KeyAction action);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_event_set_key(IntPtr keyEvent, TerminalKey key);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_event_set_mods(IntPtr keyEvent, TerminalKeyModifiers modifiers);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_event_set_consumed_mods(IntPtr keyEvent, TerminalKeyModifiers modifiers);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_event_set_composing(IntPtr keyEvent, [MarshalAs(UnmanagedType.I1)] bool composing);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_event_set_unshifted_codepoint(IntPtr keyEvent, uint codepoint);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_event_set_utf8(IntPtr keyEvent, IntPtr utf8, nuint length);
 
     // --- Render state ---------------------------------------------------
 
