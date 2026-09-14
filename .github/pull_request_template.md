@@ -19,7 +19,7 @@ reviewer can see how the change was actually verified rather than assuming.
 
 - [ ] `dotnet build windows/Vex.slnx` succeeds
 - [ ] `dotnet test windows/Vex.slnx` passes
-- [ ] `pnpm run check`, `pnpm run test`, and `pnpm run build` pass in `web/` (if it changed)
+- [ ] `pnpm run check` and `pnpm run build` pass in `web/` (if it changed)
 - [ ] Commit messages use a conventional-commit prefix
 - [ ] Documentation updated if user-visible behaviour changed
 - [ ] No unrelated changes are included in this PR

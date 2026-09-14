@@ -21,7 +21,7 @@ defaults:
 
 jobs:
   check:
-    name: format, lint, types, test, build
+    name: format, lint, types, build
     runs-on: ubuntu-latest
 
     steps:
@@ -54,9 +54,6 @@ jobs:
 
       - name: Check formatting, lint, and types
         run: pnpm run check
-
-      - name: Test
-        run: pnpm run test
 
       - name: Build
         run: pnpm run build

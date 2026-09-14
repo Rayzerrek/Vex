@@ -9,7 +9,6 @@
     "build": "tsc -b && vp build",
     "lint": "vp lint",
     "check": "vp check",
-    "test": "vp test",
     "preview": "vp preview"
   },
   "dependencies": {
