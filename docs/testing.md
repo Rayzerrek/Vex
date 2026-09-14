@@ -117,5 +117,12 @@ Useful when reviewing a change to that page:
 `dotnet test` over the solution. `.github/workflows/web.yml` installs with a
 frozen lockfile, then runs `check`, `test`, and `build`.
 
-Neither workflow runs the renderer self-test: GitHub runners have no desktop
-session capable of creating the window it needs.
+`.github/workflows/release.yml` runs on a version tag and adds the packaging
+gates: the tag must match the project version, the suite must pass, and the zip
+must contain every native library the app loads at runtime. The MSI is checked
+too — a stale WiX harvest once produced an installer with no files in it.
+
+None of these workflows runs the renderer self-test: GitHub runners have no
+desktop session capable of creating the window it needs. That is why the
+release job verifies the zip's payload by inspection rather than by launching
+it, and why a release candidate is worth starting by hand once.
