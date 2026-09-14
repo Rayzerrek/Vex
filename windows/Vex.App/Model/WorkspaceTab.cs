@@ -126,13 +126,14 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         get => _root;
         private set
         {
-            if (Set(ref _root, value))
-            {
-                OnPropertyChanged(nameof(PaneCount));
-                OnPropertyChanged(nameof(Leaves));
-                OnPropertyChanged(nameof(DisplayRoot));
-                LayoutChanged?.Invoke();
-            }
+            // Nested edits update a child of the existing root and therefore
+            // assign the same root instance back. They still change the tree.
+            _root = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PaneCount));
+            OnPropertyChanged(nameof(Leaves));
+            OnPropertyChanged(nameof(DisplayRoot));
+            LayoutChanged?.Invoke();
         }
     }
 
@@ -201,6 +202,9 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         if (target is null)
             return;
         var fresh = NewLeaf();
+        // A split cannot be seen while focus mode renders only ActiveLeaf.
+        // Return to the full tree before selecting the newly created pane.
+        IsFocusMode = false;
         Root = ReplaceNode(Root, target, new SplitPane(orientation, target, fresh));
         ActiveLeaf = fresh;
     }
