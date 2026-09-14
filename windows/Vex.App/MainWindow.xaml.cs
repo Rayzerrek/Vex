@@ -54,6 +54,33 @@ public sealed partial class MainWindow : Window
     private int _tabSlotIndex = -1;
     private bool _ghostVisible;
     private double _ghostWidth;
+    private ScrollViewer? _tabScrollViewer;
+
+    /// <summary>The tab strip's scroll viewer, resolved once from the visual
+    /// tree. Layout-space math for the drag marker needs its horizontal
+    /// offset, and the ListBox template does not guarantee a part name.</summary>
+    private ScrollViewer? TabScrollViewer
+    {
+        get
+        {
+            if (_tabScrollViewer is null)
+                _tabScrollViewer = FindDescendant<ScrollViewer>(TabStrip);
+            return _tabScrollViewer;
+        }
+    }
+
+    private static T? FindDescendant<T>(DependencyObject node) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
+        {
+            var child = VisualTreeHelper.GetChild(node, i);
+            if (child is T match)
+                return match;
+            if (FindDescendant<T>(child) is { } nested)
+                return nested;
+        }
+        return null;
+    }
 
     public MainWindow()
     {
@@ -629,6 +656,27 @@ public sealed partial class MainWindow : Window
             tab.Split(System.Windows.Controls.Orientation.Vertical);
     }
 
+    /// <summary>Wheel over the tab strip scrolls it horizontally. A vertical
+    /// wheel is the only gesture a mouse has, and the strip has no visible
+    /// scrollbar, so without this an overflowing strip would be unreachable.</summary>
+    private void TabStrip_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        if (TabScrollViewer is not { } scroll || scroll.ScrollableWidth <= 0)
+            return;
+        scroll.ScrollToHorizontalOffset(scroll.HorizontalOffset - e.Delta);
+        e.Handled = true;
+    }
+
+    /// <summary>Keeps the selected tab visible: keyboard tab switching and
+    /// session restore both select a tab that may sit off the strip.</summary>
+    private void TabStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (TabStrip.SelectedItem is not { } selected)
+            return;
+        if (TabStrip.ItemContainerGenerator.ContainerFromItem(selected) is FrameworkElement container)
+            container.BringIntoView();
+    }
+
     private void TabHeader_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: WorkspaceTab tab } && _workspace.SelectedProject is { } project)
@@ -665,7 +713,7 @@ public sealed partial class MainWindow : Window
                 && FindAncestor<TextBox>(source) is null)
             {
                 _dragTab = tab;
-                _dragTabStart = e.GetPosition(this);
+                _dragTabStart = e.GetPosition(TabDragCanvas);
             }
         }
     }
@@ -838,7 +886,7 @@ public sealed partial class MainWindow : Window
 
         if (!_dragTabActive)
         {
-            var pos = e.GetPosition(this);
+            var pos = e.GetPosition(TabDragCanvas);
             if (Math.Abs(pos.X - _dragTabStart.X) + Math.Abs(pos.Y - _dragTabStart.Y) < 6)
                 return;
             _dragTabActive = true;
@@ -1017,19 +1065,21 @@ public sealed partial class MainWindow : Window
     /// <summary>Drop slot under the pointer: the number of visible tabs (all
     /// but the dragged one) whose right edge is left of the pointer. Null when
     /// the pointer sits over the dragged tab's own home slot, where dropping
-    /// is a no-op.</summary>
-    private static int? TabInsertIndexAt(System.Windows.Point pt, System.Collections.ObjectModel.ObservableCollection<WorkspaceTab> tabs, WorkspaceTab dragged)
+    /// is a no-op. Widths are accumulated in layout space and shifted by the
+    /// strip's scroll offset, so a scrolled strip still maps correctly (a
+    /// visual transform would fold in the push animations and feed back).</summary>
+    private int? TabInsertIndexAt(System.Windows.Point pt, System.Collections.ObjectModel.ObservableCollection<WorkspaceTab> tabs, WorkspaceTab dragged)
     {
         var draggedIndex = tabs.IndexOf(dragged);
-        var listBox = ((MainWindow)Application.Current.MainWindow).TabStrip;
+        var offset = TabScrollViewer?.HorizontalOffset ?? 0;
         var width = 0.0;
         var slot = 0;
         for (var i = 0; i < tabs.Count; i++)
         {
             if (i == draggedIndex)
                 continue;
-            width += (listBox.ItemContainerGenerator.ContainerFromIndex(i) as FrameworkElement)?.ActualWidth ?? 0;
-            if (pt.X <= width)
+            width += (TabStrip.ItemContainerGenerator.ContainerFromIndex(i) as FrameworkElement)?.ActualWidth ?? 0;
+            if (pt.X <= width - offset)
                 return slot == draggedIndex ? null : slot;
             slot++;
         }
@@ -1038,20 +1088,20 @@ public sealed partial class MainWindow : Window
 
     /// <summary>X of the gap after <paramref name="slot"/> visible tabs (all
     /// but the dragged one), i.e. where the drop marker sits.</summary>
-    private static double VisibleSlotX(System.Collections.ObjectModel.ObservableCollection<WorkspaceTab> tabs, WorkspaceTab dragged, int slot)
+    private double VisibleSlotX(System.Collections.ObjectModel.ObservableCollection<WorkspaceTab> tabs, WorkspaceTab dragged, int slot)
     {
         var draggedIndex = tabs.IndexOf(dragged);
-        var listBox = ((MainWindow)Application.Current.MainWindow).TabStrip;
+        var offset = TabScrollViewer?.HorizontalOffset ?? 0;
         var x = 0.0;
         var visible = 0;
         for (var i = 0; i < tabs.Count && visible < slot; i++)
         {
             if (i == draggedIndex)
                 continue;
-            x += (listBox.ItemContainerGenerator.ContainerFromIndex(i) as FrameworkElement)?.ActualWidth ?? 0;
+            x += (TabStrip.ItemContainerGenerator.ContainerFromIndex(i) as FrameworkElement)?.ActualWidth ?? 0;
             visible++;
         }
-        return x;
+        return x - offset;
     }
 
     /// <summary>Drops a dragged tab. The strip already previews the final
