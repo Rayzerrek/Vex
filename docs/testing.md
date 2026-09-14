@@ -95,14 +95,25 @@ dotnet run --project windows/Vex.App
 cd web
 pnpm install --frozen-lockfile
 pnpm run check   # formatting, lint, types
-pnpm run test    # vitest + Testing Library
+pnpm run test    # vitest, no DOM
 pnpm run build   # production build
 ```
 
-The tests mount the real router with a memory history, so navigation, the theme
-toggle, and the documented license are exercised as a user would hit them.
-DOM is provided by jsdom; stubs for `matchMedia` and `scrollTo` are in
-`web/src/test/setup.ts`.
+The landing page is static, and the failures worth catching are content
+failures rather than rendering ones. `web/src/app.test.ts` therefore reads
+`app.tsx` and the repository files directly and asserts on facts that have
+either broken here before or would break silently:
+
+- every screenshot path referenced by the page resolves to a real file, and
+  every `<img>` carries alternative text
+- the license the page advertises matches `LICENSE`, and it never says MIT
+  again (it did once, while `LICENSE` was GPL-3.0)
+- every `to="..."` target is a route declared in `router.tsx`, and the
+  download links point at the GitHub repository
+
+This keeps the suite dependency-free: no jsdom, no DOM query library, and no
+React runtime in the test path. Vitest is the runner and comes from `vite-plus`,
+so `vp test` needs no extra runtime dependency.
 
 Tests use Vitest globals (no `import { expect } from "vitest"`); the types come
 from `vite-plus/test/globals` in `tsconfig.app.json`. Importing from `vitest`

@@ -4,9 +4,11 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   test: {
-    environment: "jsdom",
+    // The landing page is static, so its tests read source and assets off
+    // disk instead of rendering. That keeps the suite dependency-free: no
+    // jsdom, no DOM query library, and no React runtime in the test path.
+    environment: "node",
     globals: true,
-    setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"]
   },
   fmt: {
