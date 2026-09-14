@@ -16,6 +16,8 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     private LeafPane? _activeLeaf;
     private bool _isFocusMode;
     private ImageSource? _preview;
+    private bool _needsAttention;
+    private bool _isActive;
 
     public WorkspaceTab(string title, string workingDirectory)
     {
@@ -63,6 +65,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         leaf.NewTabRequested += () => NewTabRequested?.Invoke();
         leaf.PropertyChanged += OnLeafPropertyChanged;
         leaf.ProcessExited += OnLeafExited;
+        leaf.BellRang += OnLeafBell;
     }
 
     /// <summary>Directory new panes in this tab start in.</summary>
@@ -82,6 +85,40 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     {
         get => _preview;
         internal set => Set(ref _preview, value);
+    }
+
+    /// <summary>True when a pane in this tab asked for attention since the tab
+    /// was last visible. Cleared automatically when the tab becomes active, so
+    /// the marker survives switching away and never needs a manual reset.</summary>
+    public bool NeedsAttention
+    {
+        get => _needsAttention;
+        private set
+        {
+            if (Set(ref _needsAttention, value))
+                OnPropertyChanged(nameof(ShowAttentionDot));
+        }
+    }
+
+    /// <summary>Whether the tab strip draws the attention dot: a background tab
+    /// that rang, or one whose process exited while the user was elsewhere.
+    /// The active tab never shows it — the user is already looking there.</summary>
+    public bool ShowAttentionDot => !IsActive && (NeedsAttention || ActiveLeaf?.State == PaneState.Exited);
+
+    /// <summary>True while this tab is the active one in its project. Set by
+    /// <see cref="Project.SelectedTab"/>; the tab strip uses it to render the
+    /// attention marker as a dot only for background tabs.</summary>
+    public bool IsActive
+    {
+        get => _isActive;
+        internal set
+        {
+            if (!Set(ref _isActive, value))
+                return;
+            if (value)
+                NeedsAttention = false;
+            OnPropertyChanged(nameof(ShowAttentionDot));
+        }
     }
 
     public PaneNode Root
@@ -141,6 +178,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             _activeLeaf = value;
             if (IsFocusMode)
                 OnPropertyChanged(nameof(DisplayRoot));
+            OnPropertyChanged(nameof(ShowAttentionDot));
             if (value is not null)
             {
                 value.IsFocused = true;
@@ -190,11 +228,24 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
         leaf.PropertyChanged -= OnLeafPropertyChanged;
         leaf.ProcessExited -= OnLeafExited;
+        leaf.BellRang -= OnLeafBell;
         leaf.Dispose();
+    }
+
+    /// <summary>A pane rang its bell: mark the tab as wanting attention. The
+    /// flag is only raised for background tabs; a visible tab has the user's
+    /// eyes on it already, and the marker clears when it next activates.</summary>
+    private void OnLeafBell(LeafPane leaf)
+    {
+        if (!IsActive)
+            NeedsAttention = true;
     }
 
     private void OnLeafPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(LeafPane.State) && ReferenceEquals(sender, ActiveLeaf))
+            OnPropertyChanged(nameof(ShowAttentionDot));
+
         if ((e.PropertyName == nameof(LeafPane.Title) || e.PropertyName == nameof(LeafPane.IsDirty)) 
             && _activeLeaf is { } active && ReferenceEquals(sender, active) && !HasCustomTitle)
             Title = active.Title + (active.IsDirty ? "*" : "");
@@ -246,6 +297,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         foreach (var leaf in EnumerateLeaves(Root))
         {
             leaf.PropertyChanged -= OnLeafPropertyChanged;
+            leaf.BellRang -= OnLeafBell;
             leaf.Dispose();
         }
     }

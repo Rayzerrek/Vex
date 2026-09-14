@@ -134,10 +134,14 @@ public abstract class LeafPane : PaneNode, IDisposable
     public event Action? NewTabRequested;
     public event Action<LeafPane>? ProcessExited;
 
+    /// <summary>Raised when the app in this pane asks for attention (bell).</summary>
+    public event Action<LeafPane>? BellRang;
+
     protected void RequestFocus() => FocusRequested?.Invoke();
     protected void RequestSplit(Orientation orientation) => SplitRequested?.Invoke(orientation);
     protected void RequestNewTab() => NewTabRequested?.Invoke();
     protected void RequestClose() => ProcessExited?.Invoke(this);
+    protected void RequestAttention() => BellRang?.Invoke(this);
 
     /// <summary>Pane title-bar actions; the owning tab re-raises the same
     /// events the keyboard shortcuts use.</summary>
@@ -281,6 +285,7 @@ public sealed class TerminalPane : LeafPane
         };
         view.FocusGained += RequestFocus;
         view.TuiModeChanged += isTui => State = isTui ? PaneState.Busy : PaneState.Idle;
+        view.Bell += RequestAttention;
         view.ProcessExited += exitCode =>
         {
             State = PaneState.Exited;

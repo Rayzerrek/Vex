@@ -240,6 +240,28 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <!-- Attention marker: lit for a background tab whose app
+                         rang the bell, or whose process exited while the user
+                         was elsewhere. It is the strip's answer to "which of
+                         these wants me". -->
+                    <Ellipse x:Name="AttentionDot" Width="6" Height="6" Margin="0,0,6,0"
+                             VerticalAlignment="Center"
+                             Fill="{StaticResource VexAccentBlue}"
+                             ToolTip="Waiting for you">
+                        <Ellipse.Style>
+                            <Style TargetType="Ellipse">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowAttentionDot}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding ActiveLeaf.State}" Value="{x:Static m:PaneState.Exited}">
+                                        <Setter Property="Fill" Value="{StaticResource VexPaneExited}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Ellipse.Style>
+                    </Ellipse>
                     <Image Width="16" Height="16" Margin="0,0,6,0"
                            Source="{Binding ActiveLeaf.AppIcon.Image}"
                            VerticalAlignment="Center">

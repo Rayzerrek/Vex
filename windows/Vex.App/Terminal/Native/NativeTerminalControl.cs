@@ -53,6 +53,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private int _rows;
     private volatile bool _needsFullRedraw = true;
     private volatile bool _disposed;
+    private int _bellPending;
 
     // Per-row render caches: the row's last-painted content hash plus the
     // render version it was painted with. RedrawRow skips the DrawingVisual
@@ -174,6 +175,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     public event Action? FocusGained;
     public event Action<TerminalCommand>? CommandRequested;
 
+    /// <summary>Raised when the pane's application rings the bell — an agent
+    /// or build finishing, a prompt needing input. Marshalled to the UI
+    /// thread; drives the attention dot.</summary>
+    public event Action? Bell;
+
     public NativeTerminalControl(string workingDirectory)
     {
         _workingDirectory = workingDirectory;
@@ -206,6 +212,20 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                     TitleChanged?.Invoke(snapshot);
                 });
             }
+        };
+        _terminal.Bell += () =>
+        {
+            // Bell fires on the feed thread. Coalesce bursts (a shell loop or
+            // a tab-completion beep) into one UI callback: the attention dot
+            // is idempotent, so intermediate dispatches would only add churn.
+            if (Interlocked.Exchange(ref _bellPending, 1) == 1)
+                return;
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                Interlocked.Exchange(ref _bellPending, 0);
+                if (!_disposed)
+                    Bell?.Invoke();
+            }, DispatcherPriority.Background);
         };
         // Runs on the PTY reader thread during Feed (query responses) and is
         // written straight into ConPTY: DSR/OSC answers no longer wait for a

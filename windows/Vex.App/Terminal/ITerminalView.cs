@@ -20,6 +20,12 @@ public interface ITerminalView : IDisposable
     /// TUI is active. Used to surface pane state in the title bar.</summary>
     event Action<bool>? TuiModeChanged;
 
+    /// <summary>Raised when the application rings the terminal bell (BEL).
+    /// Drives the workspace attention indicator. Note that alert OSC
+    /// sequences (9/777) are not surfaced here: the emulator consumes them
+    /// as OSC payload rather than as a bell.</summary>
+    event Action? Bell;
+
     /// <summary>PID of the ConPTY shell; null until the session starts.</summary>
     int? ProcessId { get; }
 

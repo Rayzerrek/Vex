@@ -131,6 +131,7 @@ public sealed class GhosttyTerminal : IDisposable
     private const int MaxGraphemes = 32;
 
     private static readonly TitleChangedFn s_titleChanged = OnTitleChanged;
+    private static readonly BellFn s_bell = OnBell;
     private static readonly WritePtyFn s_writePty = OnWritePty;
 
     private IntPtr _terminal;
@@ -202,6 +203,10 @@ public sealed class GhosttyTerminal : IDisposable
     public event Action<string>? TitleChanged;
     public event Action<byte[], int>? WritePty;
 
+    /// <summary>Raised when the application rings the terminal bell (BEL).
+    /// Fires on the feed thread, like <see cref="TitleChanged"/>.</summary>
+    public event Action? Bell;
+
     public FrameDirty FrameDirty { get; private set; }
     public CursorState Cursor { get; private set; }
     public FrameRow[] FrameRows { get; private set; } = Array.Empty<FrameRow>();
@@ -221,6 +226,7 @@ public sealed class GhosttyTerminal : IDisposable
         _selfHandle = GCHandle.Alloc(this);
         SetOption(TerminalOption.Userdata, GCHandle.ToIntPtr(_selfHandle));
         SetOption(TerminalOption.TitleChanged, Marshal.GetFunctionPointerForDelegate(s_titleChanged));
+        SetOption(TerminalOption.Bell, Marshal.GetFunctionPointerForDelegate(s_bell));
         SetOption(TerminalOption.WritePty, Marshal.GetFunctionPointerForDelegate(s_writePty));
         // Use the familiar text-insertion bar by default. Applications can
         // still select another DECSCUSR shape (for example vim's block mode).
@@ -1285,6 +1291,13 @@ public sealed class GhosttyTerminal : IDisposable
             return;
         var title = GetBorrowed(terminal, TerminalData.Title);
         self.TitleChanged?.Invoke(title);
+    }
+
+    private static void OnBell(IntPtr terminal, IntPtr userdata)
+    {
+        if (GetTarget(userdata) is not { } self)
+            return;
+        self.Bell?.Invoke();
     }
 
     private static void OnWritePty(IntPtr terminal, IntPtr userdata, IntPtr data, nuint len)
