@@ -14,32 +14,32 @@ const downloadOptions = [
     href: "https://github.com/Rayzerrek/Vex/releases",
     title: "Windows installer",
     detail: "Latest release from GitHub",
-    meta: "exe",
+    meta: "exe"
   },
   {
     href: "https://github.com/Rayzerrek/Vex",
     title: "Build from source",
-    detail: "MIT licensed and open to inspection",
-    meta: "git",
-  },
+    detail: "GPL-3.0 licensed and open to inspection",
+    meta: "git"
+  }
 ];
 
 const principles = [
   {
     title: "Native first",
     copy: "WPF and Windows ConPTY give Vex the feel of a desktop tool, not a browser inside a window.",
-    meta: "wpf",
+    meta: "wpf"
   },
   {
     title: "Projects stay open",
     copy: "Switch between repositories without losing the shell, files, or layout that belongs to each one.",
-    meta: "workspace",
+    meta: "workspace"
   },
   {
     title: "Shortcuts are the interface",
     copy: "Split panes, open files, and move through the workspace without breaking your focus.",
-    meta: "keyboard",
-  },
+    meta: "keyboard"
+  }
 ];
 
 function useTheme() {
@@ -114,8 +114,8 @@ export function HomePage() {
             />
           </div>
           <figcaption className="mt-3 font-mono text-[11px] tracking-[0.04em] text-faint">
-            vex on windows — sidebar, file tree, nushell. follows this page
-            into dark.
+            vex on windows — sidebar, file tree, nushell. follows this page into
+            dark.
           </figcaption>
         </figure>
 
@@ -148,8 +148,7 @@ export function HomePage() {
               />
             </div>
             <figcaption className="mt-3 font-mono text-[11px] tracking-[0.04em] text-faint">
-              command palette — ctrl+shift+p. every action, one keystroke
-              away.
+              command palette — ctrl+shift+p. every action, one keystroke away.
             </figcaption>
           </figure>
         </section>
@@ -170,7 +169,7 @@ export function HomePage() {
             {[
               { term: "Platform", detail: "Windows 10 1809+" },
               { term: "Runtime", detail: ".NET 10" },
-              { term: "License", detail: "MIT" },
+              { term: "License", detail: "GPL-3.0" }
             ].map(({ term, detail }) => (
               <div
                 className="border-b border-line py-4 max-narrow:py-3"
@@ -228,8 +227,8 @@ export function DownloadPage() {
           Start with Vex.
         </h1>
         <p className="mt-5 max-w-[520px] text-[15px] leading-[1.7] text-muted">
-          A native terminal workspace for Windows developers. Pick the
-          installer or build it yourself — both are MIT licensed.
+          A native terminal workspace for Windows developers. Pick the installer
+          or build it yourself — both are GPL-3.0 licensed.
         </p>
         <div className="mt-8 border-t border-line">
           {downloadOptions.map(({ href, title, detail, meta }) => (
@@ -316,7 +315,7 @@ function SiteHeader() {
             style={{
               background: dark
                 ? "linear-gradient(90deg, transparent 50%, currentColor 50%)"
-                : "linear-gradient(90deg, currentColor 50%, transparent 50%)",
+                : "linear-gradient(90deg, currentColor 50%, transparent 50%)"
             }}
           />
         </button>
