@@ -11,6 +11,9 @@
         <Color x:Key="VexBorderColor">#FF3A424D</Color>
         <Color x:Key="VexTextColor">#FFE6E8EB</Color>
         <Color x:Key="VexTextDimColor">#FF868D96</Color>
+        <!-- Placeholder text sits on a solid input surface, not on the acrylic
+             chrome, so it needs more contrast than VexTextDim. -->
+        <Color x:Key="VexTextPlaceholderColor">#FFAFB6BF</Color>
         <Color x:Key="VexAccentColor">#FF8B939E</Color>
         <!-- Neutral outline for the active pane; focus reads as a highlight,
              not a saturated frame. -->
@@ -32,6 +35,7 @@
         <SolidColorBrush x:Key="VexBorder" Color="{DynamicResource VexBorderColor}"/>
         <SolidColorBrush x:Key="VexText" Color="{DynamicResource VexTextColor}"/>
         <SolidColorBrush x:Key="VexTextDim" Color="{DynamicResource VexTextDimColor}"/>
+        <SolidColorBrush x:Key="VexTextPlaceholder" Color="{DynamicResource VexTextPlaceholderColor}"/>
         <SolidColorBrush x:Key="VexAccent" Color="{DynamicResource VexAccentColor}"/>
         <SolidColorBrush x:Key="VexFocusBorder" Color="{DynamicResource VexFocusBorderColor}"/>
         <SolidColorBrush x:Key="VexSidebar" Color="{DynamicResource VexSidebarColor}"/>
@@ -95,6 +99,16 @@
         <SolidColorBrush x:Key="VexInput" Color="{DynamicResource VexInputColor}"/>
         <SolidColorBrush x:Key="VexToggleThumb" Color="{DynamicResource VexToggleThumbColor}"/>
         <SolidColorBrush x:Key="VexOnAccent" Color="{DynamicResource VexOnAccentColor}"/>
+
+        <!-- WPF's default caret inverts the control's own background, which on
+             the theme's dark surfaces and on the editor's transparent one
+             inverts to a near-invisible color. Every input draws the chrome's
+             own text color instead. The scheme is TextBox, not TextBoxBase:
+             implicit style lookup keys on the exact instance type, so a base
+             class entry never matches a TextBox. -->
+        <Style TargetType="TextBox">
+            <Setter Property="CaretBrush" Value="{DynamicResource VexText}"/>
+        </Style>
 
         <!-- Shared hover treatment: a soft fill fades in/out over ~0.12s with
              the same easing on every button so the chrome feels consistent.

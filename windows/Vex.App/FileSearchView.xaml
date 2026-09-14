@@ -22,10 +22,6 @@
         <!-- Search box -->
         <Border DockPanel.Dock="Top" Padding="10,6,10,4">
             <Grid>
-                <TextBlock x:Name="SearchHint" Text="Search files…"
-                           Foreground="{StaticResource VexTextDim}" FontSize="12"
-                           Margin="8,0,0,0" VerticalAlignment="Center"
-                           IsHitTestVisible="False"/>
                 <TextBox x:Name="SearchBox" Height="26" VerticalContentAlignment="Center"
                          Background="{StaticResource VexSurface}"
                          Foreground="{StaticResource VexText}"
@@ -34,6 +30,13 @@
                          TextChanged="SearchBox_TextChanged"
                          GotKeyboardFocus="SearchBox_GotKeyboardFocus"
                          PreviewKeyDown="SearchBox_PreviewKeyDown"/>
+                <!-- The hint draws over the box: the light chrome's surface is
+                     fully opaque, so a hint painted underneath it is invisible
+                     there, and only a faint blur of it survives the dark one. -->
+                <TextBlock x:Name="SearchHint" Text="Search files…"
+                           Foreground="{StaticResource VexTextPlaceholder}" FontSize="12"
+                           Margin="9,0,0,0" VerticalAlignment="Center"
+                           IsHitTestVisible="False"/>
             </Grid>
         </Border>
 
