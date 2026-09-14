@@ -1,0 +1,33 @@
+# Editor conventions for Vex.
+#
+# These settings describe the formatting the repository already uses, so they
+# should not reformat existing files. Code style for the landing page is owned
+# by Vite+ (oxfmt) through web/vite.config.ts, which is authoritative there.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{cs,csproj,props,targets,slnx,xaml,wxs,wixproj}]
+indent_size = 4
+
+[*.{json,jsonc,yml,yaml,ts,tsx,js,jsx,css,html}]
+indent_size = 2
+
+[*.{md,markdown}]
+# Markdown tables and wrapped prose are easier to keep aligned without
+# trailing-whitespace stripping turning line breaks into hard wraps.
+trim_trailing_whitespace = false
+indent_size = 2
+
+[*.ps1]
+indent_size = 4
+
+# Patch files and generated lockfiles must be left exactly as produced.
+[*.{patch,diff}]
+insert_final_newline = false
+trim_trailing_whitespace = false

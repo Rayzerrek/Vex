@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a change or a new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Vex aims to stay a focused terminal workspace. Requests that fit another
+        tool better may be declined, but it is always worth asking.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: Describe the situation you are in, not the solution yet.
+      placeholder: "When I work across two repositories I keep losing the shell in each one."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including what you do today instead, and any other tool that does it well.
+    validations:
+      required: false

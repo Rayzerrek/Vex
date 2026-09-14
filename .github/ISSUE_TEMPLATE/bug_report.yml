@@ -1,0 +1,91 @@
+name: Bug report
+description: Report something that is broken in Vex
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please check that you are on the latest release and that
+        the problem is not already reported.
+
+  - type: input
+    id: version
+    attributes:
+      label: Vex version
+      description: Shown in Settings → About.
+      placeholder: "1.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run `winver` and report the version and build.
+      placeholder: "Windows 11 23H2, build 22631.4169"
+    validations:
+      required: true
+
+  - type: input
+    id: shell
+    attributes:
+      label: Shell
+      description: Which shell profile is selected in Settings.
+      placeholder: "PowerShell 7"
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps that lead to the problem.
+      placeholder: |
+        1. Open Vex with the default settings
+        2. Split the pane with Ctrl+Shift+R
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: |
+        If the problem is visual, a screenshot helps. If the terminal shows
+        wrong output, mention the TUI application running at the time.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Terminal rendering
+        - Terminal input
+        - Panes and tabs
+        - File tree or search
+        - Editor
+        - Themes and appearance
+        - Settings
+        - Installer
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: |
+        Font in use, GPU, or a `settings.json` excerpt if it seems relevant.
+    validations:
+      required: false
