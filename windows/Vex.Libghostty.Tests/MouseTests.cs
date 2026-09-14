@@ -14,10 +14,20 @@ namespace Vex.Libghostty.Tests;
 /// </summary>
 public sealed class MouseTests
 {
+    // A 10x20 cell: the geometry the app supplies to ghostty_terminal_resize
+    // for a typical 14pt monospace font at 100% DPI. The encoder converts
+    // pixel positions to cells with the size it was last resized with, so a
+    // terminal that never resizes keeps the 8x16 defaults and every expected
+    // cell below would be off by one. Tests must resize to state the
+    // geometry they assert against.
+    private const int CellW = 10;
+    private const int CellH = 20;
+
     private static GhosttyTerminal NewTerm()
     {
         var term = new GhosttyTerminal(80, 25);
         term.WritePty += (_, _) => { };
+        term.Resize(80, 25, CellW, CellH);
         return term;
     }
 
@@ -128,5 +138,73 @@ public sealed class MouseTests
         Feed(term, $"{ResetModes}\x1b[?1000h\x1b[?1015h");
         Assert.Equal(MouseFormat.Urxvt, term.Format);
         Assert.Equal("<ESC>[32;6;3M", Encode(term, MouseInputAction.Press, MouseInputButton.Left, 55, 45, anyButtonPressed: true));
+    }
+
+    [Fact]
+    public void MiddleAndRightButtons_UseXtermButtonCodes()
+    {
+        // X10/SGR button codes are 0=left, 1=middle, 2=right, 3=release.
+        // Getting middle and right swapped silently breaks tmux's paste and
+        // context menus, which is invisible until a user tries them.
+        using var term = NewTerm();
+        Feed(term, $"{ResetModes}\x1b[?1002h\x1b[?1006h");
+        Assert.Equal("<ESC>[<1;6;3M", Encode(term, MouseInputAction.Press, MouseInputButton.Middle, 55, 45, anyButtonPressed: true));
+        Assert.Equal("<ESC>[<2;6;3M", Encode(term, MouseInputAction.Press, MouseInputButton.Right, 55, 45, anyButtonPressed: true));
+    }
+
+    [Fact]
+    public void X10Mode_ReportsPressOnly()
+    {
+        // Mode 9 is press-only by definition: releases and motion must not
+        // reach the app, and the wire format is the legacy 6-byte form.
+        using var term = NewTerm();
+        Feed(term, $"{ResetModes}\x1b[?9h");
+        Assert.Equal(MouseTrackingMode.X10, term.TrackingMode);
+        Assert.StartsWith("<ESC>[M", Encode(term, MouseInputAction.Press, MouseInputButton.Left, 55, 45, anyButtonPressed: true));
+        Assert.Equal("", Encode(term, MouseInputAction.Release, MouseInputButton.Left, 55, 45, anyButtonPressed: false));
+        Assert.Equal("", Encode(term, MouseInputAction.Motion, MouseInputButton.Left, 55, 45, anyButtonPressed: true));
+    }
+
+    [Fact]
+    public void Modifiers_AreReportedInTheButtonCode()
+    {
+        // xterm packs modifiers into the low bits above the button: +4 shift,
+        // +8 alt, +16 ctrl. Apps branch on these for ctrl+click and the like.
+        using var term = NewTerm();
+        Feed(term, $"{ResetModes}\x1b[?1002h\x1b[?1006h");
+        var output = new byte[128];
+        var len = term.EncodeMouse(MouseInputAction.Press, MouseInputButton.Left,
+            MouseInputModifiers.Control, 55, 45, anyButtonPressed: true, output);
+        Assert.Equal("<ESC>[<16;6;3M", Encoding.Latin1.GetString(output, 0, len).Replace("\x1b", "<ESC>"));
+    }
+
+    [Fact]
+    public void NoTracking_EncodesNothing()
+    {
+        // A plain shell prompt must never see mouse reports; otherwise typed
+        // output gets random escape sequences injected into it.
+        using var term = NewTerm();
+        Feed(term, ResetModes);
+        Assert.False(term.MouseTracking);
+        Assert.Equal("", Encode(term, MouseInputAction.Press, MouseInputButton.Left, 55, 45, anyButtonPressed: true));
+    }
+
+    [Fact]
+    public void CellSizeFromResize_MovesTheReportedColumn()
+    {
+        // The encoder converts pixels to cells with the geometry the host
+        // passed to Resize. A stale size puts every click one column off, so
+        // the same pixel must map to different cells for different widths.
+        using var narrow = new GhosttyTerminal(80, 25);
+        narrow.WritePty += (_, _) => { };
+        narrow.Resize(80, 25, 10, 20);
+        Feed(narrow, $"{ResetModes}\x1b[?1002h\x1b[?1006h");
+        Assert.Equal("<ESC>[<0;6;3M", Encode(narrow, MouseInputAction.Press, MouseInputButton.Left, 55, 45, anyButtonPressed: true));
+
+        using var wide = new GhosttyTerminal(80, 25);
+        wide.WritePty += (_, _) => { };
+        wide.Resize(80, 25, 12, 20);
+        Feed(wide, $"{ResetModes}\x1b[?1002h\x1b[?1006h");
+        Assert.Equal("<ESC>[<0;5;3M", Encode(wide, MouseInputAction.Press, MouseInputButton.Left, 55, 45, anyButtonPressed: true));
     }
 }
