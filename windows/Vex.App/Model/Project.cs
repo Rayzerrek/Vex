@@ -282,7 +282,10 @@ public sealed class Project : ObservableObject
         WorkspaceTab? nextTab = null;
 
         if (wasSelected)
-            nextTab = Tabs[Math.Max(0, index - 1)];
+            // Fall back to the left neighbour, or the right one when the
+            // first tab closes — picking Tabs[0] here would reselect the
+            // tab being removed and the selection would never change.
+            nextTab = index > 0 ? Tabs[index - 1] : Tabs[1];
 
         Tabs.Remove(tab);
         tab.Dispose();
