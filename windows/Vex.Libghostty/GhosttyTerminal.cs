@@ -908,6 +908,19 @@ public sealed class GhosttyTerminal : IDisposable
         lock (_vtLock)
         {
             Native.ghostty_key_encoder_setopt_from_terminal(_keyEncoder, _terminal);
+            // ConPTY cannot carry Kitty CSI-u or modifyOtherKeys input: its
+            // input parser only round-trips keystrokes it recognizes as
+            // Windows console key events and swallows the rest, so an app
+            // that negotiated Kitty (e.g. any pi-based TUI) would receive
+            // nothing for Escape or Ctrl+C. The encoder is therefore locked
+            // to legacy bytes — Kitty-aware apps still accept those on their
+            // raw-byte fallback paths. The emulator's own protocol state is
+            // untouched: queries are answered honestly, push/pop works, and
+            // KittyKeyboardFlags still reports what the app requested.
+            byte kittyFlags = 0;
+            Native.ghostty_key_encoder_setopt(_keyEncoder, Native.KeyEncoderOption.KittyFlags, (IntPtr)(&kittyFlags));
+            byte modifyOtherKeys = 0;
+            Native.ghostty_key_encoder_setopt(_keyEncoder, Native.KeyEncoderOption.ModifyOtherKeysState2, (IntPtr)(&modifyOtherKeys));
             Native.ghostty_key_event_set_key(_keyEvent, key);
             Native.ghostty_key_event_set_action(_keyEvent, (Native.KeyAction)action);
             Native.ghostty_key_event_set_mods(_keyEvent, modifiers);

@@ -423,6 +423,19 @@ internal static class Native
         TrackLastCell = 4,
     }
 
+    // Values mirror GhosttyKeyEncoderOption in include/ghostty/vt/key/encoder.h.
+    internal enum KeyEncoderOption : int
+    {
+        CursorKeyApplication = 0,
+        KeypadKeyApplication = 1,
+        IgnoreKeypadWithNumlock = 2,
+        AltEscPrefix = 3,
+        ModifyOtherKeysState2 = 4,
+        KittyFlags = 5,
+        MacosOptionAsAlt = 6,
+        BackarrowKeyMode = 7,
+    }
+
     // --- Callbacks ------------------------------------------------------
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -511,6 +524,9 @@ internal static class Native
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void ghostty_key_encoder_setopt_from_terminal(IntPtr encoder, IntPtr terminal);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void ghostty_key_encoder_setopt(IntPtr encoder, KeyEncoderOption option, IntPtr value);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Result ghostty_key_encoder_encode(IntPtr encoder, IntPtr keyEvent, IntPtr output, nuint outputSize, out nuint outputLength);

@@ -32,18 +32,36 @@ public sealed class KeyboardTests
     }
 
     [Fact]
-    public void KittyNegotiation_UpdatesFlagsAndEncodesAllEventTypes()
+    public void KittyNegotiation_UpdatesFlagsButEncodingStaysLegacy()
     {
+        // The terminal tracks the negotiated Kitty flags (query replies,
+        // state reporting), but the encoder must keep emitting legacy bytes:
+        // ConPTY cannot carry CSI-u input and would swallow every key.
         using var term = new GhosttyTerminal(80, 24);
-        term.Feed("\x1b[>31u");
+        term.Feed("[>31u");
 
         Assert.Equal(31, term.KittyKeyboardFlags);
-        Assert.Equal("\x1b[97:65;2;65u", Encode(term, TerminalKey.A,
+        Assert.Equal("A", Encode(term, TerminalKey.A,
             TerminalKeyModifiers.Shift, TerminalKeyAction.Press, "A", 'a'));
-        Assert.Equal("\x1b[97:65;2:2;65u", Encode(term, TerminalKey.A,
-            TerminalKeyModifiers.Shift, TerminalKeyAction.Repeat, "A", 'a'));
-        Assert.Equal("\x1b[97;2:3u", Encode(term, TerminalKey.A,
+        Assert.Equal("a", Encode(term, TerminalKey.A,
+            TerminalKeyModifiers.None, TerminalKeyAction.Press, "a", 'a'));
+        // Release events are a Kitty-only concept; legacy sends nothing.
+        Assert.Equal("", Encode(term, TerminalKey.A,
             TerminalKeyModifiers.Shift, TerminalKeyAction.Release, unshifted: 'a'));
+    }
+
+    [Fact]
+    public void KittyMode_CtrlCAndEscapeStayLegacyBytes()
+    {
+        // Regression: pi/agy push Kitty flags 7 and expect CSI-u input
+        // (ESC[99;5u for Ctrl+C, ESC[27u for Escape). ConPTY's input parser
+        // drops those sequences entirely, so the app saw nothing. The encoder
+        // must emit the C0/legacy bytes pi's raw-byte fallbacks accept.
+        using var term = new GhosttyTerminal(80, 24);
+        term.Feed("[>7u");
+
+        Assert.Equal("", Encode(term, TerminalKey.C, TerminalKeyModifiers.Control, unshifted: 'c'));
+        Assert.Equal("", Encode(term, TerminalKey.Escape));
     }
 
     [Fact]
