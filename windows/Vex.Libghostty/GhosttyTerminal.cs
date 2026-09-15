@@ -1297,7 +1297,7 @@ public sealed class GhosttyTerminal : IDisposable
         }
     }
 
-    public unsafe void SelectionPress(int viewportCol, int viewportRow, double xPx, double yPx)
+    public unsafe int SelectionPress(int viewportCol, int viewportRow, double xPx, double yPx)
     {
         lock (_vtLock)
         {
@@ -1309,7 +1309,7 @@ public sealed class GhosttyTerminal : IDisposable
             // A point that no longer maps to the grid (resize, alt-screen switch)
             // must skip the press, not crash the app.
             if (Native.ghostty_terminal_grid_ref(_terminal, point, out var gridRef) != Result.Success)
-                return;
+                return 0;
 
             SetEventOption(_pressEvent, SelectionGestureEventOption.Ref, gridRef);
             SetEventOption(_pressEvent, SelectionGestureEventOption.TimeNs, NowNs());
@@ -1320,6 +1320,11 @@ public sealed class GhosttyTerminal : IDisposable
             var result = Native.ghostty_selection_gesture_event(_gesture, _terminal, _pressEvent, (IntPtr)(&snapshot));
             if (result == Result.Success)
                 Check(Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, (IntPtr)(&snapshot)), "set selection");
+
+            byte clickCount = 0;
+            Check(Native.ghostty_selection_gesture_get(_gesture, _terminal,
+                SelectionGestureData.ClickCount, (IntPtr)(&clickCount)), "get selection click count");
+            return clickCount;
         }
     }
     public unsafe void SelectionDrag(int viewportCol, int viewportRow, double xPx, double yPx)
@@ -1372,12 +1377,13 @@ public sealed class GhosttyTerminal : IDisposable
         }
     }
 
-    public unsafe void ClearSelection()
+    public unsafe void ClearSelection(bool resetGesture = true)
     {
         lock (_vtLock)
         {
             Native.ghostty_terminal_set(_terminal, TerminalOption.Selection, IntPtr.Zero);
-            Native.ghostty_selection_gesture_reset(_gesture, _terminal);
+            if (resetGesture)
+                Native.ghostty_selection_gesture_reset(_gesture, _terminal);
         }
     }
 

@@ -639,6 +639,9 @@ internal static class Native
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Result ghostty_selection_gesture_event(IntPtr gesture, IntPtr terminal, IntPtr gestureEvent, IntPtr outSelection);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern Result ghostty_selection_gesture_get(IntPtr gesture, IntPtr terminal, SelectionGestureData data, IntPtr value);
 }
 /// <summary>An sRGB color as consumed by libghostty-vt.</summary>
 [StructLayout(LayoutKind.Sequential)]
