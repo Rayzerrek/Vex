@@ -207,4 +207,30 @@ public sealed class MouseTests
         Feed(wide, $"{ResetModes}\x1b[?1002h\x1b[?1006h");
         Assert.Equal("<ESC>[<0;5;3M", Encode(wide, MouseInputAction.Press, MouseInputButton.Left, 55, 45, anyButtonPressed: true));
     }
+
+    [Fact]
+    public void RepeatedClicks_SelectWordThenLineAfterSingleClickIsCleared()
+    {
+        using var term = NewTerm();
+        Feed(term, "\x1b[2J\x1b[Halpha beta\r\nsecond line");
+
+        Assert.Equal(1, Click(term, col: 7, row: 0));
+        term.ClearSelection(resetGesture: false);
+        Assert.False(term.HasSelection);
+
+        Assert.Equal(2, Click(term, col: 7, row: 0));
+        Assert.Equal("beta", term.GetSelectedText());
+
+        Assert.Equal(3, Click(term, col: 7, row: 0));
+        Assert.Equal("alpha beta", term.GetSelectedText());
+    }
+
+    private static int Click(GhosttyTerminal term, int col, int row)
+    {
+        var x = col * CellW + CellW / 2.0;
+        var y = row * CellH + CellH / 2.0;
+        var clickCount = term.SelectionPress(col, row, x, y);
+        term.SelectionRelease(col, row);
+        return clickCount;
+    }
 }

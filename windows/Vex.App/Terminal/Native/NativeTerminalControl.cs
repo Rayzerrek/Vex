@@ -130,6 +130,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private bool _selectionActive;
     private bool _selectionDragged;
     private bool _selectionGestureActive;
+    private int _selectionClickCount;
     private bool _mouseSelectionOverride;
     private bool _mouseTracking;
     private bool _kbSelectionActive;
@@ -2180,7 +2181,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _selectionGestureActive = true;
             _mouseSelectionOverride = true;
             var nativePos = NativePoint(pos);
-            _terminal.SelectionPress(col, row, nativePos.X, nativePos.Y);
+            _selectionClickCount = _terminal.SelectionPress(col, row, nativePos.X, nativePos.Y);
             CaptureMouse();
             FlushRedraw();
             e.Handled = true;
@@ -2198,26 +2199,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         }
 
-        if (e.ClickCount == 2)
-        {
-            // The gesture's own click-count state (fed by press timestamps)
-            // derives word selection on the second press.
-            _selectionActive = true;
-            _selectionDragged = false;
-            _selectionGestureActive = true;
-            var nativePos = NativePoint(pos);
-            _terminal.SelectionPress(col, row, nativePos.X, nativePos.Y);
-            CaptureMouse();
-            FlushRedraw();
-            e.Handled = true;
-            return;
-        }
-
         _selectionActive = true;
         _selectionDragged = false;
         _selectionGestureActive = true;
         var selectionPos = NativePoint(pos);
-        _terminal.SelectionPress(col, row, selectionPos.X, selectionPos.Y);
+        _selectionClickCount = _terminal.SelectionPress(col, row, selectionPos.X, selectionPos.Y);
         CaptureMouse();
         FlushRedraw();
     }
@@ -2295,7 +2281,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _selectionGestureActive = false;
             _terminal.SelectionRelease(col, row);
             if (!_selectionDragged)
-                ClearSelection();
+                FinishClickSelection();
             else
                 FlushRedraw();
             _selectionDragged = false;
@@ -2314,7 +2300,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _selectionGestureActive = false;
             _terminal.SelectionRelease(col, row);
             if (!_selectionDragged)
-                ClearSelection();
+                FinishClickSelection();
             else
                 FlushRedraw();
             _selectionDragged = false;
@@ -2338,7 +2324,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (wasDragged)
                 FlushRedraw();
             else
-                ClearSelection();
+                FinishClickSelection();
         }
 
         _scrollbarDragging = false;
@@ -2351,6 +2337,21 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             SendMouse(MouseInputAction.Release, button, position);
         }
         DrawScrollbar();
+    }
+
+    private void FinishClickSelection()
+    {
+        if (_selectionClickCount > 1)
+        {
+            FlushRedraw();
+            return;
+        }
+
+        _selectionActive = false;
+        // Keep Ghostty's click history so the next nearby press can become a
+        // word or line selection, while a lone click leaves no selected cell.
+        _terminal.ClearSelection(resetGesture: false);
+        FlushRedraw();
     }
 
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
