@@ -394,8 +394,7 @@ public sealed partial class MainWindow : Window
                 _paletteOverlay = new CommandPalette();
                 _paletteOverlay.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
                 _paletteOverlay.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
-                _paletteOverlay.Hidden += () =>
-                    _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
+                _paletteOverlay.Hidden += FocusActivePane;
                 PalettePopup.Child = _paletteOverlay;
             }
             return _paletteOverlay;
@@ -412,8 +411,7 @@ public sealed partial class MainWindow : Window
                 _settingsOverlay = new SettingsOverlay();
                 _settingsOverlay.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
                 _settingsOverlay.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
-                _settingsOverlay.Hidden += () =>
-                    _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
+                _settingsOverlay.Hidden += FocusActivePane;
                 SettingsPopup.Child = _settingsOverlay;
             }
             return _settingsOverlay;
@@ -430,6 +428,7 @@ public sealed partial class MainWindow : Window
                 _themeSwitcher = new ThemeSwitcher();
                 _themeSwitcher.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
                 _themeSwitcher.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                _themeSwitcher.Hidden += FocusActivePane;
                 ThemePopup.Child = _themeSwitcher;
             }
             return _themeSwitcher;
@@ -446,10 +445,29 @@ public sealed partial class MainWindow : Window
                 _tabPeek = new TabPeek();
                 _tabPeek.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
                 _tabPeek.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                _tabPeek.Hidden += FocusActivePane;
                 TabPeekPopup.Child = _tabPeek;
             }
             return _tabPeek;
         }
+    }
+
+    /// <summary>Hands keyboard focus back to the active pane after an overlay
+    /// closes, so typing goes straight to the terminal instead of stranding
+    /// on the window. Dispatched after the popup's own focus restoration, and
+    /// skipped when another overlay opened on top (palette → settings/theme)
+    /// so the new overlay keeps its focus.</summary>
+    private void FocusActivePane()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if ((_paletteOverlay?.Visibility == Visibility.Visible) ||
+                (_settingsOverlay?.Visibility == Visibility.Visible) ||
+                (_themeSwitcher?.Visibility == Visibility.Visible) ||
+                (_tabPeek?.Visibility == Visibility.Visible))
+                return;
+            _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
+        }, DispatcherPriority.ContextIdle);
     }
 
     private bool SaveCurrentFile()

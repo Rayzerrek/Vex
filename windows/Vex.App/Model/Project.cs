@@ -278,19 +278,19 @@ public sealed class Project : ObservableObject
         if (Tabs.Count <= 1)
             return;
 
-        bool wasSelected = (SelectedTab == tab);
-        WorkspaceTab? nextTab = null;
-
-        if (wasSelected)
+        if (ReferenceEquals(SelectedTab, tab))
+        {
+            // Select first, remove after. Removing the selected item lets the
+            // tab strip's TwoWay binding push a transient null (or its own
+            // auto-selected neighbour) back into SelectedTab, which used to
+            // leave the content area stranded on the disposed tab.
             // Fall back to the left neighbour, or the right one when the
             // first tab closes — picking Tabs[0] here would reselect the
             // tab being removed and the selection would never change.
-            nextTab = index > 0 ? Tabs[index - 1] : Tabs[1];
+            SelectedTab = index > 0 ? Tabs[index - 1] : Tabs[1];
+        }
 
         Tabs.Remove(tab);
         tab.Dispose();
-
-        if (wasSelected)
-            SelectedTab = nextTab;
     }
 }
