@@ -18,6 +18,10 @@ public sealed partial class TabPeek : OverlayControl
 
     protected override void HideCore() => Hide();
 
+    /// <summary>Raised after Tab Peek closed, so the window can hand keyboard
+    /// focus back to the terminal.</summary>
+    public event Action? Hidden;
+
     public void Show(Project project)
     {
         _project = project;
@@ -39,7 +43,7 @@ public sealed partial class TabPeek : OverlayControl
             System.Windows.Threading.DispatcherPriority.Input);
     }
 
-    public void Hide() => HideWithAnimation(Backdrop, Panel);
+    public void Hide() => HideWithAnimation(Backdrop, Panel, () => Hidden?.Invoke());
 
     private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e) => Hide();
 

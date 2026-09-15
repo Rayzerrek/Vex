@@ -40,6 +40,10 @@ public sealed partial class ThemeSwitcher : OverlayControl
 
     protected override void HideCore() => Hide();
 
+    /// <summary>Raised after the switcher closed, so the window can hand
+    /// keyboard focus back to the terminal.</summary>
+    public event Action? Hidden;
+
     public void Show()
     {
         // Re-bind on every open: the visible set follows the active
@@ -63,7 +67,7 @@ public sealed partial class ThemeSwitcher : OverlayControl
         Dispatcher.BeginInvoke(() => ThemeList.Focus(), System.Windows.Threading.DispatcherPriority.Input);
     }
 
-    public void Hide() => HideWithAnimation(Backdrop, Panel);
+    public void Hide() => HideWithAnimation(Backdrop, Panel, () => Hidden?.Invoke());
 
     private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e) => Hide();
 
