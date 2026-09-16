@@ -82,65 +82,7 @@ public sealed partial class MainWindow : Window
         return null;
     }
 
-    public MainWindow()
-    {
-        _workspace = SessionStore.Load();
-        InitializeComponent();
-        DataContext = _workspace;
-        PreviewKeyDown += MainWindow_PreviewKeyDown;
-        PreviewMouseDown += MainWindow_PreviewMouseDown;
-        PreviewMouseMove += MainWindow_PreviewMouseMove;
-        PreviewMouseLeftButtonUp += MainWindow_PreviewMouseLeftButtonUp;
-        StateChanged += MainWindow_StateChanged;
-        UpdateLayoutForWindowState();
-
-        // Keep the file search rooted at the selected project.
-        _workspace.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(Workspace.SelectedProject))
-                FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
-        };
-        FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
-
-        // Parallax translation on sidebar inner content
-        SidebarContent.RenderTransform = _sidebarContentTranslate;
-
-        // Restore the persisted sidebar state, collapsed (no animation) when
-        // the user closed it last time.
-        if (!AppSettings.Instance.SidebarVisible)
-        {
-            SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
-            SidebarPanel.Visibility = Visibility.Collapsed;
-            SidebarPanel.Opacity = 0;
-        }
-
-        // Session restoration assigns the initial selection before bindings
-        // create its terminal view. Focus it after the first frame so exactly
-        // one shell starts, and the window is immediately ready for typing.
-        ContentRendered += (_, _) =>
-        {
-            Model.StartupMark.Note("content rendered");
-            Dispatcher.BeginInvoke(
-                () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
-                DispatcherPriority.ContextIdle);
-
-            // Build the lazily-created overlays (command palette, settings)
-            // once the UI is fully idle. Loading their XAML on the user's
-            // first Ctrl+Shift+P / settings click added a visible hitch;
-            // paying it after the first frame keeps startup untouched and
-            // the first overlay open instant.
-            Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
-            {
-                _ = PaletteOverlay;
-                _ = SettingsOverlay;
-            });
-        };
-
-        // Sidebar visibility is a single source of truth: any change (toolbar
-        // button, keyboard, or the settings toggle) animates the panel.
-        AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
-        HookTabPreviewCapture();
-    }
+    public MainWindow() : this(SessionStore.Load()) { }
 
     /// <summary>Creates the window with a pre-loaded workspace (from async
     /// startup). Skips the synchronous SessionStore.Load() call that the
@@ -149,21 +91,16 @@ public sealed partial class MainWindow : Window
     {
         _workspace = workspace;
         SessionStore.Current = workspace;
+        Model.StartupMark.Note("xaml parse begin");
         InitializeComponent();
-        DataContext = _workspace;
+        Model.StartupMark.Note("xaml parsed");
+        DataContext = workspace;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         PreviewMouseDown += MainWindow_PreviewMouseDown;
         PreviewMouseMove += MainWindow_PreviewMouseMove;
         PreviewMouseLeftButtonUp += MainWindow_PreviewMouseLeftButtonUp;
         StateChanged += MainWindow_StateChanged;
         UpdateLayoutForWindowState();
-
-        _workspace.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(Workspace.SelectedProject))
-                FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
-        };
-        FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
 
         SidebarContent.RenderTransform = _sidebarContentTranslate;
 
@@ -174,40 +111,51 @@ public sealed partial class MainWindow : Window
             SidebarPanel.Opacity = 0;
         }
 
-        ContentRendered += (_, _) =>
+        // Keep the file search rooted at the selected project.
+        _workspace.PropertyChanged += (_, e) =>
         {
-            Model.StartupMark.Note("content rendered");
-            Dispatcher.BeginInvoke(
-                () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
-                DispatcherPriority.ContextIdle);
-
-            // Build the lazily-created overlays (command palette, settings)
-            // once the UI is fully idle. Loading their XAML on the user's
-            // first Ctrl+Shift+P / settings click added a visible hitch;
-            // paying it after the first frame keeps startup untouched and
-            // the first overlay open instant.
-            Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
-            {
-                _ = PaletteOverlay;
-                _ = SettingsOverlay;
-            });
+            if (e.PropertyName == nameof(Workspace.SelectedProject))
+                FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
         };
+        FileSearch.SetRoot(workspace.SelectedProject?.WorkingDirectory ?? "");
 
-        AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
-        HookTabPreviewCapture();
-    }
-
-    private void HookTabPreviewCapture()
-    {
-        foreach (var project in _workspace.Projects)
+        foreach (var project in workspace.Projects)
             HookProject(project);
-        _workspace.Projects.CollectionChanged += (_, e) =>
+        workspace.Projects.CollectionChanged += (_, e) =>
         {
             if (e.NewItems is null)
                 return;
             foreach (Project project in e.NewItems)
                 HookProject(project);
         };
+
+        Model.StartupMark.Note("ctor wiring done");
+
+        ContentRendered += (_, _) =>
+        {
+            Model.StartupMark.Note("content rendered");
+            Dispatcher.BeginInvoke(
+                () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
+                DispatcherPriority.ContextIdle);
+            PrewarmOverlaysAfterStartup();
+        };
+
+        AppSettings.Instance.PropertyChanged += OnSettingsPropertyChanged;
+    }
+
+    private async void PrewarmOverlaysAfterStartup()
+    {
+        // Keep first-input latency clear of the two largest optional XAML
+        // trees. A user opening either overlay during the delay still creates
+        // it immediately through its lazy property.
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        if (!IsLoaded)
+            return;
+        _ = PaletteOverlay;
+
+        await Task.Delay(600);
+        if (IsLoaded)
+            _ = SettingsOverlay;
     }
 
     private void HookProject(Project project)

@@ -26,6 +26,114 @@
 
         <local:SliderFillConverter x:Key="SliderFill"/>
 
+        <!-- ComboBox/CheckBox chrome, used only by this overlay. Lives here
+             instead of App.xaml so the startup App.xaml parse stays lean. -->
+        <Style TargetType="ComboBox" x:Key="DarkComboBox">
+            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Background" Value="{StaticResource VexSurface}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource VexBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleButton"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
+                                          Background="{TemplateBinding Background}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="20"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Path x:Name="Arrow" Grid.Column="1" Fill="{TemplateBinding Foreground}" HorizontalAlignment="Center" VerticalAlignment="Center" Data="M 0 0 L 4 4 L 8 0 Z"/>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="{StaticResource VexHover}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" Margin="10,6,24,6" VerticalAlignment="Center" HorizontalAlignment="Left" />
+                            <Popup x:Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                                <Grid x:Name="DropDown" SnapsToDevicePixels="True" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border x:Name="DropDownBorder" Background="{StaticResource VexSurface}" BorderThickness="1" BorderBrush="{StaticResource VexBorder}" CornerRadius="4"/>
+                                    <ScrollViewer Margin="0,4" SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained" />
+                                    </ScrollViewer>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ComboBoxItem" x:Key="DarkComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource VexHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource VexAccent}"/>
+                                <Setter Property="Foreground" Value="{StaticResource VexOnAccent}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="CheckBox" x:Key="DarkCheckBox">
+            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{StaticResource VexBorder}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <Grid Width="16" Height="16" VerticalAlignment="Center">
+                                <Border x:Name="box" Background="{StaticResource VexSurface}"
+                                        BorderBrush="{StaticResource VexBorder}" BorderThickness="1" CornerRadius="3"/>
+                                <Path x:Name="check" Data="M 3,8 L 6.5,11.5 L 13,4"
+                                      Stroke="{StaticResource VexText}" StrokeThickness="1.6"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Visibility="Collapsed"/>
+                            </Grid>
+                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource VexAccent}"/>
+                                <Setter TargetName="check" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource VexAccent}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Sidebar navigation pill. -->
         <Style x:Key="SettingsNavItem" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{StaticResource VexText}"/>
