@@ -37,6 +37,10 @@
          from the assembly for the UI, so nothing else needs updating. -->
     <Version>1.3.0</Version>
     <PublishSingleFile>true</PublishSingleFile>
+    <!-- Compress the bundle: the uncompressed exe is ~185 MB and every cold
+         start pays full sequential I/O plus an AV scan of it. Decompression
+         happens per-assembly at load; measured warm-start impact below. -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
     <!-- Ahead-of-time compiled method bodies for the published exe: faster
          cold start than the default JIT tiering at process launch. -->

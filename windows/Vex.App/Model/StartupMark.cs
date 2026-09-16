@@ -14,6 +14,8 @@ internal static class StartupMark
         ? new State(path)
         : null;
 
+    internal static bool IsEnabled => Current is not null;
+
     internal static void Note(string stage) => Current?.Note(stage);
 
     private sealed class State

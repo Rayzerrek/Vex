@@ -7,10 +7,52 @@ namespace Vex.App;
 /// </summary>
 public sealed partial class App : Application
 {
+    private readonly Task _settingsTask;
+    private readonly Task<Model.Workspace> _sessionTask;
+
+    public App()
+    {
+        Model.StartupMark.Note("app constructed");
+
+        // The generated entry point parses App.xaml after this constructor.
+        // Start all thread-safe disk and font work now so it overlaps that
+        // otherwise unavoidable WPF resource initialization.
+        _settingsTask = Task.Run(Model.AppSettings.Preload);
+        _sessionTask = Task.Run(Model.SessionStore.LoadAsync);
+
+        _ = _settingsTask.ContinueWith(_ =>
+        {
+            Model.StartupMark.Note("terminal prewarm begin");
+            var settings = Model.AppSettings.Instance;
+            Terminal.Native.NativeTerminalControl.Prewarm(settings.ThemeName, settings.FontFamily);
+            Model.StartupMark.Note("terminal prewarm ready");
+        }, TaskScheduler.Default);
+
+        if (Model.StartupMark.IsEnabled)
+        {
+            _ = _sessionTask.ContinueWith(t =>
+            {
+                if (t.Status == TaskStatus.RanToCompletion)
+                    Model.StartupMark.Note($"session task done ({t.Result.Projects.Count} projects)");
+                else
+                    Model.StartupMark.Note("session task faulted");
+            }, TaskScheduler.Default);
+        }
+    }
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         Model.StartupMark.Note("OnStartup begin");
+        if (Model.StartupMark.IsEnabled)
+        {
+            try
+            {
+                var delta = DateTime.UtcNow - System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime();
+                Model.StartupMark.Note($"process start {delta.TotalMilliseconds:F0}ms before OnStartup");
+            }
+            catch { }
+        }
 
         // WPF throttles Storyboard/timeline animations to 60 FPS no matter the
         // display (a null DesiredFrameRate falls back to 60). 120 covers
@@ -26,36 +68,17 @@ public sealed partial class App : Application
         Environment.SetEnvironmentVariable("TERM", "xterm-256color");
         Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
 
-        // Parallel preload: kick off settings and session file reads
-        // simultaneously on background threads. The two file reads were
-        // previously serial on the UI thread, blocking the first frame.
-        // Running them in parallel cuts the I/O wait roughly in half, and
-        // moving the deserialization off the UI thread means WPF can start
-        // its rendering pipeline sooner.
-        var settingsTask = Task.Run(Vex.App.Model.AppSettings.Preload);
-        var sessionTask = Task.Run(Vex.App.Model.SessionStore.LoadAsync);
-
-        // Prewarm font metrics, OpenType glyph tables, and theme palette on a
-        // background task as soon as settings load. Runs completely in parallel
-        // with session restore and chrome color setup, eliminating font parsing
-        // and brush allocation stalls on the UI thread during MainWindow creation.
-        var prewarmTask = settingsTask.ContinueWith(_ =>
-        {
-            Model.StartupMark.Note("terminal prewarm begin");
-            var s = Vex.App.Model.AppSettings.Instance;
-            Vex.App.Terminal.Native.NativeTerminalControl.Prewarm(s.ThemeName, s.FontFamily);
-            Model.StartupMark.Note("terminal prewarm ready");
-        }, TaskScheduler.Default);
-
-        await settingsTask.ConfigureAwait(true);
+        await _settingsTask.ConfigureAwait(true);
         Model.StartupMark.Note("settings ready");
 
         // Chrome colors follow the active terminal theme (sidebar, tab strip,
         // pane chrome, accents). Resolve the stored appearance first so the
         // very first frame is already dark or light — never a half-applied
         // mix. Re-apply whenever the theme or appearance changes.
+        Model.StartupMark.Note("appearance begin");
         Vex.App.Model.AppSettings.Instance.InitializeAppearance();
         ChromePalette.Apply(Vex.App.Model.AppSettings.Instance.ThemeName);
+        Model.StartupMark.Note("palette applied");
         Vex.App.Model.EditorHighlighting.SetAppearance(
             Vex.App.Model.AppSettings.Instance.IsDarkAppearance);
         Model.StartupMark.Note("appearance ready");
@@ -77,13 +100,12 @@ public sealed partial class App : Application
             }
         };
 
-        // Await the session data (it started in parallel with settings, so
-        // it may already be done by now). Creating the window after both
-        // are ready avoids a flash of empty content.
-        var workspace = await sessionTask.ConfigureAwait(true);
+        // The session read started alongside settings and normally completes
+        // before appearance setup. Bind the final model once so window
+        // construction cannot realize or subscribe to throwaway state.
+        var workspace = await _sessionTask.ConfigureAwait(true);
         Model.StartupMark.Note("session ready");
 
-        // Create and show the main window with the pre-loaded workspace.
         Model.StartupMark.Note("window construction begin");
         var window = new MainWindow(workspace);
         Model.StartupMark.Note("window constructed");
