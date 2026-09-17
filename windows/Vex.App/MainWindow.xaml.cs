@@ -637,8 +637,16 @@ public sealed partial class MainWindow : Window
     /// session restore both select a tab that may sit off the strip.</summary>
     private void TabStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (TabStrip.SelectedItem is not { } selected)
+        if (TabStrip.SelectedItem is not WorkspaceTab selected ||
+            _workspace.SelectedProject is not { } project ||
+            !project.Tabs.Contains(selected))
             return;
+
+        // Selection is intentionally written to the model only for a live
+        // item. During removal ListBox briefly reports null or the removed
+        // item; a TwoWay binding used to push that transient state into the
+        // content binding and leave the disposed tab visible.
+        project.SelectedTab = selected;
         if (TabStrip.ItemContainerGenerator.ContainerFromItem(selected) is FrameworkElement container)
             container.BringIntoView();
     }

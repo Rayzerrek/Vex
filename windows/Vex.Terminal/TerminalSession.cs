@@ -221,6 +221,11 @@ public sealed class TerminalSession : IDisposable
 
     private void StartReaderLoop()
     {
+        // Keep the stream for the lifetime of the reader. Dispose closes this
+        // instance to interrupt Read; it also clears _ptyOutput, which must
+        // not turn a close racing with the next loop iteration into a
+        // NullReferenceException on this background thread.
+        var output = _ptyOutput ?? throw new InvalidOperationException("PTY output is not initialized.");
         var reader = new Thread(() =>
         {
             try
@@ -228,7 +233,7 @@ public sealed class TerminalSession : IDisposable
                 while (true)
                 {
                     var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(BufferSize);
-                    var read = _ptyOutput!.Read(buffer, 0, buffer.Length);
+                    var read = output.Read(buffer, 0, buffer.Length);
                     if (read <= 0)
                     {
                         System.Buffers.ArrayPool<byte>.Shared.Return(buffer);

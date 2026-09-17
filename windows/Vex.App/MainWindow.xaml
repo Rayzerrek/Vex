@@ -372,7 +372,7 @@
             <!-- Tabs: natural width, left-aligned from the toggle -->
             <ListBox x:Name="TabStrip" Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="False"
                      ItemsSource="{Binding SelectedProject.Tabs}"
-                     SelectedItem="{Binding SelectedProject.SelectedTab, Mode=TwoWay}"
+                     SelectedItem="{Binding SelectedProject.SelectedTab, Mode=OneWay}"
                      Background="Transparent" BorderThickness="0"
                      ScrollViewer.HorizontalScrollBarVisibility="Hidden"
                      ScrollViewer.VerticalScrollBarVisibility="Disabled"
