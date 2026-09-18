@@ -57,54 +57,50 @@ public static class SessionStore
         return workspace;
     }
 
-    /// <summary>Async version of <see cref="Load"/> that performs file I/O
-    /// and JSON deserialization on a background thread. Model objects are not
-    /// DispatcherObjects, so constructing them off the UI thread is safe;
-    /// they are only bound to the UI after this method returns on the calling
-    /// thread.</summary>
-    public static Task<Workspace> LoadAsync()
+    /// <summary>Reads the session file on a background thread and returns
+    /// the snapshot data. Does not instantiate UI-bound model objects.</summary>
+    public static async Task<SessionSnapshot?> ReadSnapshotAsync()
     {
-        var workspace = new Workspace();
-
-        try
+        return await Task.Run(() =>
         {
-            if (!File.Exists(SessionPath))
+            try
             {
-                workspace.NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-                Current = workspace;
-                return Task.FromResult(workspace);
+                if (!File.Exists(SessionPath))
+                    return null;
+                var json = File.ReadAllText(SessionPath);
+                var appSnapshot = JsonSerializer.Deserialize(json, VexJsonContext.Default.AppSnapshot);
+                return appSnapshot?.Windows.Count > 0 ? appSnapshot.Windows[0] : null;
             }
-
-            var json = File.ReadAllText(SessionPath);
-            var appSnapshot = JsonSerializer.Deserialize(json, VexJsonContext.Default.AppSnapshot);
-            if (appSnapshot?.Windows.Count > 0)
+            catch
             {
-                var sessionSnapshot = appSnapshot.Windows[0];
-                foreach (var projectSnapshot in sessionSnapshot.Projects)
-                    workspace.Projects.Add(RestoreProject(projectSnapshot));
+                return null;
+            }
+        }).ConfigureAwait(false);
+    }
 
-                if (sessionSnapshot.SelectedProjectIndex is { } projectIndex &&
-                    projectIndex >= 0 && projectIndex < workspace.Projects.Count)
-                {
-                    workspace.SelectedProject = workspace.Projects[projectIndex];
-                }
-                else if (workspace.Projects.Count > 0)
-                {
-                    workspace.SelectedProject = workspace.Projects[0];
-                }
+    /// <summary>Populates an existing workspace with the given snapshot on the UI thread.</summary>
+    public static void Populate(Workspace workspace, SessionSnapshot? sessionSnapshot)
+    {
+        if (sessionSnapshot != null)
+        {
+            foreach (var projectSnapshot in sessionSnapshot.Projects)
+                workspace.Projects.Add(RestoreProject(projectSnapshot));
+
+            if (sessionSnapshot.SelectedProjectIndex is { } projectIndex &&
+                projectIndex >= 0 && projectIndex < workspace.Projects.Count)
+            {
+                workspace.SelectedProject = workspace.Projects[projectIndex];
+            }
+            else if (workspace.Projects.Count > 0)
+            {
+                workspace.SelectedProject = workspace.Projects[0];
             }
         }
-        catch
-        {
-            // A corrupt or old-format session must not block startup; fall
-            // through to a single fresh project.
-        }
-
+        
         if (workspace.Projects.Count == 0)
             workspace.NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-
+            
         Current = workspace;
-        return Task.FromResult(workspace);
     }
 
     /// <summary>Writes the whole workspace (projects, tabs, split tree and

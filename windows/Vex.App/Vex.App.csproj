@@ -40,7 +40,7 @@
     <!-- Compress the bundle: the uncompressed exe is ~185 MB and every cold
          start pays full sequential I/O plus an AV scan of it. Decompression
          happens per-assembly at load; measured warm-start impact below. -->
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
     <!-- Ahead-of-time compiled method bodies for the published exe: faster
          cold start than the default JIT tiering at process launch. -->

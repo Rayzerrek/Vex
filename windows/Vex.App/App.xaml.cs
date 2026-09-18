@@ -8,7 +8,7 @@ namespace Vex.App;
 public sealed partial class App : Application
 {
     private readonly Task _settingsTask;
-    private readonly Task<Model.Workspace> _sessionTask;
+    private readonly Task<Model.SessionSnapshot?> _sessionTask;
 
     public App()
     {
@@ -18,7 +18,7 @@ public sealed partial class App : Application
         // Start all thread-safe disk and font work now so it overlaps that
         // otherwise unavoidable WPF resource initialization.
         _settingsTask = Task.Run(Model.AppSettings.Preload);
-        _sessionTask = Task.Run(Model.SessionStore.LoadAsync);
+        _sessionTask = Model.SessionStore.ReadSnapshotAsync();
 
         _ = _settingsTask.ContinueWith(_ =>
         {
@@ -33,7 +33,7 @@ public sealed partial class App : Application
             _ = _sessionTask.ContinueWith(t =>
             {
                 if (t.Status == TaskStatus.RanToCompletion)
-                    Model.StartupMark.Note($"session task done ({t.Result.Projects.Count} projects)");
+                    Model.StartupMark.Note($"session task done");
                 else
                     Model.StartupMark.Note("session task faulted");
             }, TaskScheduler.Default);
@@ -100,16 +100,19 @@ public sealed partial class App : Application
             }
         };
 
-        // The session read started alongside settings and normally completes
-        // before appearance setup. Bind the final model once so window
-        // construction cannot realize or subscribe to throwaway state.
-        var workspace = await _sessionTask.ConfigureAwait(true);
-        Model.StartupMark.Note("session ready");
-
+        // Construct the workspace and window immediately without awaiting I/O.
+        // The first frame renders a skeleton UI (like Ghostty/SuperLogical),
+        // hiding the session loading latency entirely.
         Model.StartupMark.Note("window construction begin");
+        var workspace = new Model.Workspace();
         var window = new MainWindow(workspace);
         Model.StartupMark.Note("window constructed");
         window.Show();
         Model.StartupMark.Note("window shown");
+
+        // Now await the session snapshot and populate the workspace.
+        var snapshot = await _sessionTask.ConfigureAwait(true);
+        Model.SessionStore.Populate(workspace, snapshot);
+        Model.StartupMark.Note("session populated");
     }
 }
