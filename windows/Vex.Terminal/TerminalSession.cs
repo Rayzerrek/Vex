@@ -323,10 +323,10 @@ public sealed class TerminalSession : IDisposable
         // so a query response cannot land on a half-closed pipe.
         lock (_writeLock)
         {
-            _ptyInput?.Dispose();
+            try { _ptyInput?.Dispose(); } catch { }
             _ptyInput = null;
         }
-        _ptyOutput?.Dispose();
+        try { _ptyOutput?.Dispose(); } catch { }
         _ptyOutput = null;
 
         if (_processHandle != IntPtr.Zero)
