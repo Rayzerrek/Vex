@@ -146,7 +146,7 @@ public static class ChromePalette
         // showed the blurred desktop through half of it and a flat color
         // through the other half. One themed wash dims every surface alike.
         var scrimBase = Darken(bg, 0.62);
-        Set(res, "VexBackdropScrimColor", FromArgb(0xCC, scrimBase.R, scrimBase.G, scrimBase.B));
+        Set(res, "VexBackdropScrimColor", FromArgb(0xDD, scrimBase.R, scrimBase.G, scrimBase.B));
         Set(res, "VexPressFillColor", Mix(bg, fg, 0.32));
         Set(res, "VexSidebarToggleBgColor", WithAlpha(Darken(bg, 0.70), 0x2E));
         Set(res, "VexSidebarToggleBorderColor", WithAlpha(Mix(bg, fg, 0.35), 0x46));
@@ -209,7 +209,7 @@ public static class ChromePalette
 
         // Overlay chrome: scrims, pressed states, drag previews, settings
         // surfaces. All opaque or near-opaque so overlays read crisply.
-        Set(res, "VexBackdropScrimColor", FromArgb(0x28, 0x14, 0x16, 0x1A));
+        Set(res, "VexBackdropScrimColor", FromArgb(0x66, 0x14, 0x16, 0x1A));
         Set(res, "VexPressFillColor", Mix(bg, fg, 0.10));
         Set(res, "VexSidebarToggleBgColor", WithAlpha(fg, 0x06));
         Set(res, "VexSidebarToggleBorderColor", WithAlpha(fg, 0x1E));

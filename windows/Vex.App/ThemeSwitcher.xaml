@@ -80,12 +80,15 @@
                                             </StackPanel>
                                         </Border>
                                     </Border>
-                                    <Border x:Name="badge" Width="20" Height="20" CornerRadius="10" Background="{StaticResource VexAccentBlue}"
-                                            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Visibility="Collapsed">
-                                        <Path Data="M 5.5,10.5 L 8.5,13.5 L 14.5,6.5" Stroke="White" StrokeThickness="1.8"
+                                    <Grid x:Name="badge" Width="20" Height="20"
+                                          HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Visibility="Collapsed">
+                                        <Ellipse Fill="{StaticResource VexAccentBlue}"/>
+                                        <Path Data="M 3,7 L 6.5,10.5 L 13,3.5"
+                                              Stroke="White" StrokeThickness="1.8"
                                               StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                              Stretch="Uniform" Width="11" Height="9"
                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    </Border>
+                                    </Grid>
                                 </Grid>
                                 <TextBlock x:Name="name" Text="{Binding Name}" FontSize="12" Margin="2,6,0,0"
                                            Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>

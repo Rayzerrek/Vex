@@ -632,9 +632,5 @@
             </Grid>
         </Grid>
         
-        <Popup x:Name="PalettePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
-        <Popup x:Name="SettingsPopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
-        <Popup x:Name="ThemePopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
-        <Popup x:Name="TabPeekPopup" AllowsTransparency="True" Placement="Center" PlacementTarget="{Binding ElementName=MainGrid}" StaysOpen="True"/>
     </Grid>
 </Window>

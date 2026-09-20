@@ -363,11 +363,16 @@ public sealed partial class MainWindow : Window
         {
             if (_paletteOverlay is null)
             {
-                _paletteOverlay = new CommandPalette();
-                _paletteOverlay.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
-                _paletteOverlay.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                _paletteOverlay = new CommandPalette
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                };
+                Grid.SetRow(_paletteOverlay, 0);
+                Grid.SetRowSpan(_paletteOverlay, 2);
+                Panel.SetZIndex(_paletteOverlay, 1000);
                 _paletteOverlay.Hidden += FocusActivePane;
-                PalettePopup.Child = _paletteOverlay;
+                MainGrid.Children.Add(_paletteOverlay);
             }
             return _paletteOverlay;
         }
@@ -380,11 +385,16 @@ public sealed partial class MainWindow : Window
         {
             if (_settingsOverlay is null)
             {
-                _settingsOverlay = new SettingsOverlay();
-                _settingsOverlay.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
-                _settingsOverlay.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                _settingsOverlay = new SettingsOverlay
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                };
+                Grid.SetRow(_settingsOverlay, 0);
+                Grid.SetRowSpan(_settingsOverlay, 2);
+                Panel.SetZIndex(_settingsOverlay, 1001);
                 _settingsOverlay.Hidden += FocusActivePane;
-                SettingsPopup.Child = _settingsOverlay;
+                MainGrid.Children.Add(_settingsOverlay);
             }
             return _settingsOverlay;
         }
@@ -397,11 +407,16 @@ public sealed partial class MainWindow : Window
         {
             if (_themeSwitcher is null)
             {
-                _themeSwitcher = new ThemeSwitcher();
-                _themeSwitcher.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
-                _themeSwitcher.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                _themeSwitcher = new ThemeSwitcher
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                };
+                Grid.SetRow(_themeSwitcher, 0);
+                Grid.SetRowSpan(_themeSwitcher, 2);
+                Panel.SetZIndex(_themeSwitcher, 1002);
                 _themeSwitcher.Hidden += FocusActivePane;
-                ThemePopup.Child = _themeSwitcher;
+                MainGrid.Children.Add(_themeSwitcher);
             }
             return _themeSwitcher;
         }
@@ -414,11 +429,16 @@ public sealed partial class MainWindow : Window
         {
             if (_tabPeek is null)
             {
-                _tabPeek = new TabPeek();
-                _tabPeek.SetBinding(WidthProperty, new Binding("ActualWidth") { Source = MainGrid });
-                _tabPeek.SetBinding(HeightProperty, new Binding("ActualHeight") { Source = MainGrid });
+                _tabPeek = new TabPeek
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                };
+                Grid.SetRow(_tabPeek, 0);
+                Grid.SetRowSpan(_tabPeek, 2);
+                Panel.SetZIndex(_tabPeek, 1003);
                 _tabPeek.Hidden += FocusActivePane;
-                TabPeekPopup.Child = _tabPeek;
+                MainGrid.Children.Add(_tabPeek);
             }
             return _tabPeek;
         }
