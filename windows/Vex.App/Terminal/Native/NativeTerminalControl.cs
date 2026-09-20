@@ -853,16 +853,12 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             }
             else if (dirty == FrameDirty.Partial)
             {
-                // Redraw exactly the rows libghostty marked dirty. Unchanged
-                // rows skip: the per-row hash covers every input the run pass
-                // reads, so a match means identical pixels.
+                // Scan all rows: unchanged rows skip in microseconds via RowHash;
+                // any row that shifted, scrolled, or updated repaints cleanly.
                 for (var row = 0; row < Math.Min(_rows, _terminal.FrameRows.Length); row++)
                 {
-                    if (_terminal.FrameRows[row].Dirty)
-                        RedrawRow(row);
+                    RedrawRow(row, force: false);
                 }
-                // The cells under the block cursor were just repainted, so
-                // the cursor overlay must redraw even if it did not move.
                 InvalidateCaretCache();
             }
 
@@ -1276,7 +1272,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         for (var col = 0; col < cols && col < cells.Length; col++)
         {
             ref readonly var cell = ref cells[col];
-            var text = cell.Text;
+            var text = cell.Text ?? "";
             for (var i = 0; i < text.Length; i++)
                 hash = (hash ^ text[i]) * prime;
             hash = (hash ^ (ulong)(uint)text.Length) * prime;
@@ -1316,7 +1312,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             ref readonly var cell = ref cells[col];
             if (cell.Tail)
                 continue; // wide stub: the base cell owns the glyph
-            var text = cell.Text;
+            var text = cell.Text ?? "";
             if (text.Length == 0)
             {
                 _linkText[len] = ' ';
