@@ -1967,16 +1967,29 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         e.Handled = true;
     }
 
-    private void CopySelection(Point? mousePos = null)
+    private void CopySelection()
     {
         if (!_selectionActive && !_terminal.HasSelection)
             return;
+            
+        var rects = new List<Rect>();
+        for (var row = 0; row < _rows && row < _terminal.FrameRows.Length; row++)
+        {
+            var frameRow = _terminal.FrameRows[row];
+            if (!frameRow.HasSelection) continue;
+
+            var fromCol = frameRow.SelectionStart;
+            var toCol = Math.Min(frameRow.SelectionEnd, _cols - 1);
+            if (toCol < fromCol) continue;
+
+            rects.Add(new Rect(fromCol * _cellWidth, row * _cellHeight, (toCol - fromCol + 1) * _cellWidth, _cellHeight));
+        }
+
         var text = _terminal.GetSelectedText();
         if (!string.IsNullOrEmpty(text))
         {
             Clipboard.SetText(text);
-            if (mousePos.HasValue)
-                StartCopyAnimation(mousePos.Value);
+            StartCopyAnimation(rects);
         }
         // Copied text is deselected, matching the copy-then-clear convention.
         ClearSelection();
@@ -1995,9 +2008,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private DrawingVisual? _copyAnimVisual;
     private TimeSpan? _copyAnimStartTime;
-    private Point _copyAnimOrigin;
+    private List<Rect> _copyAnimRects = new();
 
-    private void StartCopyAnimation(Point mousePos)
+    private void StartCopyAnimation(List<Rect> rects)
     {
         if (_copyAnimVisual == null)
         {
@@ -2005,7 +2018,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _children.Add(_copyAnimVisual);
         }
 
-        _copyAnimOrigin = mousePos;
+        _copyAnimRects = rects;
         _copyAnimStartTime = TimeSpan.Zero;
         CompositionTarget.Rendering -= OnCopyAnimFrame;
         CompositionTarget.Rendering += OnCopyAnimFrame;
@@ -2025,7 +2038,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             ? (renderingEventArgs.RenderingTime - _copyAnimStartTime.Value).TotalMilliseconds 
             : 0;
             
-        var duration = 600.0;
+        var duration = 1200.0;
         
         if (elapsed >= duration)
         {
@@ -2035,12 +2048,25 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         }
 
         var t = elapsed / duration;
-        var easeOut = 1 - Math.Pow(1 - t, 4);
-        var opacity = t < 0.8 ? 1.0 : 1.0 - (t - 0.8) / 0.2;
-        var yOffset = -24 * easeOut; 
-
+        var opacity = t < 0.6 ? 1.0 : 1.0 - (t - 0.6) / 0.4;
+        var popEaseOut = 1 - Math.Pow(1 - Math.Min(1.0, t * 5), 4);
+        var yOffset = 16 * (1 - popEaseOut); // drops down from top
+        
         using (var dc = _copyAnimVisual!.RenderOpen())
         {
+            dc.PushOpacity(opacity);
+
+            var fgColor = ((SolidColorBrush)_palette.Foreground).Color;
+            var glowBrush = FrozenBrush(System.Windows.Media.Color.FromArgb(0x40, fgColor.R, fgColor.G, fgColor.B));
+            var framePen = new Pen(_palette.Foreground, 1.5);
+            var glowPen = new Pen(glowBrush, 5.0);
+
+            foreach (var rect in _copyAnimRects)
+            {
+                dc.DrawRectangle(null, glowPen, rect);
+                dc.DrawRectangle(null, framePen, rect);
+            }
+
             var textBrush = _palette.Background;
             var bgBrush = _palette.Foreground;
             
@@ -2048,14 +2074,20 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), 
                 12, textBrush, _pixelsPerDip);
                 
-            var rect = new Rect(_copyAnimOrigin.X - text.Width / 2 - 10,
-                                _copyAnimOrigin.Y + yOffset - text.Height - 12,
-                                text.Width + 20,
-                                text.Height + 10);
-                                
-            dc.PushOpacity(opacity);
-            dc.DrawRoundedRectangle(bgBrush, null, rect, 6, 6);
-            dc.DrawText(text, new Point(rect.X + 10, rect.Y + 5));
+            var toastWidth = text.Width + 24;
+            var toastHeight = text.Height + 12;
+            
+            var paddingX = 16.0;
+            if (IsScrollbarVisible()) paddingX += _scrollbarWidth;
+            
+            var x = ActualWidth - paddingX - toastWidth;
+            var y = 16.0 - yOffset;
+            
+            var rectToast = new Rect(x, y, toastWidth, toastHeight);
+            
+            dc.DrawRoundedRectangle(bgBrush, null, rectToast, 6, 6);
+            dc.DrawText(text, new Point(rectToast.X + 12, rectToast.Y + 6));
+            
             dc.Pop();
         }
     }
@@ -2356,7 +2388,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (!madeSelection)
                 FinishClickSelection();
             else
-                CopySelection(e.GetPosition(this));
+                CopySelection();
 
             _selectionDragged = false;
             _mouseSelectionOverride = false;
@@ -2378,7 +2410,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (!madeSelection)
                 FinishClickSelection();
             else
-                CopySelection(e.GetPosition(this));
+                CopySelection();
 
             _selectionDragged = false;
         }
@@ -2404,7 +2436,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (!madeSelection)
                 FinishClickSelection();
             else
-                CopySelection(position);
+                CopySelection();
         }
 
         _scrollbarDragging = false;
