@@ -18,14 +18,17 @@ Two rules decide which key goes where:
 | Tab peek (visual overview) | `Ctrl+Shift+Space` |
 | New tab | `Ctrl+Shift+T` |
 | Close pane or tab | `Ctrl+Shift+W` |
+| Next tab | `Ctrl+Tab` |
+| Previous tab | `Ctrl+Shift+Tab` |
 | Split right | `Ctrl+Shift+R` |
 | Split down | `Ctrl+Shift+D` |
 | Save file (editor) | `Ctrl+S` |
 | Close overlay / settings | `Esc` |
 
-`Ctrl+S` is the one exception to rule 2: it is safe to take because a shell
+`Ctrl+S` and `Ctrl+Tab` are exceptions: `Ctrl+S` is safe to take because a shell
 does not use it (terminal flow control is `Ctrl+Q`/`Ctrl+S` on some systems,
-but Vex consumes it only while the editor has focus).
+but Vex consumes it only while the editor has focus). `Ctrl+Tab` is globally
+used for tab navigation.
 
 ## Terminal
 

@@ -21,6 +21,7 @@ Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, split p
 | Theme picker | `Ctrl+Shift+M` |
 | Tab peek | `Ctrl+Shift+Space` |
 | New tab / close | `Ctrl+Shift+T` / `Ctrl+Shift+W` |
+| Next / prev tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Split right / down | `Ctrl+Shift+R` / `Ctrl+Shift+D` |
 | Save file (editor) | `Ctrl+S` |
 
