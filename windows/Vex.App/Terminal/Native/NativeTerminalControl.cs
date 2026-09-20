@@ -1972,7 +1972,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         if (!_selectionActive && !_terminal.HasSelection)
             return;
             
-        var rects = new List<Rect>();
+        var unionRect = Rect.Empty;
         for (var row = 0; row < _rows && row < _terminal.FrameRows.Length; row++)
         {
             var frameRow = _terminal.FrameRows[row];
@@ -1982,14 +1982,16 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var toCol = Math.Min(frameRow.SelectionEnd, _cols - 1);
             if (toCol < fromCol) continue;
 
-            rects.Add(new Rect(fromCol * _cellWidth, row * _cellHeight, (toCol - fromCol + 1) * _cellWidth, _cellHeight));
+            var rect = new Rect(fromCol * _cellWidth, row * _cellHeight, (toCol - fromCol + 1) * _cellWidth, _cellHeight);
+            unionRect.Union(rect);
         }
 
         var text = _terminal.GetSelectedText();
         if (!string.IsNullOrEmpty(text))
         {
             Clipboard.SetText(text);
-            StartCopyAnimation(rects);
+            if (!unionRect.IsEmpty)
+                StartCopyAnimation(unionRect);
         }
         // Copied text is deselected, matching the copy-then-clear convention.
         ClearSelection();
@@ -2008,9 +2010,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private DrawingVisual? _copyAnimVisual;
     private TimeSpan? _copyAnimStartTime;
-    private List<Rect> _copyAnimRects = new();
+    private Rect _copyAnimRect;
 
-    private void StartCopyAnimation(List<Rect> rects)
+    private void StartCopyAnimation(Rect rect)
     {
         if (_copyAnimVisual == null)
         {
@@ -2018,7 +2020,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _children.Add(_copyAnimVisual);
         }
 
-        _copyAnimRects = rects;
+        _copyAnimRect = rect;
         _copyAnimStartTime = TimeSpan.Zero;
         CompositionTarget.Rendering -= OnCopyAnimFrame;
         CompositionTarget.Rendering += OnCopyAnimFrame;
@@ -2049,23 +2051,24 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         var t = elapsed / duration;
         var opacity = t < 0.6 ? 1.0 : 1.0 - (t - 0.6) / 0.4;
+        
         var popEaseOut = 1 - Math.Pow(1 - Math.Min(1.0, t * 5), 4);
-        var yOffset = 16 * (1 - popEaseOut); // drops down from top
+        var yOffset = 16 * (1 - popEaseOut); 
+        
+        var flashOpacity = 1.0 - Math.Min(1.0, t * 4); // Fades out in first 25% of animation
         
         using (var dc = _copyAnimVisual!.RenderOpen())
         {
             dc.PushOpacity(opacity);
 
             var fgColor = ((SolidColorBrush)_palette.Foreground).Color;
-            var glowBrush = FrozenBrush(System.Windows.Media.Color.FromArgb(0x40, fgColor.R, fgColor.G, fgColor.B));
-            var framePen = new Pen(_palette.Foreground, 1.5);
-            var glowPen = new Pen(glowBrush, 5.0);
+            var glowAlpha = (byte)(0x40 + 0x80 * flashOpacity);
+            var glowBrush = FrozenBrush(System.Windows.Media.Color.FromArgb(glowAlpha, fgColor.R, fgColor.G, fgColor.B));
+            var framePen = new Pen(_palette.Foreground, 1.5 + 1.5 * flashOpacity);
+            var glowPen = new Pen(glowBrush, 5.0 + 8.0 * flashOpacity);
 
-            foreach (var rect in _copyAnimRects)
-            {
-                dc.DrawRectangle(null, glowPen, rect);
-                dc.DrawRectangle(null, framePen, rect);
-            }
+            dc.DrawRectangle(null, glowPen, _copyAnimRect);
+            dc.DrawRectangle(null, framePen, _copyAnimRect);
 
             var textBrush = _palette.Background;
             var bgBrush = _palette.Foreground;
