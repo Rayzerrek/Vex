@@ -323,11 +323,35 @@ public sealed partial class MainWindow : Window
             ToggleTabPeek();
             e.Handled = true;
         }
+        else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.Tab)
+        {
+            CycleTab(1);
+            e.Handled = true;
+        }
+        else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Tab)
+        {
+            CycleTab(-1);
+            e.Handled = true;
+        }
         else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.S)
         {
             if (SaveCurrentFile())
             {
                 e.Handled = true;
+            }
+        }
+    }
+
+    private void CycleTab(int direction)
+    {
+        if (_workspace.SelectedProject is { } project && project.Tabs.Count > 1 && project.SelectedTab is { } currentTab)
+        {
+            var index = project.Tabs.IndexOf(currentTab);
+            if (index >= 0)
+            {
+                var nextIndex = (index + direction) % project.Tabs.Count;
+                if (nextIndex < 0) nextIndex += project.Tabs.Count;
+                project.SelectedTab = project.Tabs[nextIndex];
             }
         }
     }
