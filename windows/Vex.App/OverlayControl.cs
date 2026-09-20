@@ -14,12 +14,16 @@ namespace Vex.App;
 /// </summary>
 public abstract class OverlayControl : UserControl
 {
+    protected OverlayControl()
+    {
+        System.Windows.Shell.WindowChrome.SetIsHitTestVisibleInChrome(this, true);
+    }
+
     protected static DoubleAnimation Anim(double from, double to, double ms) =>
         new(from, to, TimeSpan.FromMilliseconds(ms))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
         };
-
     protected static void OpenPopup(FrameworkElement element)
     {
         if (element.Parent is Popup popup)
@@ -36,18 +40,24 @@ public abstract class OverlayControl : UserControl
     /// context menu; keyboard focus can then never be stranded in it.</summary>
     protected void HideOnWindowDeactivate()
     {
-        // Popup content fires Loaded on every open, so guard the one-time
-        // window subscription; the overlay lives as long as the window.
         var subscribed = false;
-        Loaded += (_, _) =>
+        void Subscribe(Window window)
         {
-            if (subscribed || Window.GetWindow(this) is not { } window)
+            if (subscribed)
                 return;
             subscribed = true;
             window.Deactivated += (_, _) => HideCore();
+        }
+
+        if (Window.GetWindow(this) is { } currentWindow)
+            Subscribe(currentWindow);
+
+        Loaded += (_, _) =>
+        {
+            if (Window.GetWindow(this) is { } window)
+                Subscribe(window);
         };
     }
-
     protected abstract void HideCore();
 
     protected static void AnimateOverlayOpen(FrameworkElement backdrop, FrameworkElement panel,
