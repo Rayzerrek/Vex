@@ -155,19 +155,23 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         catch { }
     }
 
-    // Scrollbar overlay state. The bar hugs the right edge: thin at rest,
-    // widening on hover/drag (animated by _scrollbarAnimTimer). It only draws
-    // while the buffer has scrollback above the viewport.
+    // Scrollbar overlay state. The bar hugs the right edge and stays hidden
+    // until the user scrolls, drags, or hovers it — then fades out after a
+    // short idle. Hover/drag also widens the thumb (animated).
     private const double ScrollbarThinWidth = 6;
     private const double ScrollbarWideWidth = 12;
     private const double ScrollbarHitWidth = 16;
+    private const double ScrollbarHideDelayMs = 900;
     private double _scrollbarWidth = ScrollbarThinWidth;
     private double _scrollbarTargetWidth = ScrollbarThinWidth;
+    private double _scrollbarOpacity;
+    private double _scrollbarTargetOpacity;
     private bool _scrollbarHovered;
     private bool _scrollbarDragging;
     private double _scrollbarDragOffset;
     private Brush _scrollbarThumbBrush = Brushes.Gray;
     private Brush _scrollbarThumbHoverBrush = Brushes.LightGray;
+    private readonly DispatcherTimer _scrollbarHideTimer;
 
     // Cached caret draw state: the overlay is only reopened when the caret's
     // position, visibility, style or blink phase changed. The cell beneath the
@@ -264,7 +268,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         };
 
         _scrollbarAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(15) };
-        _scrollbarAnimTimer.Tick += (_, _) => AnimateScrollbarWidth();
+        _scrollbarAnimTimer.Tick += (_, _) => AnimateScrollbarVisual();
+        _scrollbarHideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ScrollbarHideDelayMs) };
+        _scrollbarHideTimer.Tick += (_, _) =>
+        {
+            _scrollbarHideTimer.Stop();
+            if (!_scrollbarHovered && !_scrollbarDragging)
+                SetScrollbarOpacity(0);
+        };
 
         ApplySettings();
         AppSettings.Instance.PropertyChanged += OnSettingsChanged;
@@ -959,7 +970,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
             DrawSelection();
             DrawCaret();
-            DrawScrollbar();
+            if (!IsScrollbarVisible() && _scrollbarTargetOpacity > 0)
+                SetScrollbarOpacity(0);
+            else
+                DrawScrollbar();
         }
         catch (Exception e)
         {
@@ -1727,13 +1741,50 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void DrawScrollbar()
     {
         using var dc = _scrollbarVisual.RenderOpen();
-        if (!TryGetScrollbarGeometry(out var thumbY, out var thumbH, out _))
+        if (_scrollbarOpacity < 0.01 || !TryGetScrollbarGeometry(out var thumbY, out var thumbH, out _))
             return;
 
         var brush = _scrollbarHovered || _scrollbarDragging ? _scrollbarThumbHoverBrush : _scrollbarThumbBrush;
         var x = ActualWidth - _scrollbarWidth;
         var radius = _scrollbarWidth / 2;
+        dc.PushOpacity(_scrollbarOpacity);
         dc.DrawRoundedRectangle(brush, null, new Rect(x, thumbY, _scrollbarWidth, thumbH), radius, radius);
+        dc.Pop();
+    }
+
+    /// <summary>Shows the overlay scrollbar after user-driven scroll or hover,
+    /// then schedules a fade-out unless the pointer is still on it.</summary>
+    private void RevealScrollbar()
+    {
+        if (!IsScrollbarVisible())
+        {
+            SetScrollbarOpacity(0);
+            _scrollbarHideTimer.Stop();
+            return;
+        }
+
+        SetScrollbarOpacity(1);
+        if (_scrollbarHovered || _scrollbarDragging)
+            _scrollbarHideTimer.Stop();
+        else
+            ScheduleScrollbarHide();
+    }
+
+    private void ScheduleScrollbarHide()
+    {
+        _scrollbarHideTimer.Stop();
+        _scrollbarHideTimer.Start();
+    }
+
+    private void SetScrollbarOpacity(double opacity)
+    {
+        if (Math.Abs(_scrollbarTargetOpacity - opacity) < 0.01)
+            return;
+        _scrollbarTargetOpacity = opacity;
+        if (Math.Abs(_scrollbarTargetOpacity - _scrollbarOpacity) < 0.01)
+            DrawScrollbar();
+        else if (!_scrollbarAnimTimer.IsEnabled)
+            _scrollbarAnimTimer.Start();
     }
 
     private void SetScrollbarHovered(bool hovered)
@@ -1744,23 +1795,44 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _scrollbarHovered = hovered;
         Cursor = hovered ? Cursors.Arrow : Cursors.IBeam;
         _scrollbarTargetWidth = targetWidth;
-        if (Math.Abs(_scrollbarTargetWidth - _scrollbarWidth) < 0.2)
+
+        if (hovered && IsScrollbarVisible())
+        {
+            SetScrollbarOpacity(1);
+            _scrollbarHideTimer.Stop();
+        }
+        else if (!_scrollbarDragging)
+        {
+            ScheduleScrollbarHide();
+        }
+
+        if (Math.Abs(_scrollbarTargetWidth - _scrollbarWidth) < 0.2
+            && Math.Abs(_scrollbarTargetOpacity - _scrollbarOpacity) < 0.01)
             DrawScrollbar();
         else if (!_scrollbarAnimTimer.IsEnabled)
             _scrollbarAnimTimer.Start();
     }
 
-    private void AnimateScrollbarWidth()
+    private void AnimateScrollbarVisual()
     {
-        var delta = _scrollbarTargetWidth - _scrollbarWidth;
-        if (Math.Abs(delta) < 0.2)
-        {
+        var widthDelta = _scrollbarTargetWidth - _scrollbarWidth;
+        var opacityDelta = _scrollbarTargetOpacity - _scrollbarOpacity;
+        var widthDone = Math.Abs(widthDelta) < 0.2;
+        var opacityDone = Math.Abs(opacityDelta) < 0.01;
+
+        if (widthDone)
             _scrollbarWidth = _scrollbarTargetWidth;
+        else
+            _scrollbarWidth += widthDelta * 0.3;
+
+        if (opacityDone)
+            _scrollbarOpacity = _scrollbarTargetOpacity;
+        else
+            _scrollbarOpacity += opacityDelta * 0.35;
+
+        if (widthDone && opacityDone)
             _scrollbarAnimTimer.Stop();
-            DrawScrollbar();
-            return;
-        }
-        _scrollbarWidth += delta * 0.3;
+
         DrawScrollbar();
     }
 
@@ -1775,6 +1847,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         if (offset != scrollbar.Offset)
         {
             _terminal.ScrollToRow(offset);
+            RevealScrollbar();
             FlushRedraw();
         }
     }
@@ -1902,6 +1975,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (mods == ModifierKeys.Control && key == Key.Home)
             {
                 _terminal.ScrollToTop();
+                RevealScrollbar();
                 FlushRedraw();
                 e.Handled = true;
                 return;
@@ -1909,6 +1983,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (mods == ModifierKeys.Control && key == Key.End)
             {
                 _terminal.ScrollToBottom();
+                RevealScrollbar();
                 FlushRedraw();
                 e.Handled = true;
                 return;
@@ -1916,6 +1991,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (mods == ModifierKeys.Shift && key == Key.PageUp)
             {
                 _terminal.ScrollBy(-_rows);
+                RevealScrollbar();
                 FlushRedraw();
                 e.Handled = true;
                 return;
@@ -1923,6 +1999,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (mods == ModifierKeys.Shift && key == Key.PageDown)
             {
                 _terminal.ScrollBy(_rows);
+                RevealScrollbar();
                 FlushRedraw();
                 e.Handled = true;
                 return;
@@ -2170,7 +2247,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var toastHeight = text.Height + 12;
             
             var paddingX = 16.0;
-            if (IsScrollbarVisible()) paddingX += _scrollbarWidth;
+            if (_scrollbarOpacity > 0.2)
+                paddingX += _scrollbarWidth;
             
             var x = ActualWidth - paddingX - toastWidth;
             var y = 16.0 - yOffset;
@@ -2345,11 +2423,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 _scrollbarDragOffset = pos.Y - thumbY;
                 _scrollbarWidth = _scrollbarTargetWidth = ScrollbarWideWidth;
                 CaptureMouse();
+                RevealScrollbar();
                 DrawScrollbar();
             }
             else
             {
                 _terminal.ScrollBy(pos.Y < thumbY ? -_rows : _rows);
+                RevealScrollbar();
                 FlushRedraw();
             }
             e.Handled = true;
@@ -2649,6 +2729,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         if (lines != 0)
         {
             _terminal.ScrollBy(-lines);
+            RevealScrollbar();
             FlushRedraw();
         }
         e.Handled = true;
@@ -2743,6 +2824,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _disposed = true;
         _blinkTimer.Stop();
         _scrollbarAnimTimer.Stop();
+        _scrollbarHideTimer.Stop();
         if (_resizeSettleTimer is { } settle)
         {
             settle.Stop();
