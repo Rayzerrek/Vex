@@ -142,25 +142,39 @@ public sealed class TerminalSession : IDisposable
     private short _columns;
     private short _rows;
 
-    public void Resize(short columns, short rows)
+    /// <summary>True when the last <see cref="Resize"/> failed to update
+    /// ConPTY. The managed grid stays at the requested size; a failed resize
+    /// desyncs the child and paints wrapped lines on the wrong rows.</summary>
+    public bool LastResizeFailed { get; private set; }
+
+    /// <summary>Applies a new ConPTY grid size. Returns false when the native
+    /// resize fails (caller should retry on the next settle pass).</summary>
+    public bool Resize(short columns, short rows)
     {
-        if (columns == _columns && rows == _rows) return;
+        if (columns == _columns && rows == _rows && !LastResizeFailed)
+            return true;
         _columns = columns;
         _rows = rows;
 
-        if (_pseudoConsole != IntPtr.Zero && !_disposed)
+        if (_pseudoConsole == IntPtr.Zero || _disposed)
         {
-            var hr = NativeMethods.ResizePseudoConsole(_pseudoConsole, new NativeMethods.COORD(columns, rows));
-            if (hr != 0)
-            {
-                // Resize failures leave ConPTY at its old geometry while Vex
-                // reports the new grid; this desyncs the cursor/scroll region
-                // and can cause text to paint at wrong rows (visual duplication).
-                // Keep the managed dimensions authoritative but surface the
-                // failure so the UI can flag the pane.
-                System.Diagnostics.Debug.WriteLine($"ConPTY resize failed: HRESULT=0x{hr:X8} {columns}x{rows}");
-            }
+            LastResizeFailed = false;
+            return true;
         }
+
+        var hr = NativeMethods.ResizePseudoConsole(_pseudoConsole, new NativeMethods.COORD(columns, rows));
+        if (hr != 0)
+        {
+            // Resize failures leave ConPTY at its old geometry while Vex
+            // reports the new grid; this desyncs the cursor/scroll region
+            // and can cause text to paint at wrong rows (visual duplication).
+            LastResizeFailed = true;
+            System.Diagnostics.Debug.WriteLine($"ConPTY resize failed: HRESULT=0x{hr:X8} {columns}x{rows}");
+            return false;
+        }
+
+        LastResizeFailed = false;
+        return true;
     }
 
     private void SpawnChild(string commandLine, string workingDirectory)

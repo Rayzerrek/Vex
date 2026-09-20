@@ -364,6 +364,8 @@ public sealed class GhosttyTerminal : IDisposable
     private int _cols;
     private int _rows;
     private bool _needsReadAll = true;
+    private TerminalScreen _lastScreen = TerminalScreen.Primary;
+    private readonly StringBuilder _graphemeBuilder = new(8);
 
     private int _cellWidthPx = 8;
     private int _cellHeightPx = 16;
@@ -995,10 +997,23 @@ public sealed class GhosttyTerminal : IDisposable
 
     public void ScrollBy(int delta) => Scroll(Native.ScrollViewportTag.Delta, delta);
 
+    /// <summary>Forces the next <see cref="UpdateFrame"/> to re-read every
+    /// cell. Used after host-side events (resize settle, alt-screen) that
+    /// can leave managed row caches behind the emulator.</summary>
+    public void InvalidateCellCache()
+    {
+        lock (_vtLock)
+            _needsReadAll = true;
+    }
+
     private void Scroll(Native.ScrollViewportTag tag, nint value)
     {
         lock (_vtLock)
         {
+            // Viewport moves rematerialize every visible row; dirty flags
+            // alone under-report the shift, so the next snapshot must
+            // rebuild the managed cell cache from scratch.
+            _needsReadAll = true;
             var behavior = new Native.GhosttyTerminalScrollViewport { tag = (int)tag, value = default };
             if (tag == Native.ScrollViewportTag.Delta)
                 behavior.value.delta = value;
@@ -1085,11 +1100,14 @@ public sealed class GhosttyTerminal : IDisposable
     /// Pulls the latest terminal state into the render state and copies the
     /// viewport into managed <see cref="FrameRows"/>. Row/cell arrays are
     /// reused between calls; data is only valid until the next call.
-    /// Rows the emulator did not mark dirty keep their previous cell data:
-    /// per the render-state contract, this method consumes the dirty flags it
-    /// reads (global and per-row), so the next update reports exactly the
-    /// rows that changed since. Only a full rebuild (viewport move, screen
-    /// switch, resize, terminal-wide change) re-reads every row.
+    /// <para>
+    /// Dirty contract: this method consumes global and per-row dirty flags.
+    /// Clean frames skip the cell walk entirely (cursor still updates).
+    /// Full / resize / alt-screen / host scroll force a complete cell read.
+    /// Partial frames re-read every row: emulator scroll shifts under-report
+    /// per-row dirty, and stale managed cells are what produced visual
+    /// duplication. Per-row dirty is still recorded for the paint layer.
+    /// </para>
     /// </summary>
     public unsafe void UpdateFrame()
     {
@@ -1111,7 +1129,17 @@ public sealed class GhosttyTerminal : IDisposable
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.Cols, (IntPtr)(&cols)), "get cols");
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.Rows, (IntPtr)(&rows)), "get rows");
         FrameDirty = dirty;
-        var readAll = _needsReadAll || dirty == FrameDirty.Full || cols != _cols || rows != _rows;
+
+        // Alt-screen enter/exit rematerializes the whole viewport; treat it
+        // like a full rebuild even when the dirty bit stays Partial.
+        var screen = TryGet(TerminalData.ActiveScreen, out TerminalScreen active)
+            ? active
+            : _lastScreen;
+        var screenChanged = screen != _lastScreen;
+        _lastScreen = screen;
+
+        var sizeChanged = cols != _cols || rows != _rows;
+        var readAll = _needsReadAll || dirty == FrameDirty.Full || sizeChanged || screenChanged;
         _needsReadAll = false;
         _cols = cols;
         _rows = rows;
@@ -1130,17 +1158,25 @@ public sealed class GhosttyTerminal : IDisposable
         }
         Cursor = new CursorState(cursorX, cursorY, cursorVisible != 0, cursorBlink != 0, cursorStyle);
 
+        // Nothing changed since the last consumed snapshot: keep managed
+        // cells as-is. Avoids a full grid P/Invoke walk on caret/UI pumps.
+        if (dirty == FrameDirty.Clean && !readAll)
+            return;
+
+        // Partial still walks every row (scroll shifts under-report dirty).
+        // readAll covers Full / resize / alt-screen / host scroll.
         EnsureFrameRows(rows);
         var rowIterator = _rowIterator;
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.RowIterator, (IntPtr)(&rowIterator)), "row iterator");
 
+        byte rowDirtyFalse = 0;
         var row = 0;
         while (Native.ghostty_render_state_row_iterator_next(_rowIterator))
         {
             var frameRow = FrameRows[row];
             byte rowDirty = 0;
             Check(Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Dirty, (IntPtr)(&rowDirty)), "row dirty");
-            frameRow.Dirty = rowDirty != 0;
+            frameRow.Dirty = rowDirty != 0 || readAll;
 
             var selection = new Native.GhosttyRenderStateRowSelection { size = (nuint)Marshal.SizeOf<Native.GhosttyRenderStateRowSelection>() };
             var selResult = Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Selection, (IntPtr)(&selection));
@@ -1151,6 +1187,8 @@ public sealed class GhosttyTerminal : IDisposable
                 frameRow.SelectionEnd = selection.endX;
             }
 
+            // Always materialize cells on dirty frames: selective skips were
+            // the source of duplicated/stale rows after emulator scrolls.
             var rowCellsHandle = _rowCells;
             Check(Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Cells, (IntPtr)(&rowCellsHandle)), "row cells");
             var cells = frameRow.Cells;
@@ -1163,6 +1201,10 @@ public sealed class GhosttyTerminal : IDisposable
             }
             for (; col < cols; col++)
                 cells[col] = new CellInfo { Text = "" };
+
+            // Consume per-row dirty so the next snapshot reports only rows
+            // that change after this point.
+            Check(Native.ghostty_render_state_row_set(_rowIterator, RenderStateRowOption.Dirty, (IntPtr)(&rowDirtyFalse)), "row dirty clear");
 
             row++;
             if (row >= rows)
@@ -1258,7 +1300,10 @@ public sealed class GhosttyTerminal : IDisposable
         }
         else
         {
-            var sb = new StringBuilder((int)graphemesLen * 2);
+            // Reuse one builder across cells: multi-codepoint graphemes are
+            // rare, but allocating per cell on a busy TUI frame shows up.
+            var sb = _graphemeBuilder;
+            sb.Clear();
             for (var i = 0; i < graphemesLen; i++)
                 sb.Append(char.ConvertFromUtf32((int)_codepoints[i]));
             cell.Text = sb.ToString();

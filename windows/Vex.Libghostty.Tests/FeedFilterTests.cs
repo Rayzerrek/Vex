@@ -324,4 +324,52 @@ public sealed class FeedFilterTests
         Assert.Equal("Content A", r1);
         Assert.Equal("Progress: 80%", r2);
     }
+
+    [Fact]
+    public void UpdateFrame_CleanFrame_PreservesCellsWithoutReread()
+    {
+        using var term = new GhosttyTerminal(40, 10);
+        Feed(term, "Stable line\r\n");
+        term.UpdateFrame();
+        var before = string.Concat(term.FrameRows[0].Cells.Select(c => c.Text)).TrimEnd();
+
+        // Second snapshot with no new input must stay Clean and keep cells.
+        term.UpdateFrame();
+        Assert.Equal(FrameDirty.Clean, term.FrameDirty);
+        var after = string.Concat(term.FrameRows[0].Cells.Select(c => c.Text)).TrimEnd();
+        Assert.Equal(before, after);
+        Assert.Equal("Stable line", after);
+    }
+
+    [Fact]
+    public void UpdateFrame_InvalidateCellCache_ForcesRereadOnClean()
+    {
+        using var term = new GhosttyTerminal(40, 10);
+        Feed(term, "Before\r\n");
+        term.UpdateFrame();
+
+        term.InvalidateCellCache();
+        term.UpdateFrame();
+        var text = string.Concat(term.FrameRows[0].Cells.Select(c => c.Text)).TrimEnd();
+        Assert.Equal("Before", text);
+    }
+
+    [Fact]
+    public void UpdateFrame_ScrollToBottom_RefreshesViewportCells()
+    {
+        using var term = new GhosttyTerminal(40, 5);
+        for (var i = 0; i < 8; i++)
+            Feed(term, $"Line {i}\r\n");
+        term.UpdateFrame();
+
+        term.ScrollBy(-3);
+        term.UpdateFrame();
+        var mid = string.Concat(term.FrameRows[0].Cells.Select(c => c.Text)).TrimEnd();
+
+        term.ScrollToBottom();
+        term.UpdateFrame();
+        var bottom = string.Concat(term.FrameRows[0].Cells.Select(c => c.Text)).TrimEnd();
+        Assert.NotEqual(mid, bottom);
+        Assert.Equal("Line 4", bottom);
+    }
 }
