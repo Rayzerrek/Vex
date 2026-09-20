@@ -9,8 +9,9 @@ namespace Vex.App;
 
 /// <summary>
 /// Shared plumbing for the popup-hosted overlays (command palette, theme
-/// switcher, settings): popup open/close, hide when the window loses
-/// activation, and the standard open/close animation curves.
+/// switcher, tab peek): popup open/close, optional hide-on-deactivate, and
+/// the standard open/close animation curves. Settings opts out of
+/// hide-on-deactivate so it survives Alt+Tab and file dialogs.
 /// </summary>
 public abstract class OverlayControl : UserControl
 {
