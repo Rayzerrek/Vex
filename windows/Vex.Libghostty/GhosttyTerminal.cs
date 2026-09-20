@@ -244,16 +244,20 @@ public enum ColorTag : int
 /// </summary>
 public struct CellInfo
 {
-    public string Text;
-    public bool Wide;
-    public bool Tail;
-    public CellFlags Flags;
-    public ColorTag FgTag;
-    public int FgValue;
-    public ColorTag BgTag;
-    public int BgValue;
-}
+    public string Text = "";
+    public bool Wide = false;
+    public bool Tail = false;
+    public CellFlags Flags = CellFlags.None;
+    public ColorTag FgTag = ColorTag.None;
+    public int FgValue = 0;
+    public ColorTag BgTag = ColorTag.None;
+    public int BgValue = 0;
 
+    public CellInfo()
+    {
+        Text = "";
+    }
+}
 public sealed class FrameRow
 {
     public bool Dirty;
@@ -359,6 +363,7 @@ public sealed class GhosttyTerminal : IDisposable
 
     private int _cols;
     private int _rows;
+    private bool _needsReadAll = true;
 
     private int _cellWidthPx = 8;
     private int _cellHeightPx = 16;
@@ -813,6 +818,7 @@ public sealed class GhosttyTerminal : IDisposable
     {
         lock (_vtLock)
         {
+            _needsReadAll = true;
             _cols = cols;
             _rows = rows;
             _cellWidthPx = cellWidthPx;
@@ -1105,7 +1111,8 @@ public sealed class GhosttyTerminal : IDisposable
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.Cols, (IntPtr)(&cols)), "get cols");
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.Rows, (IntPtr)(&rows)), "get rows");
         FrameDirty = dirty;
-        var readAll = dirty == FrameDirty.Full || cols != _cols || rows != _rows;
+        var readAll = _needsReadAll || dirty == FrameDirty.Full || cols != _cols || rows != _rows;
+        _needsReadAll = false;
         _cols = cols;
         _rows = rows;
 
@@ -1127,7 +1134,6 @@ public sealed class GhosttyTerminal : IDisposable
         var rowIterator = _rowIterator;
         Check(Native.ghostty_render_state_get(_renderState, RenderStateData.RowIterator, (IntPtr)(&rowIterator)), "row iterator");
 
-        byte rowDirtyFalse = 0;
         var row = 0;
         while (Native.ghostty_render_state_row_iterator_next(_rowIterator))
         {
@@ -1145,26 +1151,18 @@ public sealed class GhosttyTerminal : IDisposable
                 frameRow.SelectionEnd = selection.endX;
             }
 
-            // A clean row was unchanged since the previous update, so its
-            // managed cells are still valid; the per-row dirty flag is only
-            // consumed for rows whose cells are actually re-read.
-            if (readAll || frameRow.Dirty)
+            var rowCellsHandle = _rowCells;
+            Check(Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Cells, (IntPtr)(&rowCellsHandle)), "row cells");
+            var cells = frameRow.Cells;
+            var col = 0;
+            while (col < cols && Native.ghostty_render_state_row_cells_next(_rowCells))
             {
-                var rowCellsHandle = _rowCells;
-                Check(Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Cells, (IntPtr)(&rowCellsHandle)), "row cells");
-                var cells = frameRow.Cells;
-                var col = 0;
-                while (col < cols && Native.ghostty_render_state_row_cells_next(_rowCells))
-                {
-                    ref var cell = ref cells[col];
-                    ReadCell(ref cell);
-                    col++;
-                }
-                for (; col < cols; col++)
-                    cells[col] = default;
-
-                Check(Native.ghostty_render_state_row_set(_rowIterator, RenderStateRowOption.Dirty, (IntPtr)(&rowDirtyFalse)), "row dirty clear");
+                ref var cell = ref cells[col];
+                ReadCell(ref cell);
+                col++;
             }
+            for (; col < cols; col++)
+                cells[col] = new CellInfo { Text = "" };
 
             row++;
             if (row >= rows)
@@ -1282,7 +1280,12 @@ public sealed class GhosttyTerminal : IDisposable
         for (var i = 0; i < rows; i++)
         {
             if (FrameRows[i].Cells.Length != _cols)
-                FrameRows[i].Cells = new CellInfo[_cols];
+            {
+                var cells = new CellInfo[_cols];
+                for (var c = 0; c < _cols; c++)
+                    cells[c].Text = "";
+                FrameRows[i].Cells = cells;
+            }
         }
     }
 
