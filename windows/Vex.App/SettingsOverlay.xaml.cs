@@ -58,7 +58,9 @@ public sealed partial class SettingsOverlay : OverlayControl
     {
         InitializeComponent();
 
-        HideOnWindowDeactivate();
+        // Unlike the quick overlays (palette, theme switcher), settings stays
+        // open across Alt+Tab and modal file dialogs (Browse…). Dismiss only
+        // via Escape, the close button, or a backdrop click.
 
         // Terminal font size applies on release, not per thumb tick: every
         // commit resizes the ConPTY session in each pane, which turns a drag
