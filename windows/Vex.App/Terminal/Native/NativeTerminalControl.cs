@@ -1967,13 +1967,17 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         e.Handled = true;
     }
 
-    private void CopySelection()
+    private void CopySelection(Point? mousePos = null)
     {
         if (!_selectionActive && !_terminal.HasSelection)
             return;
         var text = _terminal.GetSelectedText();
         if (!string.IsNullOrEmpty(text))
+        {
             Clipboard.SetText(text);
+            if (mousePos.HasValue)
+                StartCopyAnimation(mousePos.Value);
+        }
         // Copied text is deselected, matching the copy-then-clear convention.
         ClearSelection();
     }
@@ -1986,6 +1990,73 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _selectionActive = false;
             _terminal.ClearSelection();
             FlushRedraw();
+        }
+    }
+
+    private DrawingVisual? _copyAnimVisual;
+    private TimeSpan? _copyAnimStartTime;
+    private Point _copyAnimOrigin;
+
+    private void StartCopyAnimation(Point mousePos)
+    {
+        if (_copyAnimVisual == null)
+        {
+            _copyAnimVisual = new DrawingVisual();
+            _children.Add(_copyAnimVisual);
+        }
+
+        _copyAnimOrigin = mousePos;
+        _copyAnimStartTime = TimeSpan.Zero;
+        CompositionTarget.Rendering -= OnCopyAnimFrame;
+        CompositionTarget.Rendering += OnCopyAnimFrame;
+    }
+
+    private void OnCopyAnimFrame(object? sender, EventArgs e)
+    {
+        if (_copyAnimVisual == null) return;
+
+        var renderingEventArgs = (RenderingEventArgs)e;
+        if (_copyAnimStartTime == TimeSpan.Zero)
+        {
+            _copyAnimStartTime = renderingEventArgs.RenderingTime;
+        }
+
+        var elapsed = _copyAnimStartTime.HasValue 
+            ? (renderingEventArgs.RenderingTime - _copyAnimStartTime.Value).TotalMilliseconds 
+            : 0;
+            
+        var duration = 600.0;
+        
+        if (elapsed >= duration)
+        {
+            CompositionTarget.Rendering -= OnCopyAnimFrame;
+            using (var dc = _copyAnimVisual!.RenderOpen()) { } // clear
+            return;
+        }
+
+        var t = elapsed / duration;
+        var easeOut = 1 - Math.Pow(1 - t, 4);
+        var opacity = t < 0.8 ? 1.0 : 1.0 - (t - 0.8) / 0.2;
+        var yOffset = -24 * easeOut; 
+
+        using (var dc = _copyAnimVisual!.RenderOpen())
+        {
+            var textBrush = _palette.Background;
+            var bgBrush = _palette.Foreground;
+            
+            var text = new FormattedText("Copied", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), 
+                12, textBrush, _pixelsPerDip);
+                
+            var rect = new Rect(_copyAnimOrigin.X - text.Width / 2 - 10,
+                                _copyAnimOrigin.Y + yOffset - text.Height - 12,
+                                text.Width + 20,
+                                text.Height + 10);
+                                
+            dc.PushOpacity(opacity);
+            dc.DrawRoundedRectangle(bgBrush, null, rect, 6, 6);
+            dc.DrawText(text, new Point(rect.X + 10, rect.Y + 5));
+            dc.Pop();
         }
     }
 
@@ -2280,10 +2351,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var (col, row) = CellFromPoint(e.GetPosition(this));
             _selectionGestureActive = false;
             _terminal.SelectionRelease(col, row);
-            if (!_selectionDragged)
+
+            bool madeSelection = _selectionDragged || _selectionClickCount > 1;
+            if (!madeSelection)
                 FinishClickSelection();
             else
-                FlushRedraw();
+                CopySelection(e.GetPosition(this));
+
             _selectionDragged = false;
             _mouseSelectionOverride = false;
         }
@@ -2299,10 +2373,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var (col, row) = CellFromPoint(e.GetPosition(this));
             _selectionGestureActive = false;
             _terminal.SelectionRelease(col, row);
-            if (!_selectionDragged)
+
+            bool madeSelection = _selectionDragged || _selectionClickCount > 1;
+            if (!madeSelection)
                 FinishClickSelection();
             else
-                FlushRedraw();
+                CopySelection(e.GetPosition(this));
+
             _selectionDragged = false;
         }
         ReleaseMouseIfNoButtons();
@@ -2317,14 +2394,17 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             var (col, row) = CellFromPoint(position);
             var wasDragged = _selectionDragged;
+            var clickCount = _selectionClickCount;
             _selectionGestureActive = false;
             _terminal.SelectionRelease(col, row);
             _mouseSelectionOverride = false;
             _selectionDragged = false;
-            if (wasDragged)
-                FlushRedraw();
-            else
+
+            bool madeSelection = wasDragged || clickCount > 1;
+            if (!madeSelection)
                 FinishClickSelection();
+            else
+                CopySelection(position);
         }
 
         _scrollbarDragging = false;
