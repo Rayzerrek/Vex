@@ -11,7 +11,7 @@ namespace Vex.App.Model;
 /// </summary>
 public sealed class AppIcon
 {
-    private static readonly Dictionary<string, AppIcon> Cache = new();
+    private static readonly Dictionary<string, AppIcon> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Typeface BadgeTypeface =
         new(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
 

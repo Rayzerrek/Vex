@@ -208,6 +208,15 @@ public sealed class TerminalPane : LeafPane
             _lastIconProcessName = deepest.Name;
             _lastIconTitle = _lastTitle;
         }
+
+        if (string.Equals(Title, "Terminal", StringComparison.OrdinalIgnoreCase) ||
+            AppIconCatalog.ExcludedShells.Contains(Title))
+        {
+            var appName = AppIconCatalog.ResolveToolName(deepest.Name, commandLine) ?? deepest.Name;
+            var formatted = TerminalTitleFormatter.Format(appName);
+            if (!string.IsNullOrWhiteSpace(formatted))
+                Title = formatted;
+        }
     }
 
     private bool _focusPendingLoaded;
@@ -284,11 +293,12 @@ public sealed class TerminalPane : LeafPane
         {
             if (!string.IsNullOrWhiteSpace(title))
             {
-                if (title.Contains('\\') || title.Contains('/'))
-                {
-                    try { title = System.IO.Path.GetFileNameWithoutExtension(title); } catch {}
-                }
-                Title = title;
+                var clean = TerminalTitleFormatter.Format(title);
+                if (!string.IsNullOrWhiteSpace(clean))
+                    Title = clean;
+
+                if (AppIcon == null && AppIconCatalog.FromTitle(clean) is { } cleanIcon)
+                    AppIcon = cleanIcon;
             }
         };
         view.FocusGained += RequestFocus;
