@@ -78,4 +78,21 @@ public sealed class TerminalKeyMapTests
             NativeTerminalControl.RowHash(defaultColor, 1),
             NativeTerminalControl.RowHash(ansiRed, 1));
     }
+
+    [Fact]
+    public void RowHash_HandlesNullAndEmptyTextSafely()
+    {
+        var row = new FrameRow
+        {
+            Cells = new[]
+            {
+                new CellInfo { Text = null! },
+                new CellInfo { Text = "" },
+                new CellInfo { Text = "a" },
+            }
+        };
+
+        var hash = NativeTerminalControl.RowHash(row, 3);
+        Assert.NotEqual(0ul, hash);
+    }
 }

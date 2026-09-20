@@ -149,7 +149,18 @@ public sealed class TerminalSession : IDisposable
         _rows = rows;
 
         if (_pseudoConsole != IntPtr.Zero && !_disposed)
-            NativeMethods.ResizePseudoConsole(_pseudoConsole, new NativeMethods.COORD(columns, rows));
+        {
+            var hr = NativeMethods.ResizePseudoConsole(_pseudoConsole, new NativeMethods.COORD(columns, rows));
+            if (hr != 0)
+            {
+                // Resize failures leave ConPTY at its old geometry while Vex
+                // reports the new grid; this desyncs the cursor/scroll region
+                // and can cause text to paint at wrong rows (visual duplication).
+                // Keep the managed dimensions authoritative but surface the
+                // failure so the UI can flag the pane.
+                System.Diagnostics.Debug.WriteLine($"ConPTY resize failed: HRESULT=0x{hr:X8} {columns}x{rows}");
+            }
+        }
     }
 
     private void SpawnChild(string commandLine, string workingDirectory)
