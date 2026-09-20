@@ -88,6 +88,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private readonly Dictionary<Key, TerminalKeyModifiers> _terminalKeysDown = new();
     private PendingTextKey? _pendingTextKey;
 
+    // After a burst of size changes (window drag, sidebar), one settle pass
+    // re-syncs ConPTY and forces a full cell read so wrapped lines do not
+    // stay broken if an intermediate resize failed or raced the paint.
+    private DispatcherTimer? _resizeSettleTimer;
+    private short _pendingSessionCols;
+    private short _pendingSessionRows;
+    private bool _sessionResizePending;
+
     private readonly record struct PendingTextKey(Key WpfKey, TerminalKey Key, TerminalKeyAction Action, TerminalKeyModifiers Modifiers);
 
     // While the sidebar animates, the window width changes every frame and
@@ -496,23 +504,23 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             && (_session is not null || _sessionStarting))
             return;
 
+        // Preserve the user's scrollback pin: only snap to bottom when they
+        // were already there. Unconditional ScrollToBottom after every reflow
+        // is what made resize feel like the buffer was reloading and jumping.
+        var wasAtBottom = !gridChanged || IsPinnedToBottom(_terminal.Scrollbar);
+
         _cols = cols;
         _rows = rows;
         _nativeCellWidth = nativeCellWidth;
         _nativeCellHeight = nativeCellHeight;
         Diag($"grid {cols}x{rows} session={_session is not null}");
         EnsureRowVisuals();
-        _terminal.Resize(cols, rows, nativeCellWidth, nativeCellHeight);
-        // After a grid resize, snap viewport to bottom so shells like nushell
-        // don't appear scrolled up due to buffer reflow. A DPI-only geometry
-        // update must preserve the user's scrollback position.
         if (gridChanged)
+            InvalidateRowPaintCaches();
+        _terminal.Resize(cols, rows, nativeCellWidth, nativeCellHeight);
+        if (gridChanged && wasAtBottom)
             _terminal.ScrollToBottom();
         _needsFullRedraw = true;
-        // UpdateFrame must run before the repaint so FrameRows reflects the
-        // new geometry; RedrawAll against the stale frame reads out of bounds
-        // when the grid grows (e.g. maximizing the window).
-        FlushRedraw();
 
         if (_session is null)
         {
@@ -523,12 +531,76 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // behind the first painted frame like Windows Terminal. Only
             // the selected tab's panes are realized, so this cannot spawn
             // shells for background tabs.
+            // UpdateFrame must run before the repaint so FrameRows reflects
+            // the new geometry before StartSession paints the first frame.
+            FlushRedraw();
             StartSessionIfReady();
         }
         else if (gridChanged)
         {
-            _session.Resize((short)cols, (short)rows);
+            // Resize ConPTY before painting so the child and VT agree on the
+            // new grid for this frame. Failures are retried on settle.
+            ApplySessionResize((short)cols, (short)rows);
+            FlushRedraw();
+            ScheduleResizeSettle();
         }
+        else
+        {
+            FlushRedraw();
+        }
+    }
+
+    private static bool IsPinnedToBottom((ulong Total, ulong Offset, ulong Len) sb)
+    {
+        if (sb.Len == 0 || sb.Total <= sb.Len)
+            return true;
+        return sb.Offset + sb.Len >= sb.Total;
+    }
+
+    private void ApplySessionResize(short cols, short rows)
+    {
+        var session = _session;
+        if (session is null)
+            return;
+        _pendingSessionCols = cols;
+        _pendingSessionRows = rows;
+        if (!session.Resize(cols, rows))
+        {
+            _sessionResizePending = true;
+            Diag($"conpty-resize-failed {cols}x{rows}");
+        }
+        else
+        {
+            _sessionResizePending = false;
+        }
+    }
+
+    private void ScheduleResizeSettle()
+    {
+        _resizeSettleTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        _resizeSettleTimer.Tick -= OnResizeSettled;
+        _resizeSettleTimer.Tick += OnResizeSettled;
+        _resizeSettleTimer.Stop();
+        _resizeSettleTimer.Start();
+    }
+
+    private void OnResizeSettled(object? sender, EventArgs e)
+    {
+        _resizeSettleTimer?.Stop();
+        if (_disposed)
+            return;
+
+        // Heal ConPTY desync and any frame that painted mid-reflow with a
+        // stale cell cache — the common "every line looks broken" after a
+        // fast window drag.
+        if (_session is not null)
+            ApplySessionResize((short)_cols, (short)_rows);
+        _terminal.InvalidateCellCache();
+        _needsFullRedraw = true;
+        FlushRedraw();
+
+        if (_sessionResizePending)
+            Diag($"conpty-resize-still-pending {_cols}x{_rows}");
     }
 
     private void StartSessionIfReady()
@@ -566,6 +638,20 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _rowLinkHashes = new ulong[_rows];
             _rowLinkTexts = new string?[_rows];
         }
+    }
+
+    /// <summary>Drops per-row paint caches after a width change so wrapped
+    /// glyphs cannot reuse pre-resize hashes.</summary>
+    private void InvalidateRowPaintCaches()
+    {
+        if (_rowHashes.Length == 0)
+            return;
+        Array.Clear(_rowHashes);
+        Array.Clear(_rowVersions);
+        Array.Clear(_rowLinkHashes);
+        Array.Clear(_rowLinkTexts);
+        for (var i = 0; i < _rowLinks.Length; i++)
+            _rowLinks[i] = Array.Empty<LinkSpan>();
     }
 
     protected override int VisualChildrenCount => _children.Count;
@@ -674,7 +760,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 // Apply any grid size that changed while the session was
                 // starting.
                 if (_cols != cols || _rows != rows)
-                    session.Resize((short)_cols, (short)_rows);
+                    ApplySessionResize((short)_cols, (short)_rows);
             });
         });
     }
@@ -745,7 +831,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _redrawScheduled = true;
         }
 
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
         {
             lock (_outputLock)
             {
@@ -753,7 +839,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             }
             // Output that arrives during the flush sets the flag again and
             // schedules its own pass; the emulator state it fed is picked up
-            // there, so no update is lost.
+            // there, so no update is lost. Render priority keeps long agent
+            // streams visually in lockstep with the frame instead of lagging
+            // behind Background work.
             if (!_disposed)
                 FlushRedraw();
         });
@@ -836,11 +924,15 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _lastScrollOffset = scrollbar.Offset;
 
             // Detect alternate-screen transitions (TUI start/exit) and notify
-            // the pane model so it can update the state indicator.
+            // the pane model so it can update the state indicator. Force a
+            // full rebuild: alt enter/exit rematerializes every row and dirty
+            // bits alone have under-reported the swap.
             var isAlt = _terminal.IsAlternateScreen;
             if (isAlt != _wasAlternateScreen)
             {
                 _wasAlternateScreen = isAlt;
+                _needsFullRedraw = true;
+                _terminal.InvalidateCellCache();
                 TuiModeChanged?.Invoke(isAlt);
             }
 
@@ -855,6 +947,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             {
                 // Scan all rows: unchanged rows skip in microseconds via RowHash;
                 // any row that shifted, scrolled, or updated repaints cleanly.
+                // Do not trust FrameRow.Dirty alone — it under-reports shifts.
                 for (var row = 0; row < Math.Min(_rows, _terminal.FrameRows.Length); row++)
                 {
                     RedrawRow(row, force: false);
@@ -2650,6 +2743,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _disposed = true;
         _blinkTimer.Stop();
         _scrollbarAnimTimer.Stop();
+        if (_resizeSettleTimer is { } settle)
+        {
+            settle.Stop();
+            settle.Tick -= OnResizeSettled;
+        }
         AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
         ResizeSuspensionEnded -= OnResizeSuspensionEnded;
         var session = _session;
