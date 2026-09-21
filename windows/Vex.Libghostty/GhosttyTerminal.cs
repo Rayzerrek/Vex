@@ -964,6 +964,15 @@ public sealed class GhosttyTerminal : IDisposable
         return Native.ghostty_terminal_get(_terminal, TerminalData.Mode, (IntPtr)(&config)) == Result.Success && config.value;
     }
 
+    /// <summary>Whether the application enabled DEC private mode 2048
+    /// (in-band resize). Under ConPTY the child never learns about grid
+    /// changes from the OS — no SIGWINCH and no console resize event — so a
+    /// TUI that negotiated this mode depends on the host terminal sending
+    /// CSI 48;rows;cols;yPx;xPx t reports on every resize. Vex advertises
+    /// mode 2048 through libghostty-vt's DECRQM answers, which creates the
+    /// obligation to emit those reports.</summary>
+    public bool InBandResize => GetMode(2048);
+
     private MouseTrackingMode TrackingModeLocked =>
         GetMode(1003) ? MouseTrackingMode.Any
         : GetMode(1002) ? MouseTrackingMode.Button

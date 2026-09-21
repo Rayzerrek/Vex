@@ -575,7 +575,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         _pendingSessionCols = cols;
         _pendingSessionRows = rows;
-        if (!session.Resize(cols, rows))
+        // In-band resize (DEC 2048) reports must follow a *successful* ConPTY
+        // resize: under ConPTY the child has no other way to learn the new
+        // grid, and libghostty-vt answers the app's DECRQM probe with
+        // "supported", which promised the report. The emulator's mode state
+        // already reflects ?2048h by the time a resize happens, because apps
+        // enable the mode during startup queries.
+        var report = _terminal.InBandResize;
+        if (!session.Resize(cols, rows, report))
         {
             _sessionResizePending = true;
             Diag($"conpty-resize-failed {cols}x{rows}");
@@ -583,6 +590,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         else
         {
             _sessionResizePending = false;
+            if (report)
+                Diag($"in-band-resize-report {cols}x{rows}");
         }
     }
 
