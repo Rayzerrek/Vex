@@ -16,6 +16,13 @@ public sealed class TerminalSession : IDisposable
 {
     private const int BufferSize = 64 * 1024;
 
+    /// <summary>Cell pixel size assumed for in-band resize reports (the
+    /// yPx/xPx fields). Vex's real cell metrics live in the view; any
+    /// plausible value keeps the contract, since consumers use the rows and
+    /// cols fields for geometry.</summary>
+    internal const int DefaultCellWidthPx = 9;
+    internal const int DefaultCellHeightPx = 20;
+
     private IntPtr _pseudoConsole;
     private FileStream? _ptyOutput;
     private FileStream? _ptyInput;
@@ -149,7 +156,7 @@ public sealed class TerminalSession : IDisposable
 
     /// <summary>Applies a new ConPTY grid size. Returns false when the native
     /// resize fails (caller should retry on the next settle pass).</summary>
-    public bool Resize(short columns, short rows)
+    public bool Resize(short columns, short rows, bool inBandResize = false)
     {
         if (columns == _columns && rows == _rows && !LastResizeFailed)
             return true;
@@ -174,7 +181,25 @@ public sealed class TerminalSession : IDisposable
         }
 
         LastResizeFailed = false;
+        if (inBandResize)
+            SendInBandResizeReport(columns, rows);
         return true;
+    }
+
+    /// <summary>Writes a DEC 2048 in-band resize report into the pty input:
+    /// CSI 48 ; rows ; cols ; yPixels ; xPixels t. Under ConPTY this is the
+    /// only way the child learns about a grid change (verified: Bun/pwsh
+    /// never observe one, and sending this report both delivers the bytes to
+    /// the child and makes runtimes fire their stdout resize event). Only
+    /// sent when the application enabled mode 2048, so apps that never
+    /// negotiated it see nothing.</summary>
+    private void SendInBandResizeReport(short columns, short rows)
+    {
+        var body = $"[48;{rows};{columns};{rows * DefaultCellHeightPx};{columns * DefaultCellWidthPx}t";
+        var report = new byte[1 + Encoding.ASCII.GetByteCount(body)];
+        report[0] = 0x1b;
+        Encoding.ASCII.GetBytes(body, report.AsSpan(1));
+        Write(report);
     }
 
     private void SpawnChild(string commandLine, string workingDirectory)
