@@ -391,6 +391,11 @@ public sealed class GhosttyTerminal : IDisposable
         var defaultCursorBlink = true;
         SetOption(TerminalOption.DefaultCursorBlink, defaultCursorBlink);
 
+        // ConPTY owns a separate screen buffer without scrollback. Pulling
+        // history into this emulator during a resize would make the two grids
+        // disagree, so later cursor-relative redraws would land on old rows.
+        SetOption(TerminalOption.ResizePullScrollback, false);
+
         Check(Native.ghostty_render_state_new(IntPtr.Zero, out _renderState), "render_state_new");
         Check(Native.ghostty_render_state_row_iterator_new(IntPtr.Zero, out _rowIterator), "row_iterator_new");
         Check(Native.ghostty_render_state_row_cells_new(IntPtr.Zero, out _rowCells), "row_cells_new");
