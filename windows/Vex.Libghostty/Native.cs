@@ -2,7 +2,8 @@ using System.Runtime.InteropServices;
 
 namespace Vex.Libghostty;
 
-// libghostty-vt bindings, pin ghostty@f64f4aca. All exports are cdecl.
+// libghostty-vt bindings, ghostty@f64f4aca with the ConPTY resize fix from
+// ghostty@c55f213aa. All exports are cdecl.
 // Enum values and struct layouts mirror include/ghostty/vt/*.h.
 internal static class Native
 {
@@ -215,6 +216,7 @@ internal static class Native
         Selection = 21,
         DefaultCursorStyle = 22,
         DefaultCursorBlink = 23,
+        ResizePullScrollback = 38,
     }
 
     internal enum TerminalData : int

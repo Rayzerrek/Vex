@@ -138,6 +138,22 @@ public sealed class FeedFilterTests
             }
         }
     }
+
+    [Fact]
+    public void Resize_GrowingRows_DoesNotPullConPtyScrollbackIntoScreen()
+    {
+        using var term = new GhosttyTerminal(5, 3);
+        Feed(term, "1\r\n2\r\n3\r\n4\r\n5");
+
+        term.Resize(5, 5, 8, 16);
+        term.UpdateFrame();
+
+        var rows = term.FrameRows
+            .Select(row => string.Concat(row.Cells.Select(cell => cell.Text)).TrimEnd())
+            .ToArray();
+        Assert.Equal(new[] { "3", "4", "5", "", "" }, rows);
+    }
+
     [Fact]
     public void StreamingLineUpdate_WrappedLine_Behavior()
     {
