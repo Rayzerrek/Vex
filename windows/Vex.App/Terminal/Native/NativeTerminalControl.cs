@@ -247,11 +247,15 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // Runs on the PTY reader thread during Feed (query responses) and is
         // written straight into ConPTY: DSR/OSC answers no longer wait for a
         // UI-thread pump, which is what tripped Neovim's 100 ms
-        // "Did not detect DSR response" timeout. Responses go through
-        // WriteResponseToPty, not a raw Write: ConPTY parses each input
+        // "Did not detect DSR response" timeout. Responses go through the
+        // session's WriteResponse, not a raw Write: ConPTY parses each input
         // write as one key encoding and drops ESC-prefixed chunks that are
         // not valid keys (DSR, OSC/DA reports), so they are fragmented.
-        _terminal.WritePty += (data, len) => WriteResponseToPty(data, len);
+        _terminal.WritePty += (data, len) =>
+        {
+            var session = _session;
+            session?.WriteResponse(data.AsSpan(0, len));
+        };
 
         _children = new VisualCollection(this)
         {
@@ -892,38 +896,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     /// </summary>
     private void WriteResponseToPty(byte[] data, int length)
     {
-        var session = _session;
-        if (session is null || length <= 0)
-            return;
-        var start = 0;
-        for (var i = 0; i < length; i++)
-        {
-            if (data[i] != 0x1B)
-                continue;
-            if (i > start)
-            {
-                session.Write(data.AsSpan(start, i - start));
-                ResponseGap();
-            }
-            session.Write(data.AsSpan(i, 1));
-            start = i + 1;
-            if (start < length)
-                ResponseGap();
-        }
-        if (start < length)
-            session.Write(data.AsSpan(start, length - start));
-    }
-
-    private static void ResponseGap()
-    {
-        // Let ConPTY's input thread consume the previous chunk before the
-        // next lands: back-to-back writes can merge into one pipe read and
-        // get swallowed as a unit again. A ~2 ms busy-wait is deterministic
-        // (Thread.Sleep is bound by the 15.6 ms timer granularity) and
-        // negligible next to Neovim's 100 ms DSR budget; responses are rare.
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        while (watch.Elapsed.TotalMilliseconds < 2)
-            Thread.SpinWait(200);
+        _session?.WriteResponse(data.AsSpan(0, length));
     }
 
     // ---- Rendering --------------------------------------------------------

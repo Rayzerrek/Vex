@@ -192,14 +192,57 @@ public sealed class TerminalSession : IDisposable
     /// never observe one, and sending this report both delivers the bytes to
     /// the child and makes runtimes fire their stdout resize event). Only
     /// sent when the application enabled mode 2048, so apps that never
-    /// negotiated it see nothing.</summary>
+    /// negotiated it see nothing.
+    ///
+    /// The report goes through <see cref="WriteResponse"/> (fragmented at
+    /// every ESC with a small gap between writes), not a raw <see cref="Write"/>:
+    /// ConPTY parses each input write as a single key encoding and drops
+    /// atomically-written ESC-prefixed chunks that are not valid keys, so an
+    /// unfragmented report never reaches the child (verified: the report bytes
+    /// were absent from the ConPTY stream while the harness wrote them raw).</summary>
     private void SendInBandResizeReport(short columns, short rows)
     {
         var body = $"[48;{rows};{columns};{rows * DefaultCellHeightPx};{columns * DefaultCellWidthPx}t";
         var report = new byte[1 + Encoding.ASCII.GetByteCount(body)];
         report[0] = 0x1b;
         Encoding.ASCII.GetBytes(body, report.AsSpan(1));
-        Write(report);
+        WriteResponse(report);
+    }
+
+    /// <summary>Fragments an emulator response at every ESC so ConPTY delivers
+    /// it as plain key events (a lone ESC, then ordinary characters) instead
+    /// of dropping the atomically-written chunk. Keystroke/mouse/paste input
+    /// must stay atomic and never goes through here.</summary>
+    public void WriteResponse(ReadOnlySpan<byte> data)
+    {
+        // Let ConPTY's input thread consume the previous chunk before the next
+        // lands: back-to-back writes can merge into one pipe read and get
+        // swallowed as a unit again. A ~2 ms busy-wait is deterministic
+        // (Thread.Sleep is bound by the 15.6 ms timer granularity).
+        static void Gap()
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            while (watch.Elapsed.TotalMilliseconds < 2)
+                Thread.SpinWait(200);
+        }
+
+        var start = 0;
+        for (var i = 0; i < data.Length; i++)
+        {
+            if (data[i] != 0x1B)
+                continue;
+            if (i > start)
+            {
+                Write(data[start..i]);
+                Gap();
+            }
+            Write(data.Slice(i, 1));
+            start = i + 1;
+            if (start < data.Length)
+                Gap();
+        }
+        if (start < data.Length)
+            Write(data[start..]);
     }
 
     private void SpawnChild(string commandLine, string workingDirectory)
