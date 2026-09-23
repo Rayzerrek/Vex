@@ -9,10 +9,10 @@ namespace Vex.App;
 /// <summary>
 /// Enables the DWM blur-behind backdrop via the undocumented but stable
 /// (since Windows 10 1803) SetWindowCompositionAttribute path, so the desktop
-/// shows through the chrome and terminal surface. Classic blur-behind is the
-/// primary on Windows 10 (acrylic there lags dragging and sometimes renders
-/// opaque); acrylic is attempted first on Windows 11 where DWM still honors
-/// it. Callers must fall back to an opaque background when
+/// shows through translucent chrome around the opaque terminal surface. Classic
+/// blur-behind is the primary on Windows 10 (acrylic there lags dragging and
+/// sometimes renders opaque); acrylic is attempted first on Windows 11 where
+/// DWM still honors it. Callers must fall back to an opaque background when
 /// <see cref="EnableAcrylic"/> returns false: a transparent window without a
 /// backdrop renders black. <see cref="Disable"/> turns the accent off again,
 /// used when an appearance flip moves the window to opaque chrome.

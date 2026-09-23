@@ -32,7 +32,8 @@ public sealed class TerminalPalette
         // acrylic. DWM can retain stale WPF glyph tiles when translucent row
         // visuals are recomposed after Alt+Tab; opaque terminal pixels give it
         // a coherent backing store, matching Windows Terminal's own surface.
-        Background = Freeze(Parse(theme.Background));
+        var background = Parse(theme.Background);
+        Background = Freeze(Color.FromRgb(background.R, background.G, background.B));
         Cursor = Freeze(Parse(theme.Cursor));
         Selection = Freeze(Parse(theme.SelectionBackground, alpha: 0xA0));
         Link = Freeze(Parse(theme.Blue));

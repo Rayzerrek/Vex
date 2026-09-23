@@ -205,9 +205,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         Cursor = Cursors.IBeam;
         MouseDown += OnTerminalMouseDown;
         MouseUp += OnTerminalMouseUp;
-        // Grayscale antialiasing so glyphs blend against the translucent
-        // surface; ClearType subpixel AA fringes when a run has no solid
-        // background behind it.
+        // Grayscale antialiasing keeps glyph edges stable against opaque cell
+        // backgrounds; ClearType subpixel AA fringes on the dark terminal.
         TextOptions.SetTextRenderingMode(this, TextRenderingMode.Grayscale);
 
         _terminal = new GhosttyTerminal(80, 24);

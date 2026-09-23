@@ -142,9 +142,9 @@ public static class ChromePalette
         // surfaces. Derived from the theme so overlays never clash with it.
         // The modal backdrop is one near-opaque wash in the chrome's base
         // color: the dark window is deliberately non-uniform (acrylic chrome
-        // at ~25% alpha against a ~90%-opaque terminal pane), so a thin scrim
-        // showed the blurred desktop through half of it and a flat color
-        // through the other half. One themed wash dims every surface alike.
+        // around a fully opaque terminal pane), so a thin scrim showed the
+        // blurred desktop through one region and a flat color through the other.
+        // One themed wash dims every surface alike.
         var scrimBase = Darken(bg, 0.62);
         Set(res, "VexBackdropScrimColor", FromArgb(0xDD, scrimBase.R, scrimBase.G, scrimBase.B));
         Set(res, "VexPressFillColor", Mix(bg, fg, 0.32));
