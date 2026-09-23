@@ -215,29 +215,26 @@ public sealed partial class MainWindow : Window
     {
         base.OnSourceInitialized(e);
         ApplyBackdrop();
-        // Some Windows 10 builds ignore an accent applied before the first
-        // frame is shown; re-apply once the window has actually rendered.
+        // Some DWM builds ignore an accent applied before the first frame;
+        // re-apply once the window has actually rendered.
         ContentRendered += (_, _) => ApplyBackdrop();
     }
 
     private void ApplyBackdrop()
     {
-        // Dark chrome keeps the DWM blur-behind with a theme-tinted wash. The
-        // light chrome is fully opaque instead: translucent bright surfaces
-        // over a blurred desktop read muddy, and DWM skips recomposition on a
-        // tint change until the next move/resize — which showed up as a
-        // washed-out window after switching appearance until it was dragged.
-        if (AppSettings.Instance.IsDarkAppearance)
+        // Dark chrome keeps modern DWM acrylic where it is reliable. Windows
+        // 10 and any DWM that rejects the request use a fully opaque window;
+        // the legacy blur path can leave stale WPF glyph tiles after Alt+Tab.
+        if (AppSettings.Instance.IsDarkAppearance &&
+            WindowBackdrop.EnableAcrylic(this,
+                ChromePalette.BackdropTint(AppSettings.Instance.ThemeName), alpha: 0x30))
         {
-            if (WindowBackdrop.EnableAcrylic(this,
-                    ChromePalette.BackdropTint(AppSettings.Instance.ThemeName), alpha: 0x30))
-                Background = Brushes.Transparent;
+            Background = Brushes.Transparent;
+            return;
         }
-        else
-        {
-            WindowBackdrop.Disable(this);
-            Background = (Brush)FindResource("VexBackground");
-        }
+
+        WindowBackdrop.Disable(this);
+        Background = (Brush)FindResource("VexBackground");
     }
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)
