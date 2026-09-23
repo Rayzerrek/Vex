@@ -1150,8 +1150,8 @@ internal static class RenderSelfTest
                     continue;
                 var (bg, baseColor) = control.SelfTestResolveCell(cell);
                 var expected = bg ?? baseColor;
-                // Premultiplied over the (opaque-ish) backdrop: compare the
-                // corner pixel channels to the resolved color's.
+                // Premultiplied over the opaque base fill: compare the corner
+                // pixel channels to the resolved color's.
                 var (r, g, b) = CellCornerRgb(control, shot, col, row);
                 var tol = 60;
                 if (Math.Abs(r - expected.R) > tol || Math.Abs(g - expected.G) > tol || Math.Abs(b - expected.B) > tol)

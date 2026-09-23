@@ -28,11 +28,11 @@ public sealed class TerminalPalette
     public TerminalPalette(TerminalTheme theme)
     {
         Foreground = Freeze(Parse(theme.Foreground));
-        // Translucent so the window's acrylic backdrop shows through for a
-        // frosted surface. The base fill covers the whole control uniformly
-        // and text runs draw straight on top, so there is no double-darkening
-        // where cells re-fill the default background.
-        Background = Freeze(Parse(theme.Background, alpha: 0xE6));
+        // Keep the terminal surface opaque even when the window chrome uses
+        // acrylic. DWM can retain stale WPF glyph tiles when translucent row
+        // visuals are recomposed after Alt+Tab; opaque terminal pixels give it
+        // a coherent backing store, matching Windows Terminal's own surface.
+        Background = Freeze(Parse(theme.Background));
         Cursor = Freeze(Parse(theme.Cursor));
         Selection = Freeze(Parse(theme.SelectionBackground, alpha: 0xA0));
         Link = Freeze(Parse(theme.Blue));

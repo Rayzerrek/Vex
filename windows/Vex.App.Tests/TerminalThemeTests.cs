@@ -1,5 +1,6 @@
 using Vex.App;
 using Vex.App.Model;
+using Vex.App.Terminal.Native;
 using Xunit;
 
 namespace Vex.App.Tests;
@@ -111,6 +112,15 @@ public sealed class TerminalThemeTests
         Assert.True(new TerminalTheme { Background = "#1E1E2E" }.IsDark);
         Assert.False(new TerminalTheme { Background = "#FFFFFF" }.IsDark);
         Assert.False(new TerminalTheme { Background = "#F7F8FA" }.IsDark);
+    }
+
+    [Fact]
+    public void TerminalPalette_BackgroundIsOpaqueForDwmComposition()
+    {
+        var palette = new TerminalPalette(BuiltInThemes.VexDark);
+        var background = Assert.IsType<System.Windows.Media.SolidColorBrush>(palette.Background);
+
+        Assert.Equal(byte.MaxValue, background.Color.A);
     }
 
     [Fact]
