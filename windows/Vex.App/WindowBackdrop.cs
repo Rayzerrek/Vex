@@ -7,15 +7,13 @@ using System.Windows.Media;
 namespace Vex.App;
 
 /// <summary>
-/// Enables the DWM blur-behind backdrop via the undocumented but stable
-/// (since Windows 10 1803) SetWindowCompositionAttribute path, so the desktop
-/// shows through translucent chrome around the opaque terminal surface. Classic
-/// blur-behind is the primary on Windows 10 (acrylic there lags dragging and
-/// sometimes renders opaque); acrylic is attempted first on Windows 11 where
-/// DWM still honors it. Callers must fall back to an opaque background when
-/// <see cref="EnableAcrylic"/> returns false: a transparent window without a
-/// backdrop renders black. <see cref="Disable"/> turns the accent off again,
-/// used when an appearance flip moves the window to opaque chrome.
+/// Enables the modern DWM acrylic backdrop on Windows 11 through the
+/// undocumented but long-lived SetWindowCompositionAttribute path. Legacy
+/// blur-behind is deliberately disabled on Windows 10: its older composition
+/// path can retain stale WPF glyph tiles after Alt+Tab. Callers must fall back
+/// to an opaque background when this returns false; a transparent window
+/// without a working backdrop renders black. <see cref="Disable"/> turns the
+/// accent off again when switching to an opaque appearance.
 /// </summary>
 internal static class WindowBackdrop
 {
@@ -74,13 +72,19 @@ internal static class WindowBackdrop
     private static extern bool RedrawWindow(IntPtr hwnd, IntPtr rect, IntPtr region, uint flags);
 
     /// <summary>
-    /// Turns on the DWM backdrop with a color tint. Returns false when neither
-    /// acrylic nor blur-behind is available. Idempotent: repeat calls re-apply
-    /// the accent with the new tint (DWM sometimes skips recomposition on a
-    /// pure tint change, so the window is explicitly invalidated).
+    /// Turns on the DWM backdrop with a color tint. Returns false on Windows
+    /// 10 or when neither acrylic nor blur-behind is available. Idempotent:
+    /// repeat calls re-apply the accent with the new tint (DWM sometimes skips
+    /// recomposition on a pure tint change, so the window is invalidated).
     /// </summary>
     public static bool EnableAcrylic(Window window, Color tint, byte alpha)
     {
+        // Windows 11 still reports major version 10. Build 22000 is the first
+        // Windows 11 build; earlier Windows 10 releases use the unstable legacy
+        // blur composition that produced stale WPF glyph tiles.
+        if (!SupportsModernAcrylic(Environment.OSVersion.Version))
+            return false;
+
         var handle = new WindowInteropHelper(window).Handle;
         if (handle == IntPtr.Zero)
             return false;
@@ -95,11 +99,8 @@ internal static class WindowBackdrop
         var needsFlush = !parameters.BackdropActive;
         parameters.BackdropActive = true;
 
-        // Acrylic is the crisp vibrancy look, but on Windows 10 it lags window
-        // dragging and can render fully opaque; classic blur-behind is the
-        // reliable choice there and the fallback everywhere else.
-        var acrylicActive = !IsWindows10() &&
-            TrySetAccent(handle, AccentState.EnableAcrylicBlurBehind, tint, alpha, accentFlags: 2);
+        var acrylicActive = TrySetAccent(
+            handle, AccentState.EnableAcrylicBlurBehind, tint, alpha, accentFlags: 2);
 
         if (!acrylicActive && !TrySetAccent(handle, AccentState.EnableBlurBehind, tint, alpha, accentFlags: 0))
         {
@@ -136,6 +137,12 @@ internal static class WindowBackdrop
         return true;
     }
 
+    /// <summary>Returns whether the running Windows version has the modern
+    /// acrylic composition path. Windows 11 keeps major version 10, so the
+    /// build number is the compatibility boundary.</summary>
+    internal static bool SupportsModernAcrylic(Version version)
+        => version.Major > 10 || (version.Major == 10 && version.Build >= 22000);
+
     /// <summary>Turns the DWM accent off; used when an appearance flip moves
     /// the window onto fully opaque, self-painted chrome.</summary>
     public static void Disable(Window window)
@@ -156,13 +163,6 @@ internal static class WindowBackdrop
             HookedWindows.Add(window, parameters);
         }
         return parameters;
-    }
-
-    private static bool IsWindows10()
-    {
-        // Windows 11 is build 22000+; anything else in the 10.x range is 10.
-        var version = Environment.OSVersion.Version;
-        return version.Major == 10 && version.Build < 22000;
     }
 
     private static void InstallMoveToggle(Window window)
