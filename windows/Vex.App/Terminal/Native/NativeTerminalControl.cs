@@ -1114,9 +1114,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 cellsSpanned += widths[i];
 
             // Only paint cells that carry their own background color. The
-            // default background is already filled by the control's base
-            // layer, so re-filling here would darken text rows against the
-            // frosted surface and expose a visible band.
+            // opaque base layer already covers default cells; filling every
+            // run again adds work and can expose seams at fractional widths.
             if (bg is not null)
                 context.DrawRectangle(bg, null, new Rect(x, rowY, cellsSpanned * _cellWidth, _cellHeight));
 
