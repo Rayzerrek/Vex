@@ -117,7 +117,9 @@ public sealed class TerminalThemeTests
     [Fact]
     public void TerminalPalette_BackgroundIsOpaqueForDwmComposition()
     {
-        var palette = new TerminalPalette(BuiltInThemes.VexDark);
+        var theme = BuiltInThemes.Clone(BuiltInThemes.VexDark);
+        theme.Background = "#80FFFFFF";
+        var palette = new TerminalPalette(theme);
         var background = Assert.IsType<System.Windows.Media.SolidColorBrush>(palette.Background);
 
         Assert.Equal(byte.MaxValue, background.Color.A);
