@@ -79,8 +79,6 @@ public sealed partial class App : Application
         Vex.App.Model.AppSettings.Instance.InitializeAppearance();
         ChromePalette.Apply(Vex.App.Model.AppSettings.Instance.ThemeName);
         Model.StartupMark.Note("palette applied");
-        Vex.App.Model.EditorHighlighting.SetAppearance(
-            Vex.App.Model.AppSettings.Instance.IsDarkAppearance);
         Model.StartupMark.Note("appearance ready");
         Vex.App.Model.AppSettings.Instance.PropertyChanged += (_, e) =>
         {
@@ -91,13 +89,11 @@ public sealed partial class App : Application
             var settings = Vex.App.Model.AppSettings.Instance;
             ChromePalette.Apply(settings.ThemeName);
 
-            if (e.PropertyName == nameof(Vex.App.Model.AppSettings.Appearance))
-            {
-                // Editors carry their own syntax palette, so an appearance
-                // flip swaps One Dark for One Light (and back) live.
-                Vex.App.Model.EditorHighlighting.SetAppearance(settings.IsDarkAppearance);
-                Vex.App.Model.EditorPane.OnAppearanceChanged();
-            }
+            // Editors paint their own surface, gutter and syntax palette on
+            // top of the chrome brushes, so both properties need the redraw:
+            // within one appearance a theme switch re-tints the editor
+            // surface, and across appearances the syntax set flips too.
+            Vex.App.Model.EditorPane.OnThemeChanged();
         };
 
         // Construct the workspace and window immediately without awaiting I/O.

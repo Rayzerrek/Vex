@@ -58,6 +58,14 @@ a bitmap and checks the pixels: a full screen of text, a clean screen after
 ED2 (no ghost rows), wide-character rendering, and pixel-identical snap-back
 after scrolling.
 
+Set `VEX_SELFTEST_INCR=1` to run only the incremental-repaint scenario. It
+streams chunked output, scrolls, resizes the grid, commits synchronized-output
+frames, and overwrites lines in place; after every phase it compares the pixels
+the incremental redraw produced against a full repaint of the same buffer, and
+scans cells the buffer says are blank for leftover ink. That is the harness for
+duplicated/ghost text: a stale row, a half-applied synchronized-output frame,
+or a redraw pass that threw all show up as a phase that fails.
+
 ### Live scenarios
 
 These drive a real ConPTY session and pixel-check the result against the

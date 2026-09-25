@@ -55,6 +55,19 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private volatile bool _disposed;
     private int _bellPending;
 
+    // Redraw passes that threw. A throw aborts the pass mid-way, so every row
+    // below the failure keeps its previous pixels until a later pass reaches
+    // them — reported by the self-test so a silently-half-painted screen is
+    // never mistaken for a rendering quirk.
+    private int _renderFailures;
+
+    // Start of the current synchronized-output deferral (DEC 2026). A block
+    // publishes one atomic frame, so painting inside it tears the screen; the
+    // timestamp is the safety net for an application that dies mid-frame with
+    // the mode still set.
+    private long _syncDeferSince;
+    private const int SyncDeferralLimitMs = 400;
+
     // Per-row render caches: the row's last-painted content hash plus the
     // render version it was painted with. RedrawRow skips the DrawingVisual
     // pass when both match, so redundant full redraws cost only the hash
@@ -931,6 +944,34 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             if (flushStarted is not null)
                 Diag($"flush dirty={dirty} full={_needsFullRedraw} scroll={viewportMoved} offset={scrollbar.Offset}/{scrollbar.Total} rows={_rows} cols={_cols} ms={flushStarted.Elapsed.TotalMilliseconds:F4}");
 
+            // Synchronized output (DEC 2026) publishes one atomic frame, and
+            // the emulator already exposes the rows the application has
+            // written so far. Painting mid-block shows a torn screen: new text
+            // in the rows reached so far, the previous frame in the rest — the
+            // duplicated/ghost lines seen while a TUI or an agent streams.
+            // Defer instead; the flag forces a complete repaint the moment the
+            // block closes, so nothing half-applied is ever shown.
+            if (_terminal.SynchronizedOutput)
+            {
+                var now = Environment.TickCount64;
+                if (_syncDeferSince == 0)
+                    _syncDeferSince = now;
+                // One bounded deferral per continuous block: an application
+                // that leaves the mode set paints normally from here on
+                // instead of batching every frame behind the limit.
+                if (now - _syncDeferSince < SyncDeferralLimitMs)
+                {
+                    _needsFullRedraw = true;
+                    if (diagPath is not null)
+                        Diag("flush sync-deferred");
+                    return;
+                }
+            }
+            else
+            {
+                _syncDeferSince = 0;
+            }
+
             if (_needsFullRedraw || dirty == FrameDirty.Full || viewportMoved)
             {
                 RedrawAll(force: true);
@@ -961,6 +1002,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // Guard against emulator state issues; schedule a full redraw on
             // the next pump cycle.
             Diag($"flush-EXCEPTION {e.GetType().Name}: {e.Message} @ {e.StackTrace?.Split('\n')[0]}");
+            _renderFailures++;
             _needsFullRedraw = true;
         }
     }
@@ -998,13 +1040,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var hash = RowHash(frameRow, _cols);
         if (!force && _rowVersions[row] == _renderVersion && _rowHashes[row] == hash)
             return;
-        _rowVersions[row] = _renderVersion;
-        _rowHashes[row] = hash;
 
         // The link scan is keyed by the same hash: equal hash means the row
         // content is identical, so the spans stay valid between redraws.
         var links = _rowLinkHashes[row] == hash ? _rowLinks[row] : (_rowLinks[row] = ComputeRowLinks(frameRow, row));
-        _rowLinkHashes[row] = hash;
 
         using var dc = _rowVisuals[row].RenderOpen();
 
@@ -1019,7 +1058,12 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var runStart = 0;
         _runBuilder.Clear();
         EnsureTextRunCapacity(Math.Max(1, _cols));
-        EnsureRunWidthCapacity(Math.Max(1, _cols * 2));
+        // One width entry per UTF-16 unit the run loop copies, so a row of
+        // multi-codepoint clusters needs more than the old 2*cols guess. An
+        // undersized buffer threw IndexOutOfRange mid-row, and because every
+        // retry aborted at the same row, everything below it stopped
+        // repainting — stale/duplicated text until the row's content changed.
+        EnsureRunWidthCapacity(Math.Max(1, RowTextUnits(cells, _cols)));
         var textRuns = 0;
         var runWidthCount = 0;
 
@@ -1099,6 +1143,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var linkWidth = (link.EndCol - link.StartCol + 1) * _cellWidth;
             dc.DrawLine(_linkPen, new Point(linkX, y + _cellHeight - _linkPen.Thickness), new Point(linkX + linkWidth, y + _cellHeight - _linkPen.Thickness));
         }
+
+        // Only now is the row painted in full, so only now may it be cached:
+        // marking it earlier remembered a half-drawn row as up to date, which
+        // left the missing pixels on screen until something else changed.
+        _rowVersions[row] = _renderVersion;
+        _rowHashes[row] = hash;
+        _rowLinkHashes[row] = hash;
 
         int FlushRun(DrawingContext context, StringBuilder runText, int[] widths, int cellCount, int startCol, double rowY,
             ColorTag fgTag, int fgValue, ColorTag bgTag, int bgValue, CellFlags flags, int textRunIndex)
@@ -1197,8 +1248,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                     context.DrawGlyphRun(fg, run);
                     if (!syntheticBold)
                         return;
-                    // Second pass offset by ~1px (fractional for subpixel
-                    // crispness), the classic cheap fake-bold.
+                    // Second pass offset by 1 physical pixel (fractional in DIPs
+                    // for subpixel crispness), the classic cheap fake-bold.
                     var boldRun = new GlyphRun(
                         glyphFace!,
                         0,
@@ -1206,7 +1257,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                         _fontSize,
                         (float)_pixelsPerDip,
                         indices,
-                        new Point(originX + Math.Max(1, _pixelsPerDip), rowY + _baselineY),
+                        new Point(originX + (1.0 / _pixelsPerDip), rowY + _baselineY),
                         advances,
                         null, null, null, null, null, null);
                     context.DrawGlyphRun(fg, boldRun);
@@ -1269,7 +1320,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                         var fx = colCursor * _cellWidth;
                         context.DrawText(formatted, new Point(fx, rowY));
                         if (syntheticBold)
-                            context.DrawText(formatted, new Point(fx + Math.Max(1, _pixelsPerDip), rowY));
+                            context.DrawText(formatted, new Point(fx + (1.0 / _pixelsPerDip), rowY));
                     }
                     colCursor += widths[unitStart];
                 }
@@ -1345,6 +1396,27 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private readonly record struct LinkSpan(int StartCol, int EndCol, int TextStart, int TextLength);
 
     /// <summary>
+    /// Characters a row contributes to the pooled text and width buffers: one
+    /// per cell, or one per UTF-16 unit for multi-codepoint grapheme clusters
+    /// (emoji ZWJ sequences, combining marks), which the render loop copies
+    /// verbatim. Wide-glyph spacer tails contribute nothing.
+    /// </summary>
+    private static int RowTextUnits(CellInfo[] cells, int cols)
+    {
+        var units = 0;
+        var colCount = Math.Min(cols, cells.Length);
+        for (var col = 0; col < colCount; col++)
+        {
+            ref readonly var cell = ref cells[col];
+            if (cell.Tail)
+                continue;
+            var text = cell.Text;
+            units += text is null || text.Length == 0 ? 1 : text.Length;
+        }
+        return units;
+    }
+
+    /// <summary>
     /// FNV-1a over the cells RedrawRow renders: (text, width, flags, fg, bg)
     /// per column, mirroring the render loop's cell selection so equal hashes
     /// guarantee equal pixels for the current metrics. Every character of a
@@ -1386,7 +1458,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     {
         var cells = row.Cells;
         var colCount = Math.Min(_cols, cells.Length);
-        var capacity = colCount * 2;
+        // Sized to the row's UTF-16 units, not a 2*cols guess: a cluster-dense
+        // row overflowed the pooled buffer right here, before the URL gate
+        // below could even decide the row had no links.
+        var capacity = Math.Max(1, RowTextUnits(cells, _cols));
         if (_linkText.Length < capacity)
         {
             _linkText = new char[capacity];

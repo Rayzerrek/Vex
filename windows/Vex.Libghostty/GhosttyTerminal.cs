@@ -969,6 +969,24 @@ public sealed class GhosttyTerminal : IDisposable
         return Native.ghostty_terminal_get(_terminal, TerminalData.Mode, (IntPtr)(&config)) == Result.Success && config.value;
     }
 
+    /// <summary>
+    /// Whether the application is inside a synchronized-output block
+    /// (DEC private mode 2026). Applications that redraw a whole frame — nvim,
+    /// opencode, the agent CLIs — wrap it in `CSI ? 2026 h` / `CSI ? 2026 l`
+    /// to publish it atomically, and until the block closes the emulator
+    /// already exposes the rows written so far. A host that paints between the
+    /// markers shows a torn screen: new text in the rows the app has reached,
+    /// the previous frame everywhere else. Hosts should wait for the close.
+    /// </summary>
+    public bool SynchronizedOutput
+    {
+        get
+        {
+            lock (_vtLock)
+                return GetMode(2026);
+        }
+    }
+
     /// <summary>Whether the application enabled DEC private mode 2048
     /// (in-band resize). Under ConPTY the child never learns about grid
     /// changes from the OS — no SIGWINCH and no console resize event — so a

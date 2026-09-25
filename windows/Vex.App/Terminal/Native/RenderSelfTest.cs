@@ -43,6 +43,12 @@ internal static class RenderSelfTest
     /// working directory is the pane's own.</summary>
     public static string? LiveFile { get; } = Environment.GetEnvironmentVariable("VEX_LIVE_FILE");
 
+    /// <summary>Run only the deterministic incremental-repaint scenario
+    /// (<see cref="RunIncrementalParity"/>): streamed output, scrolls, and
+    /// grid resizes, each checked for pixels the incremental paint left
+    /// stale.</summary>
+    public static bool IncrementalMode { get; } = Environment.GetEnvironmentVariable("VEX_SELFTEST_INCR") == "1";
+
     /// <summary>With VEX_LIVE=1, run the nvim mouse round-trip instead: mouse
     /// tracking must engage from nvim's own output, a press-drag-release must
     /// select in nvim's Visual mode, and D must delete the selection.</summary>
@@ -89,7 +95,10 @@ internal static class RenderSelfTest
                     }
                     return;
                 }
-                RunCore(control);
+                if (IncrementalMode)
+                    RunIncrementalParity(control);
+                else
+                    RunCore(control);
             }
             catch (Exception e)
             {
@@ -487,19 +496,26 @@ internal static class RenderSelfTest
         {
             Shot(control, Path.Combine(dir, "prompt-01-after-exit.png"));
             DumpRows(control, "after-exit");
-            // The regression: after a TUI exits there must be exactly one
-            // prompt. The stale OSC 133;A marker used to force a line feed
-            // here, leaving the prompt duplicated on the row below.
-            var prompt0 = control.SelfTestRowText(0);
-            var prompt1 = control.SelfTestRowText(1);
-            var prompt2 = control.SelfTestRowText(2);
-            // Row 0 is the restored command line ("... nvim --clean -i NONE"),
-            // row 1 the single prompt, row 2 must be empty (no duplicate).
-            var ok = prompt0.Contains("nvim") && !prompt1.Contains("nvim")
-                     && prompt1.Length > 0 && prompt2.Length == 0;
-            Report(control, ok
+            // The regression: after a TUI exits the shell redraws its prompt,
+            // and the stale OSC 133;A marker used to force a line feed — so the
+            // prompt landed twice, on consecutive rows. Assert the invariant
+            // rather than one shell's row layout: no two adjacent rows may
+            // carry identical text, and the exited command line appears once.
+            var duplicateRow = -1;
+            var commandRows = 0;
+            var previous = "";
+            for (var r = 0; r < control.SelfTestRows; r++)
+            {
+                var current = control.SelfTestRowText(r);
+                if (current.Contains("nvim --clean"))
+                    commandRows++;
+                if (current.Length > 0 && current == previous)
+                    duplicateRow = r;
+                previous = current;
+            }
+            Report(control, duplicateRow < 0 && commandRows == 1
                 ? "PASS prompt: single prompt after TUI exit"
-                : $"FAIL prompt: duplicate or misplaced prompt row0='{prompt0}' row1='{prompt1}' row2='{prompt2}'");
+                : $"FAIL prompt: duplicated row{duplicateRow} or {commandRows} command-line rows");
             control.SelfTestType("hello");
         }));
         steps.Enqueue((1500, () =>
@@ -920,6 +936,217 @@ internal static class RenderSelfTest
         Report(control, control.SelfTestBenchLinkScan(100));
 
         Report(control, "done");
+    }
+
+    /// <summary>
+    /// Deterministic incremental-repaint parity. Streams agent-style output in
+    /// small chunks, scrolls, resizes the grid, and overwrites lines in place —
+    /// capturing after every phase and comparing the incrementally painted
+    /// pixels against a full repaint of the very same emulator buffer. Any
+    /// difference is a pixel the incremental path left stale: the duplicated /
+    /// ghost lines seen while an agent streams. Also probes blank cells for
+    /// leftover ink, which catches a glyph that survived an overwrite.
+    /// </summary>
+    private static void RunIncrementalParity(NativeTerminalControl control)
+    {
+        Report(control, $"incr start cols={control.SelfTestCols} rows={control.SelfTestRows} cell={control.SelfTestCellWidth:0.0}x{control.SelfTestCellHeight:0.0}");
+        control.SelfTestStabilizeCaret();
+        control.SelfTestFeed("\u001b[2J\u001b[H");
+
+        // Agent-style streaming: ConPTY-sized chunks, one flush per chunk,
+        // wrapping and scrolling the buffer as it goes. The every-eighth-chunk
+        // captures keep the run honest without a full-grid compare per chunk.
+        var stream = new StringBuilder();
+        for (var i = 1; i <= 60; i++)
+            stream.Append("stream-line-").Append(i).Append(" the quick brown fox jumps 0123456789\r\n");
+        var text = stream.ToString();
+        for (var i = 0; i < text.Length; i += 37)
+        {
+            control.SelfTestFeed(text.Substring(i, Math.Min(37, text.Length - i)));
+            if (i % (37 * 8) == 0)
+                ParityCheck(control, $"incr-stream@{i}");
+        }
+        ParityCheck(control, "incr-stream-end");
+        InkGhostCheck(control, "incr-stream-end");
+
+        // Viewport scroll up and back through scrollback.
+        control.SelfTestScroll(-7);
+        ParityCheck(control, "incr-scrolled-up");
+        control.SelfTestScroll(7);
+        ParityCheck(control, "incr-scrolled-back");
+
+        // A pane resize mid-stream (fewer rows here), then more output: the
+        // rows below the content must not keep pre-resize glyphs.
+        var rows = control.SelfTestRows;
+        control.SelfTestResizeGrid(control.SelfTestCols, Math.Max(6, rows - 5));
+        ParityCheck(control, "incr-resized-smaller");
+        control.SelfTestFeed("after-resize one\r\nafter-resize two\r\n");
+        ParityCheck(control, "incr-after-resize-output");
+        InkGhostCheck(control, "incr-after-resize-output");
+        control.SelfTestResizeGrid(control.SelfTestCols, rows);
+        ParityCheck(control, "incr-resized-back");
+
+        // In-place status redraws (spinner) and a colored full-width bar, the
+        // shapes an agent TUI repaints many times a second.
+        control.SelfTestFeed("\u001b[1;1H\u001b[48;2;30;40;60mstatus: working      \u001b[0m");
+        ParityCheck(control, "incr-status");
+        control.SelfTestFeed("\u001b[1;1H\u001b[48;2;30;40;60mstatus: done         \u001b[0m");
+        ParityCheck(control, "incr-status2");
+        control.SelfTestFeed("\u001b[1;1H\u001b[0K");
+        ParityCheck(control, "incr-status-cleared");
+        InkGhostCheck(control, "incr-status-cleared");
+
+        // Synchronized output (DEC 2026): a TUI/agent frame must reach the
+        // screen in one step. Nothing may change between the opening marker
+        // and the closing one, or the pane shows a half-updated frame — new
+        // text in the rows written so far while the previous frame still fills
+        // the rest, which reads as duplicated/ghost lines.
+        control.SelfTestFeed("\u001b[2J\u001b[H");
+        control.SelfTestFeed("baseline one\r\nbaseline two\r\nbaseline three\r\n");
+        var syncBefore = Capture(control);
+        control.SelfTestFeed("\u001b[?2026h");
+        control.SelfTestFeed("\u001b[1;1Hframe one   ");
+        Report(control, PixelsEqual(syncBefore, Capture(control))
+            ? "PASS incr-sync: mid-frame pixels unchanged"
+            : "FAIL incr-sync: half-applied frame painted");
+        control.SelfTestFeed("\u001b[2;1Hframe two   ");
+        Report(control, PixelsEqual(syncBefore, Capture(control))
+            ? "PASS incr-sync: second mid-frame unchanged"
+            : "FAIL incr-sync: second half-applied frame painted");
+        control.SelfTestFeed("\u001b[?2026l");
+        var syncAfter = Capture(control);
+        Report(control, !PixelsEqual(syncBefore, syncAfter)
+            ? "PASS incr-sync: frame committed on close"
+            : "FAIL incr-sync: frame never appeared");
+        ParityCheck(control, "incr-sync-after-close");
+        InkGhostCheck(control, "incr-sync-after-close");
+
+        // Multi-codepoint clusters: a narrow cell holding three UTF-16 units
+        // (keycap "1️⃣" = digit + VS16 + combining keycap) contributes three
+        // run-width entries, so a row full of them exceeds the pooled
+        // per-row buffers every cell is copied into. A throw mid-redraw
+        // aborts the pass, and every retry aborts at the same row: the rows
+        // below it stop updating — stale/duplicated text until a full repaint.
+        control.SelfTestFeed("\u001b[2J\u001b[H");
+        var failuresBefore = control.SelfTestRenderFailures;
+        var clusters = new StringBuilder();
+        for (var i = 0; i < control.SelfTestCols; i++)
+            clusters.Append('1').Append('\uFE0F').Append('\u20E3');
+        control.SelfTestFeed(clusters.ToString());
+        // Repaint once before comparing: the first paint of a cluster whose
+        // fallback font is not loaded yet rasterizes one cell at a time while
+        // the face resolves, which is a first-render artifact of the font
+        // cache rather than a stale-pixel difference.
+        control.SelfTestFullRedraw();
+        Report(control, $"incr-cluster cells: {CellAttrDumpRange(control, 0, 0, 4)}");
+        Report(control, control.SelfTestRenderFailures == failuresBefore
+            ? "PASS incr-clusters: cluster-dense row redraws cleanly"
+            : $"FAIL incr-clusters: {control.SelfTestRenderFailures - failuresBefore} redraw passes threw");
+        control.SelfTestFeed("\r\nafter clusters one\r\nafter clusters two\r\n");
+        for (var r = 0; r < Math.Min(4, control.SelfTestRows); r++)
+        {
+            var rowText = control.SelfTestRowText(r);
+            Report(control, $"incr-clusters row{r} len={rowText.Length} head='{rowText[..Math.Min(24, rowText.Length)]}'");
+        }
+        ParityCheck(control, "incr-clusters-followup");
+        InkGhostCheck(control, "incr-clusters-followup");
+        Report(control, control.SelfTestRenderFailures == failuresBefore
+            ? "PASS incr-clusters-followup: rows below still painting"
+            : $"FAIL incr-clusters-followup: {control.SelfTestRenderFailures - failuresBefore} redraw passes threw");
+
+        Report(control, "incr done");
+    }
+
+    /// <summary>Captures the incrementally painted frame, repaints the whole
+    /// surface from the same buffer, and compares. A mismatch means the
+    /// incremental path left pixels behind — the duplicated/ghost text.</summary>
+    private static void ParityCheck(NativeTerminalControl control, string label)
+    {
+        var incremental = Capture(control);
+        control.SelfTestFullRedraw();
+        var forced = Capture(control);
+        if (PixelsEqual(incremental, forced))
+        {
+            Report(control, $"PASS {label}: incremental pixels match a full repaint");
+            return;
+        }
+        var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+        var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+        var height = Math.Max(1, incremental.Length / (width * 4));
+        var rowPixels = Math.Max(1, (int)Math.Round(control.SelfTestCellHeight * dpi));
+        var diff = 0;
+        var reported = 0;
+        int minX = int.MaxValue, maxX = -1, minY = int.MaxValue, maxY = -1;
+        for (var i = 0; i < incremental.Length; i += 4)
+        {
+            if (incremental[i] == forced[i] && incremental[i + 1] == forced[i + 1] && incremental[i + 2] == forced[i + 2])
+                continue;
+            diff++;
+            var pixel = i / 4;
+            var x = pixel % width;
+            var y = pixel / width;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+            if (reported < 6)
+            {
+                var row = y / rowPixels;
+                var col = x / Math.Max(1, (int)Math.Round(control.SelfTestCellWidth * dpi));
+                Report(control, $"{label} differ row{row} col{col} px=({x},{y}) incremental=({incremental[i]},{incremental[i + 1]},{incremental[i + 2]}) forced=({forced[i]},{forced[i + 1]},{forced[i + 2]})");
+                reported++;
+            }
+        }
+        Report(control, $"FAIL {label}: {diff} pixels differ from a full repaint (x {minX}-{maxX}, y {minY}-{maxY} of {width}x{height})");
+        control.SelfTestFullRedraw();
+        var forcedAgain = Capture(control);
+        Report(control, PixelsEqual(forced, forcedAgain)
+            ? $"{label} repeat: two full repaints are identical"
+            : $"{label} repeat: two full repaints DIFFER (non-deterministic paint)");
+
+        var diffRow = minY / rowPixels;
+        Report(control, $"{label} row{diffRow} text len={control.SelfTestRowText(diffRow).Length}");
+        foreach (var probeCol in new[] { 0, 1, 2, 3, 10, 40 })
+        {
+            Report(control, $"{label} ink col{probeCol} incremental={CellInk(control, incremental, probeCol, diffRow)} forced={CellInk(control, forced, probeCol, diffRow)}");
+        }
+    }
+
+    /// <summary>Blank cells must carry no ink: a glyph that survived an
+    /// overwrite or a shift shows up as a lit cell centre the buffer says is
+    /// empty. Overlap-prone neighbours (wide glyphs, AA spill) are skipped,
+    /// like <see cref="ReplayCheck"/> does for backgrounds.</summary>
+    private static void InkGhostCheck(NativeTerminalControl control, string label)
+    {
+        var shot = Capture(control);
+        var caret = control.SelfTestCaretCell();
+        var ghosts = 0;
+        for (var row = 0; row < Math.Min(control.SelfTestRows, 24); row++)
+        {
+            var line = control.SelfTestLine(row);
+            if (line is null)
+                continue;
+            var cells = line.Cells;
+            for (var col = 0; col < cells.Length; col++)
+            {
+                if (caret is { Row: var caretRow, Col: var caretCol } && row == caretRow && col == caretCol)
+                    continue;
+                if (cells[col].Text.Length > 0)
+                    continue;
+                if (col > 0 && cells[col - 1].Text.Length > 0)
+                    continue;
+                if (col + 1 < cells.Length && cells[col + 1].Text.Length > 0)
+                    continue;
+                if (!HasInkAt(control, shot, col, row))
+                    continue;
+                ghosts++;
+                if (ghosts <= 8)
+                    Report(control, $"{label} ghost row{row} col{col} text='{control.SelfTestRowText(row)}'");
+            }
+        }
+        Report(control, ghosts == 0
+            ? $"PASS {label}: no ghost ink in blank cells"
+            : $"FAIL {label}: {ghosts} blank cells carry ink");
     }
 
     private static void CheckIndexedThemeContrast(NativeTerminalControl control)
