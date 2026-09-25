@@ -8,7 +8,11 @@ namespace Vex.App.Tests;
 /// <summary>
 /// Theme resolution decides what the terminal and chrome look like, and a
 /// stale name persisted from the other appearance must never re-tint the app.
+/// Shares the "CustomTheme" collection with the editor palette tests: every
+/// class in it edits the shared <see cref="BuiltInThemes.Custom"/> mutable
+/// theme, so they must not run concurrently.
 /// </summary>
+[Collection("CustomTheme")]
 public sealed class TerminalThemeTests
 {
     [Fact]

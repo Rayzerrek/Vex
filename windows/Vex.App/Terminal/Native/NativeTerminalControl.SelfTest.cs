@@ -274,4 +274,34 @@ public sealed partial class NativeTerminalControl
         UpdateBlinkTimer();
         DrawCaret();
     }
+
+    /// <summary>Redraw passes that threw since the run started.</summary>
+    internal int SelfTestRenderFailures => _renderFailures;
+
+    /// <summary>Repaints the whole surface from the emulator buffer, the way a
+    /// palette/font change does. The pixel-parity scenarios compare this
+    /// against the incremental paint: any difference is a pixel the
+    /// incremental path left stale.</summary>
+    internal void SelfTestFullRedraw()
+    {
+        _needsFullRedraw = true;
+        FlushRedraw();
+    }
+
+    /// <summary>Rebuilds the grid at a new size exactly like
+    /// <see cref="RecalculateGridSize"/> does on a pane resize: same cell
+    /// geometry, new row/column counts, ConPTY and emulator told, paint
+    /// caches dropped.</summary>
+    internal void SelfTestResizeGrid(int cols, int rows)
+    {
+        var gridChanged = cols != _cols || rows != _rows;
+        _cols = cols;
+        _rows = rows;
+        EnsureRowVisuals();
+        if (gridChanged)
+            InvalidateRowPaintCaches();
+        _terminal.Resize(cols, rows, _nativeCellWidth, _nativeCellHeight);
+        _needsFullRedraw = true;
+        FlushRedraw();
+    }
 }

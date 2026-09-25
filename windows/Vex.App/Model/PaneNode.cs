@@ -99,11 +99,20 @@ public abstract class LeafPane : PaneNode, IDisposable
         onLoaded = (_, _) =>
         {
             element.Loaded -= onLoaded;
-            element.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160))
-                {
-                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-                });
+            var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            };
+            // Detach the clock once it is done: a completed animation that
+            // holds its end value keeps the pane composited into an
+            // intermediate surface for good, which softens text and gives DWM
+            // one more layer whose pixels can go stale.
+            fade.Completed += (_, _) =>
+            {
+                element.BeginAnimation(UIElement.OpacityProperty, null);
+                element.Opacity = 1;
+            };
+            element.BeginAnimation(UIElement.OpacityProperty, fade);
         };
         element.Loaded += onLoaded;
     }
