@@ -1,0 +1,94 @@
+diff --git a/windows/Vex.App/Terminal/Native/NativeTerminalControl.cs b/windows/Vex.App/Terminal/Native/NativeTerminalControl.cs
+index 11014cb..6c9be90 100644
+--- a/windows/Vex.App/Terminal/Native/NativeTerminalControl.cs
++++ b/windows/Vex.App/Terminal/Native/NativeTerminalControl.cs
+@@ -307,6 +307,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
+             _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+             RebuildFontMetrics();
+         };
++        // Start the shell immediately instead of waiting for layout to finish
++        // calculating the exact grid size. This hides the 50-200ms ConPTY startup
++        // cost behind the rest of WPF's window layout and realization time.
++        if (RenderSelfTest.ReportPath is null)
++        {
++            StartSession();
++        }
+     }
+ 
+     private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+@@ -641,11 +648,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
+ 
+     private void StartSessionIfReady()
+     {
+-        if (_session is not null || _sessionStarting || _cols < 20 || _rows < 5 || RenderSelfTest.ReportPath is not null)
++        if (_session is not null || _sessionStarting || RenderSelfTest.ReportPath is not null)
+             return;
+-
+         StartSession();
+-        _terminal.ScrollToBottom();
+     }
+ 
+     private void EnsureRowVisuals()
+@@ -741,16 +746,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
+             return;
+ 
+         _sessionStarting = true;
+-        var cols = (short)_cols;
+-        var rows = (short)_rows;
++        var cols = _cols >= 20 ? (short)_cols : (short)80;
++        var rows = _rows >= 5 ? (short)_rows : (short)24;
+         var workingDirectory = _workingDirectory;
+ 
+-        // Resolve the configured shell profile at spawn time; null means the
+-        // system default (or a configured shell that vanished), which ConPTY
+-        // starts bare. Arguments ride along for custom shells.
+-        var resolved = ShellRegistry.Resolve(AppSettings.Instance.ShellId);
+-        var shellProgram = SelfTestShell ?? resolved?.Program ?? TerminalSession.DefaultShell();
+-        var shellArguments = SelfTestShell is null ? resolved?.Arguments : null;
++        var shellId = AppSettings.Instance.ShellId;
+ 
+         // ConPTY creation and process spawning are P/Invoke calls that do not
+         // need the UI thread. Running them on a background thread keeps the
+@@ -759,6 +759,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
+         // the first frame.
+         _ = Task.Run(() =>
+         {
++            StartupMark.Note("terminal spawn begin");
++            // Resolve the configured shell profile at spawn time; null means the
++            // system default (or a configured shell that vanished), which ConPTY
++            // starts bare. Arguments ride along for custom shells.
++            var resolved = ShellRegistry.Resolve(shellId);
++            var shellProgram = SelfTestShell ?? resolved?.Program ?? TerminalSession.DefaultShell();
++            var shellArguments = SelfTestShell is null ? resolved?.Arguments : null;
++
+             TerminalSession session;
+             try
+             {
+@@ -769,6 +777,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
+                 Diag($"shell '{shellProgram}' failed to launch; falling back to default");
+                 session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
+             }
++            StartupMark.Note("terminal spawn end");
+ 
+             // Publish immediately on this thread: the reader loop inside Start
+             // already delivers child output (and the emulator already answers
+@@ -806,10 +815,19 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
+         var session = new TerminalSession();
+         session.OutputReceived += OnSessionOutput;
+         session.Exited += OnSessionExited;
++        session.OutputReceived += (data) =>
++        {
++            if (Interlocked.Exchange(ref _firstOutputNoted, 1) == 0)
++            {
++                StartupMark.Note("first terminal output");
++            }
++        };
+         session.Start(workingDirectory, cols, rows, shell, arguments);
+         return session;
+     }
+ 
++    private int _firstOutputNoted;
++
+     /// <summary>PID of the ConPTY shell process; null before the session starts.</summary>
+     public int? ProcessId => _session?.ProcessId;
+ 
