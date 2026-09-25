@@ -19,13 +19,20 @@ public sealed partial class App : Application
         // otherwise unavoidable WPF resource initialization.
         _settingsTask = Task.Run(Model.AppSettings.Preload);
         _sessionTask = Model.SessionStore.ReadSnapshotAsync();
-
         _ = _settingsTask.ContinueWith(_ =>
         {
             Model.StartupMark.Note("terminal prewarm begin");
             var settings = Model.AppSettings.Instance;
             Terminal.Native.NativeTerminalControl.Prewarm(settings.ThemeName, settings.FontFamily);
             Model.StartupMark.Note("terminal prewarm ready");
+        }, TaskScheduler.Default);
+
+        _ = Task.WhenAll(_settingsTask, _sessionTask).ContinueWith(_ =>
+        {
+            var snapshot = _sessionTask.Result;
+            var workingDirectory = snapshot?.Projects?.FirstOrDefault()?.WorkingDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var shellId = Model.AppSettings.Instance.ShellId;
+            Terminal.Native.TerminalSessionPrewarmer.StartPrewarm(workingDirectory, shellId);
         }, TaskScheduler.Default);
 
         if (Model.StartupMark.IsEnabled)
