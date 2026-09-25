@@ -87,7 +87,7 @@ internal static class NativeMethods
         ref SECURITY_ATTRIBUTES lpPipeAttributes,
         uint nSize);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("conpty.dll", SetLastError = true)]
     internal static extern int CreatePseudoConsole(
         COORD size,
         IntPtr hInput,
@@ -95,10 +95,10 @@ internal static class NativeMethods
         uint dwFlags,
         out IntPtr phPC);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("conpty.dll", SetLastError = true)]
     internal static extern int ResizePseudoConsole(IntPtr hPC, COORD size);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("conpty.dll")]
     internal static extern void ClosePseudoConsole(IntPtr hPC);
 
     [DllImport("kernel32.dll", SetLastError = true)]

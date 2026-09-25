@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
+    <PackageReference Include="Microsoft.Windows.Console.ConPTY" Version="1.24.260710001" />
     <ProjectReference Include="..\Vex.Terminal\Vex.Terminal.csproj" />
     <ProjectReference Include="..\Vex.Libghostty\Vex.Libghostty.csproj" />
   </ItemGroup>
@@ -18,6 +19,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <ConptyRequiresx64Host>true</ConptyRequiresx64Host>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -42,9 +44,10 @@
          happens per-assembly at load; measured warm-start impact below. -->
     <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
-    <!-- Ahead-of-time compiled method bodies for the published exe: faster
-         cold start than the default JIT tiering at process launch. -->
-    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- ReadyToRun drastically increases the bundle size (from ~80MB to ~180MB)
+         which hurts cold start time (AV scan + disk I/O). In .NET 10, Tiered
+         compilation is fast enough that smaller file size beats precompiled AOT. -->
+    <PublishReadyToRun>false</PublishReadyToRun>
     <!-- Native libraries (ghostty-vt.dll, hostfxr, ...) ship beside the exe
          instead of inside the bundle. Self-extracting them costs a
          first-launch extraction pass into %TEMP% before the first frame.
