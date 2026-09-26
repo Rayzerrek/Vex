@@ -47,7 +47,7 @@ public sealed class AppSettings : ObservableObject
         WriteSettings(waitForWrite: true);
     }
 
-    private bool _sidebarVisible = true;
+    private bool _sidebarVisible = false;
     public bool SidebarVisible
     {
         get => _sidebarVisible;
