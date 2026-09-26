@@ -84,6 +84,23 @@ public sealed class TerminalThemeTests
     }
 
     [Fact]
+    public void SetAppearance_SwitchingToLightAndBackToDark_PreservesDarkTheme()
+    {
+        var settings = AppSettings.Instance;
+        settings.SetAppearance(AppSettings.DarkAppearance);
+        Assert.True(settings.IsDarkAppearance);
+        Assert.True(BuiltInThemes.Resolve(settings.ThemeName).IsDark);
+
+        settings.SetAppearance(AppSettings.LightAppearance);
+        Assert.False(settings.IsDarkAppearance);
+        Assert.False(BuiltInThemes.Resolve(settings.ThemeName).IsDark);
+
+        settings.SetAppearance(AppSettings.DarkAppearance);
+        Assert.True(settings.IsDarkAppearance);
+        Assert.True(BuiltInThemes.Resolve(settings.ThemeName).IsDark);
+    }
+
+    [Fact]
     public void Clone_CopiesEveryColor()
     {
         var clone = BuiltInThemes.Clone(BuiltInThemes.OneDark);

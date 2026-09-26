@@ -58,6 +58,13 @@ public static class ChromePalette
                 solid.Color = c;
         }
 
+        if (res["VexAccentTranslucent"] is SolidColorBrush accentTrans && !accentTrans.IsFrozen
+            && res["VexAccentColor"] is Color ac && accentTrans.Color != ac)
+            accentTrans.Color = ac;
+        if (res["VexTextDimTranslucent"] is SolidColorBrush dimTrans && !dimTrans.IsFrozen
+            && res["VexTextDimColor"] is Color dc && dimTrans.Color != dc)
+            dimTrans.Color = dc;
+
         SyncGradient(res, "VexBackground", "VexBackgroundTopColor", "VexBackgroundBottomColor");
         SyncGradient(res, "VexTabSelected", "VexTabSelectedStartColor", "VexTabSelectedEndColor");
         SyncGradient(res, "VexAccentGradient", "VexAccentGradientStartColor", "VexAccentGradientEndColor");
@@ -104,6 +111,7 @@ public static class ChromePalette
         ("VexOnAccent", "VexOnAccentColor"),
         ("VexAccentBlue", "VexAccentBlueColor"),
         ("VexAccentPurple", "VexAccentPurpleColor"),
+        ("VexGitBranch", "VexGitBranchColor"),
     };
 
     // ---- Dark variant ------------------------------------------------------
@@ -165,6 +173,7 @@ public static class ChromePalette
         Set(res, "VexInputColor", Mix(panelBase, bg, 0.55));
         Set(res, "VexToggleThumbColor", FromHex("#EDEFF3"));
         Set(res, "VexOnAccentColor", FromHex("#EDEFF2"));
+        Set(res, "VexGitBranchColor", FromHex("#79C0FF"));
     }
 
     // ---- Light variant -----------------------------------------------------
@@ -231,6 +240,7 @@ public static class ChromePalette
         // Unused on the opaque light chrome; kept consistent anyway.
         Set(res, "VexAccentBlueColor", blue);
         Set(res, "VexAccentPurpleColor", magenta);
+        Set(res, "VexGitBranchColor", FromHex("#0969DA"));
     }
 
     /// <summary>Tint color for the acrylic window backdrop; pushed dark so the

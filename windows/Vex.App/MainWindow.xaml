@@ -432,21 +432,21 @@
                             </StackPanel.Style>
 
                             <!-- Dot separator -->
-                            <TextBlock Text="·" Foreground="{StaticResource VexTextDim}"
+                            <TextBlock Text="·" Foreground="{StaticResource VexGitBranch}"
                                        FontSize="11" Margin="5,0,5,0" VerticalAlignment="Center"/>
 
                             <!-- Git branch glyph -->
                             <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
                                   Stretch="Uniform" Width="10" Height="12"
-                                  Stroke="{StaticResource VexAccentBlue}" StrokeThickness="1.3"
+                                  Stroke="{StaticResource VexGitBranch}" StrokeThickness="1.3"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                   Fill="Transparent"
                                   VerticalAlignment="Center" Margin="0,0,4,0"/>
 
                             <!-- Branch name -->
                             <TextBlock Text="{Binding SelectedProject.GitBranch}"
-                                       Foreground="{StaticResource VexTextDim}"
-                                       FontSize="11"
+                                       Foreground="{StaticResource VexGitBranch}"
+                                       FontSize="11" FontWeight="SemiBold"
                                        MaxWidth="110"
                                        TextTrimming="CharacterEllipsis"
                                        VerticalAlignment="Center"/>
@@ -466,7 +466,7 @@
                 <Popup x:Name="ProjectPickerPopup"
                        PlacementTarget="{Binding ElementName=ProjectPillButton}"
                        Placement="Bottom"
-                       VerticalOffset="4"
+                       VerticalOffset="5"
                        HorizontalOffset="0"
                        AllowsTransparency="True"
                        StaysOpen="False"
@@ -477,11 +477,11 @@
                             BorderBrush="{StaticResource VexBorder}"
                             BorderThickness="1"
                             CornerRadius="8"
-                            MinWidth="280"
-                            MaxWidth="360"
+                            MinWidth="300"
+                            MaxWidth="400"
                             Padding="0">
                         <Border.Effect>
-                            <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.45" Color="#000000"/>
+                            <DropShadowEffect BlurRadius="22" ShadowDepth="6" Opacity="0.5" Color="#000000"/>
                         </Border.Effect>
                         <Grid PreviewKeyDown="ProjectPicker_PreviewKeyDown">
                             <Grid.RowDefinitions>
@@ -490,14 +490,25 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <!-- Header: "PROJECTS (count)" -->
-                            <Border Grid.Row="0" Padding="12,10,12,6" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,0,1">
-                                <DockPanel>
-                                    <TextBlock Text="PROJECTS" FontSize="10" FontWeight="SemiBold"
-                                               Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"/>
-                                    <TextBlock Text="{Binding Projects.Count, StringFormat='({0})'}"
-                                               FontSize="10" Foreground="{StaticResource VexTextDim}"
-                                               Margin="4,0,0,0" VerticalAlignment="Center"/>
+                            <!-- Header: "PROJECTS [count]" + Add button -->
+                            <Border Grid.Row="0" Padding="14,9,10,7" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,0,1">
+                                <DockPanel LastChildFill="False">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="PROJECTS" FontSize="10.5" FontWeight="Bold"
+                                                   Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"/>
+                                        <Border Background="{StaticResource VexHover}" CornerRadius="7" Padding="5,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Projects.Count}"
+                                                       FontSize="10" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
+                                            Width="24" Height="24" Padding="0"
+                                            ToolTip="Add Project Folder"
+                                            Click="ProjectPickerAddFolder_Click">
+                                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Button>
                                 </DockPanel>
                             </Border>
 
@@ -506,23 +517,35 @@
                                      ItemsSource="{Binding Projects}"
                                      SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
                                      Background="Transparent" BorderThickness="0" Padding="4,4"
-                                     MaxHeight="280"
+                                     MaxHeight="300"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      PreviewMouseLeftButtonUp="ProjectPickerList_PreviewMouseLeftButtonUp">
                                 <ListBox.ItemContainerStyle>
                                     <Style TargetType="ListBoxItem">
-                                        <Setter Property="Padding" Value="8,6"/>
+                                        <Setter Property="Padding" Value="8,7"/>
                                         <Setter Property="Margin" Value="2,1"/>
                                         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                                         <Setter Property="Template">
                                             <Setter.Value>
                                                 <ControlTemplate TargetType="ListBoxItem">
-                                                    <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="6">
-                                                        <ContentPresenter/>
+                                                    <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="6" Background="Transparent">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <!-- Subtle active indicator bar on the left edge -->
+                                                            <Border x:Name="activeBar" Width="3" Height="16" CornerRadius="1.5"
+                                                                    Background="{StaticResource VexAccentBlue}"
+                                                                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                                    Margin="-4,0,4,0" Visibility="Collapsed"/>
+                                                            <ContentPresenter Grid.Column="1"/>
+                                                        </Grid>
                                                     </Border>
                                                     <ControlTemplate.Triggers>
                                                         <Trigger Property="IsSelected" Value="True">
                                                             <Setter Property="Background" Value="{StaticResource VexHover}" TargetName="chrome"/>
+                                                            <Setter Property="Visibility" Value="Visible" TargetName="activeBar"/>
                                                             <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
                                                         </Trigger>
                                                         <Trigger Property="IsMouseOver" Value="True">
@@ -543,7 +566,7 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <!-- Folder glyph -->
+                                            <!-- Folder icon -->
                                             <Grid Grid.Column="0" Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center">
                                                 <Path Data="M22,19 C22,20.1 21.1,21 20,21 L4,21 C2.9,21 2,20.1 2,19 L2,5 C2,3.9 2.9,3 4,3 L9,3 L11,6 L20,6 C21.1,6 22,6.9 22,8 Z"
                                                       Stretch="Uniform"
@@ -554,14 +577,14 @@
 
                                             <!-- Project Name + Branch + Working Directory -->
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                <StackPanel Orientation="Horizontal">
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                     <TextBlock Text="{Binding Name}" Foreground="{StaticResource VexText}"
-                                                               FontSize="12" FontWeight="SemiBold"
+                                                               FontSize="12.5" FontWeight="SemiBold"
                                                                TextTrimming="CharacterEllipsis"/>
-                                                    <!-- Git Branch if present -->
-                                                    <StackPanel Orientation="Horizontal" Margin="6,0,0,0" VerticalAlignment="Center">
-                                                        <StackPanel.Style>
-                                                            <Style TargetType="StackPanel">
+                                                    <!-- Git Branch badge if repo has branch -->
+                                                    <Border Background="{StaticResource VexHover}" CornerRadius="4" Padding="5,1,5,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
                                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding HasGitBranch}" Value="True">
@@ -569,26 +592,28 @@
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
-                                                        </StackPanel.Style>
-                                                        <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
-                                                              Stretch="Uniform" Width="9" Height="11"
-                                                              Stroke="{StaticResource VexAccentBlue}" StrokeThickness="1.2"
-                                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                                              Fill="Transparent"
-                                                              VerticalAlignment="Center" Margin="0,0,3,0"/>
-                                                        <TextBlock Text="{Binding GitBranch}" Foreground="{StaticResource VexAccentBlue}"
-                                                                   FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="110"/>
-                                                    </StackPanel>
+                                                        </Border.Style>
+                                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
+                                                                  Stretch="Uniform" Width="9" Height="11"
+                                                                  Stroke="{StaticResource VexGitBranch}" StrokeThickness="1.2"
+                                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                                  Fill="Transparent"
+                                                                  VerticalAlignment="Center" Margin="0,0,3,0"/>
+                                                            <TextBlock Text="{Binding GitBranch}" Foreground="{StaticResource VexGitBranch}"
+                                                                       FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="120"/>
+                                                        </StackPanel>
+                                                    </Border>
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding WorkingDirectory}" FontSize="10.5"
                                                            Foreground="{StaticResource VexTextDim}"
-                                                           TextTrimming="CharacterEllipsis" Margin="0,1,0,0"
+                                                           TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
                                                            ToolTip="{Binding WorkingDirectory}"/>
                                             </StackPanel>
 
                                             <!-- Remove project button (visible on hover) -->
                                             <Button x:Name="RemoveBtn" Grid.Column="2"
-                                                    Margin="4,0,0,0" ToolTip="Remove Project"
+                                                    Margin="6,0,0,0" ToolTip="Remove Project"
                                                     Click="RemoveProject_Click"
                                                     Width="20" Height="20"
                                                     Opacity="0">
@@ -609,16 +634,19 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
 
-                            <!-- Footer: Add Project Folder button -->
-                            <Border Grid.Row="2" Padding="4" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,1,0,0">
+                            <!-- Footer: Open Project Folder action -->
+                            <Border Grid.Row="2" Padding="6,5" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,1,0,0">
                                 <Button Style="{StaticResource GhostButton}"
                                         HorizontalContentAlignment="Left"
-                                        Padding="8,6"
+                                        Padding="8,5"
+                                        Height="28"
                                         Click="ProjectPickerAddFolder_Click">
-                                    <StackPanel Orientation="Horizontal">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                                   Foreground="{StaticResource VexAccentBlue}"
                                                    VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <TextBlock Text="Open Project Folder..." FontSize="12"
+                                        <TextBlock Text="Open Project Folder..." FontSize="11.5"
+                                                   Foreground="{StaticResource VexText}"
                                                    VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
@@ -626,21 +654,6 @@
                         </Grid>
                     </Border>
                 </Popup>
-
-                <!-- Add Project Folder Button [+] -->
-                <Button x:Name="AddFolderButton"
-                        WindowChrome.IsHitTestVisibleInChrome="True"
-                        Style="{StaticResource GhostButton}"
-                        Width="26" Height="26" Margin="2,0,0,0"
-                        ToolTip="Add Project Folder"
-                        Click="NewProject_Click">
-                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                </Button>
-
-
-                <!-- Visual Divider between project context and tab bar -->
-                <Border Width="1" Height="16" Background="{StaticResource VexBorder}" Margin="6,0,4,0" VerticalAlignment="Center"/>
             </StackPanel>
 
             <!-- Tabs: natural width, left-aligned from the toggle -->
