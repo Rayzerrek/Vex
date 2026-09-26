@@ -102,8 +102,12 @@ public sealed partial class MainWindow : Window
         _workspace.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(Workspace.SelectedProject))
+            {
                 FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
+                _workspace.SelectedProject?.RefreshGitBranch();
+            }
         };
+        Activated += (_, _) => _workspace.SelectedProject?.RefreshGitBranch();
         FileSearch.SetRoot(workspace.SelectedProject?.WorkingDirectory ?? "");
 
         foreach (var project in workspace.Projects)
@@ -523,6 +527,11 @@ public sealed partial class MainWindow : Window
 
     private void ShowSidebar_Click(object sender, RoutedEventArgs e)
         => AppSettings.Instance.SidebarVisible = true;
+
+    private void ProjectPillButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Handled in ProjectPickerPopup
+    }
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
         => AppSettings.Instance.SidebarVisible = !AppSettings.Instance.SidebarVisible;
