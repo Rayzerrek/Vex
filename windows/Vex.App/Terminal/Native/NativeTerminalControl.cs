@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -80,8 +79,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     // maps to different content.
     private ulong _lastScrollOffset;
     private bool _resizeScheduled;
-
-
     private GlyphTypeface? _normalGlyph;
     private GlyphTypeface? _boldGlyph;
     private GlyphTypeface? _italicGlyph;
