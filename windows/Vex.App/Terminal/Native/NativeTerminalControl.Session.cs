@@ -52,7 +52,7 @@ public sealed partial class NativeTerminalControl
     private void ApplySessionResize(short cols, short rows)
     {
         var session = _session;
-        if (session is null)
+        if (session is null || _sessionStarting)
             return;
         _pendingSessionCols = cols;
         _pendingSessionRows = rows;
@@ -176,14 +176,25 @@ public sealed partial class NativeTerminalControl
             {
                 session = CreateAndStartSession(workingDirectory, cols, rows, shellProgram, shellArguments);
             }
-            catch (Win32Exception)
+            catch
             {
-                session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
+                try
+                {
+                    session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
+                }
+                catch
+                {
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        _sessionStarting = false;
+                        _session = null;
+                    });
+                    return;
+                }
             }
             StartupMark.Note("terminal spawn end");
             if (_disposed)
             {
-                _session = null;
                 session.Dispose();
                 _ = Dispatcher.BeginInvoke(() => _sessionStarting = false);
                 return;
@@ -193,10 +204,10 @@ public sealed partial class NativeTerminalControl
                 _sessionStarting = false;
                 if (_disposed)
                 {
-                    _session = null;
                     session.Dispose();
                     return;
                 }
+                _session = session;
                 if (_cols != cols || _rows != rows)
                     ApplySessionResize((short)_cols, (short)_rows);
             });
@@ -206,15 +217,55 @@ public sealed partial class NativeTerminalControl
     private TerminalSession CreateAndStartSession(string workingDirectory, short cols, short rows, string? shell, string? arguments)
     {
         var session = new TerminalSession();
-        _session = session;
-        session.OutputReceived += OnSessionOutput;
+        var buffered = new List<ArraySegment<byte>>();
+        var outputLock = new object();
+        Action<ArraySegment<byte>> outputHandler = data =>
+        {
+            if (data.Array is not { } array) return;
+            lock (outputLock)
+            {
+                var copy = System.Buffers.ArrayPool<byte>.Shared.Rent(data.Count);
+                Buffer.BlockCopy(array, data.Offset, copy, 0, data.Count);
+                System.Buffers.ArrayPool<byte>.Shared.Return(array);
+                buffered.Add(new ArraySegment<byte>(copy, 0, data.Count));
+            }
+        };
+
+        session.OutputReceived += data => outputHandler(data);
         session.Exited += OnSessionExited;
         session.OutputReceived += data =>
         {
             if (Interlocked.Exchange(ref _firstOutputNoted, 1) == 0)
                 StartupMark.Note("first terminal output");
         };
-        session.Start(workingDirectory, cols, rows, shell, arguments);
+
+        try
+        {
+            session.Start(workingDirectory, cols, rows, shell, arguments);
+        }
+        catch
+        {
+            lock (outputLock)
+            {
+                foreach (var chunk in buffered)
+                {
+                    if (chunk.Array is { } array)
+                        System.Buffers.ArrayPool<byte>.Shared.Return(array);
+                }
+                buffered.Clear();
+            }
+            session.Dispose();
+            throw;
+        }
+
+        lock (outputLock)
+        {
+            outputHandler = OnSessionOutput;
+            foreach (var chunk in buffered)
+                OnSessionOutput(chunk);
+            buffered.Clear();
+        }
+
         return session;
     }
 

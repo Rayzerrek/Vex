@@ -69,4 +69,78 @@ public class TerminalStartupRegressionTests
         lease.Dispose();
         TerminalSessionPrewarmer.Dispose();
     }
+
+    [Fact]
+    public async Task ShellSwitchFromNushellToPwsh_InvalidatesOldSlotAndStartsNewPrewarm()
+    {
+        var originalShellId = Model.AppSettings.Instance.ShellId;
+        try
+        {
+            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            TerminalSessionPrewarmer.StartPrewarm(userProfile, "nu");
+            await Task.Delay(100);
+
+            var lease1 = TerminalSessionPrewarmer.Take(userProfile, "nu");
+            Assert.NotNull(lease1);
+            var session1 = await lease1.SessionTask;
+
+            // Now user switches settings to pwsh
+            Model.AppSettings.Instance.ShellId = "pwsh";
+
+            // When Take is called with pwsh, the mismatched "nu" slot is discarded and pwsh prewarm starts
+            var lease2 = TerminalSessionPrewarmer.Take(userProfile, "pwsh");
+            Assert.Null(lease2);
+
+            // Allow the newly initiated pwsh prewarm to spin up
+            await Task.Delay(300);
+
+            var lease3 = TerminalSessionPrewarmer.Take(userProfile, "pwsh");
+            Assert.NotNull(lease3);
+            var session3 = await lease3.SessionTask;
+            Assert.NotNull(session3);
+
+            session3.Dispose();
+            lease3.Dispose();
+            session1.Dispose();
+            lease1.Dispose();
+        }
+        finally
+        {
+            Model.AppSettings.Instance.ShellId = originalShellId;
+            TerminalSessionPrewarmer.Dispose();
+        }
+    }
+
+    [Fact]
+    public void TerminalSession_ResizeBeforeChildSpawn_ReturnsSafelyWithoutDeadlock()
+    {
+        using var session = new TerminalSession();
+        // When process is not spawned yet, Resize must not call ResizePseudoConsole or deadlock
+        var result = session.Resize(120, 40);
+        Assert.True(result);
+        Assert.False(session.LastResizeFailed);
+    }
+
+    [Fact]
+    public void NativeTerminalControl_ColdStart_DoesNotDeadlockOnResize()
+    {
+        Exception? threadEx = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var control = new NativeTerminalControl(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                control.Focus();
+                control.Dispose();
+            }
+            catch (Exception ex)
+            {
+                threadEx = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(3000), "Thread deadlocked during terminal control startup/dispose");
+        Assert.Null(threadEx);
+    }
 }
