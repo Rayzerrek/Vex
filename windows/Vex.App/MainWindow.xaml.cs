@@ -23,20 +23,8 @@ internal enum DropZone
 
 public sealed partial class MainWindow : Window
 {
-    private const double SidebarWidth = 240;
-    private const double SidebarOpenDuration = 280;
-    private const double SidebarCloseDuration = 230;
 
     private readonly Workspace _workspace;
-    private Stopwatch? _sidebarAnimationClock;
-    private double _sidebarAnimationFromWidth;
-    private double _sidebarAnimationToWidth;
-    private double _sidebarAnimationFromOpacity;
-    private double _sidebarAnimationToOpacity;
-    private bool _sidebarAnimationClosing;
-    // Parallax translation applied to the sidebar inner content while the
-    // column smoothly expands/collapses for a fluid, polished reveal.
-    private readonly TranslateTransform _sidebarContentTranslate = new();
     private bool _draggingPane;
     private LeafPane? _dragPane;
     private System.Windows.Point _dragStart;
@@ -89,26 +77,14 @@ public sealed partial class MainWindow : Window
         StateChanged += MainWindow_StateChanged;
         UpdateLayoutForWindowState();
 
-        SidebarContent.RenderTransform = _sidebarContentTranslate;
 
-        if (!AppSettings.Instance.SidebarVisible)
-        {
-            SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
-            SidebarPanel.Visibility = Visibility.Collapsed;
-            SidebarPanel.Opacity = 0;
-        }
-
-        // Keep the file search rooted at the selected project.
+        // Refresh git branch when project changes.
         _workspace.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(Workspace.SelectedProject))
-            {
-                FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
                 _workspace.SelectedProject?.RefreshGitBranch();
-            }
         };
         Activated += (_, _) => _workspace.SelectedProject?.RefreshGitBranch();
-        FileSearch.SetRoot(workspace.SelectedProject?.WorkingDirectory ?? "");
 
         foreach (var project in workspace.Projects)
             HookProject(project);
@@ -202,12 +178,6 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (e.PropertyName != nameof(AppSettings.SidebarVisible))
-            return;
-
-        AnimateSidebar(
-            AppSettings.Instance.SidebarVisible ? SidebarWidth : 0,
-            fadeOut: !AppSettings.Instance.SidebarVisible);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -507,26 +477,11 @@ public sealed partial class MainWindow : Window
             _workspace.NewProject(dialog.FolderName);
     }
 
-    private void RefreshFileTree_Click(object sender, RoutedEventArgs e)
-    {
-        _workspace.SelectedProject?.RefreshFileTree();
-    }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         SettingsOverlay.Toggle();
     }
-
-    private void FileSearch_FileOpenRequested(string filePath)
-    {
-        _workspace.SelectedProject?.OpenFile(filePath);
-    }
-
-    private void HideSidebar_Click(object sender, RoutedEventArgs e)
-        => AppSettings.Instance.SidebarVisible = false;
-
-    private void ShowSidebar_Click(object sender, RoutedEventArgs e)
-        => AppSettings.Instance.SidebarVisible = true;
 
     private void ProjectPillButton_Click(object sender, RoutedEventArgs e)
     {
@@ -582,94 +537,6 @@ public sealed partial class MainWindow : Window
         NewProject_Click(sender, e);
     }
 
-    private void SidebarToggle_Click(object sender, RoutedEventArgs e)
-        => AppSettings.Instance.SidebarVisible = !AppSettings.Instance.SidebarVisible;
-
-    private void AnimateSidebar(double target, bool fadeOut = false)
-    {
-        // Freeze VT/conpty resizes until the animation settles; otherwise
-        // every frame reflows the terminal buffer (see ResizeSuspended).
-        NativeTerminalControl.SuspendResizes();
-        _sidebarAnimationClosing = fadeOut;
-        _sidebarAnimationFromWidth = SidebarColumn.ActualWidth;
-        _sidebarAnimationToWidth = target;
-        _sidebarAnimationFromOpacity = SidebarPanel.Visibility == Visibility.Visible ? SidebarPanel.Opacity : 0;
-        _sidebarAnimationToOpacity = fadeOut ? 0 : 1;
-
-        if (!fadeOut)
-        {
-            SidebarPanel.Visibility = Visibility.Visible;
-            if (_sidebarAnimationFromWidth <= 0 && SidebarPanel.Opacity <= 0)
-                _sidebarAnimationFromOpacity = 0;
-        }
-
-        _sidebarAnimationClock = Stopwatch.StartNew();
-        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
-        CompositionTarget.Rendering += SidebarAnimation_Rendering;
-    }
-
-    private void SidebarAnimation_Rendering(object? sender, EventArgs e)
-    {
-        var duration = _sidebarAnimationClosing ? SidebarCloseDuration : SidebarOpenDuration;
-        var elapsed = _sidebarAnimationClock?.Elapsed.TotalMilliseconds ?? duration;
-        var t = Math.Clamp(elapsed / duration, 0.0, 1.0);
-
-        // Fluid easing: Quartic Ease-Out on reveal for natural deceleration;
-        // smoothstep on collapse for soft exit.
-        double eased;
-        if (!_sidebarAnimationClosing)
-        {
-            // Deceleration curve: instant response on click, softly gliding into dock
-            eased = 1.0 - Math.Pow(1.0 - t, 3.2);
-        }
-        else
-        {
-            // Smooth acceleration and deceleration for clean collapse
-            eased = t * t * (3.0 - 2.0 * t);
-        }
-
-        // Animate column width smoothly
-        var width = _sidebarAnimationFromWidth + ((_sidebarAnimationToWidth - _sidebarAnimationFromWidth) * eased);
-        SidebarColumn.Width = new GridLength(Math.Max(0, width), GridUnitType.Pixel);
-
-        if (_sidebarAnimationClosing)
-        {
-            SidebarPanel.Opacity = Math.Clamp(_sidebarAnimationFromOpacity + (_sidebarAnimationToOpacity - _sidebarAnimationFromOpacity) * eased, 0, 1);
-            _sidebarContentTranslate.X = -18.0 * eased;
-        }
-        else
-        {
-            var targetOpacity = Math.Clamp(eased * 1.25, 0, 1);
-            SidebarPanel.Opacity = targetOpacity;
-            _sidebarContentTranslate.X = -18.0 * (1.0 - eased);
-        }
-
-        if (t < 1.0)
-            return;
-
-        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
-        _sidebarAnimationClock = null;
-        // Resume with an explicit recalc: the final width equals the last
-        // animated frame, so no SizeChanged fires after this point — without
-        // the resume event the grid would stay at the pre-animation size
-        // (a fullscreen TUI like nvim would then cover only part of the pane).
-        NativeTerminalControl.ResumeResizes();
-
-        if (_sidebarAnimationClosing)
-        {
-            SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
-            SidebarPanel.Visibility = Visibility.Collapsed;
-            SidebarPanel.Opacity = 0;
-            _sidebarContentTranslate.X = 0;
-        }
-        else
-        {
-            SidebarColumn.Width = new GridLength(SidebarWidth, GridUnitType.Pixel);
-            SidebarPanel.Visibility = Visibility.Visible;
-            SidebarPanel.Opacity = 1;
-            _sidebarContentTranslate.X = 0;
-        }
-    }
 
     private void NewTab_Click(object sender, RoutedEventArgs e)
     {
@@ -1092,8 +959,6 @@ public sealed partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
-        NativeTerminalControl.ResumeResizes();
         AppSettings.Instance.Flush(); // persist the debounced settings write
         SessionStore.Save(_workspace); // persist projects, tabs and divider positions
         base.OnClosed(e);

@@ -617,21 +617,6 @@
                                     </StackPanel>
                                 </Border>
 
-                                <TextBlock Text="INTERFACE" Style="{StaticResource SettingsSectionTitle}"/>
-                                <Border Style="{StaticResource SettingsCard}">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Show sidebar" Style="{StaticResource RowTitle}"/>
-                                            <TextBlock Text="Keep the project and file tree visible." Style="{StaticResource RowDesc}"/>
-                                        </StackPanel>
-                                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggle}" VerticalAlignment="Center"
-                                                  IsChecked="{Binding SidebarVisible}"/>
-                                    </Grid>
-                                </Border>
                             </StackPanel>
                         </ScrollViewer>
 

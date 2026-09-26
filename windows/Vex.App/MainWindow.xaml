@@ -638,17 +638,6 @@
                                VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 </Button>
 
-                <!-- Sidebar Toggle Button (Files) -->
-                <Button x:Name="SidebarToggleButton"
-                        WindowChrome.IsHitTestVisibleInChrome="True"
-                        Style="{StaticResource GhostButton}"
-                        Width="26" Height="26" Margin="2,0,0,0"
-                        ToolTip="Toggle Files Sidebar"
-                        Click="SidebarToggle_Click">
-                    <Path Data="M 3.5,2.5 H 12.5 A 2,2 0 0 1 14.5,4.5 V 11.5 A 2,2 0 0 1 12.5,13.5 H 3.5 A 2,2 0 0 1 1.5,11.5 V 4.5 A 2,2 0 0 1 3.5,2.5 Z M 6,2.5 V 13.5"
-                          Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
-                          StrokeThickness="1.2" Width="13" Height="13" Stretch="Uniform" Fill="Transparent"/>
-                </Button>
 
                 <!-- Visual Divider between project context and tab bar -->
                 <Border Width="1" Height="16" Background="{StaticResource VexBorder}" Margin="6,0,4,0" VerticalAlignment="Center"/>
@@ -752,60 +741,13 @@
         </Grid>
         </Border>
 
-        <!-- Lower content panel containing Sidebar and active WorkspaceTab content -->
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="0"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- Left sidebar -->
-            <Border x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource VexSidebar}"
-                    ClipToBounds="True">
-                <Grid x:Name="SidebarContent" Width="240" HorizontalAlignment="Left">
-                    <DockPanel>
-                        <!-- Sidebar header: FILES label + Refresh + Settings + Hide -->
-                        <Border DockPanel.Dock="Top" Padding="12,10,10,6">
-                            <DockPanel LastChildFill="False">
-                                <TextBlock Text="FILES" FontSize="10" FontWeight="SemiBold"
-                                           Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"/>
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <Button Style="{StaticResource GhostButton}" ToolTip="Refresh File Tree"
-                                            Click="RefreshFileTree_Click" Padding="2" Width="22" Height="22" Margin="0,0,2,0">
-                                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                    </Button>
-                                    <Button Style="{StaticResource GhostButton}" ToolTip="Settings"
-                                            Click="Settings_Click" Padding="2" Width="22" Height="22" Margin="0,0,2,0">
-                                        <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                    </Button>
-                                    <Button Style="{StaticResource GhostButton}" ToolTip="Hide Sidebar"
-                                            Click="HideSidebar_Click" Padding="2" Width="22" Height="22">
-                                        <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="9"
-                                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                    </Button>
-                                </StackPanel>
-                            </DockPanel>
-                        </Border>
-
-                        <local:FileSearchView x:Name="FileSearch" DockPanel.Dock="Top"
-                                              FileOpenRequested="FileSearch_FileOpenRequested"/>
-
-                        <local:FileTreeView DataContext="{Binding SelectedProject}"/>
-                    </DockPanel>
-                </Grid>
-            </Border>
-
-            <!-- Main content: the active tab's pane layout, with a
-                 drag-to-split preview overlay on top. -->
-            <Grid x:Name="ContentArea" Grid.Column="1" Background="{StaticResource VexTabStrip}">
-                <ContentControl Content="{Binding SelectedProject.SelectedTab.DisplayRoot}"/>
-                <Canvas x:Name="DropOverlay" Visibility="Collapsed" Background="Transparent" Panel.ZIndex="50">
-                    <Border x:Name="SplitPreview" Background="{StaticResource VexSplitPreview}" BorderBrush="{StaticResource VexSplitPreviewBorder}"
-                            BorderThickness="1" CornerRadius="8" Opacity="0" Visibility="Collapsed"/>
-                </Canvas>
-            </Grid>
+        <!-- Main content: active WorkspaceTab content with drag-to-split preview overlay -->
+        <Grid x:Name="ContentArea" Grid.Row="1" Background="{StaticResource VexTabStrip}">
+            <ContentControl Content="{Binding SelectedProject.SelectedTab.DisplayRoot}"/>
+            <Canvas x:Name="DropOverlay" Visibility="Collapsed" Background="Transparent" Panel.ZIndex="50">
+                <Border x:Name="SplitPreview" Background="{StaticResource VexSplitPreview}" BorderBrush="{StaticResource VexSplitPreviewBorder}"
+                        BorderThickness="1" CornerRadius="8" Opacity="0" Visibility="Collapsed"/>
+            </Canvas>
         </Grid>
         
     </Grid>
