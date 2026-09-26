@@ -139,7 +139,8 @@ public partial class MainWindow
     private Dictionary<int, double> PushOffsets(WorkspaceTab dragged, int slot)
     {
         var offsets = new Dictionary<int, double>();
-        var project = _workspace.SelectedProject!;
+        if (_workspace.SelectedProject is not { } project)
+            return offsets;
         var draggedIndex = project.Tabs.IndexOf(dragged);
         var visible = 0;
         for (var i = 0; i < project.Tabs.Count; i++)
