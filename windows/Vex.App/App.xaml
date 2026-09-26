@@ -38,6 +38,8 @@
         <SolidColorBrush x:Key="VexTextDim" Color="{DynamicResource VexTextDimColor}"/>
         <SolidColorBrush x:Key="VexTextPlaceholder" Color="{DynamicResource VexTextPlaceholderColor}"/>
         <SolidColorBrush x:Key="VexAccent" Color="{DynamicResource VexAccentColor}"/>
+        <SolidColorBrush x:Key="VexAccentTranslucent" Color="{DynamicResource VexAccentColor}" Opacity="0.16"/>
+        <SolidColorBrush x:Key="VexTextDimTranslucent" Color="{DynamicResource VexTextDimColor}" Opacity="0.12"/>
         <SolidColorBrush x:Key="VexFocusBorder" Color="{DynamicResource VexFocusBorderColor}"/>
         <SolidColorBrush x:Key="VexSidebar" Color="{DynamicResource VexSidebarColor}"/>
         <SolidColorBrush x:Key="VexPaneTitleBar" Color="{DynamicResource VexPaneTitleBarColor}"/>
