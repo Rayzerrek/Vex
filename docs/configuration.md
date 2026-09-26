@@ -4,7 +4,7 @@ Vex keeps its state in `%LocalAppData%\Vex\`:
 
 | File | Contents |
 |---|---|
-| `settings.json` | Appearance, theme, font, cursor, shell profiles, sidebar. |
+| `settings.json` | Appearance, theme, font, cursor, shell profiles. |
 | `session.json` | Projects, tabs, split tree, divider ratios, and focus. |
 
 Both are written by Vex and are safe to delete: the app recreates them with
@@ -22,7 +22,6 @@ overwritten by the debounced save.
 | `CursorBlink` | bool | `true` | Blink the terminal cursor. |
 | `ShellId` | string | `"system"` | Id of the shell profile to launch. |
 | `CustomShells` | array | `[]` | User-defined shell profiles. |
-| `SidebarVisible` | bool | `true` | Show the project sidebar. |
 
 Example:
 
@@ -34,7 +33,6 @@ Example:
   "FontSize": 14,
   "CursorBlink": true,
   "ShellId": "nu",
-  "SidebarVisible": true,
   "CustomShells": [
     {
       "Id": "custom-1",

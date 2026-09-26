@@ -201,10 +201,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         ApplySettings();
         AppSettings.Instance.PropertyChanged += OnSettingsChanged;
-        // Suspension end (sidebar animation settle) must force one grid
-        // recalculation even when no SizeChanged follows — see the event
-        // declaration above.
-        ResizeSuspensionEnded += OnResizeSuspensionEnded;
 
         RenderSelfTest.Run(this);
 
@@ -225,8 +221,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         // Rebuild only what the changed setting actually affects. Settings
-        // that no pane renders (sidebar, shell) used to trigger a full
-        // palette/typeface rebuild plus a full redraw in every terminal.
+        // that no pane renders (shell profiles, window backdrop) used to trigger a full
         var settings = AppSettings.Instance;
         switch (e.PropertyName)
         {
@@ -263,7 +258,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     /// <summary>A family's four typeface/glyph pairs, cached per process:
     /// TryGetGlyphTypeface parses font files, so rebuilding it on every
-    /// settings touch (even sidebar toggles) is wasteful.</summary>
+    /// settings touch is wasteful.</summary>
     private sealed record TypefaceSet(
         Typeface Normal, Typeface Bold, Typeface Italic, Typeface BoldItalic,
         GlyphTypeface? NormalGlyph, GlyphTypeface? BoldGlyph, GlyphTypeface? ItalicGlyph, GlyphTypeface? BoldItalicGlyph);
@@ -428,11 +423,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void RecalculateGridSize()
     {
         if (!IsLoaded || ActualWidth < 150 || ActualHeight < 80)
-            return;
-        // Coalesced away while the sidebar animates: reflowing the VT buffer
-        // and resizing ConPTY once per animation frame guarantees jank. The
-        // resume event forces exactly one recalc after the animation settles.
-        if (ResizeSuspended)
             return;
 
         var cols = Math.Max(2, (int)(ActualWidth / _cellWidth));
@@ -1241,7 +1231,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             settle.Tick -= OnResizeSettled;
         }
         AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
-        ResizeSuspensionEnded -= OnResizeSuspensionEnded;
         _prewarmLease?.Dispose();
         _prewarmLease = null;
         var session = _session;

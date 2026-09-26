@@ -12,39 +12,13 @@ public sealed partial class NativeTerminalControl
     private bool _sessionStarting;
     private int _firstOutputNoted;
 
-    // After a burst of size changes (window drag, sidebar), one settle pass
+    // After a burst of size changes (window drag, pane split), one settle pass
     // re-syncs ConPTY and forces a full cell read so wrapped lines do not
     // stay broken if an intermediate resize failed or raced the paint.
     private DispatcherTimer? _resizeSettleTimer;
     private short _pendingSessionCols;
     private short _pendingSessionRows;
     private bool _sessionResizePending;
-
-    // While the sidebar animates, the window width changes every frame and
-    // each size event would resize the VT emulator (buffer reflow) plus the
-    // ConPTY session. MainWindow suspends resizes for the animation duration
-    // and calls ResumeResizes() when it settles.
-    internal static bool ResizeSuspended { get; private set; }
-
-    /// <summary>Raised on the UI thread when resize suspension ends. Every
-    /// live control then recalculates its grid exactly once — necessary
-    /// because the suspension swallows all intermediate size events and the
-    /// final width usually equals the last animated frame, which fires no
-    /// SizeChanged at all. Without this the grid (and the ConPTY size behind
-    /// it) stays at the pre-animation dimensions: a fullscreen TUI like nvim
-    /// then covers only part of the control and the rest renders as bare
-    /// background.</summary>
-    private static event Action? ResizeSuspensionEnded;
-
-    internal static void SuspendResizes() => ResizeSuspended = true;
-
-    internal static void ResumeResizes()
-    {
-        if (!ResizeSuspended)
-            return;
-        ResizeSuspended = false;
-        ResizeSuspensionEnded?.Invoke();
-    }
 
     /// <summary>PID of the ConPTY shell process; null before the session starts.</summary>
     public int? ProcessId => _session?.ProcessId;
@@ -337,13 +311,4 @@ public sealed partial class NativeTerminalControl
         _session?.WriteResponse(data.AsSpan(0, length));
     }
 
-    private void OnResizeSuspensionEnded()
-    {
-        if (_disposed)
-            return;
-        if (Dispatcher.CheckAccess())
-            RecalculateGridSize();
-        else
-            _ = Dispatcher.BeginInvoke(RecalculateGridSize);
-    }
 }

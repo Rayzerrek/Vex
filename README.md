@@ -1,6 +1,6 @@
 # Vex
 
-Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, split panes, file tree, file search, and a built-in editor.
+Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, split panes, and a built-in editor.
 
 ![Vex on Windows in dark appearance, with the sidebar open and a terminal running](web/public/shots/vex-dark.png)
 
@@ -9,7 +9,7 @@ Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, split p
 - Terminal: ConPTY + libghostty-vt emulation, WPF rendering. Kitty/xterm keyboard protocols, TUI mouse input, URL underline with Ctrl+Click, keyboard selection, Ctrl+Backspace word delete.
 - Shells: auto-detects PowerShell 7, Nushell, Windows PowerShell, cmd, Git Bash, WSL; plus custom shells (program + args) in Settings.
 - Tabs & panes: split right/down, focus mode, drag reorder, custom titles, tab peek preview, pane state indicators.
-- Workspace: multi-project sidebar, lazy file tree, quick file search, session restore (projects, tabs, splits, focus).
+- Workspace: multi-project workspace switching, git branch detection, session restore (projects, tabs, splits, focus).
 - Editor: AvalonEdit, lazy file load, dark/light syntax themes, dirty indicator, `Ctrl+S` to save.
 - Themes: Dark/Light appearance (follows OS), 11 built-in terminal themes + custom theme editor, live picker.
 
@@ -54,7 +54,7 @@ Both are built by `windows/build-installer.ps1`.
 ```text
 windows/
   Vex.slnx            solution
-  Vex.App/            WPF shell: sidebar, tabs, splits, tree, search, editor, overlays
+  Vex.App/            WPF shell: window, tabs, splits, editor, overlays
   Vex.Terminal/       ConPTY process lifecycle
   Vex.Libghostty/     libghostty-vt wrapper + WPF rendering
   Vex.Setup/          WiX installer
