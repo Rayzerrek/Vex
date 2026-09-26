@@ -260,10 +260,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // Runs on the PTY reader thread during Feed (query responses) and is
         // written straight into ConPTY: DSR/OSC answers no longer wait for a
         // UI-thread pump, which is what tripped Neovim's 100 ms
-        // "Did not detect DSR response" timeout. Responses go through the
-        // session's WriteResponse, not a raw Write: ConPTY parses each input
-        // write as one key encoding and drops ESC-prefixed chunks that are
-        // not valid keys (DSR, OSC/DA reports), so they are fragmented.
+        // "Did not detect DSR response" timeout. Responses go through
+        // WriteResponse, which writes the intact VT sequence to ConPTY.
         _terminal.WritePty += (data, len) =>
         {
             var session = _session;
@@ -765,11 +763,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 try
                 {
                     var prewarmed = await prewarmLease.SessionTask.ConfigureAwait(false);
+                    _session = prewarmed;
+                    prewarmed.Exited += OnSessionExited;
                     prewarmLease.AttachOutputHandler(OnSessionOutput);
                     prewarmLease.Dispose();
                     _prewarmLease = null;
-                    prewarmed.Exited += OnSessionExited;
-                    _session = prewarmed;
                     _ = Dispatcher.BeginInvoke(() =>
                     {
                         _sessionStarting = false;
@@ -785,6 +783,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 }
                 catch
                 {
+                    _session = null;
                     prewarmLease.Dispose();
                     _prewarmLease = null;
                     _sessionStarting = false;
@@ -812,11 +811,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             StartupMark.Note("terminal spawn end");
             if (_disposed)
             {
+                _session = null;
                 session.Dispose();
                 _ = Dispatcher.BeginInvoke(() => _sessionStarting = false);
                 return;
             }
-            _session = session;
             _ = Dispatcher.BeginInvoke(() =>
             {
                 _sessionStarting = false;
@@ -835,6 +834,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private TerminalSession CreateAndStartSession(string workingDirectory, short cols, short rows, string? shell, string? arguments)
     {
         var session = new TerminalSession();
+        _session = session;
         session.OutputReceived += OnSessionOutput;
         session.Exited += OnSessionExited;
         session.OutputReceived += data =>

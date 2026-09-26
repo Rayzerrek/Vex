@@ -12,6 +12,10 @@ public sealed partial class App : Application
 
     public App()
     {
+        // Required for ported TUI applications and shells to output VT
+        // sequences properly under ConPTY; set before any prewarm starts.
+        Environment.SetEnvironmentVariable("TERM", "xterm-256color");
+        Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
         Model.StartupMark.Note("app constructed");
 
         // Start settings and session I/O immediately. The prewarmer is started
@@ -77,11 +81,6 @@ public sealed partial class App : Application
         System.Windows.Media.Animation.Timeline.DesiredFrameRateProperty.OverrideMetadata(
             typeof(System.Windows.Media.Animation.Timeline),
             new PropertyMetadata(120));
-
-        // Required for ported TUI applications (vim, agy, pi, etc.) to
-        // output VT sequences properly under ConPTY.
-        Environment.SetEnvironmentVariable("TERM", "xterm-256color");
-        Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
 
         await _settingsTask.ConfigureAwait(true);
         Model.StartupMark.Note("settings ready");
