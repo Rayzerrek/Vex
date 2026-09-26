@@ -462,6 +462,171 @@
                     </StackPanel>
                 </Button>
 
+                <!-- Project Picker Dropdown Popover -->
+                <Popup x:Name="ProjectPickerPopup"
+                       PlacementTarget="{Binding ElementName=ProjectPillButton}"
+                       Placement="Bottom"
+                       VerticalOffset="4"
+                       HorizontalOffset="0"
+                       AllowsTransparency="True"
+                       StaysOpen="False"
+                       PopupAnimation="Fade"
+                       Opened="ProjectPickerPopup_Opened"
+                       Closed="ProjectPickerPopup_Closed">
+                    <Border Background="{StaticResource VexSurface}"
+                            BorderBrush="{StaticResource VexBorder}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            MinWidth="280"
+                            MaxWidth="360"
+                            Padding="0">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.45" Color="#000000"/>
+                        </Border.Effect>
+                        <Grid PreviewKeyDown="ProjectPicker_PreviewKeyDown">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Header: "PROJECTS (count)" -->
+                            <Border Grid.Row="0" Padding="12,10,12,6" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,0,1">
+                                <DockPanel>
+                                    <TextBlock Text="PROJECTS" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding Projects.Count, StringFormat='({0})'}"
+                                               FontSize="10" Foreground="{StaticResource VexTextDim}"
+                                               Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                </DockPanel>
+                            </Border>
+
+                            <!-- Projects list -->
+                            <ListBox x:Name="ProjectPickerList" Grid.Row="1"
+                                     ItemsSource="{Binding Projects}"
+                                     SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
+                                     Background="Transparent" BorderThickness="0" Padding="4,4"
+                                     MaxHeight="280"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     PreviewMouseLeftButtonUp="ProjectPickerList_PreviewMouseLeftButtonUp">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Padding" Value="8,6"/>
+                                        <Setter Property="Margin" Value="2,1"/>
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ListBoxItem">
+                                                    <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="6">
+                                                        <ContentPresenter/>
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsSelected" Value="True">
+                                                            <Setter Property="Background" Value="{StaticResource VexHover}" TargetName="chrome"/>
+                                                            <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
+                                                        </Trigger>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter Property="Background" Value="{StaticResource VexHover}" TargetName="chrome"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Folder glyph -->
+                                            <Grid Grid.Column="0" Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                <Path Data="M22,19 C22,20.1 21.1,21 20,21 L4,21 C2.9,21 2,20.1 2,19 L2,5 C2,3.9 2.9,3 4,3 L9,3 L11,6 L20,6 C21.1,6 22,6.9 22,8 Z"
+                                                      Stretch="Uniform"
+                                                      Fill="{StaticResource VexAccentTranslucent}"
+                                                      Stroke="{StaticResource VexAccent}" StrokeThickness="1.5"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                            </Grid>
+
+                                            <!-- Project Name + Branch + Working Directory -->
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Name}" Foreground="{StaticResource VexText}"
+                                                               FontSize="12" FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <!-- Git Branch if present -->
+                                                    <StackPanel Orientation="Horizontal" Margin="6,0,0,0" VerticalAlignment="Center">
+                                                        <StackPanel.Style>
+                                                            <Style TargetType="StackPanel">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding HasGitBranch}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </StackPanel.Style>
+                                                        <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
+                                                              Stretch="Uniform" Width="9" Height="11"
+                                                              Stroke="{StaticResource VexAccentBlue}" StrokeThickness="1.2"
+                                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              Fill="Transparent"
+                                                              VerticalAlignment="Center" Margin="0,0,3,0"/>
+                                                        <TextBlock Text="{Binding GitBranch}" Foreground="{StaticResource VexAccentBlue}"
+                                                                   FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="110"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding WorkingDirectory}" FontSize="10.5"
+                                                           Foreground="{StaticResource VexTextDim}"
+                                                           TextTrimming="CharacterEllipsis" Margin="0,1,0,0"
+                                                           ToolTip="{Binding WorkingDirectory}"/>
+                                            </StackPanel>
+
+                                            <!-- Remove project button (visible on hover) -->
+                                            <Button x:Name="RemoveBtn" Grid.Column="2"
+                                                    Margin="4,0,0,0" ToolTip="Remove Project"
+                                                    Click="RemoveProject_Click"
+                                                    Width="20" Height="20"
+                                                    Opacity="0">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource CloseButton}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsMouseOver}" Value="True">
+                                                                <Setter Property="Opacity" Value="1"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                                <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                                                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <!-- Footer: Add Project Folder button -->
+                            <Border Grid.Row="2" Padding="4" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,1,0,0">
+                                <Button Style="{StaticResource GhostButton}"
+                                        HorizontalContentAlignment="Left"
+                                        Padding="8,6"
+                                        Click="ProjectPickerAddFolder_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <TextBlock Text="Open Project Folder..." FontSize="12"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Popup>
+
                 <!-- Add Project Folder Button [+] -->
                 <Button x:Name="AddFolderButton"
                         WindowChrome.IsHitTestVisibleInChrome="True"

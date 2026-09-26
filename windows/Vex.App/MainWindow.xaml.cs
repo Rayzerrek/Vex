@@ -530,7 +530,56 @@ public sealed partial class MainWindow : Window
 
     private void ProjectPillButton_Click(object sender, RoutedEventArgs e)
     {
-        // Handled in ProjectPickerPopup
+        ProjectPickerPopup.IsOpen = !ProjectPickerPopup.IsOpen;
+    }
+
+    private void ProjectPickerPopup_Opened(object? sender, EventArgs e)
+    {
+        _workspace.SelectedProject?.RefreshGitBranch();
+        ProjectPickerList.Focus();
+        if (ProjectPickerList.SelectedItem is { } item)
+            ProjectPickerList.ScrollIntoView(item);
+    }
+
+    private void ProjectPickerPopup_Closed(object? sender, EventArgs e)
+    {
+        FocusActivePane();
+    }
+
+    private void ProjectPickerList_PreviewMouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (FindAncestor<Button>(e.OriginalSource as DependencyObject) is { Name: "RemoveBtn" })
+            return;
+
+        if (FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject) is { DataContext: Project project })
+        {
+            _workspace.SelectedProject = project;
+            ProjectPickerPopup.IsOpen = false;
+            FocusActivePane();
+        }
+    }
+
+    private void ProjectPicker_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            ProjectPickerPopup.IsOpen = false;
+            FocusActivePane();
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.Enter && ProjectPickerList.SelectedItem is Project project)
+        {
+            _workspace.SelectedProject = project;
+            ProjectPickerPopup.IsOpen = false;
+            FocusActivePane();
+            e.Handled = true;
+        }
+    }
+
+    private void ProjectPickerAddFolder_Click(object sender, RoutedEventArgs e)
+    {
+        ProjectPickerPopup.IsOpen = false;
+        NewProject_Click(sender, e);
     }
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
