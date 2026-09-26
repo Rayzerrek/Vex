@@ -226,6 +226,41 @@
             <local:SplitPaneView Pane="{Binding}"/>
         </DataTemplate>
 
+        <!-- Project Pill Button Style -->
+        <Style x:Key="ProjectPillButtonStyle" TargetType="Button">
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="7,3,7,3"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="pillBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="pillBorder" Property="Background" Value="{StaticResource VexHover}"/>
+                                <Setter TargetName="pillBorder" Property="BorderBrush" Value="{StaticResource VexBorder}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="pillBorder" Property="Background" Value="{StaticResource VexPressFill}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Reusable tab header (real tabs and the drag ghost). -->
         <DataTemplate x:Key="TabHeaderTemplate">
             <Grid Background="Transparent" MouseDown="TabHeader_MouseDown">
@@ -359,15 +394,100 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Sidebar toggle: the panel-layout glyph (a frame with a
-                 divider near the left edge) so the button reads as "the
-                 sidebar" rather than the old stacked-rectangles mark. -->
-            <Button Grid.Column="0" Style="{StaticResource DeckButton}"
-                    Margin="8,0,4,0" Click="SidebarToggle_Click" ToolTip="Toggle Sidebar">
-                <Path Data="M 3.5,2.5 H 12.5 A 2,2 0 0 1 14.5,4.5 V 11.5 A 2,2 0 0 1 12.5,13.5 H 3.5 A 2,2 0 0 1 1.5,11.5 V 4.5 A 2,2 0 0 1 3.5,2.5 Z M 6,2.5 V 13.5"
-                      Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
-                      StrokeThickness="1.2" Width="14" Height="14" Stretch="Uniform" Fill="Transparent"/>
-            </Button>
+            <!-- Project Header: Project Pill + Add Folder Button + Sidebar Toggle + Divider -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0,2,0">
+                <!-- Project Pill: Folder Icon + Name + (Git Branch if available) + Caret -->
+                <Button x:Name="ProjectPillButton"
+                        Style="{StaticResource ProjectPillButtonStyle}"
+                        Click="ProjectPillButton_Click"
+                        ToolTip="{Binding SelectedProject.WorkingDirectory}">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <!-- Folder Icon -->
+                        <Path Data="M22,19 C22,20.1 21.1,21 20,21 L4,21 C2.9,21 2,20.1 2,19 L2,5 C2,3.9 2.9,3 4,3 L9,3 L11,6 L20,6 C21.1,6 22,6.9 22,8 Z"
+                              Stretch="Uniform" Width="13" Height="13"
+                              Fill="{StaticResource VexAccentTranslucent}"
+                              Stroke="{StaticResource VexAccent}" StrokeThickness="1.5"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                              VerticalAlignment="Center" Margin="0,0,6,0"/>
+
+                        <!-- Folder Name -->
+                        <TextBlock Text="{Binding SelectedProject.Name}"
+                                   Foreground="{StaticResource VexText}"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   MaxWidth="140"
+                                   TextTrimming="CharacterEllipsis"/>
+
+                        <!-- Git Branch Badge: visible only if repo has a branch -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedProject.HasGitBranch}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+
+                            <!-- Dot separator -->
+                            <TextBlock Text="·" Foreground="{StaticResource VexTextDim}"
+                                       FontSize="11" Margin="5,0,5,0" VerticalAlignment="Center"/>
+
+                            <!-- Git branch glyph -->
+                            <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
+                                  Stretch="Uniform" Width="10" Height="12"
+                                  Stroke="{StaticResource VexAccentBlue}" StrokeThickness="1.3"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  Fill="Transparent"
+                                  VerticalAlignment="Center" Margin="0,0,4,0"/>
+
+                            <!-- Branch name -->
+                            <TextBlock Text="{Binding SelectedProject.GitBranch}"
+                                       Foreground="{StaticResource VexTextDim}"
+                                       FontSize="11"
+                                       MaxWidth="110"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <!-- Dropdown Caret -->
+                        <Path Data="M 1,1 L 4,4 L 7,1"
+                              Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                              Width="7" Height="4"
+                              Stretch="Uniform"
+                              VerticalAlignment="Center" Margin="6,1,0,0"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Add Project Folder Button [+] -->
+                <Button x:Name="AddFolderButton"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        Style="{StaticResource GhostButton}"
+                        Width="26" Height="26" Margin="2,0,0,0"
+                        ToolTip="Add Project Folder"
+                        Click="NewProject_Click">
+                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                </Button>
+
+                <!-- Sidebar Toggle Button (Files) -->
+                <Button x:Name="SidebarToggleButton"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        Style="{StaticResource GhostButton}"
+                        Width="26" Height="26" Margin="2,0,0,0"
+                        ToolTip="Toggle Files Sidebar"
+                        Click="SidebarToggle_Click">
+                    <Path Data="M 3.5,2.5 H 12.5 A 2,2 0 0 1 14.5,4.5 V 11.5 A 2,2 0 0 1 12.5,13.5 H 3.5 A 2,2 0 0 1 1.5,11.5 V 4.5 A 2,2 0 0 1 3.5,2.5 Z M 6,2.5 V 13.5"
+                          Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                          StrokeThickness="1.2" Width="13" Height="13" Stretch="Uniform" Fill="Transparent"/>
+                </Button>
+
+                <!-- Visual Divider between project context and tab bar -->
+                <Border Width="1" Height="16" Background="{StaticResource VexBorder}" Margin="6,0,4,0" VerticalAlignment="Center"/>
+            </StackPanel>
 
             <!-- Tabs: natural width, left-aligned from the toggle -->
             <ListBox x:Name="TabStrip" Grid.Column="1" WindowChrome.IsHitTestVisibleInChrome="False"
