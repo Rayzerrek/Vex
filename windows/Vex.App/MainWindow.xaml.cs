@@ -30,6 +30,7 @@ public sealed partial class MainWindow : Window
     private System.Windows.Point _dragStart;
     private DropZone _dropZone;
     private ScrollViewer? _tabScrollViewer;
+    private long _projectPickerClosedTimestamp;
 
     /// <summary>The tab strip's scroll viewer, resolved once from the visual
     /// tree. Layout-space math for the drag marker needs its horizontal
@@ -485,6 +486,9 @@ public sealed partial class MainWindow : Window
 
     private void ProjectPillButton_Click(object sender, RoutedEventArgs e)
     {
+        if (Environment.TickCount64 - _projectPickerClosedTimestamp < 200)
+            return;
+
         ProjectPickerPopup.IsOpen = !ProjectPickerPopup.IsOpen;
     }
 
@@ -498,6 +502,7 @@ public sealed partial class MainWindow : Window
 
     private void ProjectPickerPopup_Closed(object? sender, EventArgs e)
     {
+        _projectPickerClosedTimestamp = Environment.TickCount64;
         FocusActivePane();
     }
 

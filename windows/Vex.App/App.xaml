@@ -64,6 +64,8 @@
         <Color x:Key="VexAccentGradientEndColor">#668A6BB5</Color>
         <SolidColorBrush x:Key="VexAccentBlue" Color="{DynamicResource VexAccentBlueColor}"/>
         <SolidColorBrush x:Key="VexAccentPurple" Color="{DynamicResource VexAccentPurpleColor}"/>
+        <Color x:Key="VexGitBranchColor">#FF79C0FF</Color>
+        <SolidColorBrush x:Key="VexGitBranch" Color="{DynamicResource VexGitBranchColor}"/>
         <LinearGradientBrush x:Key="VexAccentGradient" StartPoint="0,0" EndPoint="1,1">
             <GradientStop Color="{DynamicResource VexAccentGradientStartColor}" Offset="0"/>
             <GradientStop Color="{DynamicResource VexAccentGradientEndColor}" Offset="1"/>

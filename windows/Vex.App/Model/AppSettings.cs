@@ -82,14 +82,17 @@ public sealed class AppSettings : ObservableObject
     /// chrome and terminal re-tint together through the normal pipeline.</summary>
     public void SetAppearance(string appearance)
     {
-        var dark = appearance != LightAppearance;
-        if (!IsDarkAppearance && dark || IsDarkAppearance && !dark)
+        var target = appearance == LightAppearance ? LightAppearance : DarkAppearance;
+        var dark = target != LightAppearance;
+        var crossing = IsDarkAppearance != dark;
+        _appearance = target;
+        if (crossing)
         {
-            // Crossing the boundary: pick a theme of the new kind. The current
-            // name is kept when it already belongs to the target appearance.
             ThemeName = BuiltInThemes.ResolveInAppearance(ThemeName, dark).Name;
         }
-        Appearance = dark ? DarkAppearance : LightAppearance;
+        OnPropertyChanged(nameof(Appearance));
+        OnPropertyChanged(nameof(IsDarkAppearance));
+        Save();
     }
 
     /// <summary>Resolves the persisted appearance once at startup; an empty or
