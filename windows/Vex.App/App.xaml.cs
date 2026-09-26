@@ -14,25 +14,32 @@ public sealed partial class App : Application
     {
         Model.StartupMark.Note("app constructed");
 
-        // The generated entry point parses App.xaml after this constructor.
-        // Start all thread-safe disk and font work now so it overlaps that
-        // otherwise unavoidable WPF resource initialization.
+        // Start settings and session I/O immediately. The prewarmer is started
+        // once both values are available, without a second JSON parser that can
+        // disagree with the source-generated deserializer.
         _settingsTask = Task.Run(Model.AppSettings.Preload);
         _sessionTask = Model.SessionStore.ReadSnapshotAsync();
-        _ = _settingsTask.ContinueWith(_ =>
-        {
-            Model.StartupMark.Note("terminal prewarm begin");
-            var settings = Model.AppSettings.Instance;
-            Terminal.Native.NativeTerminalControl.Prewarm(settings.ThemeName, settings.FontFamily);
-            Model.StartupMark.Note("terminal prewarm ready");
-        }, TaskScheduler.Default);
 
         _ = Task.WhenAll(_settingsTask, _sessionTask).ContinueWith(_ =>
         {
             var snapshot = _sessionTask.Result;
-            var workingDirectory = snapshot?.Projects?.FirstOrDefault()?.WorkingDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var projects = snapshot?.Projects;
+            var selectedProjectIndex = snapshot?.SelectedProjectIndex ?? 0;
+            var workingDirectory = projects is { Count: > 0 }
+                && selectedProjectIndex >= 0
+                && selectedProjectIndex < projects.Count
+                ? projects[selectedProjectIndex].WorkingDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var shellId = Model.AppSettings.Instance.ShellId;
             Terminal.Native.TerminalSessionPrewarmer.StartPrewarm(workingDirectory, shellId);
+        }, TaskScheduler.Default);
+
+        _ = _settingsTask.ContinueWith(_ =>
+        {
+            Model.StartupMark.Note("terminal prewarm font begin");
+            var settings = Model.AppSettings.Instance;
+            Terminal.Native.NativeTerminalControl.Prewarm(settings.ThemeName, settings.FontFamily);
+            Model.StartupMark.Note("terminal prewarm font ready");
         }, TaskScheduler.Default);
 
         if (Model.StartupMark.IsEnabled)
@@ -40,11 +47,12 @@ public sealed partial class App : Application
             _ = _sessionTask.ContinueWith(t =>
             {
                 if (t.Status == TaskStatus.RanToCompletion)
-                    Model.StartupMark.Note($"session task done");
+                    Model.StartupMark.Note("session task done");
                 else
                     Model.StartupMark.Note("session task faulted");
             }, TaskScheduler.Default);
         }
+
     }
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -117,5 +125,11 @@ public sealed partial class App : Application
         var snapshot = await _sessionTask.ConfigureAwait(true);
         Model.SessionStore.Populate(workspace, snapshot);
         Model.StartupMark.Note("session populated");
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        Terminal.Native.TerminalSessionPrewarmer.Dispose();
+        base.OnExit(e);
     }
 }
