@@ -36,6 +36,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     // width, reused across redraws.  A row can have at most (cols+1)/2 runs
     // (alternating background runs), so the text-run pool is sized to that.
     private volatile TerminalSession? _session;
+    private TerminalSessionPrewarmer.Lease? _prewarmLease;
     private bool _sessionStarting;
     private TerminalPalette _palette = new(BuiltInThemes.VexDark);
     private FontFamily _fontFamily = new("Cascadia Mono");
@@ -747,31 +748,54 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
 
         _sessionStarting = true;
+        // New tabs should not create a second, short-lived prewarm. The
+        // prewarmer is single-use and only belongs to the initial restored
+        // pane; subsequent panes start directly with their actual geometry.
         var cols = _cols >= 20 ? (short)_cols : (short)80;
         var rows = _rows >= 5 ? (short)_rows : (short)24;
         var workingDirectory = _workingDirectory;
         var shellId = AppSettings.Instance.ShellId;
 
-        var prewarmed = TerminalSessionPrewarmer.Take(workingDirectory, shellId, OnSessionOutput);
-        if (prewarmed != null)
+        var prewarmLease = TerminalSessionPrewarmer.Take(workingDirectory, shellId);
+        _prewarmLease = prewarmLease;
+        if (prewarmLease != null)
         {
-            StartupMark.Note("terminal prewarmed session taken");
-            prewarmed.Exited += OnSessionExited;
-            _session = prewarmed;
-            _sessionStarting = false;
-            if (_cols != cols || _rows != rows)
-                ApplySessionResize((short)_cols, (short)_rows);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var prewarmed = await prewarmLease.SessionTask.ConfigureAwait(false);
+                    prewarmLease.AttachOutputHandler(OnSessionOutput);
+                    prewarmLease.Dispose();
+                    _prewarmLease = null;
+                    prewarmed.Exited += OnSessionExited;
+                    _session = prewarmed;
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        _sessionStarting = false;
+                        if (_disposed)
+                        {
+                            _session = null;
+                            prewarmed.Dispose();
+                            return;
+                        }
+                        if (_cols != cols || _rows != rows)
+                            ApplySessionResize((short)_cols, (short)_rows);
+                    });
+                }
+                catch
+                {
+                    prewarmLease.Dispose();
+                    _prewarmLease = null;
+                    _sessionStarting = false;
+                    _ = Dispatcher.BeginInvoke(StartSession);
+                }
+            });
             return;
         }
 
-        // ConPTY creation and process spawning are P/Invoke calls that do not
-        // need the UI thread. Running them on a background thread keeps the
-        // UI responsive while the shell process is being created — typically
-        // 50–200 ms of pipe/ConPTY/process setup that would otherwise freeze
-        // the first frame.
         _ = Task.Run(() =>
         {
-            StartupMark.Note("terminal spawn begin");
             var resolved = ShellRegistry.Resolve(shellId);
             var shellProgram = SelfTestShell ?? resolved?.Program ?? TerminalSession.DefaultShell();
             var shellArguments = SelfTestShell is null ? resolved?.Arguments : null;
@@ -783,15 +807,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             }
             catch (Win32Exception)
             {
-                Diag($"shell '{shellProgram}' failed to launch; falling back to default");
                 session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
             }
             StartupMark.Note("terminal spawn end");
-
-            // Publish immediately on this thread: the reader loop inside Start
-            // already delivers child output (and the emulator already answers
-            // queries via WritePty) before the dispatcher continuation below
-            // runs. Publishing late dropped those early responses.
             if (_disposed)
             {
                 session.Dispose();
@@ -799,20 +817,15 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 return;
             }
             _session = session;
-
             _ = Dispatcher.BeginInvoke(() =>
             {
                 _sessionStarting = false;
-                // The control may have been disposed while the session was
-                // starting (e.g. the tab was closed). Dispose the orphan.
                 if (_disposed)
                 {
                     _session = null;
                     session.Dispose();
                     return;
                 }
-                // Apply any grid size that changed while the session was
-                // starting.
                 if (_cols != cols || _rows != rows)
                     ApplySessionResize((short)_cols, (short)_rows);
             });
@@ -824,12 +837,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var session = new TerminalSession();
         session.OutputReceived += OnSessionOutput;
         session.Exited += OnSessionExited;
-        session.OutputReceived += (data) =>
+        session.OutputReceived += data =>
         {
             if (Interlocked.Exchange(ref _firstOutputNoted, 1) == 0)
-            {
                 StartupMark.Note("first terminal output");
-            }
         };
         session.Start(workingDirectory, cols, rows, shell, arguments);
         return session;
@@ -844,8 +855,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     {
         if (chunk.Array is not { } buffer)
             return;
-        if (DiagPath is not null)
-            Diag($"chunk {Convert.ToBase64String(buffer, chunk.Offset, chunk.Count)}");
         try
         {
             // Feed on this PTY reader thread, not on the UI thread. The
@@ -2914,6 +2923,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         }
         AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
         ResizeSuspensionEnded -= OnResizeSuspensionEnded;
+        _prewarmLease?.Dispose();
+        _prewarmLease = null;
         var session = _session;
         _session = null;
         if (session is not null)

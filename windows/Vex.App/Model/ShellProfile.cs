@@ -44,28 +44,59 @@ public static class ShellRegistry
     /// Runs on the pane-spawn path, so it must stay cheap: no PATH scan and
     /// no full detection sweep — at most a couple of File.Exists probes.
     /// </summary>
+    private static readonly Dictionary<string, (string Program, string Arguments)> _resolvedCache = new();
+
     public static (string Program, string Arguments)? Resolve(string? shellId)
     {
         if (string.IsNullOrEmpty(shellId) || shellId == SystemDefaultId)
             return null;
 
-        // Bare names are passed through on purpose: CreateProcess resolves
-        // them against PATH itself, so spawning stays a single CreateProcess
-        // call instead of paying for a scan here.
+        lock (_resolvedCache)
+        {
+            if (_resolvedCache.TryGetValue(shellId, out var cached))
+                return cached;
+        }
+
+        (string Program, string Arguments)? result = null;
         switch (shellId)
         {
-            case "nu": return ("nu.exe", "");
+            case "nu":
+                var nuPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "scoop", "apps", "nu", "current", "nu.exe");
+                result = (File.Exists(nuPath) ? nuPath : FindOnPath("nu.exe") ?? "nu.exe", "");
+                break;
             case "pwsh":
             case "powershell":
                 var exe = PowerShellPath(shellId == "pwsh");
-                return exe is null ? null : (exe, "");
+                result = exe is null ? null : (exe, "");
+                break;
+            default:
+                var custom = AppSettings.Instance.CustomShells.FirstOrDefault(p => p.Id == shellId);
+                if (custom is not null && !string.IsNullOrWhiteSpace(custom.Program))
+                {
+                    // If custom program is a bare name, try to resolve it so CreateProcessW doesn't stall.
+                    var prog = custom.Program;
+                    if (!prog.Contains('\\') && !prog.Contains('/'))
+                    {
+                        var resolvedPath = FindOnPath(prog);
+                        if (resolvedPath != null)
+                            prog = resolvedPath;
+                    }
+                    result = (prog, custom.Arguments);
+                }
+                break;
         }
 
-        var custom = AppSettings.Instance.CustomShells.FirstOrDefault(p => p.Id == shellId);
-        if (custom is not null && !string.IsNullOrWhiteSpace(custom.Program))
-            return (custom.Program, custom.Arguments);
+        if (result.HasValue && shellId is "nu" or "pwsh" or "powershell")
+        {
+            lock (_resolvedCache)
+            {
+                _resolvedCache[shellId] = result.Value;
+            }
+        }
 
-        return null;
+        return result;
     }
 
     private static string? PowerShellPath(bool pwsh)
