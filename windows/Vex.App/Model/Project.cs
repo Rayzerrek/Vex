@@ -24,13 +24,19 @@ public sealed class Project : ObservableObject
 
     public bool CanCreateTab => Tabs.Count < MaxTabs;
 
+    /// <summary>Whether WorkingDirectory is a git repository with an active branch.</summary>
+    public bool HasGitBranch => !string.IsNullOrEmpty(_gitBranch);
+
     /// <summary>The active git branch in WorkingDirectory, or null if not a repository.</summary>
     public string? GitBranch
     {
         get => _gitBranch;
-        private set => Set(ref _gitBranch, value);
+        private set
+        {
+            if (Set(ref _gitBranch, value))
+                OnPropertyChanged(nameof(HasGitBranch));
+        }
     }
-
     public Project(string name, string workingDirectory)
     {
         _name = name;
@@ -40,6 +46,7 @@ public sealed class Project : ObservableObject
         _selectedTab = tab;
         if (tab is not null)
             tab.IsActive = true;
+        RefreshGitBranch();
     }
 
     /// <summary>Restores a project from a saved session; tabs are wired up
@@ -57,6 +64,7 @@ public sealed class Project : ObservableObject
         _selectedTab = Tabs.FirstOrDefault();
         if (_selectedTab is not null)
             _selectedTab.IsActive = true;
+        RefreshGitBranch();
     }
 
     private void WireTabEvents(WorkspaceTab tab)
@@ -83,7 +91,12 @@ public sealed class Project : ObservableObject
         var version = ++_gitBranchVersion;
         var branch = await Task.Run(() => ResolveGitBranch(dir));
         if (version == _gitBranchVersion)
-            GitBranch = branch;
+        {
+            if (System.Windows.Application.Current?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
+                _ = dispatcher.BeginInvoke(() => GitBranch = branch);
+            else
+                GitBranch = branch;
+        }
     }
 
     private static string? ResolveGitBranch(string workingDirectory)
