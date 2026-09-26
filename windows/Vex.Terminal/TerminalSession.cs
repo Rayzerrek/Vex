@@ -172,12 +172,11 @@ public sealed class TerminalSession : IDisposable
         _columns = columns;
         _rows = rows;
 
-        if (_pseudoConsole == IntPtr.Zero || _disposed)
+        if (_pseudoConsole == IntPtr.Zero || _disposed || _processHandle == IntPtr.Zero)
         {
             LastResizeFailed = false;
             return true;
         }
-
         var hr = NativeMethods.ResizePseudoConsole(_pseudoConsole, new NativeMethods.COORD(columns, rows));
         if (hr != 0)
         {

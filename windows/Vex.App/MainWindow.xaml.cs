@@ -181,6 +181,14 @@ public sealed partial class MainWindow : Window
 
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(AppSettings.ShellId))
+        {
+            var workingDir = _workspace.SelectedProject?.WorkingDirectory
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            Terminal.Native.TerminalSessionPrewarmer.StartPrewarm(workingDir, AppSettings.Instance.ShellId);
+            return;
+        }
+
         if (e.PropertyName is nameof(AppSettings.ThemeName) or nameof(AppSettings.Appearance))
         {
             // The acrylic tint is painted by DWM, outside the XAML palette, so

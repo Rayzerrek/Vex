@@ -89,8 +89,7 @@ internal static class TerminalSessionPrewarmer
     {
         lock (Sync)
         {
-            if (_disposed)
-                return;
+            _disposed = false;
             if (_slot is { } current && !current.Claimed && !current.Invalidated
                 && Matches(current, workingDirectory, shellId))
                 return;
@@ -210,10 +209,20 @@ internal static class TerminalSessionPrewarmer
     {
         lock (Sync)
         {
+            if (_slot is { } existing && !existing.Claimed && !existing.Invalidated && !Matches(existing, workingDirectory, shellId))
+            {
+                InvalidateLocked(existing);
+                _slot = null;
+            }
+
             if (_slot is not { } slot || slot.Claimed || slot.Invalidated
                 || !Matches(slot, workingDirectory, shellId)
                 || slot.SessionTask is not { } sessionTask)
+            {
+                if (!_disposed)
+                    StartPrewarmLocked(workingDirectory, shellId);
                 return null;
+            }
 
             slot.Claimed = true;
             _slot = null;

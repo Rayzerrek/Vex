@@ -106,7 +106,7 @@ public static class ShellRegistry
             var pwshPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                 "PowerShell", "7", "pwsh.exe");
-            return File.Exists(pwshPath) ? pwshPath : null;
+            return File.Exists(pwshPath) ? pwshPath : FindOnPath("pwsh.exe");
         }
         var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
         return Path.Combine(system32, "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -135,7 +135,8 @@ public static class ShellRegistry
                 found.Add(new ShellProfile { Id = id, Name = name, Program = path, Arguments = arguments, IsBuiltIn = true });
         }
 
-        Add("pwsh", "PowerShell 7", Path.Combine(programFiles, "PowerShell", "7", "pwsh.exe"));
+        var pwshPath = Path.Combine(programFiles, "PowerShell", "7", "pwsh.exe");
+        Add("pwsh", "PowerShell 7", File.Exists(pwshPath) ? pwshPath : FindOnPath("pwsh.exe"));
         Add("nu", "Nushell", FindOnPath("nu.exe"));
         Add("powershell", "Windows PowerShell",
             Path.Combine(system32, "WindowsPowerShell", "v1.0", "powershell.exe"));
