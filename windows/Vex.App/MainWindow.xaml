@@ -394,7 +394,7 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Project Header: Project Pill + Add Folder Button + Sidebar Toggle + Divider -->
+            <!-- Project Header: Project Pill + Add Folder Button + Divider -->
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0,2,0">
                 <!-- Project Pill: Folder Icon + Name + (Git Branch if available) + Caret -->
                 <Button x:Name="ProjectPillButton"

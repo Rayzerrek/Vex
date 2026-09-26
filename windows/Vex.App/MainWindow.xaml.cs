@@ -683,10 +683,10 @@ public sealed partial class MainWindow : Window
         if (e.ChangedButton != System.Windows.Input.MouseButton.Left)
             return;
 
-        // A click on a non-interactive surface (sidebar padding, pane chrome,
-        // empty tree space) leaves keyboard focus stranded in a text box like
-        // the file search, so typing goes nowhere. Let the click settle, and
-        // if nothing took focus, return it to the active pane.
+        // A click on a non-interactive surface (tab strip, pane chrome) leaves
+        // keyboard focus stranded in an overlay text box (e.g. search, settings),
+        // so typing goes nowhere. Let the click settle, and if nothing took focus,
+        // return it to the active pane.
         if (System.Windows.Input.Keyboard.FocusedElement is not TextBox focused)
             return;
         if (IsVisualDescendantOf(focused, e.OriginalSource as DependencyObject))

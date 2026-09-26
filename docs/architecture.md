@@ -7,8 +7,8 @@ process, with Ghostty's terminal core doing the VT emulation.
 
 ```text
 windows/
-  Vex.App/           WPF shell: window, sidebar, tabs, splits, tree, search,
-                     editor, overlays. Owns all UI state.
+  Vex.App/           WPF shell: window, tabs, splits, editor,
+                     overlays. Owns all UI state.
   Vex.Terminal/      ConPTY process lifecycle: spawn, resize, resize-safe
                      teardown, process tree cleanup.
   Vex.Libghostty/    P/Invoke wrapper over the vendored libghostty-vt, plus the
@@ -65,7 +65,7 @@ State lives in `%LocalAppData%\Vex\`:
 
 | File | Contents |
 |---|---|
-| `settings.json` | Appearance, theme, font, cursor, shell profiles, sidebar. |
+| `settings.json` | Appearance, theme, font, cursor, shell profiles. |
 | `session.json` | Projects, tabs, split tree, divider ratios, focus. |
 
 Both are written by source-generated `System.Text.Json` contexts

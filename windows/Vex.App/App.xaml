@@ -20,7 +20,6 @@
              not a saturated frame. -->
         <Color x:Key="VexFocusBorderColor">#FF4C6B9C</Color>
         <!-- Translucent chrome overlays so the acrylic backdrop shows through. -->
-        <Color x:Key="VexSidebarColor">#40111317</Color>
         <Color x:Key="VexTabStripColor">#40111317</Color>
         <Color x:Key="VexPaneTitleBarColor">#FF1E2026</Color>
         <Color x:Key="VexPaneTitleBarFocusedColor">#FF262932</Color>
@@ -41,7 +40,6 @@
         <SolidColorBrush x:Key="VexAccentTranslucent" Color="{DynamicResource VexAccentColor}" Opacity="0.16"/>
         <SolidColorBrush x:Key="VexTextDimTranslucent" Color="{DynamicResource VexTextDimColor}" Opacity="0.12"/>
         <SolidColorBrush x:Key="VexFocusBorder" Color="{DynamicResource VexFocusBorderColor}"/>
-        <SolidColorBrush x:Key="VexSidebar" Color="{DynamicResource VexSidebarColor}"/>
         <SolidColorBrush x:Key="VexPaneTitleBar" Color="{DynamicResource VexPaneTitleBarColor}"/>
         <SolidColorBrush x:Key="VexPaneTitleBarFocused" Color="{DynamicResource VexPaneTitleBarFocusedColor}"/>
         <SolidColorBrush x:Key="VexTabStrip" Color="{DynamicResource VexTabStripColor}"/>
@@ -76,8 +74,6 @@
              every key at startup and on every appearance/theme switch. -->
         <Color x:Key="VexBackdropScrimColor">#CC050607</Color>
         <Color x:Key="VexPressFillColor">#FF3A3A42</Color>
-        <Color x:Key="VexSidebarToggleBgColor">#14181A1F</Color>
-        <Color x:Key="VexSidebarToggleBorderColor">#2630373E</Color>
         <Color x:Key="VexSplitPreviewColor">#40FFFFFF</Color>
         <Color x:Key="VexSplitPreviewBorderColor">#66FFFFFF</Color>
         <Color x:Key="VexPaneExitedColor">#FF6B4B4B</Color>
@@ -93,8 +89,6 @@
         <Color x:Key="VexOnAccentColor">#FFEDEFF2</Color>
         <SolidColorBrush x:Key="VexBackdropScrim" Color="{DynamicResource VexBackdropScrimColor}"/>
         <SolidColorBrush x:Key="VexPressFill" Color="{DynamicResource VexPressFillColor}"/>
-        <SolidColorBrush x:Key="VexSidebarToggleBg" Color="{DynamicResource VexSidebarToggleBgColor}"/>
-        <SolidColorBrush x:Key="VexSidebarToggleBorder" Color="{DynamicResource VexSidebarToggleBorderColor}"/>
         <SolidColorBrush x:Key="VexSplitPreview" Color="{DynamicResource VexSplitPreviewColor}"/>
         <SolidColorBrush x:Key="VexSplitPreviewBorder" Color="{DynamicResource VexSplitPreviewBorderColor}"/>
         <SolidColorBrush x:Key="VexPaneExited" Color="{DynamicResource VexPaneExitedColor}"/>

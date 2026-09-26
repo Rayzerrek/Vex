@@ -5,7 +5,7 @@ using Vex.App.Model;
 namespace Vex.App;
 
 /// <summary>
-/// Derives the app's chrome palette (window, sidebar, tab strip, pane chrome,
+/// Derives the app's chrome palette (window, tab strip, pane chrome,
 /// accents, overlay surfaces) from the active terminal theme, so switching a
 /// theme tints the whole application like upstream — not just the ANSI grid.
 /// Every color is computed in one of two variants, dark or light, chosen by
@@ -46,7 +46,7 @@ public static class ChromePalette
     /// <summary>Brushes in App.xaml bind their Color to a Color key through
     /// DynamicResource. That indirection stops propagating on live appearance
     /// flips: the color key updates while the brush keeps painting the previous
-    /// variant (observed on VexSidebar/VexTabStrip), leaving half the chrome in
+    /// variant (observed on VexTabStrip), leaving half the chrome in
     /// the old theme until a restart. Push values into the brushes directly —
     /// an unfrozen shared brush invalidates all consumers on write.</summary>
     private static void SyncBrushes(ResourceDictionary res)
@@ -91,15 +91,12 @@ public static class ChromePalette
         ("VexTextPlaceholder", "VexTextPlaceholderColor"),
         ("VexAccent", "VexAccentColor"),
         ("VexFocusBorder", "VexFocusBorderColor"),
-        ("VexSidebar", "VexSidebarColor"),
         ("VexPaneTitleBar", "VexPaneTitleBarColor"),
         ("VexPaneTitleBarFocused", "VexPaneTitleBarFocusedColor"),
         ("VexTabStrip", "VexTabStripColor"),
         ("VexTabHover", "VexTabHoverColor"),
         ("VexBackdropScrim", "VexBackdropScrimColor"),
         ("VexPressFill", "VexPressFillColor"),
-        ("VexSidebarToggleBg", "VexSidebarToggleBgColor"),
-        ("VexSidebarToggleBorder", "VexSidebarToggleBorderColor"),
         ("VexSplitPreview", "VexSplitPreviewColor"),
         ("VexSplitPreviewBorder", "VexSplitPreviewBorderColor"),
         ("VexPaneExited", "VexPaneExitedColor"),
@@ -133,7 +130,6 @@ public static class ChromePalette
         Set(res, "VexTextPlaceholderColor", Mix(dim, fg, 0.5));
         Set(res, "VexAccentColor", Mix(Mix(blue, magenta, 0.5), bg, 0.35));
         Set(res, "VexFocusBorderColor", Mix(bg, blue, 0.50));
-        Set(res, "VexSidebarColor", WithAlpha(bg, 0x40));
         Set(res, "VexTabStripColor", WithAlpha(bg, 0x40));
         // The pane title bar carries the terminal's own background, so each
         // pane reads as one tinted block; focus lifts it slightly and the
@@ -156,8 +152,6 @@ public static class ChromePalette
         var scrimBase = Darken(bg, 0.62);
         Set(res, "VexBackdropScrimColor", FromArgb(0xDD, scrimBase.R, scrimBase.G, scrimBase.B));
         Set(res, "VexPressFillColor", Mix(bg, fg, 0.32));
-        Set(res, "VexSidebarToggleBgColor", WithAlpha(Darken(bg, 0.70), 0x2E));
-        Set(res, "VexSidebarToggleBorderColor", WithAlpha(Mix(bg, fg, 0.35), 0x46));
         Set(res, "VexSplitPreviewColor", WithAlpha(fg, 0x26));
         Set(res, "VexSplitPreviewBorderColor", WithAlpha(fg, 0x55));
         Set(res, "VexPaneExitedColor", FromArgb(0xFF, 0x6B, 0x4B, 0x4B));
@@ -204,9 +198,7 @@ public static class ChromePalette
         Set(res, "VexTextPlaceholderColor", Mix(dim, fg, 0.5));
         Set(res, "VexAccentColor", Mix(accent, fg, 0.08));
         Set(res, "VexFocusBorderColor", Mix(blue, fg, 0.10));
-        // Sidebar and tab strip share one surface so the chrome reads as
-        // a single frame — both opaque.
-        Set(res, "VexSidebarColor", canvas);
+        // Tab strip chrome is opaque.
         Set(res, "VexTabStripColor", canvas);
         Set(res, "VexPaneTitleBarColor", Mix(bg, Colors.White, 0.18));
         Set(res, "VexPaneTitleBarFocusedColor", Mix(bg, fg, 0.035));
@@ -220,8 +212,6 @@ public static class ChromePalette
         // surfaces. All opaque or near-opaque so overlays read crisply.
         Set(res, "VexBackdropScrimColor", FromArgb(0x66, 0x14, 0x16, 0x1A));
         Set(res, "VexPressFillColor", Mix(bg, fg, 0.10));
-        Set(res, "VexSidebarToggleBgColor", WithAlpha(fg, 0x06));
-        Set(res, "VexSidebarToggleBorderColor", WithAlpha(fg, 0x1E));
         Set(res, "VexSplitPreviewColor", WithAlpha(blue, 0x1A));
         Set(res, "VexSplitPreviewBorderColor", WithAlpha(blue, 0x55));
         Set(res, "VexPaneExitedColor", FromHex("#D93025"));
