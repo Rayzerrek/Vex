@@ -47,12 +47,6 @@ public sealed class AppSettings : ObservableObject
         WriteSettings(waitForWrite: true);
     }
 
-    private bool _sidebarVisible = false;
-    public bool SidebarVisible
-    {
-        get => _sidebarVisible;
-        set { if (Set(ref _sidebarVisible, value)) Save(); }
-    }
 
     private string _themeName = "Vex Dark";
     public string ThemeName

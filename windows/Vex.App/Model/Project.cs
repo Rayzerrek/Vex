@@ -6,11 +6,10 @@ using System.Windows.Threading;
 namespace Vex.App.Model;
 
 /// <summary>
-/// A project groups tabs and appears as one row in the left sidebar, exactly
-/// like upstream's <c>Project</c>. Each tab is a "deck" — a split layout of
-/// terminal panes — so splitting always happens inside a tab, never between
-/// tabs. The working directory anchors new terminals, the file tree, and the
-/// git panel.
+/// A project groups tabs and represents a working directory session.
+/// Each tab is a "deck" — a split layout of terminal panes — so splitting
+/// always happens inside a tab, never between tabs. The working directory
+/// anchors new terminals and the git branch detection.
 /// </summary>
 public sealed class Project : ObservableObject
 {
@@ -19,8 +18,6 @@ public sealed class Project : ObservableObject
     private string? _gitBranch;
     private WorkspaceTab? _selectedTab;
 
-    private FileTreeNode[] _treeRoots = Array.Empty<FileTreeNode>();
-    private FileTreeNode? _rootTree;
 
     public bool CanCreateTab => Tabs.Count < MaxTabs;
 
@@ -150,41 +147,6 @@ public sealed class Project : ObservableObject
         }
     }
 
-    public FileTreeNode Root
-    {
-        get
-        {
-            if (_rootTree is null && !string.IsNullOrEmpty(WorkingDirectory))
-                RefreshFileTree();
-            return _rootTree!;
-        }
-        private set
-        {
-            if (Set(ref _rootTree, value))
-            {
-                _treeRoots = new[] { value };
-                OnPropertyChanged(nameof(TreeRoots));
-            }
-        }
-    }
-
-    public FileTreeNode[] TreeRoots
-        => _treeRoots;
-
-    /// <summary>Creates the root only after the file tree becomes visible.
-    /// Enumerating a large working directory must not delay the first frame.</summary>
-    public void EnsureFileTree()
-    {
-        if (_rootTree is null && !string.IsNullOrEmpty(WorkingDirectory))
-            RefreshFileTree();
-    }
-
-    public void RefreshFileTree()
-    {
-        Root = new FileTreeNode(WorkingDirectory, true, Name);
-        Root.IsExpanded = true;
-        RefreshGitBranch();
-    }
 
     public string Name
     {
