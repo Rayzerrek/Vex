@@ -11,7 +11,7 @@ namespace Vex.App.Model;
 /// always happens inside a tab, never between tabs. The working directory
 /// anchors new terminals and the git branch detection.
 /// </summary>
-public sealed class Project : ObservableObject
+public sealed class Project : ObservableObject, IDisposable
 {
     public const int MaxTabs = 8;
     private string _name;
@@ -267,5 +267,15 @@ public sealed class Project : ObservableObject
 
         Tabs.Remove(tab);
         tab.Dispose();
+    }
+
+    public bool IsDisposed { get; private set; }
+
+    public void Dispose()
+    {
+        if (IsDisposed) return;
+        IsDisposed = true;
+        foreach (var tab in Tabs)
+            tab.Dispose();
     }
 }

@@ -995,9 +995,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                         FlushSegment();
                         var cx1 = Math.Round(colCursor * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
                         var cx2 = Math.Round((colCursor + widths[unitStart]) * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
-                        CustomGlyphRenderer.Draw(context, singleCp, cx1, rowY, cx2 - cx1, _cellHeight, fg, _pixelsPerDip);
-                        colCursor += widths[unitStart];
-                        continue;
+                        if (CustomGlyphRenderer.Draw(context, singleCp, cx1, rowY, cx2 - cx1, _cellHeight, fg, _pixelsPerDip))
+                        {
+                            colCursor += widths[unitStart];
+                            continue;
+                        }
                     }
 
                     var cellOk = true;

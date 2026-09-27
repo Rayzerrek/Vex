@@ -39,6 +39,21 @@ public sealed class WorkspaceProjectSwitchTests
         Assert.Same(p1, workspace.SelectedProject);
     }
 
+    [Fact]
+    public void CloseProject_DisposesProject()
+    {
+        var workspace = new Workspace();
+        var p1 = workspace.NewProject("C:\\proj1");
+        var p2 = workspace.NewProject("C:\\proj2");
+
+        Assert.False(p1.IsDisposed);
+        workspace.CloseProject(p1);
+
+        Assert.True(p1.IsDisposed);
+        Assert.DoesNotContain(p1, workspace.Projects);
+        Assert.Same(p2, workspace.SelectedProject);
+    }
+
     [Theory]
     [InlineData(-1)]
     [InlineData(-10)]

@@ -20,12 +20,17 @@ internal static class CustomGlyphRenderer
             // Block Elements (U+2580..U+259F)
             >= 0x2580 and <= 0x259F => true,
 
-            // Powerline symbols (U+E0B0..U+E0B7)
-            >= 0xE0B0 and <= 0xE0B7 => true,
+            // Powerline symbols: solid arrows and rounded dividers
+            0xE0B0 or 0xE0B2 or 0xE0B4 or 0xE0B6 => true,
 
-            // Box Drawing common characters (U+2500..U+257F)
-            >= 0x2500 and <= 0x257F => true,
-
+            // Box Drawing: implemented characters (lines, corners, Ts, crosses, diagonals, half-lines)
+            0x2500 or 0x2501 or 0x2502 or 0x2503 => true,
+            0x250C or 0x250F or 0x2510 or 0x2513 or 0x2514 or 0x2517 or 0x2518 or 0x251B => true,
+            0x251C or 0x2523 or 0x2524 or 0x252B or 0x252C or 0x2533 or 0x2534 or 0x253B or 0x253C or 0x254B => true,
+            0x2550 or 0x2551 => true,
+            0x2554 or 0x2557 or 0x255A or 0x255D => true,
+            0x2560 or 0x2563 or 0x2566 or 0x2569 or 0x256C => true,
+            >= 0x256D and <= 0x2577 => true,
             _ => false,
         };
     }
@@ -313,17 +318,17 @@ internal static class CustomGlyphRenderer
                     if (codepoint == 0x256D) // ╭ down and right
                     {
                         ctx.BeginFigure(new Point(midX, y + height), isFilled: false, isClosed: false);
-                        ctx.ArcTo(new Point(x + width, midY), new Size(width / 2.0, height / 2.0), 0, false, SweepDirection.Counterclockwise, isStroked: true, isSmoothJoin: true);
+                        ctx.ArcTo(new Point(x + width, midY), new Size(width / 2.0, height / 2.0), 0, false, SweepDirection.Clockwise, isStroked: true, isSmoothJoin: true);
                     }
                     else if (codepoint == 0x256E) // ╮ down and left
                     {
                         ctx.BeginFigure(new Point(x, midY), isFilled: false, isClosed: false);
-                        ctx.ArcTo(new Point(midX, y + height), new Size(width / 2.0, height / 2.0), 0, false, SweepDirection.Counterclockwise, isStroked: true, isSmoothJoin: true);
+                        ctx.ArcTo(new Point(midX, y + height), new Size(width / 2.0, height / 2.0), 0, false, SweepDirection.Clockwise, isStroked: true, isSmoothJoin: true);
                     }
                     else if (codepoint == 0x256F) // ╯ up and left
                     {
                         ctx.BeginFigure(new Point(x, midY), isFilled: false, isClosed: false);
-                        ctx.ArcTo(new Point(midX, y), new Size(width / 2.0, height / 2.0), 0, false, SweepDirection.Clockwise, isStroked: true, isSmoothJoin: true);
+                        ctx.ArcTo(new Point(midX, y), new Size(width / 2.0, height / 2.0), 0, false, SweepDirection.Counterclockwise, isStroked: true, isSmoothJoin: true);
                     }
                     else // 0x2570: ╰ up and right
                     {
