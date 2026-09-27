@@ -46,6 +46,33 @@ public sealed class Workspace : ObservableObject
             SelectedProject = Projects.Count > 0 ? Projects[Math.Max(0, index - 1)] : null;
     }
 
+    public bool SelectProjectByIndex(int index)
+    {
+        if (index >= 0 && index < Projects.Count)
+        {
+            SelectedProject = Projects[index];
+            return true;
+        }
+        return false;
+    }
+
+    public bool CycleProject(int direction)
+    {
+        if (Projects.Count <= 1)
+            return false;
+
+        var currentIndex = SelectedProject is { } current ? Projects.IndexOf(current) : -1;
+        var nextIndex = currentIndex >= 0
+            ? (currentIndex + direction) % Projects.Count
+            : (direction > 0 ? 0 : Projects.Count - 1);
+
+        if (nextIndex < 0)
+            nextIndex += Projects.Count;
+
+        SelectedProject = Projects[nextIndex];
+        return true;
+    }
+
     private static string? DirectoryName(string path)
     {
         var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
