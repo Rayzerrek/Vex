@@ -137,7 +137,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // Grayscale antialiasing keeps glyph edges stable against opaque cell
         // backgrounds; ClearType subpixel AA fringes on the dark terminal.
         TextOptions.SetTextRenderingMode(this, TextRenderingMode.Grayscale);
-
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+        SnapsToDevicePixels = true;
+        UseLayoutRounding = true;
         _terminal = new GhosttyTerminal(80, 24);
         _terminal.TitleChanged += title =>
         {
@@ -201,10 +203,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         ApplySettings();
         AppSettings.Instance.PropertyChanged += OnSettingsChanged;
-        // Suspension end (sidebar animation settle) must force one grid
-        // recalculation even when no SizeChanged follows — see the event
-        // declaration above.
-        ResizeSuspensionEnded += OnResizeSuspensionEnded;
 
         RenderSelfTest.Run(this);
 
@@ -225,8 +223,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         // Rebuild only what the changed setting actually affects. Settings
-        // that no pane renders (sidebar, shell) used to trigger a full
-        // palette/typeface rebuild plus a full redraw in every terminal.
+        // that no pane renders (shell profiles, window backdrop) used to trigger a full
         var settings = AppSettings.Instance;
         switch (e.PropertyName)
         {
@@ -263,7 +260,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     /// <summary>A family's four typeface/glyph pairs, cached per process:
     /// TryGetGlyphTypeface parses font files, so rebuilding it on every
-    /// settings touch (even sidebar toggles) is wasteful.</summary>
+    /// settings touch is wasteful.</summary>
     private sealed record TypefaceSet(
         Typeface Normal, Typeface Bold, Typeface Italic, Typeface BoldItalic,
         GlyphTypeface? NormalGlyph, GlyphTypeface? BoldGlyph, GlyphTypeface? ItalicGlyph, GlyphTypeface? BoldItalicGlyph);
@@ -428,11 +425,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void RecalculateGridSize()
     {
         if (!IsLoaded || ActualWidth < 150 || ActualHeight < 80)
-            return;
-        // Coalesced away while the sidebar animates: reflowing the VT buffer
-        // and resizing ConPTY once per animation frame guarantees jank. The
-        // resume event forces exactly one recalc after the animation settles.
-        if (ResizeSuspended)
             return;
 
         var cols = Math.Max(2, (int)(ActualWidth / _cellWidth));
@@ -748,7 +740,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         using var dc = _rowVisuals[row].RenderOpen();
 
-        var y = row * _cellHeight;
+        var y = Math.Round(row * _cellHeight * _pixelsPerDip) / _pixelsPerDip;
         var cells = frameRow.Cells;
         ref readonly var first = ref cells[0];
         var runFgTag = first.FgTag;
@@ -827,8 +819,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             ref readonly var run = ref _textRuns[i];
             if (!run.HasDecoration)
                 continue;
-            var runX = run.StartCol * _cellWidth;
-            var runWidth = run.Length * _cellWidth;
+            var runX1 = Math.Round(run.StartCol * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+            var runX2 = Math.Round((run.StartCol + run.Length) * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+            var runWidth = runX2 - runX1;
+            var runX = runX1;
             var pen = _palette.GetPen(run.Foreground ?? _palette.Foreground);
             var rowY = y;
             if (run.Underline)
@@ -840,8 +834,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // Detected URLs get their own underline, independent of SGR styles.
         foreach (var link in links)
         {
-            var linkX = link.StartCol * _cellWidth;
-            var linkWidth = (link.EndCol - link.StartCol + 1) * _cellWidth;
+            var linkX1 = Math.Round(link.StartCol * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+            var linkX2 = Math.Round((link.EndCol + 1) * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+            var linkWidth = linkX2 - linkX1;
+            var linkX = linkX1;
             dc.DrawLine(_linkPen, new Point(linkX, y + _cellHeight - _linkPen.Thickness), new Point(linkX + linkWidth, y + _cellHeight - _linkPen.Thickness));
         }
 
@@ -856,7 +852,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             ColorTag fgTag, int fgValue, ColorTag bgTag, int bgValue, CellFlags flags, int textRunIndex)
         {
             _palette.Resolve(fgTag, fgValue, bgTag, bgValue, flags, out var fg, out var bg);
-            var x = startCol * _cellWidth;
+            var x = Math.Round(startCol * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
 
             // One width entry per advance-consuming char (wide glyph stubs
             // are already skipped), so the column extent is the width sum.
@@ -864,11 +860,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             for (var i = 0; i < cellCount; i++)
                 cellsSpanned += widths[i];
 
+            var x2 = Math.Round((startCol + cellsSpanned) * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+
             // Only paint cells that carry their own background color. The
             // opaque base layer already covers default cells; filling every
             // run again adds work and can expose seams at fractional widths.
             if (bg is not null)
-                context.DrawRectangle(bg, null, new Rect(x, rowY, cellsSpanned * _cellWidth, _cellHeight));
+                context.DrawRectangle(bg, null, new Rect(x, rowY, x2 - x, _cellHeight));
 
             // Trailing whitespace carries no ink; skip the text pass for it.
             var contentEnd = runText.Length;
@@ -930,7 +928,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                     var advances = new double[segUnits];
                     Array.Copy(segIndices, indices, segUnits);
                     Array.Copy(segAdvances, advances, segUnits);
-                    DrawGlyph(indices, advances, segStartCol * _cellWidth);
+                    var sx = Math.Round(segStartCol * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+                    DrawGlyph(indices, advances, sx);
                     segUnits = 0;
                 }
 
@@ -977,6 +976,32 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                     var firstGlyph = segUnits;
                     if (segUnits == 0)
                         segStartCol = colCursor;
+
+                    // Procedural rendering for block elements, powerline, and box drawing:
+                    // guarantees 0-gap pixel-perfect alignment with cell boundaries.
+                    var cellLen = i - unitStart;
+                    int singleCp = 0;
+                    if (cellLen == 1)
+                    {
+                        singleCp = trimmedText[unitStart];
+                    }
+                    else if (cellLen == 2 && char.IsHighSurrogate(trimmedText[unitStart]) && char.IsLowSurrogate(trimmedText[unitStart + 1]))
+                    {
+                        singleCp = char.ConvertToUtf32(trimmedText[unitStart], trimmedText[unitStart + 1]);
+                    }
+
+                    if (singleCp != 0 && CustomGlyphRenderer.CanDraw(singleCp))
+                    {
+                        FlushSegment();
+                        var cx1 = Math.Round(colCursor * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+                        var cx2 = Math.Round((colCursor + widths[unitStart]) * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+                        if (CustomGlyphRenderer.Draw(context, singleCp, cx1, rowY, cx2 - cx1, _cellHeight, fg, _pixelsPerDip))
+                        {
+                            colCursor += widths[unitStart];
+                            continue;
+                        }
+                    }
+
                     var cellOk = true;
                     var u = unitStart;
                     while (u < i)
@@ -1018,7 +1043,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                             trimmedText.ToString(unitStart, i - unitStart),
                             CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                             face, _fontSize, fg, _pixelsPerDip);
-                        var fx = colCursor * _cellWidth;
+                        var fx = Math.Round(colCursor * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
                         context.DrawText(formatted, new Point(fx, rowY));
                         if (syntheticBold)
                             context.DrawText(formatted, new Point(fx + (1.0 / _pixelsPerDip), rowY));
@@ -1241,7 +1266,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             settle.Tick -= OnResizeSettled;
         }
         AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
-        ResizeSuspensionEnded -= OnResizeSuspensionEnded;
         _prewarmLease?.Dispose();
         _prewarmLease = null;
         var session = _session;

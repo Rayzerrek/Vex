@@ -560,12 +560,22 @@ public sealed partial class SettingsOverlay : OverlayControl
     /// <summary>Binds the card grid to the themes of the active appearance.
     /// Called on first page visit and whenever the appearance flips, so the
     /// offered cards always match the surrounding chrome.</summary>
+    private bool _suppressThemeSelection;
+
     private void RebindThemeList()
     {
-        var themes = BuiltInThemes.ForAppearance(AppSettings.Instance.IsDarkAppearance);
-        ThemeList.ItemsSource = themes;
-        var currentTheme = themes.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
-        ThemeList.SelectedItem = currentTheme ?? themes.FirstOrDefault();
+        _suppressThemeSelection = true;
+        try
+        {
+            var themes = BuiltInThemes.ForAppearance(AppSettings.Instance.IsDarkAppearance);
+            ThemeList.ItemsSource = themes;
+            var currentTheme = themes.FirstOrDefault(t => t.Name == AppSettings.Instance.ThemeName);
+            ThemeList.SelectedItem = currentTheme ?? themes.FirstOrDefault();
+        }
+        finally
+        {
+            _suppressThemeSelection = false;
+        }
     }
 
     private bool _suppressAppearanceSync;
@@ -620,6 +630,9 @@ public sealed partial class SettingsOverlay : OverlayControl
 
     private void ThemeList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_suppressThemeSelection)
+            return;
+
         if (ThemeList.SelectedItem is TerminalTheme theme)
         {
             AppSettings.Instance.ThemeName = theme.Name;

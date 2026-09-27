@@ -85,7 +85,7 @@ public sealed partial class App : Application
         await _settingsTask.ConfigureAwait(true);
         Model.StartupMark.Note("settings ready");
 
-        // Chrome colors follow the active terminal theme (sidebar, tab strip,
+        // Chrome colors follow the active terminal theme (tab strip,
         // pane chrome, accents). Resolve the stored appearance first so the
         // very first frame is already dark or light — never a half-applied
         // mix. Re-apply whenever the theme or appearance changes.

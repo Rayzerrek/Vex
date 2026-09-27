@@ -23,25 +23,14 @@ internal enum DropZone
 
 public sealed partial class MainWindow : Window
 {
-    private const double SidebarWidth = 240;
-    private const double SidebarOpenDuration = 280;
-    private const double SidebarCloseDuration = 230;
 
     private readonly Workspace _workspace;
-    private Stopwatch? _sidebarAnimationClock;
-    private double _sidebarAnimationFromWidth;
-    private double _sidebarAnimationToWidth;
-    private double _sidebarAnimationFromOpacity;
-    private double _sidebarAnimationToOpacity;
-    private bool _sidebarAnimationClosing;
-    // Parallax translation applied to the sidebar inner content while the
-    // column smoothly expands/collapses for a fluid, polished reveal.
-    private readonly TranslateTransform _sidebarContentTranslate = new();
     private bool _draggingPane;
     private LeafPane? _dragPane;
     private System.Windows.Point _dragStart;
     private DropZone _dropZone;
     private ScrollViewer? _tabScrollViewer;
+    private long _projectPickerClosedTimestamp;
 
     /// <summary>The tab strip's scroll viewer, resolved once from the visual
     /// tree. Layout-space math for the drag marker needs its horizontal
@@ -89,22 +78,14 @@ public sealed partial class MainWindow : Window
         StateChanged += MainWindow_StateChanged;
         UpdateLayoutForWindowState();
 
-        SidebarContent.RenderTransform = _sidebarContentTranslate;
 
-        if (!AppSettings.Instance.SidebarVisible)
-        {
-            SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
-            SidebarPanel.Visibility = Visibility.Collapsed;
-            SidebarPanel.Opacity = 0;
-        }
-
-        // Keep the file search rooted at the selected project.
+        // Refresh git branch when project changes.
         _workspace.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(Workspace.SelectedProject))
-                FileSearch.SetRoot(_workspace.SelectedProject?.WorkingDirectory ?? "");
+                _workspace.SelectedProject?.RefreshGitBranch();
         };
-        FileSearch.SetRoot(workspace.SelectedProject?.WorkingDirectory ?? "");
+        Activated += (_, _) => _workspace.SelectedProject?.RefreshGitBranch();
 
         foreach (var project in workspace.Projects)
             HookProject(project);
@@ -198,12 +179,6 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (e.PropertyName != nameof(AppSettings.SidebarVisible))
-            return;
-
-        AnimateSidebar(
-            AppSettings.Instance.SidebarVisible ? SidebarWidth : 0,
-            fadeOut: !AppSettings.Instance.SidebarVisible);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -290,22 +265,65 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // A full-screen terminal application owns its entire keyspace. In
+        // Vex owns Ctrl+Shift+P universally: opens the command palette
+        // regardless of whether a shell or full-screen TUI (nvim, htop, ...) is focused.
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.P)
+        {
+            ShowCommandPalette();
+            e.Handled = true;
+            return;
+        }
+
+        // Tab cycling belongs to Vex universally across all panes and TUIs.
+        if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.Tab)
+        {
+            CycleTab(1);
+            e.Handled = true;
+            return;
+        }
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Tab)
+        {
+            CycleTab(-1);
+            e.Handled = true;
+            return;
+        }
+
+        // Project switching and cycling belong to Vex universally across all panes and TUIs.
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift))
+        {
+            if (TryGetProjectIndex(key, out var projectIndex))
+            {
+                SwitchToProject(projectIndex);
+                e.Handled = true;
+                return;
+            }
+            if (key == System.Windows.Input.Key.PageDown)
+            {
+                CycleProject(1);
+                e.Handled = true;
+                return;
+            }
+            if (key == System.Windows.Input.Key.PageUp)
+            {
+                CycleProject(-1);
+                e.Handled = true;
+                return;
+            }
+            if (key == System.Windows.Input.Key.O)
+            {
+                ToggleProjectPicker();
+                e.Handled = true;
+                return;
+            }
+        }
+
+        // A full-screen terminal application owns its other keyspace. In
         // particular, applications such as vim, htop, and lazygit commonly
         // use Ctrl+Shift chords that otherwise look like Vex shortcuts.
         if (System.Windows.Input.Keyboard.FocusedElement is NativeTerminalControl { IsTuiMode: true })
             return;
 
-        // Plain Ctrl+<letter> is never claimed here, so a full-screen TUI's own
-        // bindings (opencode's Ctrl+P, vim-style apps, ...) always reach the PTY.
-        // Vex owns Ctrl+Shift chords instead; Ctrl+Shift+P opens the palette,
-        // which also hosts Settings.
-        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.P)
-        {
-            ShowCommandPalette();
-            e.Handled = true;
-        }
-        else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.M)
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.M)
         {
             ToggleThemeSwitcher();
             e.Handled = true;
@@ -313,16 +331,6 @@ public sealed partial class MainWindow : Window
         else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Space)
         {
             ToggleTabPeek();
-            e.Handled = true;
-        }
-        else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.Tab)
-        {
-            CycleTab(1);
-            e.Handled = true;
-        }
-        else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Tab)
-        {
-            CycleTab(-1);
             e.Handled = true;
         }
         else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.S)
@@ -346,6 +354,75 @@ public sealed partial class MainWindow : Window
                 project.SelectedTab = project.Tabs[nextIndex];
             }
         }
+    }
+
+    private void SwitchToProject(int index)
+    {
+        if (_workspace.SelectProjectByIndex(index))
+        {
+            ProjectPickerPopup.IsOpen = false;
+            _tabPeek?.Hide();
+            _paletteOverlay?.Hide();
+            _settingsOverlay?.Hide();
+            _themeSwitcher?.Hide();
+            FocusActivePane();
+        }
+    }
+
+    private void CycleProject(int direction)
+    {
+        if (_workspace.CycleProject(direction))
+        {
+            ProjectPickerPopup.IsOpen = false;
+            _tabPeek?.Hide();
+            _paletteOverlay?.Hide();
+            _settingsOverlay?.Hide();
+            _themeSwitcher?.Hide();
+            FocusActivePane();
+        }
+    }
+
+    private void ToggleProjectPicker()
+    {
+        if (ProjectPickerPopup.IsOpen)
+        {
+            ProjectPickerPopup.IsOpen = false;
+        }
+        else
+        {
+            _paletteOverlay?.Hide();
+            _settingsOverlay?.Hide();
+            _themeSwitcher?.Hide();
+            _tabPeek?.Hide();
+            ProjectPickerPopup.IsOpen = true;
+        }
+    }
+
+    internal static bool TryGetProjectIndex(System.Windows.Input.Key key, out int index)
+    {
+        if (key >= System.Windows.Input.Key.D1 && key <= System.Windows.Input.Key.D9)
+        {
+            index = key - System.Windows.Input.Key.D1;
+            return true;
+        }
+        if (key == System.Windows.Input.Key.D0)
+        {
+            index = 9;
+            return true;
+        }
+        if (key >= System.Windows.Input.Key.NumPad1 && key <= System.Windows.Input.Key.NumPad9)
+        {
+            index = key - System.Windows.Input.Key.NumPad1;
+            return true;
+        }
+        if (key == System.Windows.Input.Key.NumPad0)
+        {
+            index = 9;
+            return true;
+        }
+
+        index = -1;
+        return false;
     }
 
     private CommandPalette? _paletteOverlay;
@@ -472,6 +549,9 @@ public sealed partial class MainWindow : Window
             else if (action == "Settings") Settings_Click(this, new RoutedEventArgs());
             else if (action == "ThemePicker") ToggleThemeSwitcher();
             else if (action == "TabPeek") ToggleTabPeek();
+            else if (action == "NextProject") CycleProject(1);
+            else if (action == "PrevProject") CycleProject(-1);
+            else if (action == "ProjectPicker") ToggleProjectPicker();
         });
         PaletteOverlay.Show(items);
     }
@@ -503,115 +583,70 @@ public sealed partial class MainWindow : Window
             _workspace.NewProject(dialog.FolderName);
     }
 
-    private void RefreshFileTree_Click(object sender, RoutedEventArgs e)
-    {
-        _workspace.SelectedProject?.RefreshFileTree();
-    }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         SettingsOverlay.Toggle();
     }
 
-    private void FileSearch_FileOpenRequested(string filePath)
+    private void ProjectPillButton_Click(object sender, RoutedEventArgs e)
     {
-        _workspace.SelectedProject?.OpenFile(filePath);
-    }
-
-    private void HideSidebar_Click(object sender, RoutedEventArgs e)
-        => AppSettings.Instance.SidebarVisible = false;
-
-    private void ShowSidebar_Click(object sender, RoutedEventArgs e)
-        => AppSettings.Instance.SidebarVisible = true;
-
-    private void SidebarToggle_Click(object sender, RoutedEventArgs e)
-        => AppSettings.Instance.SidebarVisible = !AppSettings.Instance.SidebarVisible;
-
-    private void AnimateSidebar(double target, bool fadeOut = false)
-    {
-        // Freeze VT/conpty resizes until the animation settles; otherwise
-        // every frame reflows the terminal buffer (see ResizeSuspended).
-        NativeTerminalControl.SuspendResizes();
-        _sidebarAnimationClosing = fadeOut;
-        _sidebarAnimationFromWidth = SidebarColumn.ActualWidth;
-        _sidebarAnimationToWidth = target;
-        _sidebarAnimationFromOpacity = SidebarPanel.Visibility == Visibility.Visible ? SidebarPanel.Opacity : 0;
-        _sidebarAnimationToOpacity = fadeOut ? 0 : 1;
-
-        if (!fadeOut)
-        {
-            SidebarPanel.Visibility = Visibility.Visible;
-            if (_sidebarAnimationFromWidth <= 0 && SidebarPanel.Opacity <= 0)
-                _sidebarAnimationFromOpacity = 0;
-        }
-
-        _sidebarAnimationClock = Stopwatch.StartNew();
-        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
-        CompositionTarget.Rendering += SidebarAnimation_Rendering;
-    }
-
-    private void SidebarAnimation_Rendering(object? sender, EventArgs e)
-    {
-        var duration = _sidebarAnimationClosing ? SidebarCloseDuration : SidebarOpenDuration;
-        var elapsed = _sidebarAnimationClock?.Elapsed.TotalMilliseconds ?? duration;
-        var t = Math.Clamp(elapsed / duration, 0.0, 1.0);
-
-        // Fluid easing: Quartic Ease-Out on reveal for natural deceleration;
-        // smoothstep on collapse for soft exit.
-        double eased;
-        if (!_sidebarAnimationClosing)
-        {
-            // Deceleration curve: instant response on click, softly gliding into dock
-            eased = 1.0 - Math.Pow(1.0 - t, 3.2);
-        }
-        else
-        {
-            // Smooth acceleration and deceleration for clean collapse
-            eased = t * t * (3.0 - 2.0 * t);
-        }
-
-        // Animate column width smoothly
-        var width = _sidebarAnimationFromWidth + ((_sidebarAnimationToWidth - _sidebarAnimationFromWidth) * eased);
-        SidebarColumn.Width = new GridLength(Math.Max(0, width), GridUnitType.Pixel);
-
-        if (_sidebarAnimationClosing)
-        {
-            SidebarPanel.Opacity = Math.Clamp(_sidebarAnimationFromOpacity + (_sidebarAnimationToOpacity - _sidebarAnimationFromOpacity) * eased, 0, 1);
-            _sidebarContentTranslate.X = -18.0 * eased;
-        }
-        else
-        {
-            var targetOpacity = Math.Clamp(eased * 1.25, 0, 1);
-            SidebarPanel.Opacity = targetOpacity;
-            _sidebarContentTranslate.X = -18.0 * (1.0 - eased);
-        }
-
-        if (t < 1.0)
+        if (Environment.TickCount64 - _projectPickerClosedTimestamp < 200)
             return;
 
-        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
-        _sidebarAnimationClock = null;
-        // Resume with an explicit recalc: the final width equals the last
-        // animated frame, so no SizeChanged fires after this point — without
-        // the resume event the grid would stay at the pre-animation size
-        // (a fullscreen TUI like nvim would then cover only part of the pane).
-        NativeTerminalControl.ResumeResizes();
+        ProjectPickerPopup.IsOpen = !ProjectPickerPopup.IsOpen;
+    }
 
-        if (_sidebarAnimationClosing)
+    private void ProjectPickerPopup_Opened(object? sender, EventArgs e)
+    {
+        _workspace.SelectedProject?.RefreshGitBranch();
+        ProjectPickerList.Focus();
+        if (ProjectPickerList.SelectedItem is { } item)
+            ProjectPickerList.ScrollIntoView(item);
+    }
+
+    private void ProjectPickerPopup_Closed(object? sender, EventArgs e)
+    {
+        _projectPickerClosedTimestamp = Environment.TickCount64;
+        FocusActivePane();
+    }
+
+    private void ProjectPickerList_PreviewMouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (FindAncestor<Button>(e.OriginalSource as DependencyObject) is { Name: "RemoveBtn" })
+            return;
+
+        if (FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject) is { DataContext: Project project })
         {
-            SidebarColumn.Width = new GridLength(0, GridUnitType.Pixel);
-            SidebarPanel.Visibility = Visibility.Collapsed;
-            SidebarPanel.Opacity = 0;
-            _sidebarContentTranslate.X = 0;
-        }
-        else
-        {
-            SidebarColumn.Width = new GridLength(SidebarWidth, GridUnitType.Pixel);
-            SidebarPanel.Visibility = Visibility.Visible;
-            SidebarPanel.Opacity = 1;
-            _sidebarContentTranslate.X = 0;
+            _workspace.SelectedProject = project;
+            ProjectPickerPopup.IsOpen = false;
+            FocusActivePane();
         }
     }
+
+    private void ProjectPicker_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            ProjectPickerPopup.IsOpen = false;
+            FocusActivePane();
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.Enter && ProjectPickerList.SelectedItem is Project project)
+        {
+            _workspace.SelectedProject = project;
+            ProjectPickerPopup.IsOpen = false;
+            FocusActivePane();
+            e.Handled = true;
+        }
+    }
+
+    private void ProjectPickerAddFolder_Click(object sender, RoutedEventArgs e)
+    {
+        ProjectPickerPopup.IsOpen = false;
+        NewProject_Click(sender, e);
+    }
+
 
     private void NewTab_Click(object sender, RoutedEventArgs e)
     {
@@ -753,10 +788,10 @@ public sealed partial class MainWindow : Window
         if (e.ChangedButton != System.Windows.Input.MouseButton.Left)
             return;
 
-        // A click on a non-interactive surface (sidebar padding, pane chrome,
-        // empty tree space) leaves keyboard focus stranded in a text box like
-        // the file search, so typing goes nowhere. Let the click settle, and
-        // if nothing took focus, return it to the active pane.
+        // A click on a non-interactive surface (tab strip, pane chrome) leaves
+        // keyboard focus stranded in an overlay text box (e.g. search, settings),
+        // so typing goes nowhere. Let the click settle, and if nothing took focus,
+        // return it to the active pane.
         if (System.Windows.Input.Keyboard.FocusedElement is not TextBox focused)
             return;
         if (IsVisualDescendantOf(focused, e.OriginalSource as DependencyObject))
@@ -1034,27 +1069,10 @@ public sealed partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        CompositionTarget.Rendering -= SidebarAnimation_Rendering;
-        NativeTerminalControl.ResumeResizes();
         AppSettings.Instance.Flush(); // persist the debounced settings write
         SessionStore.Save(_workspace); // persist projects, tabs and divider positions
         base.OnClosed(e);
         foreach (var project in _workspace.Projects)
-            foreach (var tab in project.Tabs)
-                DisposePane(tab.Root);
-    }
-
-    private static void DisposePane(PaneNode node)
-    {
-        switch (node)
-        {
-            case LeafPane leaf:
-                leaf.Dispose();
-                break;
-            case SplitPane split:
-                DisposePane(split.First);
-                DisposePane(split.Second);
-                break;
-        }
+            project.Dispose();
     }
 }

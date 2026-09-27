@@ -27,19 +27,27 @@ public static class PaletteProvider
         }
 
         // Projects switch list
-        foreach (var proj in workspace.Projects)
+        if (workspace.Projects.Count > 1)
         {
+            yield return new PaletteItem("Next Project", "Switch to next project · Ctrl+Shift+PageDown", () => uiAction("NextProject"), "Projects");
+            yield return new PaletteItem("Previous Project", "Switch to previous project · Ctrl+Shift+PageUp", () => uiAction("PrevProject"), "Projects");
+        }
+
+        for (var i = 0; i < workspace.Projects.Count; i++)
+        {
+            var proj = workspace.Projects[i];
             if (proj != workspace.SelectedProject)
             {
+                var shortcutHint = i < 9 ? $"Ctrl+Shift+{i + 1} · " : (i == 9 ? "Ctrl+Shift+0 · " : "");
                 yield return new PaletteItem(
                     $"Switch Project: {proj.Name}",
-                    proj.WorkingDirectory,
+                    $"{shortcutHint}{proj.WorkingDirectory}",
                     () => workspace.SelectedProject = proj,
                     "Projects");
             }
         }
 
-        yield return new PaletteItem("Toggle Sidebar", "Show or hide the workspace sidebar", () => AppSettings.Instance.SidebarVisible = !AppSettings.Instance.SidebarVisible, "Workspace");
+        yield return new PaletteItem("Switch Project...", "Open project picker popover · Ctrl+Shift+O", () => uiAction("ProjectPicker"), "Projects");
         yield return new PaletteItem("New Project", "Open a new project directory", () => uiAction("NewProject"), "Workspace");
 
         var dark = AppSettings.Instance.IsDarkAppearance;
