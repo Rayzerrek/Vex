@@ -71,25 +71,10 @@ public sealed partial class NativeTerminalControl
             return;
         }
 
-        // Full-screen terminal applications own Ctrl+Shift chords too. They
-        // use these combinations for navigation and command palettes just as
-        // often as ordinary Ctrl chords.
-        if (!_terminal.IsAlternateScreen && mods == (ModifierKeys.Control | ModifierKeys.Shift))
+        // Clipboard shortcuts (Ctrl+Shift+C, Ctrl+Shift+V, Ctrl+Shift+X) are universal
+        // across all terminal modes, matching standard modern terminals.
+        if (mods == (ModifierKeys.Control | ModifierKeys.Shift))
         {
-            var command = key switch
-            {
-                Key.R => TerminalCommand.SplitRight,
-                Key.D => TerminalCommand.SplitDown,
-                Key.T => TerminalCommand.NewTab,
-                Key.W => TerminalCommand.ClosePane,
-                _ => (TerminalCommand?)null,
-            };
-            if (command is { } requested)
-            {
-                CommandRequested?.Invoke(requested);
-                e.Handled = true;
-                return;
-            }
             if (key == Key.C)
             {
                 CopySelection();
@@ -107,6 +92,25 @@ public sealed partial class NativeTerminalControl
                 CutSelection();
                 e.Handled = true;
                 return;
+            }
+
+            // Window/pane management chords yield when in alternate screen (TUI mode).
+            if (!_terminal.IsAlternateScreen)
+            {
+                var command = key switch
+                {
+                    Key.R => TerminalCommand.SplitRight,
+                    Key.D => TerminalCommand.SplitDown,
+                    Key.T => TerminalCommand.NewTab,
+                    Key.W => TerminalCommand.ClosePane,
+                    _ => (TerminalCommand?)null,
+                };
+                if (command is { } requested)
+                {
+                    CommandRequested?.Invoke(requested);
+                    e.Handled = true;
+                    return;
+                }
             }
         }
 
