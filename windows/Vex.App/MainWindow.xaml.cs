@@ -265,22 +265,65 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // A full-screen terminal application owns its entire keyspace. In
+        // Vex owns Ctrl+Shift+P universally: opens the command palette
+        // regardless of whether a shell or full-screen TUI (nvim, htop, ...) is focused.
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.P)
+        {
+            ShowCommandPalette();
+            e.Handled = true;
+            return;
+        }
+
+        // Tab cycling belongs to Vex universally across all panes and TUIs.
+        if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.Tab)
+        {
+            CycleTab(1);
+            e.Handled = true;
+            return;
+        }
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Tab)
+        {
+            CycleTab(-1);
+            e.Handled = true;
+            return;
+        }
+
+        // Project switching and cycling belong to Vex universally across all panes and TUIs.
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift))
+        {
+            if (TryGetProjectIndex(key, out var projectIndex))
+            {
+                SwitchToProject(projectIndex);
+                e.Handled = true;
+                return;
+            }
+            if (key == System.Windows.Input.Key.PageDown)
+            {
+                CycleProject(1);
+                e.Handled = true;
+                return;
+            }
+            if (key == System.Windows.Input.Key.PageUp)
+            {
+                CycleProject(-1);
+                e.Handled = true;
+                return;
+            }
+            if (key == System.Windows.Input.Key.O)
+            {
+                ToggleProjectPicker();
+                e.Handled = true;
+                return;
+            }
+        }
+
+        // A full-screen terminal application owns its other keyspace. In
         // particular, applications such as vim, htop, and lazygit commonly
         // use Ctrl+Shift chords that otherwise look like Vex shortcuts.
         if (System.Windows.Input.Keyboard.FocusedElement is NativeTerminalControl { IsTuiMode: true })
             return;
 
-        // Plain Ctrl+<letter> is never claimed here, so a full-screen TUI's own
-        // bindings (opencode's Ctrl+P, vim-style apps, ...) always reach the PTY.
-        // Vex owns Ctrl+Shift chords instead; Ctrl+Shift+P opens the palette,
-        // which also hosts Settings.
-        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.P)
-        {
-            ShowCommandPalette();
-            e.Handled = true;
-        }
-        else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.M)
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.M)
         {
             ToggleThemeSwitcher();
             e.Handled = true;
@@ -288,16 +331,6 @@ public sealed partial class MainWindow : Window
         else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Space)
         {
             ToggleTabPeek();
-            e.Handled = true;
-        }
-        else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.Tab)
-        {
-            CycleTab(1);
-            e.Handled = true;
-        }
-        else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Tab)
-        {
-            CycleTab(-1);
             e.Handled = true;
         }
         else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.S)
@@ -321,6 +354,75 @@ public sealed partial class MainWindow : Window
                 project.SelectedTab = project.Tabs[nextIndex];
             }
         }
+    }
+
+    private void SwitchToProject(int index)
+    {
+        if (_workspace.SelectProjectByIndex(index))
+        {
+            ProjectPickerPopup.IsOpen = false;
+            _tabPeek?.Hide();
+            _paletteOverlay?.Hide();
+            _settingsOverlay?.Hide();
+            _themeSwitcher?.Hide();
+            FocusActivePane();
+        }
+    }
+
+    private void CycleProject(int direction)
+    {
+        if (_workspace.CycleProject(direction))
+        {
+            ProjectPickerPopup.IsOpen = false;
+            _tabPeek?.Hide();
+            _paletteOverlay?.Hide();
+            _settingsOverlay?.Hide();
+            _themeSwitcher?.Hide();
+            FocusActivePane();
+        }
+    }
+
+    private void ToggleProjectPicker()
+    {
+        if (ProjectPickerPopup.IsOpen)
+        {
+            ProjectPickerPopup.IsOpen = false;
+        }
+        else
+        {
+            _paletteOverlay?.Hide();
+            _settingsOverlay?.Hide();
+            _themeSwitcher?.Hide();
+            _tabPeek?.Hide();
+            ProjectPickerPopup.IsOpen = true;
+        }
+    }
+
+    internal static bool TryGetProjectIndex(System.Windows.Input.Key key, out int index)
+    {
+        if (key >= System.Windows.Input.Key.D1 && key <= System.Windows.Input.Key.D9)
+        {
+            index = key - System.Windows.Input.Key.D1;
+            return true;
+        }
+        if (key == System.Windows.Input.Key.D0)
+        {
+            index = 9;
+            return true;
+        }
+        if (key >= System.Windows.Input.Key.NumPad1 && key <= System.Windows.Input.Key.NumPad9)
+        {
+            index = key - System.Windows.Input.Key.NumPad1;
+            return true;
+        }
+        if (key == System.Windows.Input.Key.NumPad0)
+        {
+            index = 9;
+            return true;
+        }
+
+        index = -1;
+        return false;
     }
 
     private CommandPalette? _paletteOverlay;
@@ -447,6 +549,9 @@ public sealed partial class MainWindow : Window
             else if (action == "Settings") Settings_Click(this, new RoutedEventArgs());
             else if (action == "ThemePicker") ToggleThemeSwitcher();
             else if (action == "TabPeek") ToggleTabPeek();
+            else if (action == "NextProject") CycleProject(1);
+            else if (action == "PrevProject") CycleProject(-1);
+            else if (action == "ProjectPicker") ToggleProjectPicker();
         });
         PaletteOverlay.Show(items);
     }
