@@ -29,6 +29,12 @@ public sealed class CustomGlyphRendererTests
     [InlineData(0x2550, true)] // Double horizontal
     [InlineData(0x2551, true)] // Double vertical
     [InlineData(0x2573, true)] // Diagonal cross
+    [InlineData(0x2504, false)] // Box drawing light triple dash horizontal
+    [InlineData(0x2552, false)] // Box drawing mixed single/double
+    [InlineData(0xE0B1, false)] // Powerline thin right arrow
+    [InlineData(0xE0B3, false)] // Powerline thin left arrow
+    [InlineData(0xE0B5, false)] // Powerline thin right rounded
+    [InlineData(0xE0B7, false)] // Powerline thin left rounded
     [InlineData('A', false)]
     [InlineData(' ', false)]
     [InlineData('z', false)]
@@ -59,5 +65,52 @@ public sealed class CustomGlyphRendererTests
 
         var drawn = CustomGlyphRenderer.Draw(dc, 0xE0B0, 10, 20, 9, 21, brush, 1.0);
         Assert.True(drawn);
+    }
+
+    [Fact]
+    public void CanDraw_True_GuaranteesDrawSucceeds()
+    {
+        var visual = new DrawingVisual();
+        using var dc = visual.RenderOpen();
+        var brush = Brushes.Cyan;
+
+        for (var cp = 0; cp <= 0xFFFF; cp++)
+        {
+            if (CustomGlyphRenderer.CanDraw(cp))
+            {
+                var drawn = CustomGlyphRenderer.Draw(dc, cp, 10, 20, 9, 21, brush, 1.0);
+                Assert.True(drawn, $"CustomGlyphRenderer claimed CanDraw(0x{cp:X4}) but Draw returned false.");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0x256D)] // ╭
+    [InlineData(0x256E)] // ╮
+    [InlineData(0x256F)] // ╯
+    [InlineData(0x2570)] // ╰
+    public void Draw_RoundedCorners_ExecuteSuccessfully(int codepoint)
+    {
+        var visual = new DrawingVisual();
+        using var dc = visual.RenderOpen();
+        var brush = Brushes.Cyan;
+
+        Assert.True(CustomGlyphRenderer.CanDraw(codepoint));
+        Assert.True(CustomGlyphRenderer.Draw(dc, codepoint, 0, 0, 10, 20, brush, 1.0));
+    }
+
+    [Theory]
+    [InlineData(0x2554)] // ╔
+    [InlineData(0x2557)] // ╗
+    [InlineData(0x255A)] // ╚
+    [InlineData(0x255D)] // ╝
+    public void Draw_DoubleCorners_ExecuteSuccessfully(int codepoint)
+    {
+        var visual = new DrawingVisual();
+        using var dc = visual.RenderOpen();
+        var brush = Brushes.Cyan;
+
+        Assert.True(CustomGlyphRenderer.CanDraw(codepoint));
+        Assert.True(CustomGlyphRenderer.Draw(dc, codepoint, 0, 0, 10, 20, brush, 1.0));
     }
 }

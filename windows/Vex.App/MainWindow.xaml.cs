@@ -1073,21 +1073,6 @@ public sealed partial class MainWindow : Window
         SessionStore.Save(_workspace); // persist projects, tabs and divider positions
         base.OnClosed(e);
         foreach (var project in _workspace.Projects)
-            foreach (var tab in project.Tabs)
-                DisposePane(tab.Root);
-    }
-
-    private static void DisposePane(PaneNode node)
-    {
-        switch (node)
-        {
-            case LeafPane leaf:
-                leaf.Dispose();
-                break;
-            case SplitPane split:
-                DisposePane(split.First);
-                DisposePane(split.Second);
-                break;
-        }
+            project.Dispose();
     }
 }

@@ -44,6 +44,7 @@ public sealed class Workspace : ObservableObject
             return;
         if (SelectedProject == project)
             SelectedProject = Projects.Count > 0 ? Projects[Math.Max(0, index - 1)] : null;
+        project.Dispose();
     }
 
     public bool SelectProjectByIndex(int index)
