@@ -49,31 +49,57 @@ public static class ChromePalette
     /// variant (observed on VexTabStrip), leaving half the chrome in
     /// the old theme until a restart. Push values into the brushes directly —
     /// an unfrozen shared brush invalidates all consumers on write.</summary>
+    private static (SolidColorBrush Brush, string ColorKey)[]? s_cachedBrushPairs;
+    private static SolidColorBrush? s_accentTransBrush;
+    private static SolidColorBrush? s_dimTransBrush;
+    private static LinearGradientBrush? s_bgGradient;
+    private static LinearGradientBrush? s_tabGradient;
+    private static LinearGradientBrush? s_accentGradient;
+
     private static void SyncBrushes(ResourceDictionary res)
     {
-        foreach (var (brushKey, colorKey) in BrushColorPairs)
+        s_cachedBrushPairs ??= ResolveBrushPairs(res);
+        foreach (var (solid, colorKey) in s_cachedBrushPairs)
         {
-            if (res[brushKey] is SolidColorBrush solid && !solid.IsFrozen
-                && res[colorKey] is Color c && solid.Color != c)
+            if (res[colorKey] is Color c && solid.Color != c)
                 solid.Color = c;
         }
 
-        if (res["VexAccentTranslucent"] is SolidColorBrush accentTrans && !accentTrans.IsFrozen
+        s_accentTransBrush ??= res["VexAccentTranslucent"] as SolidColorBrush;
+        if (s_accentTransBrush is { IsFrozen: false } accentTrans
             && res["VexAccentColor"] is Color ac && accentTrans.Color != ac)
             accentTrans.Color = ac;
-        if (res["VexTextDimTranslucent"] is SolidColorBrush dimTrans && !dimTrans.IsFrozen
+
+        s_dimTransBrush ??= res["VexTextDimTranslucent"] as SolidColorBrush;
+        if (s_dimTransBrush is { IsFrozen: false } dimTrans
             && res["VexTextDimColor"] is Color dc && dimTrans.Color != dc)
             dimTrans.Color = dc;
 
-        SyncGradient(res, "VexBackground", "VexBackgroundTopColor", "VexBackgroundBottomColor");
-        SyncGradient(res, "VexTabSelected", "VexTabSelectedStartColor", "VexTabSelectedEndColor");
-        SyncGradient(res, "VexAccentGradient", "VexAccentGradientStartColor", "VexAccentGradientEndColor");
+        s_bgGradient ??= res["VexBackground"] as LinearGradientBrush;
+        SyncGradientCached(s_bgGradient, res, "VexBackgroundTopColor", "VexBackgroundBottomColor");
+
+        s_tabGradient ??= res["VexTabSelected"] as LinearGradientBrush;
+        SyncGradientCached(s_tabGradient, res, "VexTabSelectedStartColor", "VexTabSelectedEndColor");
+
+        s_accentGradient ??= res["VexAccentGradient"] as LinearGradientBrush;
+        SyncGradientCached(s_accentGradient, res, "VexAccentGradientStartColor", "VexAccentGradientEndColor");
     }
 
-    private static void SyncGradient(ResourceDictionary res, string brushKey,
+    private static (SolidColorBrush Brush, string ColorKey)[] ResolveBrushPairs(ResourceDictionary res)
+    {
+        var list = new List<(SolidColorBrush, string)>(BrushColorPairs.Length);
+        foreach (var (brushKey, colorKey) in BrushColorPairs)
+        {
+            if (res[brushKey] is SolidColorBrush solid && !solid.IsFrozen)
+                list.Add((solid, colorKey));
+        }
+        return list.ToArray();
+    }
+
+    private static void SyncGradientCached(LinearGradientBrush? gradient, ResourceDictionary res,
         string startColorKey, string endColorKey)
     {
-        if (res[brushKey] is not LinearGradientBrush gradient || gradient.IsFrozen
+        if (gradient is null || gradient.IsFrozen
             || res[startColorKey] is not Color start || res[endColorKey] is not Color end)
             return;
         var stops = gradient.GradientStops;
@@ -244,7 +270,10 @@ public static class ChromePalette
     }
 
     private static void Set(ResourceDictionary res, string key, Color color)
-        => res[key] = color;
+    {
+        if (res[key] is not Color existing || existing != color)
+            res[key] = color;
+    }
 
     private static Color Parse(string hex)
         => FastColor.ParseHex(hex);
