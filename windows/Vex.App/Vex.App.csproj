@@ -28,6 +28,8 @@
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <TieredPGO>true</TieredPGO>
+    <TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>
+    <DebuggerSupport Condition="'$(Configuration)' == 'Release'">false</DebuggerSupport>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <AssemblyTitle>Vex</AssemblyTitle>
     <Product>Vex</Product>
@@ -39,8 +41,8 @@
          from the assembly for the UI, so nothing else needs updating. -->
     <Version>1.3.0</Version>
     <PublishSingleFile>true</PublishSingleFile>
-    <!-- Single-file compression reduces disk footprint from ~115 MB to ~53 MB,
-         cutting cold-start disk I/O and Windows Defender scan time by ~650 ms. -->
+    <!-- Single-file compression reduces disk footprint from ~100 MB to ~45 MB,
+         cutting cold-start disk I/O and Windows Defender scan time. -->
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
     <!-- ReadyToRun drastically increases the bundle size (from ~80MB to ~180MB)
@@ -55,12 +57,16 @@
          InvalidOperationException when ICU cultures are unavailable. -->
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SatelliteResourceLanguages>none</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <!-- Prune completely unused framework assemblies and debug engines from the self-contained
        single-file bundle. Microsoft.WindowsDesktop.App unconditionally pulls in Windows Forms,
-       System.Data, Active Directory, VB, unused networking/diagnostics, and CLR debugging engines
-       even though Vex never touches them. Removing them saves ~45 MB uncompressed. -->
+       System.Data, Active Directory, VB, unused networking/diagnostics, XPS/Printing, and CLR debugging engines
+       even though Vex never touches them. Removing them saves over ~55 MB uncompressed.
+       NOTE: System.Configuration.ConfigurationManager and presentation assemblies (Ribbon,
+       WindowsFormsIntegration, PresentationUI) MUST NOT be pruned: WPF loads them dynamically
+       at startup via BaseCompatibilityPreferences and Baml2006SchemaContext.EnsureXmlnsAssembliesLoaded. -->
   <Target Name="PruneUnusedSingleFileAssemblies" BeforeTargets="_ComputeFilesToBundle">
     <ItemGroup>
       <_UnusedPublishFiles Include="@(ResolvedFileToPublish)"
@@ -79,6 +85,36 @@
           $([System.String]::Copy('%(Filename)').StartsWith('mscordaccore')) or
           $([System.String]::Copy('%(Filename)').StartsWith('mscordbi')) or
           $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.DiaSymReader')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('ReachFramework')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Printing')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Mail')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Quic')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Requests')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebSockets')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Ping')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.ServerSentEvents')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebClient')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebProxy')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebHeaderCollection')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Transactions.')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.CodeDom')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Security.Cryptography.Xml')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Formats.Tar')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Formats.Nrbf')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Reflection.Metadata')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Linq.AsyncEnumerable')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Threading.Tasks.Dataflow')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Pipelines')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Text.Encoding.CodePages')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Compression.Brotli')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Compression.ZipFile')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Compression.FileSystem')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.IO.IsolatedStorage')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Runtime.InteropServices.JavaScript')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Web.')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.ServiceModel.')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.ServiceProcess')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Threading.Channels')) or
           '%(Filename)' == 'clrgcexp'
         " />
       <ResolvedFileToPublish Remove="@(_UnusedPublishFiles)" />
