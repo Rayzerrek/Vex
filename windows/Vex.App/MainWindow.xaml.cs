@@ -264,84 +264,86 @@ public sealed partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-
-        // Vex owns Ctrl+Shift+P universally: opens the command palette
-        // regardless of whether a shell or full-screen TUI (nvim, htop, ...) is focused.
-        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.P)
-        {
-            ShowCommandPalette();
-            e.Handled = true;
+        if (!TryGetWorkspaceShortcut(modifiers, key, out var shortcut, out var projectIndex))
             return;
-        }
 
-        // Tab cycling belongs to Vex universally across all panes and TUIs.
-        if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.Tab)
+        switch (shortcut)
         {
-            CycleTab(1);
-            e.Handled = true;
-            return;
-        }
-        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Tab)
-        {
-            CycleTab(-1);
-            e.Handled = true;
-            return;
-        }
-
-        // Project switching and cycling belong to Vex universally across all panes and TUIs.
-        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift))
-        {
-            if (TryGetProjectIndex(key, out var projectIndex))
-            {
+            case WorkspaceShortcut.CommandPalette:
+                ShowCommandPalette();
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.PreviousTab:
+                CycleTab(-1);
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.NextTab:
+                CycleTab(1);
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.SplitRight:
+                _workspace.SelectedProject?.SelectedTab?.Split(System.Windows.Controls.Orientation.Horizontal);
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.SplitDown:
+                _workspace.SelectedProject?.SelectedTab?.Split(System.Windows.Controls.Orientation.Vertical);
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.NewTab:
+                _workspace.SelectedProject?.NewTab();
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.ClosePaneOrTab:
+                CloseActivePaneOrTab();
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.ThemeSwitcher:
+                ToggleThemeSwitcher();
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.TabPeek:
+                ToggleTabPeek();
+                e.Handled = true;
+                break;
+            case WorkspaceShortcut.SwitchProject:
                 SwitchToProject(projectIndex);
                 e.Handled = true;
-                return;
-            }
-            if (key == System.Windows.Input.Key.PageDown)
-            {
+                break;
+            case WorkspaceShortcut.NextProject:
                 CycleProject(1);
                 e.Handled = true;
-                return;
-            }
-            if (key == System.Windows.Input.Key.PageUp)
-            {
+                break;
+            case WorkspaceShortcut.PreviousProject:
                 CycleProject(-1);
                 e.Handled = true;
-                return;
-            }
-            if (key == System.Windows.Input.Key.O)
-            {
+                break;
+            case WorkspaceShortcut.ProjectPicker:
                 ToggleProjectPicker();
                 e.Handled = true;
-                return;
-            }
-        }
-
-        // A full-screen terminal application owns its other keyspace. In
-        // particular, applications such as vim, htop, and lazygit commonly
-        // use Ctrl+Shift chords that otherwise look like Vex shortcuts.
-        if (System.Windows.Input.Keyboard.FocusedElement is NativeTerminalControl { IsTuiMode: true })
-            return;
-
-        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.M)
-        {
-            ToggleThemeSwitcher();
-            e.Handled = true;
-        }
-        else if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift) && key == System.Windows.Input.Key.Space)
-        {
-            ToggleTabPeek();
-            e.Handled = true;
-        }
-        else if (modifiers == System.Windows.Input.ModifierKeys.Control && key == System.Windows.Input.Key.S)
-        {
-            if (SaveCurrentFile())
-            {
-                e.Handled = true;
-            }
+                break;
+            case WorkspaceShortcut.SaveFile:
+                if (SaveCurrentFile())
+                {
+                    e.Handled = true;
+                }
+                break;
         }
     }
 
+    private void CloseActivePaneOrTab()
+    {
+        if (_workspace.SelectedProject?.SelectedTab is not { } tab)
+            return;
+
+        if (tab.ActiveLeaf is { } activeLeaf)
+        {
+            activeLeaf.Close();
+        }
+        else
+        {
+            _workspace.SelectedProject.CloseTab(tab);
+        }
+    }
     private void CycleTab(int direction)
     {
         if (_workspace.SelectedProject is { } project && project.Tabs.Count > 1 && project.SelectedTab is { } currentTab)
@@ -422,6 +424,39 @@ public sealed partial class MainWindow : Window
         }
 
         index = -1;
+        return false;
+    }
+
+    internal static bool TryGetWorkspaceShortcut(
+        System.Windows.Input.ModifierKeys modifiers,
+        System.Windows.Input.Key key,
+        out WorkspaceShortcut shortcut,
+        out int projectIndex)
+    {
+        projectIndex = -1;
+
+        if (modifiers == (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift))
+        {
+            if (key == System.Windows.Input.Key.P) { shortcut = WorkspaceShortcut.CommandPalette; return true; }
+            if (key == System.Windows.Input.Key.Tab) { shortcut = WorkspaceShortcut.PreviousTab; return true; }
+            if (key == System.Windows.Input.Key.R) { shortcut = WorkspaceShortcut.SplitRight; return true; }
+            if (key == System.Windows.Input.Key.D) { shortcut = WorkspaceShortcut.SplitDown; return true; }
+            if (key == System.Windows.Input.Key.T) { shortcut = WorkspaceShortcut.NewTab; return true; }
+            if (key == System.Windows.Input.Key.W) { shortcut = WorkspaceShortcut.ClosePaneOrTab; return true; }
+            if (key == System.Windows.Input.Key.M) { shortcut = WorkspaceShortcut.ThemeSwitcher; return true; }
+            if (key == System.Windows.Input.Key.Space) { shortcut = WorkspaceShortcut.TabPeek; return true; }
+            if (key == System.Windows.Input.Key.PageDown) { shortcut = WorkspaceShortcut.NextProject; return true; }
+            if (key == System.Windows.Input.Key.PageUp) { shortcut = WorkspaceShortcut.PreviousProject; return true; }
+            if (key == System.Windows.Input.Key.O) { shortcut = WorkspaceShortcut.ProjectPicker; return true; }
+            if (TryGetProjectIndex(key, out projectIndex)) { shortcut = WorkspaceShortcut.SwitchProject; return true; }
+        }
+        else if (modifiers == System.Windows.Input.ModifierKeys.Control)
+        {
+            if (key == System.Windows.Input.Key.Tab) { shortcut = WorkspaceShortcut.NextTab; return true; }
+            if (key == System.Windows.Input.Key.S) { shortcut = WorkspaceShortcut.SaveFile; return true; }
+        }
+
+        shortcut = default;
         return false;
     }
 
@@ -1075,4 +1110,22 @@ public sealed partial class MainWindow : Window
         foreach (var project in _workspace.Projects)
             project.Dispose();
     }
+}
+
+public enum WorkspaceShortcut
+{
+    CommandPalette,
+    ThemeSwitcher,
+    TabPeek,
+    NewTab,
+    ClosePaneOrTab,
+    SplitRight,
+    SplitDown,
+    NextTab,
+    PreviousTab,
+    NextProject,
+    PreviousProject,
+    ProjectPicker,
+    SwitchProject,
+    SaveFile,
 }
