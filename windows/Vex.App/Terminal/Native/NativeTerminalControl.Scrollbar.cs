@@ -18,6 +18,7 @@ public sealed partial class NativeTerminalControl
     private double _scrollbarTargetWidth = ScrollbarThinWidth;
     private double _scrollbarOpacity;
     private double _scrollbarTargetOpacity;
+    private bool _scrollbarVisualDrawn;
     private bool _scrollbarHovered;
     private bool _scrollbarDragging;
     private double _scrollbarDragOffset;
@@ -83,10 +84,18 @@ public sealed partial class NativeTerminalControl
 
     private void DrawScrollbar()
     {
-        using var dc = _scrollbarVisual.RenderOpen();
         if (_scrollbarOpacity < 0.01 || !TryGetScrollbarGeometry(out var thumbY, out var thumbH, out _))
+        {
+            if (_scrollbarVisualDrawn)
+            {
+                using var clearDc = _scrollbarVisual.RenderOpen();
+                _scrollbarVisualDrawn = false;
+            }
             return;
+        }
 
+        _scrollbarVisualDrawn = true;
+        using var dc = _scrollbarVisual.RenderOpen();
         var brush = _scrollbarHovered || _scrollbarDragging ? _scrollbarThumbHoverBrush : _scrollbarThumbBrush;
         var x = ActualWidth - _scrollbarWidth;
         var radius = _scrollbarWidth / 2;
