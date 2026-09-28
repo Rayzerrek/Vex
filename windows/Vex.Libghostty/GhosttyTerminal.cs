@@ -1117,7 +1117,7 @@ public sealed class GhosttyTerminal : IDisposable
     {
         var size = new Native.GhosttyMouseEncoderSize
         {
-            size = (nuint)Marshal.SizeOf<Native.GhosttyMouseEncoderSize>(),
+            size = (nuint)sizeof(Native.GhosttyMouseEncoderSize),
             screenWidth = (uint)Math.Max(1, _cols * _cellWidthPx),
             screenHeight = (uint)Math.Max(1, _rows * _cellHeightPx),
             cellWidth = (uint)Math.Max(1, _cellWidthPx),
@@ -1210,7 +1210,7 @@ public sealed class GhosttyTerminal : IDisposable
             Check(Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Dirty, (IntPtr)(&rowDirty)), "row dirty");
             frameRow.Dirty = rowDirty != 0 || readAll;
 
-            var selection = new Native.GhosttyRenderStateRowSelection { size = (nuint)Marshal.SizeOf<Native.GhosttyRenderStateRowSelection>() };
+            var selection = new Native.GhosttyRenderStateRowSelection { size = (nuint)sizeof(Native.GhosttyRenderStateRowSelection) };
             var selResult = Native.ghostty_render_state_row_get(_rowIterator, RenderStateRowData.Selection, (IntPtr)(&selection));
             frameRow.HasSelection = selResult == Result.Success;
             if (frameRow.HasSelection)
@@ -1473,7 +1473,7 @@ public sealed class GhosttyTerminal : IDisposable
         {
             var options = new Native.GhosttyTerminalSelectionFormatOptions
             {
-                size = (nuint)Marshal.SizeOf<Native.GhosttyTerminalSelectionFormatOptions>(),
+                size = (nuint)sizeof(Native.GhosttyTerminalSelectionFormatOptions),
                 emit = (int)Native.FormatterFormat.Plain,
                 unwrap = true,
                 trim = true,
@@ -1493,11 +1493,11 @@ public sealed class GhosttyTerminal : IDisposable
         }
     }
 
-    private static GhosttySelection GhosttySelectionScratch() => new()
+    private static unsafe GhosttySelection GhosttySelectionScratch() => new()
     {
-        size = (nuint)Marshal.SizeOf<GhosttySelection>(),
-        start = new Native.GhosttyGridRef { size = (nuint)Marshal.SizeOf<Native.GhosttyGridRef>() },
-        end = new Native.GhosttyGridRef { size = (nuint)Marshal.SizeOf<Native.GhosttyGridRef>() },
+        size = (nuint)sizeof(GhosttySelection),
+        start = new Native.GhosttyGridRef { size = (nuint)sizeof(Native.GhosttyGridRef) },
+        end = new Native.GhosttyGridRef { size = (nuint)sizeof(Native.GhosttyGridRef) },
     };
 
     // ---- Plumbing ------------------------------------------------------------
@@ -1565,10 +1565,17 @@ public sealed class GhosttyTerminal : IDisposable
         return strings;
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static void Check(Result result, string what)
     {
         if (result != Result.Success)
-            throw new InvalidOperationException($"libghostty: {what} failed: {result}");
+            ThrowFailed(result, what);
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    private static void ThrowFailed(Result result, string what)
+    {
+        throw new InvalidOperationException($"libghostty: {what} failed: {result}");
     }
 
     private static void OnTitleChanged(IntPtr terminal, IntPtr userdata)

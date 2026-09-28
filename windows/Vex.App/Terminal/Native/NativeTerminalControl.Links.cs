@@ -80,8 +80,8 @@ public sealed partial class NativeTerminalControl
             ref readonly var cell = ref cells[col];
             if (cell.Tail)
                 continue; // wide stub: the base cell owns the glyph
-            var text = cell.Text ?? "";
-            if (text.Length == 0)
+            var text = cell.Text;
+            if (text is null || text.Length == 0)
             {
                 _linkText[len] = ' ';
                 _linkCharToCol[len] = col;

@@ -60,7 +60,7 @@ internal static class Native
         public byte overline;
         public int underline;
 
-        public static GhosttyStyle New() => new() { size = (nuint)Marshal.SizeOf<GhosttyStyle>() };
+        public static unsafe GhosttyStyle New() => new() { size = (nuint)sizeof(GhosttyStyle) };
     }
 
     [StructLayout(LayoutKind.Sequential)]

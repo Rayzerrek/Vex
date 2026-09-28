@@ -184,11 +184,11 @@ public sealed class AppSettings : ObservableObject
         {
             if (File.Exists(SettingsPath))
             {
-                var json = File.ReadAllText(SettingsPath);
-                var settings = JsonSerializer.Deserialize(json, VexJsonContext.Default.AppSettings);
+                var bytes = File.ReadAllBytes(SettingsPath);
+                var settings = JsonSerializer.Deserialize(bytes, VexJsonContext.Default.AppSettings);
                 if (settings != null)
                 {
-                    MigrateLegacyShell(settings, json);
+                    MigrateLegacyShell(settings, bytes);
                     return settings;
                 }
             }
@@ -203,13 +203,16 @@ public sealed class AppSettings : ObservableObject
     // Settings written before shells had profile ids carry only a display
     // name ("Shell": "Nushell"). A ShellId key in any form means the file is
     // already in the new format, even when it selects the system default.
-    private static void MigrateLegacyShell(AppSettings settings, string json)
+    private static void MigrateLegacyShell(AppSettings settings, byte[] bytes)
     {
         if (settings.ShellMigrated)
             return;
+        // Fast path: SIMD check for "ShellId" key in UTF-8 bytes to avoid JsonDocument allocation.
+        if (bytes.AsSpan().IndexOf("\"ShellId\""u8) >= 0)
+            return;
         try
         {
-            using var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(bytes);
             if (doc.RootElement.TryGetProperty(nameof(ShellId), out _))
                 return;
             settings.ShellId = ShellRegistry.MigrateLegacyName(settings.Shell);

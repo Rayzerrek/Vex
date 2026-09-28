@@ -38,14 +38,14 @@ internal static class CustomGlyphRenderer
     public static bool Draw(DrawingContext context, int codepoint, double x, double y,
         double width, double height, Brush brush, double pixelsPerDip)
     {
-        if (DrawBlockElement(context, codepoint, x, y, width, height, brush))
-            return true;
+        if (codepoint is >= 0x2580 and <= 0x259F)
+            return DrawBlockElement(context, codepoint, x, y, width, height, brush);
 
-        if (DrawPowerline(context, codepoint, x, y, width, height, brush))
-            return true;
+        if (codepoint is >= 0xE0B0 and <= 0xE0B7)
+            return DrawPowerline(context, codepoint, x, y, width, height, brush);
 
-        if (DrawBoxDrawing(context, codepoint, x, y, width, height, brush, pixelsPerDip))
-            return true;
+        if (codepoint is >= 0x2500 and <= 0x257F)
+            return DrawBoxDrawing(context, codepoint, x, y, width, height, brush, pixelsPerDip);
 
         return false;
     }
