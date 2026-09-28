@@ -110,20 +110,19 @@ public sealed partial class App : Application
             Vex.App.Model.EditorPane.OnThemeChanged();
         };
 
-        // Construct the workspace and window immediately without awaiting I/O.
-        // The first frame renders a skeleton UI (like Ghostty/SuperLogical),
-        // hiding the session loading latency entirely.
-        Model.StartupMark.Note("window construction begin");
+        // Await the preloaded session snapshot and populate the workspace
+        // before window construction so WPF builds the real visual tree once,
+        // eliminating the empty-skeleton layout rebuild.
+        var snapshot = await _sessionTask.ConfigureAwait(true);
         var workspace = new Model.Workspace();
+        Model.SessionStore.Populate(workspace, snapshot);
+        Model.StartupMark.Note("session populated");
+
+        Model.StartupMark.Note("window construction begin");
         var window = new MainWindow(workspace);
         Model.StartupMark.Note("window constructed");
         window.Show();
         Model.StartupMark.Note("window shown");
-
-        // Now await the session snapshot and populate the workspace.
-        var snapshot = await _sessionTask.ConfigureAwait(true);
-        Model.SessionStore.Populate(workspace, snapshot);
-        Model.StartupMark.Note("session populated");
     }
 
     protected override void OnExit(ExitEventArgs e)
