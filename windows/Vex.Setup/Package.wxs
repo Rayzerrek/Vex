@@ -7,7 +7,7 @@
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     
-    <MediaTemplate EmbedCab="yes" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Icon Id="AppIcon" SourceFile="..\Vex.App\Assets\app.ico" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
