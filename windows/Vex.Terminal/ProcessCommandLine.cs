@@ -36,7 +36,7 @@ public static class ProcessCommandLine
         {
             var pbi = new NativeMethods.PROCESS_BASIC_INFORMATION();
             if (NativeMethods.NtQueryInformationProcess(handle, NativeMethods.ProcessBasicInformation,
-                    ref pbi, Marshal.SizeOf<NativeMethods.PROCESS_BASIC_INFORMATION>(), out _) != 0)
+                    ref pbi, System.Runtime.CompilerServices.Unsafe.SizeOf<NativeMethods.PROCESS_BASIC_INFORMATION>(), out _) != 0)
                 return null;
             if (pbi.PebBaseAddress == IntPtr.Zero)
                 return null;

@@ -83,6 +83,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private GlyphTypeface? _boldGlyph;
     private GlyphTypeface? _italicGlyph;
     private GlyphTypeface? _boldItalicGlyph;
+    private ushort[]? _normalAscii;
+    private ushort[]? _boldAscii;
+    private ushort[]? _italicAscii;
+    private ushort[]? _boldItalicAscii;
     private double _baselineY;
 
     private readonly object _outputLock = new();
@@ -263,7 +267,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     /// settings touch is wasteful.</summary>
     private sealed record TypefaceSet(
         Typeface Normal, Typeface Bold, Typeface Italic, Typeface BoldItalic,
-        GlyphTypeface? NormalGlyph, GlyphTypeface? BoldGlyph, GlyphTypeface? ItalicGlyph, GlyphTypeface? BoldItalicGlyph);
+        GlyphTypeface? NormalGlyph, GlyphTypeface? BoldGlyph, GlyphTypeface? ItalicGlyph, GlyphTypeface? BoldItalicGlyph,
+        ushort[]? NormalAscii, ushort[]? BoldAscii, ushort[]? ItalicAscii, ushort[]? BoldItalicAscii);
 
     private static readonly Dictionary<string, TerminalPalette> PaletteCache = new();
     private static readonly Dictionary<string, TypefaceSet> TypefaceCache = new();
@@ -327,10 +332,30 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             bold.TryGetGlyphTypeface(out var boldGlyph);
             italic.TryGetGlyphTypeface(out var italicGlyph);
             boldItalic.TryGetGlyphTypeface(out var boldItalicGlyph);
-            set = new TypefaceSet(normal, bold, italic, boldItalic, normalGlyph, boldGlyph, italicGlyph, boldItalicGlyph);
+            set = new TypefaceSet(
+                normal, bold, italic, boldItalic,
+                normalGlyph, boldGlyph, italicGlyph, boldItalicGlyph,
+                BuildAsciiGlyphTable(normalGlyph),
+                BuildAsciiGlyphTable(boldGlyph),
+                BuildAsciiGlyphTable(italicGlyph),
+                BuildAsciiGlyphTable(boldItalicGlyph));
             TypefaceCache[familySource] = set;
             return set;
         }
+    }
+
+    private static ushort[]? BuildAsciiGlyphTable(GlyphTypeface? glyph)
+    {
+        if (glyph is null)
+            return null;
+        var table = new ushort[128];
+        var map = glyph.CharacterToGlyphMap;
+        for (var c = 0; c < 128; c++)
+        {
+            if (map.TryGetValue(c, out var idx))
+                table[c] = idx;
+        }
+        return table;
     }
 
     private void ApplyTypefaces(string familySource)
@@ -345,8 +370,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _boldGlyph = set.BoldGlyph;
         _italicGlyph = set.ItalicGlyph;
         _boldItalicGlyph = set.BoldItalicGlyph;
+        _normalAscii = set.NormalAscii;
+        _boldAscii = set.BoldAscii;
+        _italicAscii = set.ItalicAscii;
+        _boldItalicAscii = set.BoldItalicAscii;
     }
-
     private void ApplySettings()
     {
         var settings = AppSettings.Instance;
@@ -880,7 +908,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
             var face = ResolveTypeface(flags);
             var glyphFace = ResolveGlyphTypeface(flags);
-            // When BOLD is requested but the family has no bold face (glyph
+            var asciiTable = ResolveAsciiGlyphs(flags);
             // resolution fell back to the regular face), emulate bold by
             // double-drawing the run with a 1px horizontal offset. Note: a
             // null glyphFace (FormattedText fallback) also needs this, so the
@@ -1018,7 +1046,17 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                         {
                             cp = ch;
                         }
-                        if (!map.TryGetValue(cp, out var glyphIndex))
+                        ushort glyphIndex;
+                        if ((uint)cp < 128u && asciiTable is not null)
+                        {
+                            glyphIndex = asciiTable[cp];
+                            if (glyphIndex == 0)
+                            {
+                                cellOk = false;
+                                break;
+                            }
+                        }
+                        else if (!map.TryGetValue(cp, out glyphIndex))
                         {
                             cellOk = false;
                             break;
@@ -1130,22 +1168,42 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         const ulong prime = 1099511628211;
         ulong hash = 14695981039346656037;
         var cells = row.Cells;
-        for (var col = 0; col < cols && col < cells.Length; col++)
+        var maxCol = Math.Min(cols, cells.Length);
+        for (var col = 0; col < maxCol; col++)
         {
             ref readonly var cell = ref cells[col];
-            var text = cell.Text ?? "";
-            for (var i = 0; i < text.Length; i++)
-                hash = (hash ^ text[i]) * prime;
-            hash = (hash ^ (ulong)(uint)text.Length) * prime;
-            hash = (hash ^ (ulong)(cell.Wide ? 1u : 0u)) * prime;
-            hash = (hash ^ (ulong)(cell.Tail ? 1u : 0u)) * prime;
-            hash = (hash ^ (ulong)(byte)cell.Flags) * prime;
-            hash = (hash ^ (ulong)(uint)cell.FgValue) * prime;
-            hash = (hash ^ (ulong)(uint)cell.FgTag) * prime;
-            hash = (hash ^ (ulong)(uint)cell.BgValue) * prime;
-            hash = (hash ^ (ulong)(uint)cell.BgTag) * prime;
+            var text = cell.Text;
+            if (text is not null)
+            {
+                for (var i = 0; i < text.Length; i++)
+                    hash = (hash ^ text[i]) * prime;
+                hash = (hash ^ (ulong)(uint)text.Length) * prime;
+            }
+            ulong packedMeta = ((ulong)(uint)cell.FgValue << 32) | (uint)cell.BgValue;
+            ulong packedFlags = ((ulong)(uint)cell.FgTag << 24)
+                              | ((ulong)(uint)cell.BgTag << 16)
+                              | ((ulong)(byte)cell.Flags << 8)
+                              | (cell.Wide ? 2u : 0u)
+                              | (cell.Tail ? 1u : 0u);
+            hash = (hash ^ packedMeta) * prime;
+            hash = (hash ^ packedFlags) * prime;
         }
         return hash;
+    }
+
+    private ushort[]? ResolveAsciiGlyphs(CellFlags flags)
+    {
+        var bold = (flags & CellFlags.Bold) != 0;
+        var italic = (flags & CellFlags.Italic) != 0;
+        if (bold && _boldGlyph is not null)
+        {
+            if (!italic)
+                return _boldAscii;
+            return _boldItalicAscii ?? _boldAscii;
+        }
+        if (italic)
+            return _italicAscii;
+        return _normalAscii;
     }
 
     private Typeface ResolveTypeface(CellFlags flags)

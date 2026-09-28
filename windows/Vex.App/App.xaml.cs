@@ -12,6 +12,16 @@ public sealed partial class App : Application
 
     public App()
     {
+        try
+        {
+            var profileDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Vex");
+            System.IO.Directory.CreateDirectory(profileDir);
+            System.Runtime.ProfileOptimization.SetProfileRoot(profileDir);
+            System.Runtime.ProfileOptimization.StartProfile("startup.profile");
+        }
+        catch { }
         // Required for ported TUI applications and shells to output VT
         // sequences properly under ConPTY; set before any prewarm starts.
         Environment.SetEnvironmentVariable("TERM", "xterm-256color");
@@ -110,20 +120,29 @@ public sealed partial class App : Application
             Vex.App.Model.EditorPane.OnThemeChanged();
         };
 
-        // Construct the workspace and window immediately without awaiting I/O.
-        // The first frame renders a skeleton UI (like Ghostty/SuperLogical),
-        // hiding the session loading latency entirely.
-        Model.StartupMark.Note("window construction begin");
         var workspace = new Model.Workspace();
+        var sessionReady = _sessionTask.IsCompletedSuccessfully;
+        if (sessionReady)
+        {
+            Model.SessionStore.Populate(workspace, _sessionTask.Result);
+            Model.StartupMark.Note("session populated before window");
+        }
+
+        Model.StartupMark.Note("window construction begin");
         var window = new MainWindow(workspace);
         Model.StartupMark.Note("window constructed");
         window.Show();
         Model.StartupMark.Note("window shown");
 
-        // Now await the session snapshot and populate the workspace.
-        var snapshot = await _sessionTask.ConfigureAwait(true);
-        Model.SessionStore.Populate(workspace, snapshot);
-        Model.StartupMark.Note("session populated");
+        // Usually the background read wins the race and WPF builds the final
+        // tree once. Slow storage must not delay the first visible frame;
+        // retain the skeleton fallback for the uncommon unfinished read.
+        if (!sessionReady)
+        {
+            var snapshot = await _sessionTask.ConfigureAwait(true);
+            Model.SessionStore.Populate(workspace, snapshot);
+            Model.StartupMark.Note("session populated after window");
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

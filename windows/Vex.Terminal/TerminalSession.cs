@@ -88,7 +88,7 @@ public sealed class TerminalSession : IDisposable
 
         var sa = new NativeMethods.SECURITY_ATTRIBUTES
         {
-            nLength = Marshal.SizeOf<NativeMethods.SECURITY_ATTRIBUTES>(),
+            nLength = System.Runtime.CompilerServices.Unsafe.SizeOf<NativeMethods.SECURITY_ATTRIBUTES>(),
             bInheritHandle = true,
         };
 
@@ -206,11 +206,13 @@ public sealed class TerminalSession : IDisposable
     /// VT sequence reaches the child process.</summary>
     private void SendInBandResizeReport(short columns, short rows)
     {
-        var body = $"[48;{rows};{columns};{rows * DefaultCellHeightPx};{columns * DefaultCellWidthPx}t";
-        var report = new byte[1 + Encoding.ASCII.GetByteCount(body)];
-        report[0] = 0x1b;
-        Encoding.ASCII.GetBytes(body, report.AsSpan(1));
-        WriteResponse(report);
+        Span<char> chars = stackalloc char[64];
+        if (chars.TryWrite($"\x1b[48;{rows};{columns};{rows * DefaultCellHeightPx};{columns * DefaultCellWidthPx}t", out var written))
+        {
+            Span<byte> report = stackalloc byte[written];
+            var bytesWritten = Encoding.ASCII.GetBytes(chars[..written], report);
+            WriteResponse(report[..bytesWritten]);
+        }
     }
 
     /// <summary>Writes an emulator response to the PTY input pipe. Under
@@ -253,7 +255,7 @@ public sealed class TerminalSession : IDisposable
             {
                 StartupInfo = new NativeMethods.STARTUPINFO
                 {
-                    cb = Marshal.SizeOf<NativeMethods.STARTUPINFOEX>(),
+                    cb = System.Runtime.CompilerServices.Unsafe.SizeOf<NativeMethods.STARTUPINFOEX>(),
                     // STARTF_USESTDHANDLES stops the child from inheriting or attaching to the parent's console window.
                     dwFlags = NativeMethods.STARTF_USESTDHANDLES,
                     hStdInput = IntPtr.Zero,

@@ -3,7 +3,17 @@ namespace Vex.App.Model;
 public sealed class TerminalTheme
 {
     public string Name { get; set; } = "";
-    public string Background { get; set; } = "";
+    private string _background = "";
+    private bool? _isDark;
+    public string Background
+    {
+        get => _background;
+        set
+        {
+            _background = value;
+            _isDark = null;
+        }
+    }
     public string Foreground { get; set; } = "";
     public string Cursor { get; set; } = "";
     public string SelectionBackground { get; set; } = "";
@@ -33,10 +43,12 @@ public sealed class TerminalTheme
     {
         get
         {
-            // Perceived (gamma-corrected) luminance of the background; the
-            // 0.5 threshold cleanly splits every built-in theme.
+            if (_isDark.HasValue)
+                return _isDark.Value;
             var c = FastColor.ParseHex(Background);
-            return (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255.0 < 0.5;
+            var dark = (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255.0 < 0.5;
+            _isDark = dark;
+            return dark;
         }
     }
 }

@@ -71,6 +71,7 @@ public sealed class Project : ObservableObject, IDisposable
     }
 
     private int _gitBranchVersion;
+    private readonly SemaphoreSlim _gitBranchRefreshGate = new(1, 1);
 
     public void RefreshGitBranch() => _ = RefreshGitBranchAsync();
 
@@ -83,16 +84,36 @@ public sealed class Project : ObservableObject, IDisposable
             return;
         }
 
-        // Drop stale completions: a newer refresh supersedes an older one,
-        // so an in-flight read must not overwrite the freshest result.
-        var version = ++_gitBranchVersion;
-        var branch = await Task.Run(() => ResolveGitBranch(dir));
-        if (version == _gitBranchVersion)
+        var version = Interlocked.Increment(ref _gitBranchVersion);
+        await _gitBranchRefreshGate.WaitAsync().ConfigureAwait(false);
+        try
         {
+            // Coalesce queued requests while preserving one fresh read for the
+            // newest request. Reusing the active read can publish a branch that
+            // was already replaced while that read was in progress.
+            if (version != Volatile.Read(ref _gitBranchVersion))
+                return;
+
+            var branch = await Task.Run(() => ResolveGitBranch(dir)).ConfigureAwait(false);
+            if (version != Volatile.Read(ref _gitBranchVersion))
+                return;
+
             if (System.Windows.Application.Current?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
-                _ = dispatcher.BeginInvoke(() => GitBranch = branch);
+            {
+                _ = dispatcher.BeginInvoke(() =>
+                {
+                    if (version == Volatile.Read(ref _gitBranchVersion))
+                        GitBranch = branch;
+                });
+            }
             else
+            {
                 GitBranch = branch;
+            }
+        }
+        finally
+        {
+            _gitBranchRefreshGate.Release();
         }
     }
 
@@ -108,7 +129,7 @@ public sealed class Project : ObservableObject, IDisposable
             if (File.Exists(gitPath))
             {
                 // Submodule or git worktree file: "gitdir: /path/to/real/gitdir"
-                var line = File.ReadAllLines(gitPath).FirstOrDefault()?.Trim();
+                var line = File.ReadLines(gitPath).FirstOrDefault()?.Trim();
                 if (line != null && line.StartsWith("gitdir:", StringComparison.OrdinalIgnoreCase))
                 {
                     var target = line.AsSpan(7).Trim().ToString();
