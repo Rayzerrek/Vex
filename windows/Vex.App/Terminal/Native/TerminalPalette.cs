@@ -48,14 +48,30 @@ public sealed class TerminalPalette
         for (var i = 0; i < 16; i++)
             _ansi[i] = Freeze(Parse(theme16[i]));
 
-        // xterm 256-color table: 6x6x6 cube then 24 grayscale steps.
+        // xterm 256-color table: indices 16–255 are shared across all themes.
+        Array.Copy(s_xtermBrushes, 0, _ansi, 16, 240);
+
+        for (var i = 0; i < 16; i++)
+        {
+            var c = ((SolidColorBrush)_ansi[i]).Color;
+            _paletteRgb[i] = new GhosttyColorRgb(c.R, c.G, c.B);
+        }
+        Array.Copy(s_xtermRgb, 0, _paletteRgb, 16, 240);
+    }
+
+    private static readonly Brush[] s_xtermBrushes = BuildXtermBrushes();
+    private static readonly GhosttyColorRgb[] s_xtermRgb = BuildXtermRgb(s_xtermBrushes);
+
+    private static Brush[] BuildXtermBrushes()
+    {
+        var brushes = new Brush[240];
         for (var i = 16; i < 232; i++)
         {
             var n = i - 16;
             var r = n / 36 % 6;
             var g = n / 6 % 6;
             var b = n % 6;
-            _ansi[i] = Freeze(Color.FromRgb(
+            brushes[i - 16] = Freeze(Color.FromRgb(
                 (byte)(r == 0 ? 0 : 55 + r * 40),
                 (byte)(g == 0 ? 0 : 55 + g * 40),
                 (byte)(b == 0 ? 0 : 55 + b * 40)));
@@ -63,14 +79,20 @@ public sealed class TerminalPalette
         for (var i = 232; i < 256; i++)
         {
             var v = (byte)(8 + (i - 232) * 10);
-            _ansi[i] = Freeze(Color.FromRgb(v, v, v));
+            brushes[i - 16] = Freeze(Color.FromRgb(v, v, v));
         }
+        return brushes;
+    }
 
-        for (var i = 0; i < 256; i++)
+    private static GhosttyColorRgb[] BuildXtermRgb(Brush[] brushes)
+    {
+        var rgb = new GhosttyColorRgb[240];
+        for (var i = 0; i < 240; i++)
         {
-            var c = ((SolidColorBrush)_ansi[i]).Color;
-            _paletteRgb[i] = new GhosttyColorRgb(c.R, c.G, c.B);
+            var c = ((SolidColorBrush)brushes[i]).Color;
+            rgb[i] = new GhosttyColorRgb(c.R, c.G, c.B);
         }
+        return rgb;
     }
 
     /// <summary>The palette handed to libghostty for ANSI color resolution.</summary>
