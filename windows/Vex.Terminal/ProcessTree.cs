@@ -135,7 +135,7 @@ public static class ProcessTree
             var result = new List<(uint, uint, string)>();
             var entry = new NativeMethods.PROCESSENTRY32
             {
-                dwSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.PROCESSENTRY32>(),
+                dwSize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<NativeMethods.PROCESSENTRY32>(),
             };
             if (!NativeMethods.Process32FirstW(snapshot, ref entry))
                 return null;
