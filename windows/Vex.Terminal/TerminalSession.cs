@@ -206,11 +206,13 @@ public sealed class TerminalSession : IDisposable
     /// VT sequence reaches the child process.</summary>
     private void SendInBandResizeReport(short columns, short rows)
     {
-        var body = $"[48;{rows};{columns};{rows * DefaultCellHeightPx};{columns * DefaultCellWidthPx}t";
-        var report = new byte[1 + Encoding.ASCII.GetByteCount(body)];
-        report[0] = 0x1b;
-        Encoding.ASCII.GetBytes(body, report.AsSpan(1));
-        WriteResponse(report);
+        Span<char> chars = stackalloc char[64];
+        if (chars.TryWrite($"\x1b[48;{rows};{columns};{rows * DefaultCellHeightPx};{columns * DefaultCellWidthPx}t", out var written))
+        {
+            Span<byte> report = stackalloc byte[written];
+            var bytesWritten = Encoding.ASCII.GetBytes(chars[..written], report);
+            WriteResponse(report[..bytesWritten]);
+        }
     }
 
     /// <summary>Writes an emulator response to the PTY input pipe. Under
