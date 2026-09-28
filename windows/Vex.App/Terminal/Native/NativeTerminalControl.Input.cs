@@ -94,23 +94,21 @@ public sealed partial class NativeTerminalControl
                 return;
             }
 
-            // Window/pane management chords yield when in alternate screen (TUI mode).
-            if (!_terminal.IsAlternateScreen)
+            // Window/pane management chords (Ctrl+Shift+R, Ctrl+Shift+D, Ctrl+Shift+T, Ctrl+Shift+W)
+            // are universal across all terminal modes.
+            var command = key switch
             {
-                var command = key switch
-                {
-                    Key.R => TerminalCommand.SplitRight,
-                    Key.D => TerminalCommand.SplitDown,
-                    Key.T => TerminalCommand.NewTab,
-                    Key.W => TerminalCommand.ClosePane,
-                    _ => (TerminalCommand?)null,
-                };
-                if (command is { } requested)
-                {
-                    CommandRequested?.Invoke(requested);
-                    e.Handled = true;
-                    return;
-                }
+                Key.R => TerminalCommand.SplitRight,
+                Key.D => TerminalCommand.SplitDown,
+                Key.T => TerminalCommand.NewTab,
+                Key.W => TerminalCommand.ClosePane,
+                _ => (TerminalCommand?)null,
+            };
+            if (command is { } requested)
+            {
+                CommandRequested?.Invoke(requested);
+                e.Handled = true;
+                return;
             }
         }
 

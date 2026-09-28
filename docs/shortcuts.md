@@ -6,8 +6,8 @@ Two rules decide which key goes where:
    nvim, tmux, and fzf keep their own bindings; Vex only intercepts `Ctrl+C`
    when text is selected, so copy still works.
 2. **Vex uses `Ctrl+Shift+<key>`.** That namespace is reserved for the
-   workspace. Full-screen applications receive these chords too, so a TUI can
-   use them when it is on the alternate screen.
+   workspace. These shortcuts apply universally across all panes, shells,
+   full-screen TUIs (such as nvim), and the editor.
 
 ## Workspace
 
