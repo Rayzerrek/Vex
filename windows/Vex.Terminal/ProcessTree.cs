@@ -34,8 +34,8 @@ public static class ProcessTree
         {
             if (entries.Count == 0)
                 return null;
-            var names = new Dictionary<uint, string>();
-            var children = new Dictionary<uint, List<(string, uint)>>();
+            var names = new Dictionary<uint, string>(entries.Count);
+            var children = new Dictionary<uint, List<(string, uint)>>(entries.Count / 2);
             foreach (var e in entries)
             {
                 names[e.Pid] = e.Name;
@@ -132,7 +132,7 @@ public static class ProcessTree
 
         try
         {
-            var result = new List<(uint, uint, string)>();
+            var result = new List<(uint, uint, string)>(384);
             var entry = new NativeMethods.PROCESSENTRY32
             {
                 dwSize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<NativeMethods.PROCESSENTRY32>(),
@@ -143,7 +143,7 @@ public static class ProcessTree
             {
                 // szExeFile carries the extension (and sometimes a full path);
                 // the catalog keys are bare names, so normalize here.
-                var name = System.IO.Path.GetFileNameWithoutExtension(entry.szExeFile);
+                var name = System.IO.Path.GetFileNameWithoutExtension(entry.szExeFile.AsSpan()).ToString();
                 result.Add((entry.th32ProcessID, entry.th32ParentProcessID, name));
             } while (NativeMethods.Process32NextW(snapshot, ref entry));
             return result;
