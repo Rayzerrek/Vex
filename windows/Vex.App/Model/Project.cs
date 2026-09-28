@@ -71,6 +71,7 @@ public sealed class Project : ObservableObject, IDisposable
     }
 
     private int _gitBranchVersion;
+    private Task<string?>? _inFlightGitTask;
 
     public void RefreshGitBranch() => _ = RefreshGitBranchAsync();
 
@@ -83,10 +84,15 @@ public sealed class Project : ObservableObject, IDisposable
             return;
         }
 
-        // Drop stale completions: a newer refresh supersedes an older one,
-        // so an in-flight read must not overwrite the freshest result.
         var version = ++_gitBranchVersion;
-        var branch = await Task.Run(() => ResolveGitBranch(dir));
+        var task = _inFlightGitTask;
+        if (task is null || task.IsCompleted)
+        {
+            task = Task.Run(() => ResolveGitBranch(dir));
+            _inFlightGitTask = task;
+        }
+
+        var branch = await task.ConfigureAwait(false);
         if (version == _gitBranchVersion)
         {
             if (System.Windows.Application.Current?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
@@ -108,7 +114,7 @@ public sealed class Project : ObservableObject, IDisposable
             if (File.Exists(gitPath))
             {
                 // Submodule or git worktree file: "gitdir: /path/to/real/gitdir"
-                var line = File.ReadAllLines(gitPath).FirstOrDefault()?.Trim();
+                var line = File.ReadLines(gitPath).FirstOrDefault()?.Trim();
                 if (line != null && line.StartsWith("gitdir:", StringComparison.OrdinalIgnoreCase))
                 {
                     var target = line.AsSpan(7).Trim().ToString();
