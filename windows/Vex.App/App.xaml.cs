@@ -120,19 +120,29 @@ public sealed partial class App : Application
             Vex.App.Model.EditorPane.OnThemeChanged();
         };
 
-        // Await the preloaded session snapshot and populate the workspace
-        // before window construction so WPF builds the real visual tree once,
-        // eliminating the empty-skeleton layout rebuild.
-        var snapshot = await _sessionTask.ConfigureAwait(true);
         var workspace = new Model.Workspace();
-        Model.SessionStore.Populate(workspace, snapshot);
-        Model.StartupMark.Note("session populated");
+        var sessionReady = _sessionTask.IsCompletedSuccessfully;
+        if (sessionReady)
+        {
+            Model.SessionStore.Populate(workspace, _sessionTask.Result);
+            Model.StartupMark.Note("session populated before window");
+        }
 
         Model.StartupMark.Note("window construction begin");
         var window = new MainWindow(workspace);
         Model.StartupMark.Note("window constructed");
         window.Show();
         Model.StartupMark.Note("window shown");
+
+        // Usually the background read wins the race and WPF builds the final
+        // tree once. Slow storage must not delay the first visible frame;
+        // retain the skeleton fallback for the uncommon unfinished read.
+        if (!sessionReady)
+        {
+            var snapshot = await _sessionTask.ConfigureAwait(true);
+            Model.SessionStore.Populate(workspace, snapshot);
+            Model.StartupMark.Note("session populated after window");
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
