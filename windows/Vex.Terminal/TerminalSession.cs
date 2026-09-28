@@ -88,7 +88,7 @@ public sealed class TerminalSession : IDisposable
 
         var sa = new NativeMethods.SECURITY_ATTRIBUTES
         {
-            nLength = Marshal.SizeOf<NativeMethods.SECURITY_ATTRIBUTES>(),
+            nLength = System.Runtime.CompilerServices.Unsafe.SizeOf<NativeMethods.SECURITY_ATTRIBUTES>(),
             bInheritHandle = true,
         };
 
@@ -253,7 +253,7 @@ public sealed class TerminalSession : IDisposable
             {
                 StartupInfo = new NativeMethods.STARTUPINFO
                 {
-                    cb = Marshal.SizeOf<NativeMethods.STARTUPINFOEX>(),
+                    cb = System.Runtime.CompilerServices.Unsafe.SizeOf<NativeMethods.STARTUPINFOEX>(),
                     // STARTF_USESTDHANDLES stops the child from inheriting or attaching to the parent's console window.
                     dwFlags = NativeMethods.STARTF_USESTDHANDLES,
                     hStdInput = IntPtr.Zero,
