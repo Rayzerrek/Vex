@@ -12,6 +12,10 @@ namespace Vex.Terminal;
 /// </summary>
 public static class ProcessTree
 {
+    // PROCESSENTRY32 marshals its string into an inline native buffer.
+    private static readonly uint ProcessEntrySize =
+        (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.PROCESSENTRY32>();
+
     /// <summary>
     /// Process adjacency built once from a snapshot and shared across every
     /// root lookup. Building it is the O(processes) pass, so rebuilding it per
@@ -135,7 +139,7 @@ public static class ProcessTree
             var result = new List<(uint, uint, string)>(384);
             var entry = new NativeMethods.PROCESSENTRY32
             {
-                dwSize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<NativeMethods.PROCESSENTRY32>(),
+                dwSize = ProcessEntrySize,
             };
             if (!NativeMethods.Process32FirstW(snapshot, ref entry))
                 return null;

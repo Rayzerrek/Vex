@@ -118,10 +118,9 @@ public sealed partial class NativeTerminalControl
         _terminal.Feed("\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l" +
                        "\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l" + modes);
         var output = new byte[128];
-        var nativeCellWidth = Math.Max(1, (int)_cellWidth);
-        var nativeCellHeight = Math.Max(1, (int)_cellHeight);
+        // Use the geometry supplied to the encoder, not truncated WPF DIPs.
         var len = _terminal.EncodeMouse(action, button, MouseInputModifiers.None,
-            nativeCellWidth * col + 1, nativeCellHeight * 2 + 1, anyButtonPressed, output);
+            _nativeCellWidth * col + 1, _nativeCellHeight * 2 + 1, anyButtonPressed, output);
         return Encoding.Latin1.GetString(output, 0, len).Replace("\x1b", "<ESC>");
     }
 
@@ -155,15 +154,13 @@ public sealed partial class NativeTerminalControl
     {
         _terminal.Feed("\x1b[?1003h\x1b[?1006h");
         var output = new byte[128];
-        var cellWidth = Math.Max(1, (int)_cellWidth);
-        var cellHeight = Math.Max(1, (int)_cellHeight);
         var before = GC.GetAllocatedBytesForCurrentThread();
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var bytes = 0;
         for (var i = 0; i < iterations; i++)
         {
             bytes += _terminal.EncodeMouse(MouseInputAction.Motion, null, MouseInputModifiers.None,
-                cellWidth * (i % Math.Max(1, _cols)) + 1, cellHeight * 2 + 1,
+                _nativeCellWidth * (i % Math.Max(1, _cols)) + 1, _nativeCellHeight * 2 + 1,
                 anyButtonPressed: false, output);
         }
         watch.Stop();

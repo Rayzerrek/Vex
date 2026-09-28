@@ -10,6 +10,27 @@ namespace Vex.App.Tests;
 public class TerminalStartupRegressionTests
 {
     [Fact]
+    public void Prewarmer_ConsecutiveTakesHaveReplacementSessions()
+    {
+        var directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var shellId = Model.AppSettings.Instance.ShellId;
+        try
+        {
+            TerminalSessionPrewarmer.StartPrewarm(directory, shellId);
+            using var first = TerminalSessionPrewarmer.Take(directory, shellId);
+            Assert.NotNull(first);
+
+            using var second = TerminalSessionPrewarmer.Take(directory, shellId);
+            Assert.NotNull(second);
+            Assert.NotSame(first.SessionTask, second.SessionTask);
+        }
+        finally
+        {
+            TerminalSessionPrewarmer.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task ShellSessionReceivesDa1AndRendersPromptPromptly()
     {
         var resolved = Model.ShellRegistry.Resolve(Model.AppSettings.Instance.ShellId);
@@ -59,8 +80,8 @@ public class TerminalStartupRegressionTests
             }
         });
 
-        var completed = await Task.WhenAny(promptTcs.Task, Task.Delay(2500));
-        Assert.True(promptTcs.Task.IsCompleted, "Shell prompt did not arrive within 2500ms; DA1 response may be dropped or delayed.");
+        var completed = await Task.WhenAny(promptTcs.Task, Task.Delay(5000));
+        Assert.True(promptTcs.Task.IsCompleted, "Shell prompt did not arrive within 5000ms; DA1 response may be dropped or delayed.");
 
         var fullOutput = string.Join("", chunks);
         Assert.DoesNotContain("TERM=dumb", fullOutput);

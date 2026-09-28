@@ -51,7 +51,7 @@ internal static class RenderSelfTest
 
     /// <summary>With VEX_LIVE=1, run the nvim mouse round-trip instead: mouse
     /// tracking must engage from nvim's own output, a press-drag-release must
-    /// select in nvim's Visual mode, and D must delete the selection.</summary>
+    /// select in nvim's Visual mode, and d must delete the selection.</summary>
     public static bool MouseLiveMode { get; } = Environment.GetEnvironmentVariable("VEX_LIVE_MOUSE") == "1";
 
     public static void Run(NativeTerminalControl control)
@@ -132,7 +132,7 @@ internal static class RenderSelfTest
 
         byte[]? clearedPixels = null;
         var steps = new Queue<(int DelayMs, Action Act)>();
-        steps.Enqueue((4000, () => control.SelfTestType("1..200 | each {gh help}\r")));
+        steps.Enqueue((4000, () => control.SelfTestType("let h = (gh help); 1..200 | each { print $h }\r")));
         steps.Enqueue((30000, () =>
         {
             Shot(control, Path.Combine(dir, "stress-01-flood.png"));
@@ -382,7 +382,7 @@ internal static class RenderSelfTest
     /// <summary>
     /// Live mouse round-trip — the reported regression: open nvim, drag a
     /// selection with the mouse (reported through the app's real SendMouse
-    /// path), then press D. nvim must enter Visual mode from the reported
+    /// path), then press d. nvim must enter Visual mode from the reported
     /// events and delete the selection. Also asserts tracking engaged from
     /// nvim's own output, so a TUI that never enables the mouse (or a build
     /// whose tracking detection is broken) is reported as such.
@@ -406,7 +406,7 @@ internal static class RenderSelfTest
         File.WriteAllText(testFile, "apple banana cherry\n");
 
         var steps = new Queue<(int DelayMs, Action Act)>();
-        steps.Enqueue((2000, () => control.SelfTestType($"nvim --clean -i NONE '{testFile}'\r")));
+        steps.Enqueue((2000, () => control.SelfTestType($"nvim --clean -i NONE -n '{testFile}'\r")));
         // nvim must have negotiated mouse tracking from its own startup
         // output (mode 1002 + 1006 on nvim 0.10+).
         steps.Enqueue((2500, () =>
@@ -428,16 +428,16 @@ internal static class RenderSelfTest
             Shot(control, Path.Combine(dir, "mouse-02-selected.png"));
             Report(control, $"live-mouse row0='{control.SelfTestRowText(0)}'");
         }));
-        // The user's exact action: D over the visual selection deletes it.
-        steps.Enqueue((200, () => control.SelfTestType("D")));
+        // Lowercase d deletes the selected characters; Visual D deletes whole lines.
+        steps.Enqueue((200, () => control.SelfTestType("d")));
         steps.Enqueue((800, () =>
         {
             Shot(control, Path.Combine(dir, "mouse-03-deleted.png"));
             var row0 = control.SelfTestRowText(0) ?? "";
-            Report(control, $"live-mouse after-D row0='{row0}'");
-            Report(control, !row0.Contains("banana") && row0.Contains("apple")
-                ? "PASS mouse: nvim deleted the mouse selection on D"
-                : "FAIL mouse: selection not deleted by D");
+            Report(control, $"live-mouse after-d row0='{row0}'");
+            Report(control, row0 == "apple  cherry"
+                ? "PASS mouse: nvim deleted exactly the mouse selection on d"
+                : "FAIL mouse: selection not deleted exactly by d");
             Report(control, "live-mouse done");
             Application.Current.Shutdown();
         }));
