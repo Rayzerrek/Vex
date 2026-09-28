@@ -59,23 +59,23 @@ public static class SessionStore
 
     /// <summary>Reads the session file on a background thread and returns
     /// the snapshot data. Does not instantiate UI-bound model objects.</summary>
-    public static async Task<SessionSnapshot?> ReadSnapshotAsync()
+    public static Task<SessionSnapshot?> ReadSnapshotAsync()
     {
-        return await Task.Run(() =>
+        return Task.Run(() =>
         {
             try
             {
                 if (!File.Exists(SessionPath))
                     return null;
-                var json = File.ReadAllText(SessionPath);
-                var appSnapshot = JsonSerializer.Deserialize(json, VexJsonContext.Default.AppSnapshot);
+                var bytes = File.ReadAllBytes(SessionPath);
+                var appSnapshot = JsonSerializer.Deserialize(bytes, VexJsonContext.Default.AppSnapshot);
                 return appSnapshot?.Windows.Count > 0 ? appSnapshot.Windows[0] : null;
             }
             catch
             {
                 return null;
             }
-        }).ConfigureAwait(false);
+        });
     }
 
     /// <summary>Populates an existing workspace with the given snapshot on the UI thread.</summary>
