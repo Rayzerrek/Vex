@@ -46,7 +46,7 @@ public sealed class TerminalTheme
             if (_isDark.HasValue)
                 return _isDark.Value;
             var c = FastColor.ParseHex(Background);
-            var dark = (0.2126 * c.R + 0.7152 * c.R + 0.0722 * c.B) / 255.0 < 0.5;
+            var dark = (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255.0 < 0.5;
             _isDark = dark;
             return dark;
         }

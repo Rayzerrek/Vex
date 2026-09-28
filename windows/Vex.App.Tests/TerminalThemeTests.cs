@@ -135,6 +135,31 @@ public sealed class TerminalThemeTests
         Assert.False(new TerminalTheme { Background = "#F7F8FA" }.IsDark);
     }
 
+    [Theory]
+    [InlineData("#00FF00", false)]
+    [InlineData("#FF0000", true)]
+    [InlineData("#0000FF", true)]
+    public void IsDark_WeightsEachColorChannel(string background, bool expected)
+    {
+        var theme = new TerminalTheme { Background = background };
+
+        Assert.Equal(expected, theme.IsDark);
+        Assert.Equal(expected, theme.IsDark);
+    }
+
+    [Fact]
+    public void IsDark_RecomputesAfterBackgroundChanges()
+    {
+        var theme = new TerminalTheme { Background = "#000000" };
+        Assert.True(theme.IsDark);
+
+        theme.Background = "#FFFFFF";
+        Assert.False(theme.IsDark);
+
+        theme.Background = "#000000";
+        Assert.True(theme.IsDark);
+    }
+
     [Fact]
     public void TerminalPalette_BackgroundIsOpaqueForDwmComposition()
     {
