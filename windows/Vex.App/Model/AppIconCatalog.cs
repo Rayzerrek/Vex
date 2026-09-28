@@ -98,8 +98,8 @@ internal static partial class AppIconCatalog
             ["fish"] = "fishshell",
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly Lazy<FrozenSet<string>> KnownAppsLazy = new(BuildKnownApps);
-    private static FrozenSet<string> KnownApps => KnownAppsLazy.Value;
+    private static readonly Lazy<FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>>> KnownAppsLookupLazy =
+        new(() => BuildKnownApps().GetAlternateLookup<ReadOnlySpan<char>>());
 
     private static FrozenSet<string> BuildKnownApps()
     {
@@ -125,7 +125,7 @@ internal static partial class AppIconCatalog
     /// Checks if a string span matches a known application name or alias without allocating.
     /// </summary>
     internal static bool IsKnownApp(ReadOnlySpan<char> name) =>
-        KnownApps.GetAlternateLookup<ReadOnlySpan<char>>().Contains(name);
+        KnownAppsLookupLazy.Value.Contains(name);
 
     /// <summary>
     /// Universally resolves an icon for an application or tool name.
