@@ -226,7 +226,16 @@ internal static class TerminalSessionPrewarmer
 
             slot.Claimed = true;
             _slot = null;
-            StartPrewarmLocked(workingDirectory, shellId);
+            // Defer spawning the replacement prewarm session to avoid contending
+            // with UI rendering and process tree initialization during the initial window frame.
+            _ = Task.Delay(800).ContinueWith(_ =>
+            {
+                lock (Sync)
+                {
+                    if (!_disposed && _slot is null)
+                        StartPrewarmLocked(workingDirectory, shellId);
+                }
+            }, TaskScheduler.Default);
             return new Lease(slot, sessionTask);
         }
     }
