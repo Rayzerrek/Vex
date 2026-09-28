@@ -12,6 +12,16 @@ public sealed partial class App : Application
 
     public App()
     {
+        try
+        {
+            var profileDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Vex");
+            System.IO.Directory.CreateDirectory(profileDir);
+            System.Runtime.ProfileOptimization.SetProfileRoot(profileDir);
+            System.Runtime.ProfileOptimization.StartProfile("startup.profile");
+        }
+        catch { }
         // Required for ported TUI applications and shells to output VT
         // sequences properly under ConPTY; set before any prewarm starts.
         Environment.SetEnvironmentVariable("TERM", "xterm-256color");
