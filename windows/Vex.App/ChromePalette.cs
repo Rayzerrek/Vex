@@ -18,14 +18,17 @@ namespace Vex.App;
 /// </summary>
 public static class ChromePalette
 {
-    public static void Apply(string? themeName)
+    public static void Apply(string? themeName, ResourceDictionary? res = null)
     {
-        Apply(BuiltInThemes.Resolve(themeName));
+        Apply(BuiltInThemes.Resolve(themeName), res);
     }
 
-    public static void Apply(TerminalTheme theme)
+    public static void Apply(TerminalTheme theme, ResourceDictionary? res = null)
     {
-        var res = Application.Current.Resources;
+        res ??= Application.Current?.Resources;
+        if (res is null)
+            return;
+
         var bg = Parse(theme.Background);
         var fg = Parse(theme.Foreground);
         var blue = Parse(theme.Blue);
@@ -44,67 +47,87 @@ public static class ChromePalette
     }
 
     /// <summary>Brushes in App.xaml bind their Color to a Color key through
-    /// DynamicResource. That indirection stops propagating on live appearance
-    /// flips: the color key updates while the brush keeps painting the previous
-    /// variant (observed on VexTabStrip), leaving half the chrome in
-    /// the old theme until a restart. Push values into the brushes directly —
-    /// an unfrozen shared brush invalidates all consumers on write.</summary>
-    private static (SolidColorBrush Brush, string ColorKey)[]? s_cachedBrushPairs;
-    private static SolidColorBrush? s_accentTransBrush;
-    private static SolidColorBrush? s_dimTransBrush;
-    private static LinearGradientBrush? s_bgGradient;
-    private static LinearGradientBrush? s_tabGradient;
-    private static LinearGradientBrush? s_accentGradient;
-
+    /// DynamicResource. Push values into the brushes directly when unfrozen,
+    /// or replace the brush in the resource dictionary if WPF has frozen it
+    /// (e.g. through style/template sealing or cross-thread resource promotion).
+    /// Mutating an in-place unfrozen brush invalidates all visual consumers without
+    /// allocation; replacing a frozen brush avoids InvalidOperationException and
+    /// updates all DynamicResource bindings.</summary>
     private static void SyncBrushes(ResourceDictionary res)
     {
-        s_cachedBrushPairs ??= ResolveBrushPairs(res);
-        foreach (var (solid, colorKey) in s_cachedBrushPairs)
-        {
-            if (res[colorKey] is Color c && solid.Color != c)
-                solid.Color = c;
-        }
-
-        s_accentTransBrush ??= res["VexAccentTranslucent"] as SolidColorBrush;
-        if (s_accentTransBrush is { IsFrozen: false } accentTrans
-            && res["VexAccentColor"] is Color ac && accentTrans.Color != ac)
-            accentTrans.Color = ac;
-
-        s_dimTransBrush ??= res["VexTextDimTranslucent"] as SolidColorBrush;
-        if (s_dimTransBrush is { IsFrozen: false } dimTrans
-            && res["VexTextDimColor"] is Color dc && dimTrans.Color != dc)
-            dimTrans.Color = dc;
-
-        s_bgGradient ??= res["VexBackground"] as LinearGradientBrush;
-        SyncGradientCached(s_bgGradient, res, "VexBackgroundTopColor", "VexBackgroundBottomColor");
-
-        s_tabGradient ??= res["VexTabSelected"] as LinearGradientBrush;
-        SyncGradientCached(s_tabGradient, res, "VexTabSelectedStartColor", "VexTabSelectedEndColor");
-
-        s_accentGradient ??= res["VexAccentGradient"] as LinearGradientBrush;
-        SyncGradientCached(s_accentGradient, res, "VexAccentGradientStartColor", "VexAccentGradientEndColor");
-    }
-
-    private static (SolidColorBrush Brush, string ColorKey)[] ResolveBrushPairs(ResourceDictionary res)
-    {
-        var list = new List<(SolidColorBrush, string)>(BrushColorPairs.Length);
         foreach (var (brushKey, colorKey) in BrushColorPairs)
         {
+            if (res[colorKey] is not Color targetColor)
+                continue;
+
             if (res[brushKey] is SolidColorBrush solid && !solid.IsFrozen)
-                list.Add((solid, colorKey));
+            {
+                if (solid.Color != targetColor)
+                    solid.Color = targetColor;
+            }
+            else
+            {
+                if (res[brushKey] is not SolidColorBrush current || current.Color != targetColor)
+                    res[brushKey] = new SolidColorBrush(targetColor);
+            }
         }
-        return list.ToArray();
+
+        SyncTranslucentBrush(res, "VexAccentTranslucent", "VexAccentColor", opacity: 0.16);
+        SyncTranslucentBrush(res, "VexTextDimTranslucent", "VexTextDimColor", opacity: 0.12);
+
+        SyncGradient(res, "VexBackground", "VexBackgroundTopColor", "VexBackgroundBottomColor",
+            new Point(0, 0), new Point(0, 1));
+        SyncGradient(res, "VexTabSelected", "VexTabSelectedStartColor", "VexTabSelectedEndColor",
+            new Point(0, 0), new Point(0, 1));
+        SyncGradient(res, "VexAccentGradient", "VexAccentGradientStartColor", "VexAccentGradientEndColor",
+            new Point(0, 0), new Point(1, 1));
     }
 
-    private static void SyncGradientCached(LinearGradientBrush? gradient, ResourceDictionary res,
-        string startColorKey, string endColorKey)
+    private static void SyncTranslucentBrush(ResourceDictionary res, string brushKey, string colorKey, double opacity)
     {
-        if (gradient is null || gradient.IsFrozen
-            || res[startColorKey] is not Color start || res[endColorKey] is not Color end)
+        if (res[colorKey] is not Color c)
             return;
-        var stops = gradient.GradientStops;
-        if (stops.Count > 0 && stops[0].Color != start) stops[0].Color = start;
-        if (stops.Count > 1 && stops[^1].Color != end) stops[^1].Color = end;
+
+        if (res[brushKey] is SolidColorBrush brush && !brush.IsFrozen)
+        {
+            if (brush.Color != c)
+                brush.Color = c;
+        }
+        else
+        {
+            if (res[brushKey] is not SolidColorBrush current || current.Color != c || Math.Abs(current.Opacity - opacity) > 0.001)
+                res[brushKey] = new SolidColorBrush(c) { Opacity = opacity };
+        }
+    }
+
+    private static void SyncGradient(ResourceDictionary res, string brushKey,
+        string startColorKey, string endColorKey, Point startPoint, Point endPoint)
+    {
+        if (res[startColorKey] is not Color start || res[endColorKey] is not Color end)
+            return;
+
+        if (res[brushKey] is LinearGradientBrush gradient && !gradient.IsFrozen && !gradient.GradientStops.IsFrozen)
+        {
+            var stops = gradient.GradientStops;
+            if (stops.Count > 0 && !stops[0].IsFrozen && stops[0].Color != start)
+                stops[0].Color = start;
+            if (stops.Count > 1 && !stops[^1].IsFrozen && stops[^1].Color != end)
+                stops[^1].Color = end;
+        }
+        else
+        {
+            var newGradient = new LinearGradientBrush
+            {
+                StartPoint = startPoint,
+                EndPoint = endPoint,
+                GradientStops =
+                {
+                    new GradientStop(start, 0),
+                    new GradientStop(end, 1)
+                }
+            };
+            res[brushKey] = newGradient;
+        }
     }
 
     private static readonly (string Brush, string Color)[] BrushColorPairs =

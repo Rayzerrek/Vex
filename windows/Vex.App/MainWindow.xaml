@@ -5,8 +5,8 @@
         xmlns:local="clr-namespace:Vex.App"
         Title="Vex" Width="1120" Height="700" MinWidth="640" MinHeight="400"
         UseLayoutRounding="True"
-        Background="{StaticResource VexBackground}"
-        Foreground="{StaticResource VexText}"
+        Background="{DynamicResource VexBackground}"
+        Foreground="{DynamicResource VexText}"
         FontFamily="Segoe UI" FontSize="13">
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="40"
@@ -19,21 +19,21 @@
         <!-- Recursive pane tree: a leaf hosts a terminal, a split hosts two
              children with a draggable splitter. -->
         <DataTemplate DataType="{x:Type m:TerminalPane}">
-            <Border Background="Transparent" BorderBrush="{StaticResource VexBorder}"
+            <Border Background="Transparent" BorderBrush="{DynamicResource VexBorder}"
                     BorderThickness="1" Margin="3" CornerRadius="9">
                 <Grid local:RoundedClip.Radius="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="28"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,0,1"
+                    <Border Grid.Row="0" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,0,0,1"
                             MouseLeftButtonDown="PaneTitleBar_MouseLeftButtonDown">
                         <Border.Style>
                             <Style TargetType="Border">
-                                <Setter Property="Background" Value="{StaticResource VexPaneTitleBar}"/>
+                                <Setter Property="Background" Value="{DynamicResource VexPaneTitleBar}"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsFocused}" Value="True">
-                                        <Setter Property="Background" Value="{StaticResource VexPaneTitleBarFocused}"/>
+                                        <Setter Property="Background" Value="{DynamicResource VexPaneTitleBarFocused}"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -60,15 +60,15 @@
                                 <Ellipse Width="6" Height="6" Margin="0,0,6,0" VerticalAlignment="Center">
                                     <Ellipse.Style>
                                         <Style TargetType="Ellipse">
-                                            <Setter Property="Fill" Value="{StaticResource VexTextDim}"/>
+                                            <Setter Property="Fill" Value="{DynamicResource VexTextDim}"/>
                                             <Setter Property="Opacity" Value="0.5"/>
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding State}" Value="{x:Static m:PaneState.Busy}">
-                                                    <Setter Property="Fill" Value="{StaticResource VexAccentBlue}"/>
+                                                    <Setter Property="Fill" Value="{DynamicResource VexAccentBlue}"/>
                                                     <Setter Property="Opacity" Value="1"/>
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding State}" Value="{x:Static m:PaneState.Exited}">
-                                                    <Setter Property="Fill" Value="{StaticResource VexPaneExited}"/>
+                                                    <Setter Property="Fill" Value="{DynamicResource VexPaneExited}"/>
                                                     <Setter Property="Opacity" Value="1"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
@@ -87,7 +87,7 @@
                                         </Style>
                                     </Image.Style>
                                 </Image>
-                                <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexText}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform">
+                                <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{DynamicResource VexText}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform">
                                     <Path.Style>
                                         <Style TargetType="Path">
                                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -99,7 +99,7 @@
                                         </Style>
                                     </Path.Style>
                                 </Path>
-                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{StaticResource VexText}"
+                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{DynamicResource VexText}"
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </DockPanel>
@@ -110,7 +110,7 @@
                     <Style TargetType="Border">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsFocused}" Value="True">
-                                <Setter Property="BorderBrush" Value="{StaticResource VexFocusBorder}"/>
+                                <Setter Property="BorderBrush" Value="{DynamicResource VexFocusBorder}"/>
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
@@ -144,21 +144,21 @@
             </DataTemplate.Triggers>
         </DataTemplate>
         <DataTemplate DataType="{x:Type m:EditorPane}">
-            <Border Background="{StaticResource VexSurface}" BorderBrush="{StaticResource VexBorder}"
+            <Border Background="{DynamicResource VexSurface}" BorderBrush="{DynamicResource VexBorder}"
                     BorderThickness="1" Margin="3" CornerRadius="9">
                 <Grid local:RoundedClip.Radius="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="28"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,0,1"
+                    <Border Grid.Row="0" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,0,0,1"
                             MouseLeftButtonDown="PaneTitleBar_MouseLeftButtonDown">
                         <Border.Style>
                             <Style TargetType="Border">
-                                <Setter Property="Background" Value="{StaticResource VexPaneTitleBar}"/>
+                                <Setter Property="Background" Value="{DynamicResource VexPaneTitleBar}"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsFocused}" Value="True">
-                                        <Setter Property="Background" Value="{StaticResource VexPaneTitleBarFocused}"/>
+                                        <Setter Property="Background" Value="{DynamicResource VexPaneTitleBarFocused}"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -176,9 +176,9 @@
                                 </Button>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="9,0,0,0">
-                                <Ellipse Width="6" Height="6" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{StaticResource VexTextDim}" Opacity="0.5"/>
-                                <Path Data="M 2,1 H 9 L 12,4 V 13 H 2 Z M 9,1 V 4 H 12" Stroke="{StaticResource VexText}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform" Fill="Transparent"/>
-                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{StaticResource VexText}"
+                                <Ellipse Width="6" Height="6" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{DynamicResource VexTextDim}" Opacity="0.5"/>
+                                <Path Data="M 2,1 H 9 L 12,4 V 13 H 2 Z M 9,1 V 4 H 12" Stroke="{DynamicResource VexText}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform" Fill="Transparent"/>
+                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{DynamicResource VexText}"
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </DockPanel>
@@ -189,7 +189,7 @@
                     <Style TargetType="Border">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsFocused}" Value="True">
-                                <Setter Property="BorderBrush" Value="{StaticResource VexFocusBorder}"/>
+                                <Setter Property="BorderBrush" Value="{DynamicResource VexFocusBorder}"/>
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
@@ -382,7 +382,7 @@
         <Border Grid.Row="0" BorderThickness="0">
         <Grid x:Name="TabBarGrid"
               Panel.ZIndex="100"
-              Background="{StaticResource VexTabStrip}">
+              Background="{DynamicResource VexTabStrip}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <!-- Tabs own the flexible column: with a few dozen tabs the
@@ -859,10 +859,10 @@
         </Border>
 
         <!-- Main content: active WorkspaceTab content with drag-to-split preview overlay -->
-        <Grid x:Name="ContentArea" Grid.Row="1" Background="{StaticResource VexTabStrip}">
+        <Grid x:Name="ContentArea" Grid.Row="1" Background="{DynamicResource VexTabStrip}">
             <ContentControl Content="{Binding SelectedProject.SelectedTab.DisplayRoot}"/>
             <Canvas x:Name="DropOverlay" Visibility="Collapsed" Background="Transparent" Panel.ZIndex="50">
-                <Border x:Name="SplitPreview" Background="{StaticResource VexSplitPreview}" BorderBrush="{StaticResource VexSplitPreviewBorder}"
+                <Border x:Name="SplitPreview" Background="{DynamicResource VexSplitPreview}" BorderBrush="{DynamicResource VexSplitPreviewBorder}"
                         BorderThickness="1" CornerRadius="8" Opacity="0" Visibility="Collapsed"/>
             </Canvas>
         </Grid>
