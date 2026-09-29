@@ -93,7 +93,7 @@ internal static partial class AppIconCatalog
 
     private static Dictionary<string, SimpleIconGlyph> GlyphBySlug => GlyphBySlugLazy.Value;
 
-    internal static (Geometry Geometry, Color Color)? GeometryFor(string slug)
+    internal static (Geometry Geometry, Color Color)? GeometryFor(string slug, bool isDark = true)
     {
         if (!GlyphBySlug.TryGetValue(slug, out var glyph))
             return null;
@@ -115,7 +115,7 @@ internal static partial class AppIconCatalog
                     -glyph.ViewX * scaleX, -glyph.ViewY * scaleY);
             }
             geometry.Freeze();
-            return (geometry, ParseColor(glyph.Hex));
+            return (geometry, ParseColor(glyph.Hex, isDark));
         }
         catch (FormatException)
         {
@@ -123,17 +123,46 @@ internal static partial class AppIconCatalog
         }
     }
 
-    private static Color ParseColor(string hex)
+    internal static Color ParseColor(string hex, bool isDark = true)
     {
         var value = uint.Parse(hex.TrimStart('#'), System.Globalization.NumberStyles.HexNumber);
         var r = (byte)(value >> 16);
         var g = (byte)(value >> 8);
         var b = (byte)value;
-        // Near-black brand colors (rust, bun, github) vanish on the dark tab
-        // strip; lift them to a readable gray.
-        var luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
-        if (luminance < 0.25)
-            return Color.FromRgb(0xB8, 0xB8, 0xBE);
-        return Color.FromRgb(r, g, b);
+
+        if (isDark)
+        {
+            // Near-black brand colors (rust, bun, github) vanish on the dark tab
+            // strip; lift them to a readable gray.
+            var luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
+            if (luminance < 0.25)
+                return Color.FromRgb(0xB8, 0xB8, 0xBE);
+            return Color.FromRgb(r, g, b);
+        }
+
+        // Light appearance:
+        // 1. Pure white or near-white marks (opencode, pi) vanish completely on
+        // a light tab strip; map them to a deep ink/charcoal.
+        if (r > 225 && g > 225 && b > 225)
+            return Color.FromRgb(0x24, 0x24, 0x29);
+
+        // 2. Near-black brand marks (bun, rust, github, cursor, etc.) naturally
+        // have excellent contrast against white (> 15:1). Keep them as-is.
+        var initialColor = Color.FromRgb(r, g, b);
+        if (FastColor.ContrastRatio(initialColor, Colors.White) >= 3.2)
+            return initialColor;
+
+        // 3. Bright or pastel brand marks (react, javascript, vitest, linux, etc.)
+        // wash out on light surfaces; darken proportionally to preserve their
+        // distinct brand hue while ensuring WCAG graphical contrast (>= 3.2:1 against white,
+        // which guarantees >= 3.0:1 across all light terminal and chrome themes).
+        for (var factor = 0.95; factor >= 0.1; factor -= 0.05)
+        {
+            var candidate = Color.FromRgb((byte)(r * factor), (byte)(g * factor), (byte)(b * factor));
+            if (FastColor.ContrastRatio(candidate, Colors.White) >= 3.2)
+                return candidate;
+        }
+
+        return initialColor;
     }
 }

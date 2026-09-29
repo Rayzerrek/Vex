@@ -114,15 +114,50 @@ public static class TabCloseConfirmation
     private static TabCloseInfo BuildTerminalDirtyInfo(TerminalPane terminal)
     {
         var clean = terminal.Title.TrimEnd('*');
+        var parsed = TerminalTitleFormatter.Parse(terminal.Title);
+        var appKey = !string.IsNullOrEmpty(terminal.ActiveProcessName)
+            ? terminal.ActiveProcessName
+            : parsed.AppName;
+
+        var displayName = ResolveEditorDisplayName(appKey);
+        var icon = terminal.AppIcon ?? (!string.IsNullOrEmpty(appKey) ? (AppIconCatalog.Resolve(appKey, null, null) ?? AppIconCatalog.FromProcess(appKey)) : null);
+        var title = displayName.Equals("Editor", StringComparison.OrdinalIgnoreCase)
+            ? "Unsaved Changes"
+            : $"Unsaved Changes in {displayName}";
+
         return new TabCloseInfo(
             NeedsConfirmation: true,
-            AppName: "Neovim",
+            AppName: displayName,
             IsAgent: false,
             IsDirty: true,
-            Icon: terminal.AppIcon ?? AppIconCatalog.ResolveIcon("neovim"),
-            Title: "Unsaved Changes in Neovim",
+            Icon: icon,
+            Title: title,
             Message: $"\"{clean}\" has unsaved buffer changes. Closing this tab will discard them."
         );
+    }
+
+    private static string ResolveEditorDisplayName(string? appKey)
+    {
+        if (string.IsNullOrWhiteSpace(appKey))
+            return "Editor";
+
+        return appKey.ToLowerInvariant() switch
+        {
+            "nvim" or "neovim" => "Neovim",
+            "vim" => "Vim",
+            "lazyvim" => "LazyVim",
+            "opencode" => "OpenCode",
+            _ => Capitalize(appKey)
+        };
+    }
+
+    private static string Capitalize(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return name;
+        if (name.Length == 1)
+            return char.ToUpperInvariant(name[0]).ToString();
+        return char.ToUpperInvariant(name[0]) + name[1..];
     }
 
     private static TabCloseInfo BuildAgentInfo(string toolName, TerminalPane terminal)

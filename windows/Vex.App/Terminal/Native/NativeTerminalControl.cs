@@ -33,18 +33,18 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     // Per-row run caches: one glyph-index array per row, sized to the row
     // width, reused across redraws.  A row can have at most (cols+1)/2 runs
     // (alternating background runs), so the text-run pool is sized to that.
-    private TerminalPalette _palette = new(BuiltInThemes.VexDark);
-    private FontFamily _fontFamily = new("Cascadia Mono");
+    private TerminalPalette _palette = null!;
+    private FontFamily _fontFamily = null!;
     private double _fontSize = 13;
     private double _cellWidth = 8;
     private double _cellHeight = 16;
     private double _pixelsPerDip = 1.0;
     private int _nativeCellWidth = 8;
     private int _nativeCellHeight = 16;
-    private Typeface _normalTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
-    private Typeface _boldTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
-    private Typeface _italicTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Italic, FontWeights.Normal, FontStretches.Normal);
-    private Typeface _boldItalicTypeface = new(new FontFamily("Cascadia Mono"), FontStyles.Italic, FontWeights.Bold, FontStretches.Normal);
+    private Typeface _normalTypeface = null!;
+    private Typeface _boldTypeface = null!;
+    private Typeface _italicTypeface = null!;
+    private Typeface _boldItalicTypeface = null!;
     private int _cols;
     private int _rows;
     private volatile bool _needsFullRedraw = true;

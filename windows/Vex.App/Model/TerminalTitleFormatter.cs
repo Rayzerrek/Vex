@@ -58,15 +58,16 @@ public static class TerminalTitleFormatter
             }
         }
 
-        // 4. Neovim / Vim suffix: "<file> - NVIM" or "<file> - VIM"
-        if (span.EndsWith(" - NVIM", StringComparison.OrdinalIgnoreCase))
-            return ParseVimTitle(span[..^7].Trim(), "neovim");
-        if (span.EndsWith(" - VIM", StringComparison.OrdinalIgnoreCase))
-            return ParseVimTitle(span[..^6].Trim(), "vim");
-
-        // 5. Check for App/Session or File/App separator: " - ", " : ", " | "
+        // 4. Check for App/Session or File/App separator: " - ", " : ", " | "
         if (TryExtractSeparatedTitle(span, out var separated))
             return separated;
+
+        // 5. Standalone buffer/file with modified marker (e.g. "main.rs*", "[+]", "file.txt ●")
+        if (CleanFileTitleAndExtractModified(span, "", out var standaloneTitle, out var standaloneMod) && standaloneMod)
+        {
+            var title = string.IsNullOrEmpty(standaloneTitle) ? "Terminal" : standaloneTitle;
+            return new TitleParseResult(title, null, IsModified: true);
+        }
         // 6. Truncate at unquoted redirection or pipe operators: >, <, |, &, 2>, 1>
         var inQuotes = false;
         var quoteChar = '\0';
@@ -173,86 +174,203 @@ public static class TerminalTitleFormatter
     {
         result = default;
 
-        int sepIdx = -1;
-        int sepLen = 0;
+        // 1. Check for separator from the right first (e.g. "<file> [modified] - <App>")
+        foreach (var sep in (ReadOnlySpan<string>)[" - ", " : ", " | ", ": ", "| "])
+        {
+            var rIdx = span.LastIndexOf(sep.AsSpan(), StringComparison.Ordinal);
+            if (rIdx > 0)
+            {
+                var left = span[..rIdx].Trim();
+                var right = span[(rIdx + sep.Length)..].Trim();
+                if (!right.IsEmpty)
+                {
+                    var isRightKnown = AppIconCatalog.IsKnownApp(right);
+                    var isLeftMod = HasModifiedIndicator(left);
+                    var isLeftFilename = LooksLikeFilename(left) && !LooksLikeFilename(right);
+
+                    if (isRightKnown || isLeftMod || isLeftFilename)
+                    {
+                        var canonicalApp = AppIconCatalog.CanonicalAppName(right);
+                        CleanFileTitleAndExtractModified(left, canonicalApp, out var tabTitle, out var isMod);
+                        result = new TitleParseResult(tabTitle, canonicalApp, isMod);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 2. Check for separator from the left (e.g. "<App> - <session/file>")
         foreach (var sep in (ReadOnlySpan<string>)[" - ", " : ", " | ", ": ", "| "])
         {
             var idx = span.IndexOf(sep.AsSpan(), StringComparison.Ordinal);
             if (idx > 0)
             {
-                sepIdx = idx;
-                sepLen = sep.Length;
-                break;
+                var left = span[..idx].Trim();
+                var right = span[(idx + sep.Length)..].Trim();
+                if (!left.IsEmpty)
+                {
+                    var isLeftKnown = AppIconCatalog.IsKnownApp(left);
+                    var isRightMod = HasModifiedIndicator(right);
+                    var isRightFilename = LooksLikeFilename(right) && !LooksLikeFilename(left);
+
+                    if (isLeftKnown || isRightMod || isRightFilename)
+                    {
+                        var canonicalApp = AppIconCatalog.CanonicalAppName(left);
+                        CleanFileTitleAndExtractModified(right, canonicalApp, out var tabTitle, out var isMod);
+                        var appDisplayName = left.Equals("OpenCode", StringComparison.OrdinalIgnoreCase) ? "OpenCode" : canonicalApp;
+                        result = new TitleParseResult(tabTitle, appDisplayName, isMod);
+                        return true;
+                    }
+                }
             }
         }
 
-        if (sepIdx <= 0)
-            return false;
-
-        var left = span[..sepIdx].Trim();
-        var right = span[(sepIdx + sepLen)..].Trim();
-
-        if (left.IsEmpty && right.IsEmpty)
-            return false;
-
-        var leftIsApp = AppIconCatalog.IsKnownApp(left);
-        var rightIsApp = AppIconCatalog.IsKnownApp(right);
-
-        if (leftIsApp)
+        // 3. Neither side is a known app or filename, but left looks like a single-word application name (e.g. "CustomApp - Task 1")
+        foreach (var sep in (ReadOnlySpan<string>)[" - ", " : ", " | ", ": ", "| "])
         {
-            var tab = !right.IsEmpty ? right.ToString() : left.ToString();
-            result = new TitleParseResult(tab, left.ToString());
-            return true;
-        }
-        if (rightIsApp)
-        {
-            var tab = !left.IsEmpty ? left.ToString() : right.ToString();
-            result = new TitleParseResult(tab, right.ToString());
-            return true;
-        }
-
-        // Neither is known in the catalog, but left looks like a single-word application name
-        // (e.g. "CustomApp - Task 1")
-        if (left.IndexOfAny(' ', '\t') < 0 && !right.IsEmpty)
-        {
-            result = new TitleParseResult(right.ToString(), left.ToString());
-            return true;
+            var idx = span.IndexOf(sep.AsSpan(), StringComparison.Ordinal);
+            if (idx > 0)
+            {
+                var left = span[..idx].Trim();
+                var right = span[(idx + sep.Length)..].Trim();
+                if (!left.IsEmpty && left.IndexOfAny(' ', '\t') < 0 && !right.IsEmpty)
+                {
+                    var leftStr = left.ToString();
+                    CleanFileTitleAndExtractModified(right, leftStr, out var tabTitle, out var isMod);
+                    result = new TitleParseResult(tabTitle, leftStr, isMod);
+                    return true;
+                }
+            }
         }
 
         return false;
     }
 
-    private static TitleParseResult ParseVimTitle(ReadOnlySpan<char> fileSpan, string appName)
+    private static bool HasModifiedIndicator(ReadOnlySpan<char> span)
     {
-        var isModified = false;
-        // Strip trailing directory in parentheses: e.g. "file.txt [+] (C:\Users\...)"
-        if (fileSpan.EndsWith(")") && fileSpan.LastIndexOf('(') is var parenIdx && parenIdx > 0)
+        if (span.IndexOf("[+]".AsSpan(), StringComparison.Ordinal) >= 0 ||
+            span.IndexOf("[*]".AsSpan(), StringComparison.Ordinal) >= 0 ||
+            span.IndexOf("[modified]".AsSpan(), StringComparison.OrdinalIgnoreCase) >= 0 ||
+            span.IndexOf("(modified)".AsSpan(), StringComparison.OrdinalIgnoreCase) >= 0 ||
+            span.IndexOfAny('●', '•') >= 0 ||
+            span.EndsWith(" *") ||
+            span.EndsWith(" +"))
         {
+            return true;
+        }
+
+        if (span.EndsWith("*") && span.Length > 1 && !span.StartsWith("*") && span.IndexOf('.') >= 0)
+            return true;
+
+        return false;
+    }
+
+    private static bool LooksLikeFilename(ReadOnlySpan<char> span)
+    {
+        span = span.Trim();
+        if (span.EndsWith(")") && span.LastIndexOf('(') is var pIdx && pIdx > 0)
+            span = span[..pIdx].TrimEnd();
+
+        var spaceIdx = span.IndexOfAny(' ', '\t');
+        var token = spaceIdx > 0 ? span[..spaceIdx] : span;
+
+        var dotIdx = token.LastIndexOf('.');
+        if (dotIdx <= 0 || dotIdx == token.Length - 1)
+            return false;
+
+        var ext = token[(dotIdx + 1)..];
+        if (ext.Length is < 1 or > 6)
+            return false;
+
+        foreach (var c in ext)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c != '_')
+                return false;
+        }
+        return true;
+    }
+
+    private static bool CleanFileTitleAndExtractModified(
+        ReadOnlySpan<char> fileSpan,
+        string fallbackTitle,
+        out string cleanTitle,
+        out bool isModified)
+    {
+        isModified = false;
+
+        // Check for "(modified)" specifically first
+        if (fileSpan.EndsWith("(modified)", StringComparison.OrdinalIgnoreCase))
+        {
+            isModified = true;
+            fileSpan = fileSpan[..^10].TrimEnd();
+        }
+        else if (fileSpan.EndsWith(")") && fileSpan.LastIndexOf('(') is var parenIdx && parenIdx > 0)
+        {
+            // Strip trailing directory in parentheses: e.g. "file.txt [+] (C:\Users\...)"
             fileSpan = fileSpan[..parenIdx].TrimEnd();
         }
 
-        var modIdx = fileSpan.IndexOf("[+]".AsSpan(), StringComparison.Ordinal);
-        string titleStr;
-        if (modIdx >= 0)
+        // 1. "[+]"
+        var modPlusIdx = fileSpan.IndexOf("[+]".AsSpan(), StringComparison.Ordinal);
+        if (modPlusIdx >= 0)
         {
             isModified = true;
-            var before = fileSpan[..modIdx].Trim();
-            var after = fileSpan[(modIdx + 3)..].Trim();
-            if (!before.IsEmpty && !after.IsEmpty)
-                titleStr = $"{before} {after}";
-            else if (!before.IsEmpty)
-                titleStr = before.ToString();
-            else if (!after.IsEmpty)
-                titleStr = after.ToString();
-            else
-                titleStr = appName;
-        }
-        else
-        {
-            titleStr = fileSpan.IsEmpty ? appName : fileSpan.ToString();
+            var before = fileSpan[..modPlusIdx].Trim();
+            var after = fileSpan[(modPlusIdx + 3)..].Trim();
+            fileSpan = CombineSpan(before, after);
         }
 
-        return new TitleParseResult(titleStr, appName, isModified);
+        // 2. "[*]"
+        var modStarBracketIdx = fileSpan.IndexOf("[*]".AsSpan(), StringComparison.Ordinal);
+        if (modStarBracketIdx >= 0)
+        {
+            isModified = true;
+            var before = fileSpan[..modStarBracketIdx].Trim();
+            var after = fileSpan[(modStarBracketIdx + 3)..].Trim();
+            fileSpan = CombineSpan(before, after);
+        }
+
+        // 3. "[modified]"
+        var modBracketIdx = fileSpan.IndexOf("[modified]".AsSpan(), StringComparison.OrdinalIgnoreCase);
+        if (modBracketIdx >= 0)
+        {
+            isModified = true;
+            var before = fileSpan[..modBracketIdx].Trim();
+            var after = fileSpan[(modBracketIdx + 10)..].Trim();
+            fileSpan = CombineSpan(before, after);
+        }
+
+        // 4. Bullet marker "●" or "•"
+        var bulletIdx = fileSpan.IndexOfAny('●', '•');
+        if (bulletIdx >= 0)
+        {
+            isModified = true;
+            var before = fileSpan[..bulletIdx].Trim();
+            var after = fileSpan[(bulletIdx + 1)..].Trim();
+            fileSpan = CombineSpan(before, after);
+        }
+
+        // 5. Trailing " *" or " +"
+        if (fileSpan.EndsWith(" *") || fileSpan.EndsWith(" +"))
+        {
+            isModified = true;
+            fileSpan = fileSpan[..^2].TrimEnd();
+        }
+        else if (fileSpan.EndsWith("*") && fileSpan.Length > 1 && !fileSpan.StartsWith("*") && fileSpan.IndexOf('.') >= 0)
+        {
+            isModified = true;
+            fileSpan = fileSpan[..^1].TrimEnd();
+        }
+
+        cleanTitle = fileSpan.IsEmpty ? fallbackTitle : fileSpan.ToString();
+        return isModified || !fileSpan.IsEmpty;
+    }
+
+    private static ReadOnlySpan<char> CombineSpan(ReadOnlySpan<char> before, ReadOnlySpan<char> after)
+    {
+        if (before.IsEmpty) return after;
+        if (after.IsEmpty) return before;
+        return string.Concat(before, " ", after).AsSpan();
     }
 
     private static bool IsShellNameOrPath(ReadOnlySpan<char> text)

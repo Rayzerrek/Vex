@@ -1,3 +1,4 @@
+#if DEBUG || VEX_SELFTEST
 using System;
 using System.Globalization;
 using System.IO;
@@ -1531,3 +1532,14 @@ internal static class RenderSelfTest
         return false;
     }
 }
+#else
+namespace Vex.App.Terminal.Native;
+
+internal static class RenderSelfTest
+{
+    public static string? ReportPath => null;
+
+    [System.Diagnostics.Conditional("DEBUG")]
+    public static void Run(NativeTerminalControl control) { }
+}
+#endif

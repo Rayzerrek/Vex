@@ -118,6 +118,7 @@ public sealed partial class App : Application
             // within one appearance a theme switch re-tints the editor
             // surface, and across appearances the syntax set flips too.
             Vex.App.Model.EditorPane.OnThemeChanged();
+            Vex.App.Model.AppIconTracker.OnThemeChanged();
         };
 
         var workspace = new Model.Workspace();
