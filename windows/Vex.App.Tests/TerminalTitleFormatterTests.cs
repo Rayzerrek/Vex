@@ -2,7 +2,7 @@ using Vex.App.Model;
 using Xunit;
 
 namespace Vex.App.Tests;
-
+[Collection("CustomTheme")]
 public sealed class TerminalTitleFormatterTests
 {
     [Theory]
