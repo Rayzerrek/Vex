@@ -73,30 +73,27 @@
         Condition="
           $([System.String]::Copy('%(Filename)').StartsWith('System.Windows.Forms')) or
           $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.VisualBasic')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Data.')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Data')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.DirectoryServices')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Private.DataContractSerialization')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Drawing.')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Http')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Drawing')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Net')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Linq.Parallel')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Diagnostics.PerformanceCounter')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Diagnostics.EventLog')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Security.Cryptography.Pkcs')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Security.Cryptography.Csp')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Security.Cryptography.OpenSsl')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Runtime.Serialization')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Xml.Serialization')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Xml.XmlSerializer')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Xml.XPath')) or
           $([System.String]::Copy('%(Filename)').StartsWith('mscordaccore')) or
           $([System.String]::Copy('%(Filename)').StartsWith('mscordbi')) or
           $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.DiaSymReader')) or
           $([System.String]::Copy('%(Filename)').StartsWith('ReachFramework')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Printing')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Mail')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Quic')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Requests')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebSockets')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.Ping')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.ServerSentEvents')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebClient')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebProxy')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebHeaderCollection')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Transactions.')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Transactions')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.CodeDom')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Security.Cryptography.Xml')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Formats.Tar')) or
@@ -111,10 +108,14 @@
           $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Compression.FileSystem')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.IO.IsolatedStorage')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Runtime.InteropServices.JavaScript')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Web.')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.ServiceModel.')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.Web')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('System.ServiceModel')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.ServiceProcess')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Threading.Channels')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('PresentationFramework.Luna')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('PresentationFramework.Royale')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('PresentationFramework.Aero.')) or
+          $([System.String]::Copy('%(Filename)').StartsWith('PresentationFramework.Classic')) or
           '%(Filename)' == 'clrgcexp'
         " />
       <ResolvedFileToPublish Remove="@(_UnusedPublishFiles)" />
