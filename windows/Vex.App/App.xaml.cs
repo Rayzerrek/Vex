@@ -14,9 +14,7 @@ public sealed partial class App : Application
     {
         try
         {
-            var profileDir = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Vex");
+            var profileDir = Model.AppProfile.DirectoryPath;
             System.IO.Directory.CreateDirectory(profileDir);
             System.Runtime.ProfileOptimization.SetProfileRoot(profileDir);
             System.Runtime.ProfileOptimization.StartProfile("startup.profile");

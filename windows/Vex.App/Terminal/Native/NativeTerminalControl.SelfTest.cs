@@ -1,7 +1,9 @@
 #if DEBUG || VEX_SELFTEST
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Vex.Libghostty;
 
 namespace Vex.App.Terminal.Native;
@@ -51,6 +53,99 @@ public sealed partial class NativeTerminalControl
         return (bg is SolidColorBrush brush ? brush.Color : (Color?)null, baseColor);
     }
 
+    /// <summary>Checks input precedence over a queued output flush without timing thresholds.</summary>
+    internal bool SelfTestInputPrecedesOutputRedraw()
+    {
+        _terminal.Feed("\x1b[H!");
+        var inputSawPendingRedraw = false;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            inputSawPendingRedraw = _redrawScheduled);
+        ScheduleRedraw();
+        var frame = new DispatcherFrame();
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => frame.Continue = false);
+        Dispatcher.PushFrame(frame);
+        return inputSawPendingRedraw && !_redrawScheduled
+            && _terminal.FrameRows[0].Cells[0].Text == "!";
+    }
+
+    /// <summary>Verifies hidden output is deferred while terminal events stay live.</summary>
+    internal bool SelfTestHiddenOutputCatchUp(Visibility hiddenVisibility)
+    {
+        SelfTestFeed("\x1b[?1049l\x1b[2J\x1b[Hbefore");
+        var hashes = _rowHashes.ToArray();
+        var modes = new List<bool>();
+        var bell = false;
+        var title = "";
+        var response = "";
+        void OnMode(bool alternate) => modes.Add(alternate);
+        void OnBell() => bell = true;
+        void OnTitle(string value) => title = value;
+        void OnResponse(byte[] bytes, int length) => response += Encoding.ASCII.GetString(bytes, 0, length);
+        TuiModeChanged += OnMode;
+        Bell += OnBell;
+        TitleRawChanged += OnTitle;
+        _terminal.WritePty += OnResponse;
+        var visibility = Visibility;
+        try
+        {
+            Visibility = hiddenVisibility;
+            SelfTestFeed("\x1b[?1049h\x1b[2J\x1b[Hhidden-alt\x1b[?1003h\a\x1b]0;hidden-title\a\x1b[6n");
+            var deferred = _rowHashes.SequenceEqual(hashes)
+                && _terminal.FrameRows[0].Cells[0].Text == "b";
+            var frame = new DispatcherFrame();
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => frame.Continue = false);
+            Dispatcher.PushFrame(frame);
+            var eventsLive = modes.SequenceEqual(new[] { true }) && bell && title == "hidden-title"
+                && response.Contains("\x1b[1;11R", StringComparison.Ordinal);
+            Visibility = visibility;
+            var caughtUp = string.Concat(_terminal.FrameRows[0].Cells.Select(cell => cell.Text)).StartsWith("hidden-alt")
+                && _mouseTracking;
+            SelfTestFeed("\x1b[?1003l\x1b[?1049l");
+            return deferred && eventsLive && caughtUp && modes.SequenceEqual(new[] { true, false });
+        }
+        finally
+        {
+            Visibility = visibility;
+            TuiModeChanged -= OnMode;
+            Bell -= OnBell;
+            TitleRawChanged -= OnTitle;
+            _terminal.WritePty -= OnResponse;
+        }
+    }
+    /// <summary>Checks deferred output after a real detach/reattach with unchanged geometry.</summary>
+    internal bool SelfTestDetachedOutputCatchUp()
+    {
+        if (VisualTreeHelper.GetParent(this) is not ContentPresenter presenter
+            || !ReferenceEquals(presenter.Content, this))
+            return false;
+        SelfTestFeed("\x1b[?1049l\x1b[2J\x1b[Hbefore-detach");
+        // Live tabs take the unchanged-grid shortcut; exercise it without
+        // launching a shell in this deterministic renderer scenario.
+        var sessionStarting = _sessionStarting;
+        _sessionStarting = true;
+        try
+        {
+            presenter.SetCurrentValue(ContentPresenter.ContentProperty, null);
+            var detached = new DispatcherFrame();
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => detached.Continue = false);
+            Dispatcher.PushFrame(detached);
+            if (IsVisible || IsLoaded)
+                return false;
+            SelfTestFeed("\x1b[2J\x1b[Hdetached-latest");
+            var deferred = _terminal.FrameRows[0].Cells[0].Text == "b";
+            presenter.SetCurrentValue(ContentPresenter.ContentProperty, this);
+            var attached = new DispatcherFrame();
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => attached.Continue = false);
+            Dispatcher.PushFrame(attached);
+            return deferred && IsLoaded && IsVisible
+                && string.Concat(_terminal.FrameRows[0].Cells.Select(cell => cell.Text)).StartsWith("detached-latest");
+        }
+        finally
+        {
+            _sessionStarting = sessionStarting;
+            presenter.SetCurrentValue(ContentPresenter.ContentProperty, this);
+        }
+    }
     internal void SelfTestFeed(string text)
     {
         _terminal.Feed(text);

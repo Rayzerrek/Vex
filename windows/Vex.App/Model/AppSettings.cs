@@ -6,9 +6,7 @@ namespace Vex.App.Model;
 
 public sealed class AppSettings : ObservableObject
 {
-    private static readonly string SettingsPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Vex", "settings.json");
+    private static readonly string SettingsPath = Path.Combine(AppProfile.DirectoryPath, "settings.json");
 
     private static AppSettings? _instance;
     public static AppSettings Instance => _instance ??= Load();

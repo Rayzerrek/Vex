@@ -7,9 +7,7 @@ namespace Vex.App.Model;
 
 public static class SessionStore
 {
-    private static readonly string SessionPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Vex", "session.json");
+    private static readonly string SessionPath = Path.Combine(AppProfile.DirectoryPath, "session.json");
 
     /// <summary>The workspace this process loaded at startup; app-wide
     /// services (e.g. appearance flips re-tinting open editors) walk live
