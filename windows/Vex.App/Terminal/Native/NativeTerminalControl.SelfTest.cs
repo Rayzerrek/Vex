@@ -1,3 +1,4 @@
+#if DEBUG || VEX_SELFTEST
 using System.Text;
 using System.Windows;
 using System.Windows.Media;
@@ -302,3 +303,12 @@ public sealed partial class NativeTerminalControl
         FlushRedraw();
     }
 }
+#else
+namespace Vex.App.Terminal.Native;
+
+public sealed partial class NativeTerminalControl
+{
+    internal static readonly string? SelfTestShell = null;
+    private const bool _selfTestCaret = false;
+}
+#endif

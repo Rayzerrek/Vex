@@ -177,7 +177,7 @@ public sealed class TerminalPane : LeafPane
     /// <summary>True when a non-shell process is currently running under this pane's shell.</summary>
     public bool HasActiveProcess { get; private set; }
     /// <summary>Name of the active tool/app running in this pane (null if bare shell).</summary>
-    public string? ActiveProcessName { get; private set; }
+    public string? ActiveProcessName { get; internal set; }
     /// <summary>The PID of the root process (shell) in this terminal pane, or null if view not created.</summary>
     public int? ProcessId => (ViewIfCreated as ITerminalView)?.ProcessId;
 
@@ -254,6 +254,17 @@ public sealed class TerminalPane : LeafPane
         }
     }
 
+    /// <summary>
+    /// Resets the memoized process/title state so the next icon refresh or
+    /// theme switch re-resolves the icon image.
+    /// </summary>
+    public void ResetIconCache()
+    {
+        _lastIconPid = 0;
+        _lastIconProcessName = null;
+        _lastIconTitle = null;
+    }
+
     private bool _focusPendingLoaded;
 
     public override void Focus()
@@ -319,10 +330,7 @@ public sealed class TerminalPane : LeafPane
         {
             _lastTitle = rawTitle;
             var parsed = TerminalTitleFormatter.Parse(rawTitle);
-            if (parsed.AppName is "neovim" or "vim")
-                IsDirty = parsed.IsModified;
-            else if (IsDirty)
-                IsDirty = false;
+            IsDirty = parsed.IsModified;
 
             // OSC titles arrive before the next process-tree poll and are the
             // only reliable signal for some WSL and Node launchers.
@@ -338,10 +346,7 @@ public sealed class TerminalPane : LeafPane
                 if (!string.IsNullOrWhiteSpace(parsed.TabTitle))
                     Title = parsed.TabTitle;
 
-                if (parsed.AppName is "neovim" or "vim")
-                    IsDirty = parsed.IsModified;
-                else if (IsDirty)
-                    IsDirty = false;
+                IsDirty = parsed.IsModified;
 
                 if (AppIcon == null && AppIconCatalog.FromTitle(parsed.TabTitle) is { } cleanIcon)
                     AppIcon = cleanIcon;

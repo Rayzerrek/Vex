@@ -23,12 +23,13 @@ public sealed class AppIcon
     /// <summary>Vector image, 16x16 logical units, safe to bind to Image.Source.</summary>
     public DrawingImage Image { get; }
 
-    internal static AppIcon Glyph(string slug)
+    internal static AppIcon Glyph(string slug, bool? isDark = null)
     {
-        var key = $"glyph:{slug}";
+        var dark = isDark ?? AppSettings.Instance.IsDarkAppearance;
+        var key = $"glyph:{slug}:{(dark ? "dark" : "light")}";
         if (Cache.TryGetValue(key, out var cached))
             return cached;
-        if (AppIconCatalog.GeometryFor(slug) is { } resolved)
+        if (AppIconCatalog.GeometryFor(slug, dark) is { } resolved)
         {
             var icon = new AppIcon(BuildGlyphImage(resolved.Geometry, resolved.Color));
             Cache[key] = icon;

@@ -59,6 +59,46 @@ public static class AppIconTracker
         }
     }
 
+    /// <summary>
+    /// Re-evaluates tab icons across all active panes on appearance or theme switch
+    /// so icons re-tint to their light/dark contrast variants immediately.
+    /// </summary>
+    public static void OnThemeChanged()
+    {
+        TerminalPane[] panesSnapshot;
+        lock (Lock)
+        {
+            if (Panes.Count == 0)
+                return;
+            panesSnapshot = Panes.ToArray();
+        }
+
+        foreach (var pane in panesSnapshot)
+            pane.ResetIconCache();
+
+        if (LatestIndex is { } index)
+        {
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                _ = dispatcher.BeginInvoke(() =>
+                {
+                    foreach (var pane in panesSnapshot)
+                        pane.RefreshAppIcon(index);
+                }, DispatcherPriority.Background);
+            }
+            else
+            {
+                foreach (var pane in panesSnapshot)
+                    pane.RefreshAppIcon(index);
+            }
+        }
+        else
+        {
+            TriggerDebounced();
+        }
+    }
+
     private static Timer StartTimer()
     {
         // 2500ms initial quiet period: allow the app to finish startup and initial

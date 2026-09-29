@@ -40,6 +40,8 @@ internal static partial class AppIconCatalog
         "npm", "npx", "node_modules", "bin", "lib", "cli", "scripts", "cmd",
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
+    private static readonly FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>> CommandLineNoiseLookup =
+        CommandLineNoise.GetAlternateLookup<ReadOnlySpan<char>>();
     /// <summary>
     /// Tools that use custom letter badges rather than SVG glyphs.
     /// </summary>
@@ -52,8 +54,13 @@ internal static partial class AppIconCatalog
             ["aider"] = () => AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6)),
             ["cmd"] = () => AppIcon.Badge(">", Color.FromRgb(0x00, 0x78, 0xD4)),
             ["wsl"] = () => AppIcon.Badge("W", HashColor("wsl")),
+            ["nano"] = () => AppIcon.Badge("na", Color.FromRgb(0x4A, 0x90, 0xE2)),
+            ["micro"] = () => AppIcon.Badge("mc", Color.FromRgb(0x50, 0xE3, 0xC2)),
+            ["emacs"] = () => AppIcon.Badge("em", Color.FromRgb(0x7F, 0x5A, 0xB6)),
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
+    private static readonly FrozenDictionary<string, Func<AppIcon>>.AlternateLookup<ReadOnlySpan<char>> SpecialBadgesLookup =
+        SpecialBadges.GetAlternateLookup<ReadOnlySpan<char>>();
     /// <summary>
     /// Universal alias dictionary mapping CLI and process variants to canonical glyph slugs.
     /// E.g. "agy" or "antigravity" -> "googlegemini", "oc" -> "opencode".
@@ -76,6 +83,10 @@ internal static partial class AppIconCatalog
             ["vim"] = "vim",
             ["lazyvim"] = "lazyvim",
             ["hx"] = "helix",
+            ["helix"] = "helix",
+            ["nano"] = "nano",
+            ["micro"] = "micro",
+            ["emacs"] = "emacs",
             ["copilot"] = "githubcopilot",
             ["zed"] = "zedindustries",
             ["next"] = "nextdotjs",
@@ -98,6 +109,8 @@ internal static partial class AppIconCatalog
             ["fish"] = "fishshell",
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
+    private static readonly FrozenDictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> AliasesLookup =
+        Aliases.GetAlternateLookup<ReadOnlySpan<char>>();
     private static readonly Lazy<FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>>> KnownAppsLookupLazy =
         new(() => BuildKnownApps().GetAlternateLookup<ReadOnlySpan<char>>());
 
@@ -128,27 +141,44 @@ internal static partial class AppIconCatalog
         KnownAppsLookupLazy.Value.Contains(name);
 
     /// <summary>
-    /// Universally resolves an icon for an application or tool name.
+    /// Maps an application name or alias (e.g. "nvim", "hx", "oc") to its canonical lowercase slug.
     /// </summary>
-    internal static AppIcon? ResolveIcon(string? name)
+    internal static string CanonicalAppName(ReadOnlySpan<char> name)
     {
-        if (string.IsNullOrWhiteSpace(name))
+        if (AliasesLookup.TryGetValue(name, out var canonical))
+            return canonical;
+        return name.ToString().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Universally resolves an icon for an application or tool name span without allocating strings.
+    /// </summary>
+    internal static AppIcon? ResolveIcon(ReadOnlySpan<char> name, bool? isDark = null)
+    {
+        if (name.IsEmpty)
             return null;
 
-        if (SpecialBadges.TryGetValue(name, out var badgeFactory))
+        if (SpecialBadgesLookup.TryGetValue(name, out var badgeFactory))
             return badgeFactory();
 
-        if (Aliases.TryGetValue(name, out var canonical))
+        if (AliasesLookup.TryGetValue(name, out var canonical))
         {
             if (GlyphBySlug.TryGetValue(canonical, out var cg))
-                return AppIcon.Glyph(cg.Slug);
+                return AppIcon.Glyph(cg.Slug, isDark);
         }
 
-        if (GlyphBySlug.TryGetValue(name, out var g))
-            return AppIcon.Glyph(g.Slug);
+        var str = name.ToString();
+        if (GlyphBySlug.TryGetValue(str, out var g))
+            return AppIcon.Glyph(g.Slug, isDark);
 
         return null;
     }
+
+    /// <summary>
+    /// Universally resolves an icon for an application or tool name.
+    /// </summary>
+    internal static AppIcon? ResolveIcon(string? name, bool? isDark = null) =>
+        string.IsNullOrWhiteSpace(name) ? null : ResolveIcon(name.AsSpan(), isDark);
 
     /// <summary>
     /// Resolves the tab icon. A shim host (node, bun) is identified by the script
@@ -156,27 +186,27 @@ internal static partial class AppIconCatalog
     /// own icon (a bare `node` or `bun` session). Other processes are looked up
     /// in the catalog directly, fall back to the title, and finally to a letter badge.
     /// </summary>
-    internal static AppIcon? Resolve(string? processName, string? commandLine, string? title)
+    internal static AppIcon? Resolve(string? processName, string? commandLine, string? title, bool? isDark = null)
     {
         if (processName is { } name)
         {
             var isShim = ShimHosts.Contains(name);
             if (isShim)
             {
-                if (FromCommandLine(commandLine, name) is { } shimIcon)
+                if (FromCommandLine(commandLine, name, isDark) is { } shimIcon)
                     return shimIcon;
-                if (FromTitle(title) is { } shimTitleIcon)
+                if (FromTitle(title, isDark) is { } shimTitleIcon)
                     return shimTitleIcon;
             }
-            if (ResolveIcon(name) is { } known)
+            if (ResolveIcon(name, isDark) is { } known)
                 return known;
-            if (!isShim && FromTitle(title) is { } fromTitle)
+            if (!isShim && FromTitle(title, isDark) is { } fromTitle)
                 return fromTitle;
             if (!isShim)
-                return FromProcess(name);
+                return FromProcess(name, isDark);
             return null;
         }
-        return FromTitle(title);
+        return FromTitle(title, isDark);
     }
 
     /// <summary>True when the process is a script host that needs command-line matching.</summary>
@@ -185,7 +215,7 @@ internal static partial class AppIconCatalog
     /// <summary>
     /// Scans a command line for the actual tool name being run.
     /// </summary>
-    private static AppIcon? FromCommandLine(string? commandLine, string shimName)
+    private static AppIcon? FromCommandLine(string? commandLine, string shimName, bool? isDark = null)
     {
         if (string.IsNullOrWhiteSpace(commandLine))
             return null;
@@ -193,21 +223,22 @@ internal static partial class AppIconCatalog
         var parsed = TerminalTitleFormatter.Parse(commandLine);
         if (!string.IsNullOrEmpty(parsed.AppName) &&
             !parsed.AppName.Equals(shimName, StringComparison.OrdinalIgnoreCase) &&
-            ResolveIcon(parsed.AppName) is { } parsedIcon)
+            ResolveIcon(parsed.AppName, isDark) is { } parsedIcon)
         {
             return parsedIcon;
         }
 
-        foreach (var segment in PathSegments(commandLine))
+        var shimSpan = shimName.AsSpan();
+        foreach (var segment in EnumerateSegments(commandLine))
         {
-            if (segment.Equals(shimName, StringComparison.OrdinalIgnoreCase) || CommandLineNoise.Contains(segment))
+            if (segment.Equals(shimSpan, StringComparison.OrdinalIgnoreCase) || CommandLineNoiseLookup.Contains(segment))
                 continue;
 
-            if (ResolveIcon(segment) is { } icon)
+            if (ResolveIcon(segment, isDark) is { } icon)
                 return icon;
 
             if (segment.StartsWith("pi-", StringComparison.OrdinalIgnoreCase))
-                return ResolveIcon("pi");
+                return ResolveIcon("pi", isDark);
         }
 
         return null;
@@ -228,64 +259,112 @@ internal static partial class AppIconCatalog
             return parsed.AppName;
         }
 
-        foreach (var segment in PathSegments(commandLine))
+        var procSpan = processName.AsSpan();
+        foreach (var segment in EnumerateSegments(commandLine))
         {
-            if (segment.Equals(processName, StringComparison.OrdinalIgnoreCase) || CommandLineNoise.Contains(segment))
+            if (segment.Equals(procSpan, StringComparison.OrdinalIgnoreCase) || CommandLineNoiseLookup.Contains(segment))
                 continue;
 
-            if (IsKnownApp(segment.AsSpan()))
-                return segment;
+            if (IsKnownApp(segment))
+                return segment.ToString();
         }
 
         return null;
     }
 
-    /// <summary>Path segments of every token in a command line.</summary>
-    private static IEnumerable<string> PathSegments(string commandLine)
+    /// <summary>
+    /// Enumerates path segments of every token in a command line or title without heap allocations.
+    /// </summary>
+    private static PathSegmentRange EnumerateSegments(string? text) => new(text.AsSpan());
+
+    private readonly ref struct PathSegmentRange
     {
-        var token = new StringBuilder();
-        var inQuotes = false;
-        foreach (var ch in commandLine)
+        private readonly ReadOnlySpan<char> _text;
+        public PathSegmentRange(ReadOnlySpan<char> text) => _text = text;
+        public PathSegmentEnumerator GetEnumerator() => new(_text);
+    }
+
+    private ref struct PathSegmentEnumerator
+    {
+        private readonly ReadOnlySpan<char> _span;
+        private int _pos;
+        private bool _inQuotes;
+        private ReadOnlySpan<char> _currentPiece;
+        private ReadOnlySpan<char> _remainingPieces;
+
+        public PathSegmentEnumerator(ReadOnlySpan<char> text)
         {
-            if (ch == '"')
+            _span = text.Trim();
+            _pos = 0;
+            _inQuotes = false;
+            _currentPiece = default;
+            _remainingPieces = default;
+        }
+
+        public readonly ReadOnlySpan<char> Current => _currentPiece;
+
+        public bool MoveNext()
+        {
+            while (true)
             {
-                inQuotes = !inQuotes;
-            }
-            else if (char.IsWhiteSpace(ch) && !inQuotes)
-            {
-                if (token.Length > 0)
+                if (!_remainingPieces.IsEmpty)
                 {
-                    foreach (var segment in SegmentsOf(token.ToString()))
-                        yield return segment;
-                    token.Clear();
+                    var sepIdx = _remainingPieces.IndexOfAny('/', '\\');
+                    ReadOnlySpan<char> piece;
+                    if (sepIdx >= 0)
+                    {
+                        piece = _remainingPieces[..sepIdx];
+                        _remainingPieces = _remainingPieces[(sepIdx + 1)..];
+                    }
+                    else
+                    {
+                        piece = _remainingPieces;
+                        _remainingPieces = default;
+                    }
+
+                    var dotIdx = piece.LastIndexOf('.');
+                    piece = dotIdx > 0 ? piece[..dotIdx] : piece;
+                    if (!piece.IsEmpty)
+                    {
+                        _currentPiece = piece;
+                        return true;
+                    }
+                    continue;
+                }
+
+                if (_pos >= _span.Length)
+                    return false;
+
+                var tokenStart = _pos;
+                while (_pos < _span.Length)
+                {
+                    var ch = _span[_pos];
+                    if (ch == '"')
+                    {
+                        _inQuotes = !_inQuotes;
+                    }
+                    else if (char.IsWhiteSpace(ch) && !_inQuotes)
+                    {
+                        break;
+                    }
+                    _pos++;
+                }
+
+                var token = _span[tokenStart.._pos].Trim('"');
+                while (_pos < _span.Length && char.IsWhiteSpace(_span[_pos]))
+                    _pos++;
+
+                if (!token.IsEmpty)
+                {
+                    _remainingPieces = token;
                 }
             }
-            else
-            {
-                token.Append(ch);
-            }
-        }
-        if (token.Length > 0)
-        {
-            foreach (var segment in SegmentsOf(token.ToString()))
-                yield return segment;
         }
     }
-
-    private static IEnumerable<string> SegmentsOf(string token)
-    {
-        foreach (var piece in token.Split('/', '\\'))
-        {
-            var segment = System.IO.Path.GetFileNameWithoutExtension(piece);
-            if (segment.Length > 0)
-                yield return segment;
-        }
-    }
-
     /// <summary>Icon for a process name; never null (letter badge fallback).</summary>
-    internal static AppIcon FromProcess(string processName)
+    internal static AppIcon FromProcess(string processName, bool? isDark = null)
     {
-        if (ResolveIcon(processName) is { } known)
+        if (ResolveIcon(processName, isDark) is { } known)
             return known;
         var initial = char.ToUpperInvariant(processName.Length > 0 ? processName[0] : '?');
         return AppIcon.Badge(initial.ToString(), HashColor(processName));
@@ -294,21 +373,21 @@ internal static partial class AppIconCatalog
     /// <summary>
     /// Universally resolves an icon from the terminal title using the universal parser.
     /// </summary>
-    internal static AppIcon? FromTitle(string? title)
+    internal static AppIcon? FromTitle(string? title, bool? isDark = null)
     {
         if (string.IsNullOrWhiteSpace(title))
             return null;
 
         var parsed = TerminalTitleFormatter.Parse(title);
-        if (!string.IsNullOrEmpty(parsed.AppName) && ResolveIcon(parsed.AppName) is { } icon)
+        if (!string.IsNullOrEmpty(parsed.AppName) && ResolveIcon(parsed.AppName, isDark) is { } icon)
             return icon;
 
-        if (!string.IsNullOrEmpty(parsed.TabTitle) && ResolveIcon(parsed.TabTitle) is { } tabIcon)
+        if (!string.IsNullOrEmpty(parsed.TabTitle) && ResolveIcon(parsed.TabTitle, isDark) is { } tabIcon)
             return tabIcon;
 
-        foreach (var segment in PathSegments(title))
+        foreach (var segment in EnumerateSegments(title))
         {
-            if (ResolveIcon(segment) is { } match)
+            if (ResolveIcon(segment, isDark) is { } match)
                 return match;
         }
 
