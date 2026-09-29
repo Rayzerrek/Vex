@@ -246,7 +246,7 @@ public sealed partial class MainWindow : Window
 
     private void CloseWindow_Click(object sender, RoutedEventArgs e)
     {
-        SystemCommands.CloseWindow(this);
+        Close();
     }
 
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -254,15 +254,32 @@ public sealed partial class MainWindow : Window
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
         var modifiers = System.Windows.Input.Keyboard.Modifiers;
 
-        // Plain Escape closes the settings overlay while it is open, before the
-        // terminal (or any focused control inside it) sees the key. Chorded
-        // Escape (e.g. Ctrl+Escape) still belongs to the terminal.
-        if (key == System.Windows.Input.Key.Escape && modifiers == System.Windows.Input.ModifierKeys.None
-            && _settingsOverlay is { Visibility: Visibility.Visible })
+        // Plain Escape closes popups and overlays while open, before the
+        // terminal (or any focused control inside it) sees the key.
+        if (key == System.Windows.Input.Key.Escape && modifiers == System.Windows.Input.ModifierKeys.None)
         {
-            _settingsOverlay.Hide();
-            e.Handled = true;
-            return;
+            if (TabClosePopup.IsOpen)
+            {
+                TabClosePopup.IsOpen = false;
+                _pendingBackgroundCloseTab = null;
+                FocusActivePane();
+                e.Handled = true;
+                return;
+            }
+
+            if (_tabCloseOverlay is { Visibility: Visibility.Visible })
+            {
+                _tabCloseOverlay.Hide();
+                e.Handled = true;
+                return;
+            }
+
+            if (_settingsOverlay is { Visibility: Visibility.Visible })
+            {
+                _settingsOverlay.Hide();
+                e.Handled = true;
+                return;
+            }
         }
         if (!TryGetWorkspaceShortcut(modifiers, key, out var shortcut, out var projectIndex))
             return;
@@ -335,13 +352,21 @@ public sealed partial class MainWindow : Window
         if (_workspace.SelectedProject?.SelectedTab is not { } tab)
             return;
 
-        if (tab.ActiveLeaf is { } activeLeaf)
+        if (tab.PaneCount > 1 && tab.ActiveLeaf is { } activeLeaf)
         {
-            activeLeaf.Close();
+            var info = TabCloseConfirmation.GetCloseInfo(activeLeaf);
+            if (info.NeedsConfirmation)
+            {
+                TabCloseOverlay.Show(info, () => activeLeaf.Close());
+            }
+            else
+            {
+                activeLeaf.Close();
+            }
         }
         else
         {
-            _workspace.SelectedProject.CloseTab(tab);
+            RequestCloseTab(tab, null);
         }
     }
     private void CycleTab(int direction)
@@ -547,6 +572,28 @@ public sealed partial class MainWindow : Window
             return _tabPeek;
         }
     }
+    private TabCloseOverlay? _tabCloseOverlay;
+    private TabCloseOverlay TabCloseOverlay
+    {
+        get
+        {
+            if (_tabCloseOverlay is null)
+            {
+                _tabCloseOverlay = new TabCloseOverlay
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                };
+                Grid.SetRow(_tabCloseOverlay, 0);
+                Grid.SetRowSpan(_tabCloseOverlay, 2);
+                Panel.SetZIndex(_tabCloseOverlay, 1004);
+                _tabCloseOverlay.Hidden += FocusActivePane;
+                MainGrid.Children.Add(_tabCloseOverlay);
+            }
+            return _tabCloseOverlay;
+        }
+    }
+
 
     /// <summary>Hands keyboard focus back to the active pane after an overlay
     /// closes, so typing goes straight to the terminal instead of stranding
@@ -560,7 +607,8 @@ public sealed partial class MainWindow : Window
             if ((_paletteOverlay?.Visibility == Visibility.Visible) ||
                 (_settingsOverlay?.Visibility == Visibility.Visible) ||
                 (_themeSwitcher?.Visibility == Visibility.Visible) ||
-                (_tabPeek?.Visibility == Visibility.Visible))
+                (_tabPeek?.Visibility == Visibility.Visible) ||
+                (_tabCloseOverlay?.Visibility == Visibility.Visible))
                 return;
             _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
         }, DispatcherPriority.ContextIdle);
@@ -580,7 +628,8 @@ public sealed partial class MainWindow : Window
     {
         var items = PaletteProvider.GetItems(_workspace, action => 
         {
-            if (action == "NewProject") NewProject_Click(this, new RoutedEventArgs());
+            if (action == "CloseTab") CloseActivePaneOrTab();
+            else if (action == "NewProject") NewProject_Click(this, new RoutedEventArgs());
             else if (action == "Settings") Settings_Click(this, new RoutedEventArgs());
             else if (action == "ThemePicker") ToggleThemeSwitcher();
             else if (action == "TabPeek") ToggleTabPeek();
@@ -709,7 +758,17 @@ public sealed partial class MainWindow : Window
     private void PaneClose_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: LeafPane leaf })
-            leaf.Close();
+        {
+            var info = TabCloseConfirmation.GetCloseInfo(leaf);
+            if (info.NeedsConfirmation)
+            {
+                TabCloseOverlay.Show(info, () => leaf.Close());
+            }
+            else
+            {
+                leaf.Close();
+            }
+        }
     }
 
     private void PaneFocus_Click(object sender, RoutedEventArgs e)
@@ -763,7 +822,7 @@ public sealed partial class MainWindow : Window
         {
             if (e.ChangedButton == System.Windows.Input.MouseButton.Middle)
             {
-                project.CloseTab(tab);
+                RequestCloseTab(tab, sender as FrameworkElement);
                 e.Handled = true;
                 return;
             }
@@ -1067,10 +1126,88 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private WorkspaceTab? _pendingBackgroundCloseTab;
+
+    private void RequestCloseTab(WorkspaceTab tab, FrameworkElement? anchorElement)
+    {
+        if (_workspace.SelectedProject is not { } project)
+            return;
+
+        if (project.Tabs.Count <= 1)
+            return;
+
+        var info = TabCloseConfirmation.GetCloseInfo(tab);
+        if (!info.NeedsConfirmation)
+        {
+            project.CloseTab(tab);
+            return;
+        }
+
+        var isActive = ReferenceEquals(tab, project.SelectedTab);
+        if (isActive)
+        {
+            TabCloseOverlay.Show(info, () => project.CloseTab(tab));
+        }
+        else
+        {
+            _pendingBackgroundCloseTab = tab;
+            TabClosePopupTitle.Text = info.Title;
+            TabClosePopupMessage.Text = info.Message;
+            TabClosePopupConfirmBtn.Content = info.IsAgent ? "Terminate" : (info.IsDirty ? "Discard" : "Close Tab");
+
+            if (info.Icon?.Image is { } drawing)
+            {
+                TabClosePopupIcon.Source = drawing;
+                TabClosePopupIcon.Visibility = Visibility.Visible;
+                TabClosePopupWarning.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                TabClosePopupIcon.Visibility = Visibility.Collapsed;
+                TabClosePopupWarning.Visibility = Visibility.Visible;
+            }
+
+            TabClosePopup.PlacementTarget = anchorElement;
+            TabClosePopup.IsOpen = true;
+        }
+    }
+
+    private void TabClosePopupCancel_Click(object sender, RoutedEventArgs e)
+    {
+        TabClosePopup.IsOpen = false;
+        _pendingBackgroundCloseTab = null;
+    }
+
+    private void TabClosePopupConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        TabClosePopup.IsOpen = false;
+        if (_pendingBackgroundCloseTab is { } tab && _workspace.SelectedProject is { } project)
+        {
+            project.CloseTab(tab);
+        }
+        _pendingBackgroundCloseTab = null;
+    }
+
+    private void TabClosePopup_Closed(object? sender, EventArgs e)
+    {
+        _pendingBackgroundCloseTab = null;
+    }
+
+    private void TabClosePopup_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            TabClosePopup.IsOpen = false;
+            _pendingBackgroundCloseTab = null;
+            FocusActivePane();
+            e.Handled = true;
+        }
+    }
+
     private void CloseTab_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: WorkspaceTab tab } && _workspace.SelectedProject is { } project)
-            project.CloseTab(tab);
+        if (sender is FrameworkElement anchor && anchor.DataContext is WorkspaceTab tab)
+            RequestCloseTab(tab, anchor);
         e.Handled = true;
     }
 
@@ -1100,6 +1237,37 @@ public sealed partial class MainWindow : Window
 
         _workspace.CloseProject(project);
         e.Handled = true;
+    }
+
+    private bool _forceClose;
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (_forceClose)
+        {
+            base.OnClosing(e);
+            return;
+        }
+
+        if (!AppSettings.Instance.ConfirmOnExit)
+        {
+            base.OnClosing(e);
+            return;
+        }
+
+        var exitInfo = TabCloseConfirmation.GetWorkspaceExitInfo(_workspace);
+        if (!exitInfo.NeedsConfirmation)
+        {
+            base.OnClosing(e);
+            return;
+        }
+
+        e.Cancel = true;
+        TabCloseOverlay.ShowExit(exitInfo, () =>
+        {
+            _forceClose = true;
+            Close();
+        });
     }
 
     protected override void OnClosed(EventArgs e)

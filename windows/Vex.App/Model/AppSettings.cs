@@ -150,6 +150,14 @@ public sealed class AppSettings : ObservableObject
         set { if (Set(ref _cursorBlink, value)) Save(); }
     }
 
+    private bool _confirmOnExit = true;
+    /// <summary>Whether to prompt for confirmation before closing the window when processes or agents are running.</summary>
+    public bool ConfirmOnExit
+    {
+        get => _confirmOnExit;
+        set { if (Set(ref _confirmOnExit, value)) Save(); }
+    }
+
     // Legacy single-name setting kept only so older settings.json files
     // deserialize; MigrateLegacyShell folds it into ShellId on load.
     private string _shell = "Nushell";

@@ -15,10 +15,10 @@ namespace Vex.App.Model;
 /// </summary>
 internal static partial class AppIconCatalog
 {
-    /// <summary>Process names that are just the shell, never the tab's app.</summary>
-    internal static readonly IReadOnlySet<string> ExcludedShells = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    /// <summary>Console-host helper processes that are not user applications.</summary>
+    internal static readonly IReadOnlySet<string> ConsoleHelpers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "pwsh", "powershell", "cmd", "nu", "bash", "sh", "zsh", "fish", "conhost", "wslhost",
+        "conhost", "wslhost", "OpenConsole",
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>

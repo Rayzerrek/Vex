@@ -12,10 +12,7 @@ public static class PaletteProvider
         if (workspace.SelectedProject?.SelectedTab != null)
         {
             yield return new PaletteItem("Show All Tabs", "Open visual tab overview · Ctrl+Shift+Space", () => uiAction("TabPeek"), "Terminal");
-            yield return new PaletteItem("Close Tab", "Close current terminal tab · Middle-click / Ctrl+Shift+W", () => {
-                var project = workspace.SelectedProject;
-                project.CloseTab(project.SelectedTab!);
-            }, "Terminal");
+            yield return new PaletteItem("Close Tab", "Close current terminal tab · Middle-click / Ctrl+Shift+W", () => uiAction("CloseTab"), "Terminal");
             yield return new PaletteItem("Split Right", "Split current tab horizontally · Ctrl+Shift+R", () => workspace.SelectedProject.SelectedTab.Split(System.Windows.Controls.Orientation.Horizontal), "Terminal");
             yield return new PaletteItem("Split Down", "Split current tab vertically · Ctrl+Shift+D", () => workspace.SelectedProject.SelectedTab.Split(System.Windows.Controls.Orientation.Vertical), "Terminal");
             yield return new PaletteItem("Toggle Focus Mode", "Show only the active pane", () => workspace.SelectedProject.SelectedTab.ToggleFocusMode(), "Terminal");

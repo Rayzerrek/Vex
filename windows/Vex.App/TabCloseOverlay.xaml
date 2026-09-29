@@ -1,0 +1,150 @@
+<vex:OverlayControl x:Class="Vex.App.TabCloseOverlay"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vex="clr-namespace:Vex.App"
+             Visibility="Collapsed">
+    <Grid>
+        <!-- Backdrop Scrim -->
+        <Border x:Name="Backdrop" Background="{StaticResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+
+        <!-- Main Card Panel -->
+        <Border x:Name="Panel" Background="{StaticResource VexSurface}"
+                BorderBrush="{StaticResource VexBorder}"
+                BorderThickness="1"
+                CornerRadius="10"
+                Width="450"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Opacity="0"
+                RenderTransformOrigin="0.5,0.5"
+                MouseDown="Panel_MouseDown">
+            <Border.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="PanelScale" ScaleX="0.96" ScaleY="0.96"/>
+                    <TranslateTransform x:Name="PanelTranslate" Y="8"/>
+                </TransformGroup>
+            </Border.RenderTransform>
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.45" Color="#000000"/>
+            </Border.Effect>
+            <StackPanel Margin="22,18,22,16">
+                <!-- Single-tab close header (shown when closing one tab) -->
+                <Grid x:Name="SingleHeaderGrid" Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Favicon: borderless, clean floating icon -->
+                    <Grid Grid.Column="0" VerticalAlignment="Top" Margin="0,3,14,0">
+                        <Image x:Name="IconImage" Width="26" Height="26" Stretch="Uniform" Visibility="Collapsed"/>
+                        <TextBlock x:Name="WarningIcon" Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets"
+                                   FontSize="22" Foreground="{StaticResource VexAccent}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <!-- Text block -->
+                    <StackPanel Grid.Column="1" VerticalAlignment="Top">
+                        <TextBlock x:Name="TitleText" Text="Terminate session?"
+                                   Foreground="{StaticResource VexText}"
+                                   FontSize="14" FontWeight="SemiBold"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock x:Name="MessageText"
+                                   Text="An agent is currently running in this tab. Closing will terminate the session."
+                                   Foreground="{StaticResource VexTextDim}"
+                                   FontSize="12" TextWrapping="Wrap"
+                                   LineHeight="17"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Workspace Exit List (shown when exiting whole application with active sessions) -->
+                <StackPanel x:Name="ExitListPanel" Visibility="Collapsed" Margin="0,0,0,16">
+                    <TextBlock Text="Exit Vex?" FontSize="14.5" FontWeight="SemiBold" Foreground="{StaticResource VexText}" Margin="0,0,0,4"/>
+                    <TextBlock x:Name="ExitSummaryText" Text="Active applications will be terminated:" FontSize="12" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,10"/>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="220">
+                        <ItemsControl x:Name="ExitItemsList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="4,7">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Image Width="20" Height="20" Margin="0,0,10,0" Source="{Binding IconImage}" VerticalAlignment="Center"
+                                               Visibility="{Binding IconVisibility}"/>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Foreground="{StaticResource VexText}" FontWeight="SemiBold" FontSize="12.5"
+                                                       TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding AppName}"/>
+                                                <Run Text="  ·  " Foreground="{StaticResource VexTextDim}"/>
+                                                <Run Text="{Binding ProjectName}" Foreground="{StaticResource VexTextDim}" FontWeight="SemiBold"/>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </StackPanel>
+
+                <!-- Action buttons: right-aligned, normal balanced padding -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="CancelButton" Content="Cancel"
+                            Click="Cancel_Click"
+                            Padding="14,6" FontSize="12" FontWeight="Medium"
+                            Cursor="Hand"
+                            Foreground="{StaticResource VexText}"
+                            Background="{StaticResource VexHover}"
+                            BorderBrush="{StaticResource VexBorder}"
+                            BorderThickness="1"
+                            Margin="0,0,8,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="cb" Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="5">
+                                    <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource VexPressFill}"/>
+                                        <Setter Property="BorderBrush" Value="{StaticResource VexFocusBorder}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button x:Name="ConfirmButton" Content="Close Tab"
+                            Click="Confirm_Click"
+                            Padding="16,6" FontSize="12" FontWeight="SemiBold"
+                            Cursor="Hand"
+                            Foreground="White"
+                            Background="#D32F2F"
+                            BorderBrush="#EF5350"
+                            BorderThickness="1">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="db" Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="5">
+                                    <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#E53935"/>
+                                        <Setter Property="BorderBrush" Value="#FF7043"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter Property="Background" Value="#B71C1C"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Grid>
+</vex:OverlayControl>
