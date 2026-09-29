@@ -935,6 +935,20 @@ internal static class RenderSelfTest
             ? "PASS link-flood: url resolves"
             : "FAIL link-flood: url missing");
         Report(control, control.SelfTestBenchLinkScan(100));
+        foreach (var visibility in new[] { Visibility.Hidden, Visibility.Collapsed })
+        {
+            Report(control, control.SelfTestHiddenOutputCatchUp(visibility)
+                ? $"PASS visibility {visibility}: hidden output deferred, events live, reveal catches up"
+                : $"FAIL visibility {visibility}: hidden work or missing event/output");
+            ParityCheck(control, $"visibility-{visibility}");
+        }
+        Report(control, control.SelfTestDetachedOutputCatchUp()
+            ? "PASS visibility detached: latest output appears after unchanged-size reload"
+            : "FAIL visibility detached: latest output missing after reload");
+        ParityCheck(control, "visibility-detached");
+        Report(control, control.SelfTestInputPrecedesOutputRedraw()
+            ? "PASS scheduling: input precedes output redraw and final output is applied"
+            : "FAIL scheduling: output redraw delays input or final output is missing");
 
         Report(control, "done");
     }

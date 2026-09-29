@@ -5,9 +5,8 @@ using Vex.Terminal;
 namespace Vex.App.Model;
 
 /// <summary>
-/// One shared background tracker polls every live pane's process tree so tab icons track
-/// the app running inside each pane. Uses ThreadPool Timer and HalfDebouncer rather than
-/// DispatcherTimer so it has zero UI-dispatch overhead and zero impact on application startup.
+/// One shared background tracker reads process trees and shim command lines for
+/// every live pane. The UI dispatcher only applies the completed icon snapshot.
 /// </summary>
 public static class AppIconTracker
 {
@@ -17,11 +16,16 @@ public static class AppIconTracker
     private static int _tickInFlight;
     private static HalfDebouncer? _triggerDebouncer;
 
-    /// <summary>Cached process-tree index from the most recent tick, used for zero-delay close checks.</summary>
-    private static ProcessTree.Index? _latestIndex;
-    private static long _latestIndexTimestamp;
-    public static ProcessTree.Index? LatestIndex => Volatile.Read(ref _latestIndex);
-    public static long LatestIndexTimestamp => Volatile.Read(ref _latestIndexTimestamp);
+    private sealed record IconSnapshot(
+        ProcessTree.Index Index,
+        IReadOnlyDictionary<uint, string?> CommandLines,
+        long Timestamp);
+
+    private static IconSnapshot? _latestSnapshot;
+    /// <summary>Completed background process-tree snapshot used by close checks.</summary>
+    public static ProcessTree.Index? LatestIndex => Volatile.Read(ref _latestSnapshot)?.Index;
+    /// <summary>Monotonic completion timestamp in Environment.TickCount64 milliseconds.</summary>
+    public static long LatestIndexTimestamp => Volatile.Read(ref _latestSnapshot)?.Timestamp ?? 0;
 
     public static void Register(TerminalPane pane)
     {
@@ -76,7 +80,7 @@ public static class AppIconTracker
         foreach (var pane in panesSnapshot)
             pane.ResetIconCache();
 
-        if (LatestIndex is { } index)
+        if (Volatile.Read(ref _latestSnapshot) is { } snapshot)
         {
             var dispatcher = System.Windows.Application.Current?.Dispatcher;
             if (dispatcher != null && !dispatcher.CheckAccess())
@@ -84,13 +88,13 @@ public static class AppIconTracker
                 _ = dispatcher.BeginInvoke(() =>
                 {
                     foreach (var pane in panesSnapshot)
-                        pane.RefreshAppIcon(index);
+                        pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines);
                 }, DispatcherPriority.Background);
             }
             else
             {
                 foreach (var pane in panesSnapshot)
-                    pane.RefreshAppIcon(index);
+                    pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines);
             }
         }
         else
@@ -126,15 +130,31 @@ public static class AppIconTracker
                 panesSnapshot = Panes.ToArray();
             }
 
-            var index = await Task.Run(() =>
+            var snapshot = await Task.Run(() =>
             {
                 var entries = ProcessTree.Snapshot();
-                return entries is null ? null : ProcessTree.Index.Build(entries);
+                var index = entries is null ? null : ProcessTree.Index.Build(entries);
+                if (index is null)
+                    return null;
+
+                // Reading shim command lines opens other processes and walks
+                // their memory. Keep that I/O off the UI dispatcher, including
+                // theme changes that reuse the last completed snapshot.
+                var commandLines = new Dictionary<uint, string?>();
+                foreach (var pane in panesSnapshot)
+                {
+                    if (pane.ProcessId is not { } pid)
+                        continue;
+                    var process = ProcessTree.DeepestDescendant(index, (uint)pid, AppIconCatalog.ConsoleHelpers);
+                    if (process is { } child && AppIconCatalog.IsShimHost(child.Name)
+                        && !commandLines.ContainsKey(child.Pid))
+                        commandLines.Add(child.Pid, ProcessCommandLine.Get(child.Pid));
+                }
+                return new IconSnapshot(index, commandLines, Environment.TickCount64);
             });
 
-                Volatile.Write(ref _latestIndex, index);
-                Volatile.Write(ref _latestIndexTimestamp, Environment.TickCount64);
-            if (index is not null)
+            Volatile.Write(ref _latestSnapshot, snapshot);
+            if (snapshot is not null)
             {
                 var dispatcher = System.Windows.Application.Current?.Dispatcher;
                 if (dispatcher != null && !dispatcher.CheckAccess())
@@ -142,13 +162,13 @@ public static class AppIconTracker
                     _ = dispatcher.BeginInvoke(() =>
                     {
                         foreach (var pane in panesSnapshot)
-                            pane.RefreshAppIcon(index);
+                            pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines);
                     }, DispatcherPriority.Background);
                 }
                 else
                 {
                     foreach (var pane in panesSnapshot)
-                        pane.RefreshAppIcon(index);
+                        pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines);
                 }
             }
         }

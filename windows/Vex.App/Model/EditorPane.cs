@@ -11,8 +11,6 @@ namespace Vex.App.Model;
 public sealed class EditorPane : LeafPane
 {
     private string _filePath;
-    private string _content = "";
-    private bool _contentLoaded;
 
     public EditorPane(string filePath)
     {
@@ -23,21 +21,16 @@ public sealed class EditorPane : LeafPane
     /// <summary>Loads the file content on first use. Session restore creates
     /// one editor pane per restored tab on the UI thread, so reading every
     /// file eagerly would stall startup on slow disks.</summary>
-    private string GetContent()
+    private string ReadContent()
     {
-        if (!_contentLoaded)
+        try
         {
-            _contentLoaded = true;
-            try
-            {
-                _content = File.ReadAllText(_filePath);
-            }
-            catch
-            {
-                _content = "";
-            }
+            return File.ReadAllText(_filePath);
         }
-        return _content;
+        catch
+        {
+            return "";
+        }
     }
 
     public string FilePath
@@ -53,10 +46,9 @@ public sealed class EditorPane : LeafPane
 
         try
         {
-            // Read the live text from the editor instead of the _content
-            // snapshot; it is only copied once per save, not per keystroke.
+            // Copy the live document once per save, not per keystroke.
             // (editor.Save() would add a UTF-8 BOM with the default encoding.)
-            var text = View is TextEditor editor ? editor.Text : GetContent();
+            var text = View is TextEditor editor ? editor.Text : ReadContent();
             File.WriteAllText(_filePath, text);
             IsDirty = false;
         }
@@ -71,7 +63,7 @@ public sealed class EditorPane : LeafPane
         var themeName = AppSettings.Instance.ThemeName;
         var editor = new TextEditor
         {
-            Text = GetContent(),
+            Text = ReadContent(),
             IsReadOnly = false,
             ShowLineNumbers = true,
             FocusVisualStyle = null,

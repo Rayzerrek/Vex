@@ -190,10 +190,10 @@ public sealed class TerminalPane : LeafPane
 
     /// <summary>
     /// Re-resolves the tab icon from the shared process-tree index, the shim's
-    /// command line and the last raw OSC title; called by the tracker timer
+    /// cached command line and the last raw OSC title; called by the tracker timer
     /// on the UI thread.
     /// </summary>
-    public void RefreshAppIcon(ProcessTree.Index index)
+    public void RefreshAppIcon(ProcessTree.Index index, IReadOnlyDictionary<uint, string?> commandLines)
     {
         if (ViewIfCreated is not ITerminalView terminal)
             return;
@@ -208,7 +208,8 @@ public sealed class TerminalPane : LeafPane
         }
         var isShim = AppIconCatalog.IsShimHost(deepest.Name);
         var commandLine = isShim
-            ? ProcessCommandLine.Get(deepest.Pid)
+            && commandLines.TryGetValue(deepest.Pid, out var cachedCommandLine)
+            ? cachedCommandLine
             : null;
 
         // A bare shell is the root process itself. Helper processes used by

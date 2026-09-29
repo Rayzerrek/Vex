@@ -1063,21 +1063,39 @@ public sealed class GhosttyTerminal : IDisposable
 
         if (graphemesLen == 1)
         {
-            var cp = _codepoints[0];
-            cell.Text = cp < (uint)s_asciiStrings.Length
-                ? s_asciiStrings[(int)cp]
-                : char.ConvertFromUtf32((int)cp);
+            var cp = codepoints[0];
+            if (cp < (uint)s_asciiStrings.Length)
+                cell.Text = s_asciiStrings[(int)cp];
+            else if (!MatchesCodepoints(cell.Text, codepoints.AsSpan(0, 1)))
+                cell.Text = char.ConvertFromUtf32((int)cp);
         }
-        else
+        else if (!MatchesCodepoints(cell.Text, codepoints.AsSpan(0, (int)graphemesLen)))
         {
-            // Reuse one builder across cells: multi-codepoint graphemes are
-            // rare, but allocating per cell on a busy TUI frame shows up.
+            // Partial frames still read the whole viewport for scroll coherence.
+            // Retain unchanged Unicode text instead of allocating it every frame.
             var sb = _graphemeBuilder;
             sb.Clear();
+            Span<char> utf16 = stackalloc char[2];
             for (var i = 0; i < graphemesLen; i++)
-                sb.Append(char.ConvertFromUtf32((int)_codepoints[i]));
+            {
+                var rune = new Rune((int)codepoints[i]);
+                var length = rune.EncodeToUtf16(utf16);
+                sb.Append(utf16[..length]);
+            }
             cell.Text = sb.ToString();
         }
+    }
+
+    private static bool MatchesCodepoints(string text, ReadOnlySpan<uint> codepoints)
+    {
+        var offset = 0;
+        foreach (var codepoint in codepoints)
+        {
+            if (offset >= text.Length || !Rune.TryGetRuneAt(text, offset, out var rune) || rune.Value != codepoint)
+                return false;
+            offset += rune.Utf16SequenceLength;
+        }
+        return offset == text.Length;
     }
 
     private void EnsureFrameRows(int rows)

@@ -214,6 +214,21 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
             RebuildFontMetrics();
+            if (_needsFullRedraw && IsVisible)
+                FlushRedraw();
+        };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (_disposed)
+                return;
+            if (IsVisible)
+            {
+                _terminal.InvalidateCellCache();
+                _needsFullRedraw = true;
+                if (IsLoaded)
+                    FlushRedraw();
+            }
+            UpdateBlinkTimer();
         };
         // Start the shell immediately instead of waiting for layout to finish
         // calculating the exact grid size. This hides the 50-200ms ConPTY startup
@@ -407,7 +422,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     {
         var cursor = _terminal.Cursor;
         var blink = _cursorBlinkSetting && cursor.Blinking;
-        if (blink && IsKeyboardFocused)
+        if (blink && IsKeyboardFocused && IsVisible)
             _blinkTimer.Start();
         else
         {
@@ -618,7 +633,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _redrawScheduled = true;
         }
 
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
             lock (_outputLock)
             {
@@ -626,9 +641,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             }
             // Output that arrives during the flush sets the flag again and
             // schedules its own pass; the emulator state it fed is picked up
-            // there, so no update is lost. Render priority keeps long agent
-            // streams visually in lockstep with the frame instead of lagging
-            // behind Background work.
+            // there, so no update is lost. Background priority lets input and
+            // WPF composition run between flushes during continuous output.
             if (!_disposed)
                 FlushRedraw();
         });
@@ -642,13 +656,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var flushStarted = diagPath is null ? null : System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            _terminal.UpdateFrame();
-            var dirty = _terminal.FrameDirty;
-            _mouseTracking = _terminal.MouseTracking;
-            var scrollbar = _terminal.Scrollbar;
-            var viewportMoved = scrollbar.Offset != _lastScrollOffset;
-            _lastScrollOffset = scrollbar.Offset;
-
             // Detect alternate-screen transitions (TUI start/exit) and notify
             // the pane model so it can update the state indicator. Force a
             // full rebuild: alt enter/exit rematerializes every row and dirty
@@ -661,6 +668,21 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 _terminal.InvalidateCellCache();
                 TuiModeChanged?.Invoke(isAlt);
             }
+
+            // Hidden tabs keep parsing output and publishing their TUI state,
+            // but defer snapshots and drawing until the view is shown again.
+            if (!IsVisible)
+            {
+                _needsFullRedraw = true;
+                return;
+            }
+
+            _terminal.UpdateFrame();
+            var dirty = _terminal.FrameDirty;
+            _mouseTracking = _terminal.MouseTracking;
+            var scrollbar = _terminal.Scrollbar;
+            var viewportMoved = scrollbar.Offset != _lastScrollOffset;
+            _lastScrollOffset = scrollbar.Offset;
 
             if (flushStarted is not null)
                 Diag($"flush dirty={dirty} full={_needsFullRedraw} scroll={viewportMoved} offset={scrollbar.Offset}/{scrollbar.Total} rows={_rows} cols={_cols} ms={flushStarted.Elapsed.TotalMilliseconds:F4}");
