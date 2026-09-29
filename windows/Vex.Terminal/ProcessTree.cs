@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using Vex.Terminal.Native;
 
 namespace Vex.Terminal;
@@ -121,6 +122,64 @@ public static class ProcessTree
         if (firstExcluded is { } shell)
             return shell;
         return rootName is not null ? (rootName, rootPid) : null;
+    }
+
+    private static readonly FrozenSet<string> DefaultSystemHelpers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "conhost", "wslhost", "OpenConsole"
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Finds the deepest application process running under the shell at <paramref name="rootPid"/>.
+    /// Returns null if only the shell itself (with no child processes running) is present.
+    /// Universal for every shell: does not require knowing the shell name because the root
+    /// process at <paramref name="rootPid"/> is always the shell.
+    /// </summary>
+    public static (string Name, uint Pid)? DeepestChildProcess(
+        Index index,
+        uint rootPid,
+        IReadOnlySet<string>? systemHelpers = null)
+    {
+        if (!index.Children.TryGetValue(rootPid, out var rootChildren) || rootChildren.Count == 0)
+            return null;
+
+        var helpers = systemHelpers ?? DefaultSystemHelpers;
+        (string Name, uint Pid)? best = null;
+        var frontier = rootChildren;
+
+        while (frontier.Count > 0)
+        {
+            var next = new List<(string Name, uint Pid)>();
+            (string Name, uint Pid)? levelBest = null;
+
+            foreach (var node in frontier)
+            {
+                if (!helpers.Contains(node.Name))
+                    levelBest = levelBest is { } b ? (node.Pid > b.Pid ? node : b) : node;
+
+                if (index.Children.TryGetValue(node.Pid, out var kids))
+                    next.AddRange(kids);
+            }
+
+            if (levelBest is { } lb)
+                best = lb;
+
+            var deeper = false;
+            foreach (var node in next)
+            {
+                if (!helpers.Contains(node.Name))
+                {
+                    deeper = true;
+                    break;
+                }
+            }
+
+            if (!deeper)
+                break;
+            frontier = next;
+        }
+
+        return best;
     }
 
     /// <summary>

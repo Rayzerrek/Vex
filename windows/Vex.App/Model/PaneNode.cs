@@ -174,6 +174,13 @@ public sealed class TerminalPane : LeafPane
     private uint _lastIconPid;
     private string? _lastIconProcessName;
     private string? _lastIconTitle;
+    /// <summary>True when a non-shell process is currently running under this pane's shell.</summary>
+    public bool HasActiveProcess { get; private set; }
+    /// <summary>Name of the active tool/app running in this pane (null if bare shell).</summary>
+    public string? ActiveProcessName { get; private set; }
+    /// <summary>The PID of the root process (shell) in this terminal pane, or null if view not created.</summary>
+    public int? ProcessId => (ViewIfCreated as ITerminalView)?.ProcessId;
+
 
     public TerminalPane(string workingDirectory)
     {
@@ -192,19 +199,38 @@ public sealed class TerminalPane : LeafPane
             return;
         if (terminal.ProcessId is not { } pid)
             return;
-        var process = ProcessTree.DeepestDescendant(index, (uint)pid, AppIconCatalog.ExcludedShells);
+        var process = ProcessTree.DeepestDescendant(index, (uint)pid, AppIconCatalog.ConsoleHelpers);
         if (process is not { } deepest)
+        {
+            HasActiveProcess = false;
+            ActiveProcessName = null;
             return;
+        }
+        var isShim = AppIconCatalog.IsShimHost(deepest.Name);
+        var commandLine = isShim
+            ? ProcessCommandLine.Get(deepest.Pid)
+            : null;
+
+        // A bare shell is the root process itself. Helper processes used by
+        // the console host are not user applications. This keeps detection
+        // independent of the shell executable's name.
+        var isShellOrHelper = deepest.Pid == (uint)pid || AppIconCatalog.ConsoleHelpers.Contains(deepest.Name);
+        if (isShellOrHelper)
+        {
+            HasActiveProcess = false;
+            ActiveProcessName = null;
+        }
+        else
+        {
+            HasActiveProcess = true;
+            ActiveProcessName = AppIconCatalog.ResolveToolName(deepest.Name, commandLine) ?? deepest.Name;
+        }
 
         if (_lastIconPid == deepest.Pid &&
             string.Equals(_lastIconProcessName, deepest.Name, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(_lastIconTitle, _lastTitle, StringComparison.Ordinal))
             return;
 
-        var isShim = AppIconCatalog.IsShimHost(deepest.Name);
-        var commandLine = isShim
-            ? ProcessCommandLine.Get(deepest.Pid)
-            : null;
         // Assign null as well as a resolved icon. Otherwise a shell icon (most
         // often Nushell) survives after a node-hosted app starts but its
         // command line is temporarily unreadable.
@@ -219,7 +245,7 @@ public sealed class TerminalPane : LeafPane
         }
 
         if (string.Equals(Title, "Terminal", StringComparison.OrdinalIgnoreCase) ||
-            AppIconCatalog.ExcludedShells.Contains(Title))
+            AppIconCatalog.ConsoleHelpers.Contains(Title))
         {
             var appName = AppIconCatalog.ResolveToolName(deepest.Name, commandLine) ?? deepest.Name;
             var formatted = TerminalTitleFormatter.Format(appName);
@@ -292,6 +318,12 @@ public sealed class TerminalPane : LeafPane
         _titleRawHandler = rawTitle =>
         {
             _lastTitle = rawTitle;
+            var parsed = TerminalTitleFormatter.Parse(rawTitle);
+            if (parsed.AppName is "neovim" or "vim")
+                IsDirty = parsed.IsModified;
+            else if (IsDirty)
+                IsDirty = false;
+
             // OSC titles arrive before the next process-tree poll and are the
             // only reliable signal for some WSL and Node launchers.
             if (AppIconCatalog.FromTitle(rawTitle) is { } icon)
@@ -302,11 +334,16 @@ public sealed class TerminalPane : LeafPane
         {
             if (!string.IsNullOrWhiteSpace(title))
             {
-                var clean = TerminalTitleFormatter.Format(title);
-                if (!string.IsNullOrWhiteSpace(clean))
-                    Title = clean;
+                var parsed = TerminalTitleFormatter.Parse(title);
+                if (!string.IsNullOrWhiteSpace(parsed.TabTitle))
+                    Title = parsed.TabTitle;
 
-                if (AppIcon == null && AppIconCatalog.FromTitle(clean) is { } cleanIcon)
+                if (parsed.AppName is "neovim" or "vim")
+                    IsDirty = parsed.IsModified;
+                else if (IsDirty)
+                    IsDirty = false;
+
+                if (AppIcon == null && AppIconCatalog.FromTitle(parsed.TabTitle) is { } cleanIcon)
                     AppIcon = cleanIcon;
             }
         };
@@ -315,6 +352,9 @@ public sealed class TerminalPane : LeafPane
         view.Bell += RequestAttention;
         view.ProcessExited += exitCode =>
         {
+            HasActiveProcess = false;
+            ActiveProcessName = null;
+            IsDirty = false;
             State = PaneState.Exited;
             RequestClose();
         };

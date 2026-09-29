@@ -174,6 +174,22 @@ public sealed class TerminalTitleFormatterTests
     }
 
     [Theory]
+    [InlineData("main.rs [+] - NVIM", "main.rs", "neovim", true)]
+    [InlineData("main.rs - NVIM", "main.rs", "neovim", false)]
+    [InlineData("app.ts [+] - VIM", "app.ts", "vim", true)]
+    [InlineData("app.ts - VIM", "app.ts", "vim", false)]
+    [InlineData("[+] - NVIM", "neovim", "neovim", true)]
+    [InlineData(@"file.txt [+] (C:\Users\code) - NVIM", "file.txt", "neovim", true)]
+    [InlineData(@"file.txt (C:\Users\code) - NVIM", "file.txt", "neovim", false)]
+    public void UniversalParser_VimAndNeovim_ExtractsModifiedState(string input, string expectedTabTitle, string expectedApp, bool expectedModified)
+    {
+        var parsed = TerminalTitleFormatter.Parse(input);
+        Assert.Equal(expectedTabTitle, parsed.TabTitle);
+        Assert.Equal(expectedApp, parsed.AppName);
+        Assert.Equal(expectedModified, parsed.IsModified);
+    }
+
+    [Theory]
     [InlineData("docker ps", "docker")]
     [InlineData("git status", "git")]
     [InlineData("main.rs - NVIM", "neovim")]

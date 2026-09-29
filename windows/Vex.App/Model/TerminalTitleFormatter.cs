@@ -3,7 +3,7 @@ namespace Vex.App.Model;
 /// <summary>
 /// Represents the parsed components of a terminal title.
 /// </summary>
-public readonly record struct TitleParseResult(string TabTitle, string? AppName);
+public readonly record struct TitleParseResult(string TabTitle, string? AppName, bool IsModified = false);
 
 /// <summary>
 /// Universal terminal title parser and formatter.
@@ -58,22 +58,15 @@ public static class TerminalTitleFormatter
             }
         }
 
-        // 4. Check for App/Session or File/App separator: " - ", " : ", " | "
+        // 4. Neovim / Vim suffix: "<file> - NVIM" or "<file> - VIM"
+        if (span.EndsWith(" - NVIM", StringComparison.OrdinalIgnoreCase))
+            return ParseVimTitle(span[..^7].Trim(), "neovim");
+        if (span.EndsWith(" - VIM", StringComparison.OrdinalIgnoreCase))
+            return ParseVimTitle(span[..^6].Trim(), "vim");
+
+        // 5. Check for App/Session or File/App separator: " - ", " : ", " | "
         if (TryExtractSeparatedTitle(span, out var separated))
             return separated;
-
-        // 5. Neovim / Vim suffix without spaces: "<file> - NVIM" or "<file> - VIM"
-        if (span.EndsWith(" - NVIM", StringComparison.OrdinalIgnoreCase))
-        {
-            var file = span[..^7].Trim();
-            return new TitleParseResult(file.ToString(), "neovim");
-        }
-        if (span.EndsWith(" - VIM", StringComparison.OrdinalIgnoreCase))
-        {
-            var file = span[..^6].Trim();
-            return new TitleParseResult(file.ToString(), "vim");
-        }
-
         // 6. Truncate at unquoted redirection or pipe operators: >, <, |, &, 2>, 1>
         var inQuotes = false;
         var quoteChar = '\0';
@@ -227,6 +220,39 @@ public static class TerminalTitleFormatter
         }
 
         return false;
+    }
+
+    private static TitleParseResult ParseVimTitle(ReadOnlySpan<char> fileSpan, string appName)
+    {
+        var isModified = false;
+        // Strip trailing directory in parentheses: e.g. "file.txt [+] (C:\Users\...)"
+        if (fileSpan.EndsWith(")") && fileSpan.LastIndexOf('(') is var parenIdx && parenIdx > 0)
+        {
+            fileSpan = fileSpan[..parenIdx].TrimEnd();
+        }
+
+        var modIdx = fileSpan.IndexOf("[+]".AsSpan(), StringComparison.Ordinal);
+        string titleStr;
+        if (modIdx >= 0)
+        {
+            isModified = true;
+            var before = fileSpan[..modIdx].Trim();
+            var after = fileSpan[(modIdx + 3)..].Trim();
+            if (!before.IsEmpty && !after.IsEmpty)
+                titleStr = $"{before} {after}";
+            else if (!before.IsEmpty)
+                titleStr = before.ToString();
+            else if (!after.IsEmpty)
+                titleStr = after.ToString();
+            else
+                titleStr = appName;
+        }
+        else
+        {
+            titleStr = fileSpan.IsEmpty ? appName : fileSpan.ToString();
+        }
+
+        return new TitleParseResult(titleStr, appName, isModified);
     }
 
     private static bool IsShellNameOrPath(ReadOnlySpan<char> text)

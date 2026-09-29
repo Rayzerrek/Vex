@@ -617,6 +617,22 @@
                                     </StackPanel>
                                 </Border>
 
+                                <TextBlock Text="WINDOW EXIT" Style="{StaticResource SettingsSectionTitle}" Margin="2,14,0,8"/>
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Confirm before exiting" Style="{StaticResource RowTitle}"/>
+                                            <TextBlock Text="Ask before closing Vex when a process or unsaved file is active." Style="{StaticResource RowDesc}"/>
+                                        </StackPanel>
+                                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggle}" VerticalAlignment="Center"
+                                                  IsChecked="{Binding ConfirmOnExit}"/>
+                                    </Grid>
+                                </Border>
+
                             </StackPanel>
                         </ScrollViewer>
 

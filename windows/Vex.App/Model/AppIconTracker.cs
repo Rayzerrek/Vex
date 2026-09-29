@@ -17,6 +17,12 @@ public static class AppIconTracker
     private static int _tickInFlight;
     private static HalfDebouncer? _triggerDebouncer;
 
+    /// <summary>Cached process-tree index from the most recent tick, used for zero-delay close checks.</summary>
+    private static ProcessTree.Index? _latestIndex;
+    private static long _latestIndexTimestamp;
+    public static ProcessTree.Index? LatestIndex => Volatile.Read(ref _latestIndex);
+    public static long LatestIndexTimestamp => Volatile.Read(ref _latestIndexTimestamp);
+
     public static void Register(TerminalPane pane)
     {
         lock (Lock)
@@ -86,6 +92,8 @@ public static class AppIconTracker
                 return entries is null ? null : ProcessTree.Index.Build(entries);
             });
 
+                Volatile.Write(ref _latestIndex, index);
+                Volatile.Write(ref _latestIndexTimestamp, Environment.TickCount64);
             if (index is not null)
             {
                 var dispatcher = System.Windows.Application.Current?.Dispatcher;
