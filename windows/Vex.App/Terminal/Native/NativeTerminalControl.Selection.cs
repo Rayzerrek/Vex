@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Input;
@@ -87,7 +88,8 @@ public sealed partial class NativeTerminalControl
         var text = _terminal.GetSelectedText();
         if (!string.IsNullOrEmpty(text))
         {
-            Clipboard.SetText(text);
+            if (!TrySetClipboardText(text))
+                return;
             if (!unionRect.IsEmpty)
                 StartCopyAnimation(unionRect);
         }
@@ -288,12 +290,39 @@ public sealed partial class NativeTerminalControl
 
     private void PasteClipboard()
     {
-        if (_session is null || !Clipboard.ContainsText())
+        if (_session is null || !TryGetClipboardText(out var text) || text.Length == 0)
             return;
-        var text = Clipboard.GetText().Replace("\r\n", "\r").Replace("\n", "\r");
+        text = text.Replace("\r\n", "\r").Replace("\n", "\r");
         if (_terminal.BracketedPaste)
             text = "\x1b[200~" + text + "\x1b[201~";
         _session.Write(Encoding.UTF8.GetBytes(text));
+    }
+
+    internal static bool TryGetClipboardText(out string text)
+    {
+        try
+        {
+            text = Clipboard.GetText();
+            return true;
+        }
+        catch (ExternalException)
+        {
+            text = "";
+            return false;
+        }
+    }
+
+    internal static bool TrySetClipboardText(string text)
+    {
+        try
+        {
+            Clipboard.SetText(text);
+            return true;
+        }
+        catch (ExternalException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -309,7 +338,8 @@ public sealed partial class NativeTerminalControl
         var text = _terminal.GetSelectedText();
         if (string.IsNullOrEmpty(text))
             return;
-        Clipboard.SetText(text);
+        if (!TrySetClipboardText(text))
+            return;
 
         var cursor = _terminal.Cursor;
         var nearestCursorCol = _kbFocusRow == _kbAnchorRow
