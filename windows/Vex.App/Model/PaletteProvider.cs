@@ -16,11 +16,6 @@ public static class PaletteProvider
             yield return new PaletteItem("Split Right", "Split current tab horizontally · Ctrl+Shift+R", () => workspace.SelectedProject.SelectedTab.Split(System.Windows.Controls.Orientation.Horizontal), "Terminal");
             yield return new PaletteItem("Split Down", "Split current tab vertically · Ctrl+Shift+D", () => workspace.SelectedProject.SelectedTab.Split(System.Windows.Controls.Orientation.Vertical), "Terminal");
             yield return new PaletteItem("Toggle Focus Mode", "Show only the active pane", () => workspace.SelectedProject.SelectedTab.ToggleFocusMode(), "Terminal");
-
-            if (workspace.SelectedProject.SelectedTab.ActiveLeaf is EditorPane editorPane)
-            {
-                yield return new PaletteItem("Save File", "Save current open file · Ctrl+S", () => editorPane.Save(), "Editor");
-            }
         }
 
         // Projects switch list

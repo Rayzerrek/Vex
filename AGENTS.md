@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Vex is a WPF terminal workspace: ConPTY sessions, split panes, a file tree, and an editor.
+Vex is a WPF terminal workspace: ConPTY sessions, tabs, and split panes.
 The app lives in `windows/`.
 
 ## Build

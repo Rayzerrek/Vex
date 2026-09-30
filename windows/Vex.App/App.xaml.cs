@@ -111,11 +111,6 @@ public sealed partial class App : Application
             var settings = Vex.App.Model.AppSettings.Instance;
             ChromePalette.Apply(settings.ThemeName);
 
-            // Editors paint their own surface, gutter and syntax palette on
-            // top of the chrome brushes, so both properties need the redraw:
-            // within one appearance a theme switch re-tints the editor
-            // surface, and across appearances the syntax set flips too.
-            Vex.App.Model.EditorPane.OnThemeChanged();
             Vex.App.Model.AppIconTracker.OnThemeChanged();
         };
 

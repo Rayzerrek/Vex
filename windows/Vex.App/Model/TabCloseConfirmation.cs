@@ -101,16 +101,6 @@ public static class TabCloseConfirmation
         return entries is not null ? ProcessTree.Index.Build(entries) : AppIconTracker.LatestIndex;
     }
 
-    private static TabCloseInfo BuildEditorDirtyInfo(EditorPane editor) => new(
-        NeedsConfirmation: true,
-        AppName: editor.Title,
-        IsAgent: false,
-        IsDirty: true,
-        Icon: null,
-        Title: "Unsaved Changes",
-        Message: $"File \"{editor.Title}\" has unsaved changes that will be lost."
-    );
-
     private static TabCloseInfo BuildTerminalDirtyInfo(TerminalPane terminal)
     {
         var clean = terminal.Title.TrimEnd('*');
@@ -218,9 +208,6 @@ public static class TabCloseConfirmation
         // Pass 1: 0ms fast check on in-memory pane properties
         foreach (var leaf in tab.Leaves)
         {
-            if (leaf is EditorPane editor && editor.IsDirty)
-                return BuildEditorDirtyInfo(editor);
-
             if (leaf is TerminalPane terminal)
             {
                 if (terminal.IsDirty)
@@ -314,9 +301,6 @@ public static class TabCloseConfirmation
 
     internal static TabCloseInfo GetCloseInfo(LeafPane leaf, ProcessTree.Index? index)
     {
-        if (leaf is EditorPane editor && editor.IsDirty)
-            return BuildEditorDirtyInfo(editor);
-
         if (leaf is TerminalPane terminal)
         {
             // 1. Neovim/Vim buffer with unsaved changes

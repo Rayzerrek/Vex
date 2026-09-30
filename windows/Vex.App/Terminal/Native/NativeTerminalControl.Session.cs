@@ -10,6 +10,7 @@ public sealed partial class NativeTerminalControl
     private volatile TerminalSession? _session;
     private TerminalSessionPrewarmer.Lease? _prewarmLease;
     private bool _sessionStarting;
+    private List<byte[]>? _pendingSessionInput;
     private int _firstOutputNoted;
 
     // After a burst of size changes (window drag, pane split), one settle pass
@@ -78,6 +79,30 @@ public sealed partial class NativeTerminalControl
             Diag($"conpty-resize-still-pending {_cols}x{_rows}");
     }
 
+    private void WriteUserInput(ReadOnlySpan<byte> input)
+    {
+        if (_disposed)
+            return;
+        if (_sessionStarting)
+        {
+            // Only the UI thread queues input. Replay waits until startup
+            // output has answered ConPTY queries and attached the reader.
+            (_pendingSessionInput ??= new List<byte[]>()).Add(input.ToArray());
+            return;
+        }
+        _session?.Write(input);
+    }
+
+    private void FlushPendingSessionInput()
+    {
+        var pending = _pendingSessionInput;
+        _pendingSessionInput = null;
+        if (pending is null || _session is not { } session)
+            return;
+        foreach (var input in pending)
+            session.Write(input);
+    }
+
     private void StartSessionIfReady()
     {
         if (_session is not null || _sessionStarting || RenderSelfTest.ReportPath is not null)
@@ -88,13 +113,12 @@ public sealed partial class NativeTerminalControl
 
     private void StartSession()
     {
-        if (_session is not null || _sessionStarting)
+        if (_disposed || _session is not null || _sessionStarting)
             return;
 
         _sessionStarting = true;
-        // New tabs should not create a second, short-lived prewarm. The
-        // prewarmer is single-use and only belongs to the initial restored
-        // pane; subsequent panes start directly with their actual geometry.
+        // A replacement may already have initialized the shell for a new tab.
+        // If no prewarm matches, direct startup uses this pane's current grid.
         var cols = _cols >= 20 ? (short)_cols : (short)80;
         var rows = _rows >= 5 ? (short)_rows : (short)24;
         var workingDirectory = _workingDirectory;
@@ -125,6 +149,7 @@ public sealed partial class NativeTerminalControl
                         }
                         if (_cols != cols || _rows != rows)
                             ApplySessionResize((short)_cols, (short)_rows);
+                        FlushPendingSessionInput();
                     });
                 }
                 catch
@@ -132,8 +157,11 @@ public sealed partial class NativeTerminalControl
                     _session = null;
                     prewarmLease.Dispose();
                     _prewarmLease = null;
-                    _sessionStarting = false;
-                    _ = Dispatcher.BeginInvoke(StartSession);
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        _sessionStarting = false;
+                        StartSession();
+                    });
                 }
             });
             return;
@@ -161,6 +189,7 @@ public sealed partial class NativeTerminalControl
                     _ = Dispatcher.BeginInvoke(() =>
                     {
                         _sessionStarting = false;
+                        _pendingSessionInput = null;
                         _session = null;
                     });
                     return;
@@ -169,6 +198,7 @@ public sealed partial class NativeTerminalControl
             StartupMark.Note("terminal spawn end");
             if (_disposed)
             {
+                _session = null;
                 session.Dispose();
                 _ = Dispatcher.BeginInvoke(() => _sessionStarting = false);
                 return;
@@ -178,12 +208,13 @@ public sealed partial class NativeTerminalControl
                 _sessionStarting = false;
                 if (_disposed)
                 {
+                    _session = null;
                     session.Dispose();
                     return;
                 }
-                _session = session;
                 if (_cols != cols || _rows != rows)
                     ApplySessionResize((short)_cols, (short)_rows);
+                FlushPendingSessionInput();
             });
         });
     }
@@ -232,6 +263,9 @@ public sealed partial class NativeTerminalControl
             throw;
         }
 
+        // Feeding startup output can synchronously answer ConPTY's DA query.
+        // Publish the session before replay so the answer has a destination.
+        _session = session;
         lock (outputLock)
         {
             outputHandler = OnSessionOutput;

@@ -7,7 +7,7 @@ Two rules decide which key goes where:
    when text is selected, so copy still works.
 2. **Vex uses `Ctrl+Shift+<key>`.** That namespace is reserved for the
    workspace. These shortcuts apply universally across all panes, shells,
-   full-screen TUIs (such as nvim), and the editor.
+   full-screen TUIs (such as nvim).
 
 ## Workspace
 
@@ -22,13 +22,10 @@ Two rules decide which key goes where:
 | Previous tab | `Ctrl+Shift+Tab` |
 | Split right | `Ctrl+Shift+R` |
 | Split down | `Ctrl+Shift+D` |
-| Save file (editor) | `Ctrl+S` |
 | Close overlay / settings | `Esc` |
 
-`Ctrl+S` and `Ctrl+Tab` are exceptions: `Ctrl+S` is safe to take because a shell
-does not use it (terminal flow control is `Ctrl+Q`/`Ctrl+S` on some systems,
-but Vex consumes it only while the editor has focus). `Ctrl+Tab` is globally
-used for tab navigation.
+`Ctrl+Tab` is the exception used for tab navigation. `Ctrl+S` goes to the
+terminal/TUI, including its save binding or terminal flow control.
 
 ## Terminal
 

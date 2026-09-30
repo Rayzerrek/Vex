@@ -28,7 +28,7 @@ public sealed partial class NativeTerminalControl
     protected override void OnLostKeyboardFocus(KeyboardFocusChangedEventArgs e)
     {
         base.OnLostKeyboardFocus(e);
-        if (_session is not null)
+        if (_session is not null || _sessionStarting)
         {
             foreach (var (key, modifiers) in _terminalKeysDown)
             {
@@ -45,7 +45,7 @@ public sealed partial class NativeTerminalControl
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (_session is null)
+        if (_disposed)
             return;
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
@@ -201,7 +201,7 @@ public sealed partial class NativeTerminalControl
         if (key == Key.Back && mods == ModifierKeys.Control && _terminal.KittyKeyboardFlags == 0)
         {
             ReadOnlySpan<byte> ctrlBackspace = stackalloc byte[] { 0x17 };
-            _session.Write(ctrlBackspace);
+            WriteUserInput(ctrlBackspace);
             e.Handled = true;
             return;
         }
@@ -213,7 +213,7 @@ public sealed partial class NativeTerminalControl
     protected override void OnKeyUp(KeyEventArgs e)
     {
         base.OnKeyUp(e);
-        if (_session is null)
+        if (_disposed)
             return;
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
@@ -240,8 +240,7 @@ public sealed partial class NativeTerminalControl
     private bool SendTerminalKey(Key wpfKey, TerminalKey key, TerminalKeyAction action,
         TerminalKeyModifiers modifiers, ReadOnlySpan<byte> utf8)
     {
-        var session = _session;
-        if (session is null)
+        if (_disposed)
             return false;
 
         Span<byte> output = stackalloc byte[512];
@@ -250,7 +249,7 @@ public sealed partial class NativeTerminalControl
         if (written == 0)
             return false;
 
-        session.Write(output[..written]);
+        WriteUserInput(output[..written]);
         if (action is TerminalKeyAction.Press or TerminalKeyAction.Repeat)
             _terminalKeysDown[wpfKey] = modifiers;
         return true;
@@ -261,7 +260,7 @@ public sealed partial class NativeTerminalControl
         base.OnTextInput(e);
         if (DiagPath is not null)
             Diag($"text '{e.Text.Replace("\r", "<CR>")}' session={_session is not null}");
-        if (_session is null || string.IsNullOrEmpty(e.Text))
+        if (_disposed || string.IsNullOrEmpty(e.Text))
             return;
 
         if (_pendingTextKey is { } pending)
@@ -288,11 +287,11 @@ public sealed partial class NativeTerminalControl
         {
             Span<byte> buffer = stackalloc byte[Encoding.UTF8.GetMaxByteCount(e.Text.Length)];
             var written = Encoding.UTF8.GetBytes(e.Text, buffer);
-            _session.Write(buffer[..written]);
+            WriteUserInput(buffer[..written]);
         }
         else
         {
-            _session.Write(Encoding.UTF8.GetBytes(e.Text));
+            WriteUserInput(Encoding.UTF8.GetBytes(e.Text));
         }
         e.Handled = true;
     }

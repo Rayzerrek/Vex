@@ -143,85 +143,6 @@
                 </Trigger>
             </DataTemplate.Triggers>
         </DataTemplate>
-        <DataTemplate DataType="{x:Type m:EditorPane}">
-            <Border Background="{DynamicResource VexSurface}" BorderBrush="{DynamicResource VexBorder}"
-                    BorderThickness="1" Margin="3" CornerRadius="9">
-                <Grid local:RoundedClip.Radius="8">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="28"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <Border Grid.Row="0" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,0,0,1"
-                            MouseLeftButtonDown="PaneTitleBar_MouseLeftButtonDown">
-                        <Border.Style>
-                            <Style TargetType="Border">
-                                <Setter Property="Background" Value="{DynamicResource VexPaneTitleBar}"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsFocused}" Value="True">
-                                        <Setter Property="Background" Value="{DynamicResource VexPaneTitleBarFocused}"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Border.Style>
-                        <DockPanel LastChildFill="True">
-                            <StackPanel x:Name="EditorActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
-                                        Opacity="0">
-                                <Button Style="{StaticResource PaneTitleButton}" ToolTip="Focus this pane" Click="PaneFocus_Click">
-                                    <Path Data="M9.79,12.79 C10.18,12.4 10.82,12.4 11.21,12.79 C11.57,13.15 11.6,13.72 11.29,14.11 L11.21,14.21 L6.41,19 L9,19 C9.55,19 10,19.45 10,20 C10,20.51 9.61,20.94 9.12,20.99 L9,21 L4,21 C3.49,21 3.06,20.61 3.01,20.12 L3,20 L3,15 C3,14.45 3.45,14 4,14 C4.51,14 4.94,14.39 4.99,14.88 L5,15 L5,17.59 L9.79,12.79 Z M20,3 C20.51,3 20.94,3.39 20.99,3.88 L21,4 L21,9 C21,9.55 20.55,10 20,10 C19.49,10 19.06,9.61 19.01,9.12 L19,9 L19,6.41 L14.21,11.21 C13.82,11.6 13.18,11.6 12.79,11.21 C12.43,10.85 12.4,10.28 12.71,9.89 L12.79,9.79 L17.59,5 L15,5 C14.45,5 14,4.55 14,4 C14,3.49 14.39,3.06 14.88,3.01 L15,3 L20,3 Z"
-                                          Fill="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
-                                          Width="13" Height="13" Stretch="Uniform"/>
-                                </Button>
-                                <Button Style="{StaticResource PaneTitleButton}" ToolTip="Close Pane (Ctrl+Shift+W)" Click="PaneClose_Click">
-                                    <Path Data="M 3,3 L 11,11 M 11,3 L 3,11" Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
-                                </Button>
-                            </StackPanel>
-                            <DockPanel LastChildFill="True" VerticalAlignment="Center" Margin="9,0,0,0">
-                                <Ellipse Width="6" Height="6" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{DynamicResource VexTextDim}" Opacity="0.5"/>
-                                <Path Data="M 2,1 H 9 L 12,4 V 13 H 2 Z M 9,1 V 4 H 12" Stroke="{DynamicResource VexText}" StrokeThickness="1.1" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center" Stretch="Uniform" Fill="Transparent"/>
-                                <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{DynamicResource VexText}"
-                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"/>
-                            </DockPanel>
-                        </DockPanel>
-                    </Border>
-                    <ContentPresenter Grid.Row="1" Content="{Binding View}"/>
-                </Grid>
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsFocused}" Value="True">
-                                <Setter Property="BorderBrush" Value="{DynamicResource VexFocusBorder}"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-            </Border>
-            <DataTemplate.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Trigger.EnterActions>
-                        <BeginStoryboard>
-                            <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="EditorActionButtons" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
-                                    <DoubleAnimation.EasingFunction>
-                                        <QuadraticEase EasingMode="EaseOut"/>
-                                    </DoubleAnimation.EasingFunction>
-                                </DoubleAnimation>
-                            </Storyboard>
-                        </BeginStoryboard>
-                    </Trigger.EnterActions>
-                    <Trigger.ExitActions>
-                        <BeginStoryboard>
-                            <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="EditorActionButtons" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
-                                    <DoubleAnimation.EasingFunction>
-                                        <QuadraticEase EasingMode="EaseOut"/>
-                                    </DoubleAnimation.EasingFunction>
-                                </DoubleAnimation>
-                            </Storyboard>
-                        </BeginStoryboard>
-                    </Trigger.ExitActions>
-                </Trigger>
-            </DataTemplate.Triggers>
-        </DataTemplate>
         <DataTemplate DataType="{x:Type m:SplitPane}">
             <local:SplitPaneView Pane="{Binding}"/>
         </DataTemplate>
@@ -470,7 +391,7 @@
                        HorizontalOffset="0"
                        AllowsTransparency="True"
                        StaysOpen="False"
-                       PopupAnimation="Fade"
+                       PopupAnimation="None"
                        Opened="ProjectPickerPopup_Opened"
                        Closed="ProjectPickerPopup_Closed">
                     <Border Background="{StaticResource VexSurface}"

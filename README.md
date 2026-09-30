@@ -1,6 +1,6 @@
 # Vex
 
-Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, split panes, and a built-in editor.
+Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, and split panes.
 
 ![Vex on Windows in dark appearance, with the sidebar open and a terminal running](web/public/shots/vex-dark.png)
 
@@ -10,7 +10,6 @@ Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, split p
 - Shells: auto-detects PowerShell 7, Nushell, Windows PowerShell, cmd, Git Bash, WSL; plus custom shells (program + args) in Settings.
 - Tabs & panes: split right/down, focus mode, drag reorder, custom titles, tab peek preview, pane state indicators.
 - Workspace: multi-project workspace switching, git branch detection, session restore (projects, tabs, splits, focus).
-- Editor: AvalonEdit, lazy file load, dark/light syntax themes, dirty indicator, `Ctrl+S` to save.
 - Themes: Dark/Light appearance (follows OS), 11 built-in terminal themes + custom theme editor, live picker.
 
 ## Shortcuts
@@ -23,7 +22,6 @@ Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, split p
 | New tab / close | `Ctrl+Shift+T` / `Ctrl+Shift+W` |
 | Next / prev tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Split right / down | `Ctrl+Shift+R` / `Ctrl+Shift+D` |
-| Save file (editor) | `Ctrl+S` |
 
 Plain `Ctrl+<key>` goes to the terminal (TUI apps keep their own bindings). The
 full list, including copy, paste, selection, and scroll keys, is in
@@ -54,7 +52,7 @@ Both are built by `windows/build-installer.ps1`.
 ```text
 windows/
   Vex.slnx            solution
-  Vex.App/            WPF shell: window, tabs, splits, editor, overlays
+  Vex.App/            WPF shell: window, tabs, splits, overlays
   Vex.Terminal/       ConPTY process lifecycle
   Vex.Libghostty/     libghostty-vt wrapper + WPF rendering
   Vex.Setup/          WiX installer
@@ -88,7 +86,7 @@ Both land in `windows/publish/`, named after the `<Version>` in
 ## Third-party components
 
 Vex bundles and depends on third-party software, including Ghostty's
-`ghostty-vt` and AvalonEdit. See
+`ghostty-vt`. See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## License

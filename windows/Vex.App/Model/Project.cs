@@ -232,26 +232,6 @@ public sealed class Project : ObservableObject, IDisposable
         return tab;
     }
 
-    public void OpenFile(string filePath)
-    {
-        var existingTab = Tabs.FirstOrDefault(t => t.ActiveLeaf is EditorPane ep && ep.FilePath == filePath);
-        if (existingTab != null)
-        {
-            SelectedTab = existingTab;
-            return;
-        }
-
-        if (!CanCreateTab)
-            return;
-
-        var fileName = System.IO.Path.GetFileName(filePath);
-        var editorPane = new EditorPane(filePath);
-        var tab = new WorkspaceTab(fileName, WorkingDirectory, editorPane, hasCustomTitle: false);
-        WireTabEvents(tab);
-        Tabs.Add(tab);
-        SelectedTab = tab;
-    }
-
     /// <summary>Moves a tab to a new position in the tab bar.</summary>
     public void MoveTab(WorkspaceTab tab, int newIndex)
     {

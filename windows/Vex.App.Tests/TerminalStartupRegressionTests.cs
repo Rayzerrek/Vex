@@ -1,4 +1,8 @@
 using System.Diagnostics;
+using System.Reflection;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Threading;
 using System.Text;
 using Vex.App.Terminal.Native;
 using Vex.Libghostty;
@@ -7,8 +11,27 @@ using Xunit;
 
 namespace Vex.App.Tests;
 
+[Collection("CustomTheme")]
 public class TerminalStartupRegressionTests
 {
+    [Theory]
+    [InlineData("cmd")]
+    [InlineData("gitbash")]
+    [InlineData("wsl")]
+    public void DetectedBuiltInShell_ResolvesItsDeclaredProgramAndArguments(string shellId)
+    {
+        var declared = Model.ShellRegistry.Detected().SingleOrDefault(shell => shell.Id == shellId);
+        var resolved = Model.ShellRegistry.Resolve(shellId);
+        if (declared is null)
+        {
+            Assert.Null(resolved);
+            return;
+        }
+        var actual = Assert.IsType<(string Program, string Arguments)>(resolved);
+        Assert.Equal(declared.Program, actual.Program);
+        Assert.Equal(declared.Arguments, actual.Arguments);
+    }
+
     [Fact]
     public void Prewarmer_ConsecutiveTakesHaveReplacementSessions()
     {
@@ -140,6 +163,117 @@ public class TerminalStartupRegressionTests
         var result = session.Resize(120, 40);
         Assert.True(result);
         Assert.False(session.LastResizeFailed);
+    }
+
+    [Fact]
+    public void NativeTerminalControl_ColdStart_ExecutesTextEnteredBeforeDispatcherPump()
+    {
+        TerminalSessionPrewarmer.Dispose();
+        var originalShellId = Model.AppSettings.Instance.ShellId;
+        Model.AppSettings.Instance.ShellId = "cmd";
+        Exception? threadEx = null;
+        var thread = new Thread(() =>
+        {
+            NativeTerminalControl? control = null;
+            Window? window = null;
+            DispatcherTimer? timer = null;
+            try
+            {
+                control = new NativeTerminalControl(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                var marker = "VEX_BUFFERED_żółw_" + Guid.NewGuid().ToString("N");
+                var keyboard = InputManager.Current.PrimaryKeyboardDevice;
+                foreach (var text in new[] { "@echo VEX_BU^FFERED_", marker["VEX_BUFFERED_".Length..] })
+                {
+                    var composition = new TextComposition(InputManager.Current, control, text);
+                    control.RaiseEvent(new TextCompositionEventArgs(keyboard, composition)
+                    {
+                        RoutedEvent = TextCompositionManager.TextInputEvent,
+                    });
+                }
+                var field = typeof(NativeTerminalControl).GetField("_terminal", BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.NotNull(field);
+                var terminal = Assert.IsType<GhosttyTerminal>(field.GetValue(control));
+                window = new Window { Content = control, Width = 800, Height = 500, ShowActivated = false };
+                window.Show();
+                var source = PresentationSource.FromVisual(window);
+                Assert.NotNull(source);
+                control.RaiseEvent(new KeyEventArgs(keyboard, source, Environment.TickCount, Key.Enter)
+                {
+                    RoutedEvent = Keyboard.KeyDownEvent,
+                });
+                control.RaiseEvent(new KeyEventArgs(keyboard, source, Environment.TickCount, Key.Enter)
+                {
+                    RoutedEvent = Keyboard.KeyUpEvent,
+                });
+                var frame = new DispatcherFrame();
+                var watch = Stopwatch.StartNew();
+                var executed = false;
+                timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+                timer.Tick += (_, _) =>
+                {
+                    executed = string.Concat(terminal.FrameRows.SelectMany(row => row.Cells).Select(cell => cell.Text))
+                        .Contains(marker, StringComparison.Ordinal);
+                    if (executed || watch.Elapsed > TimeSpan.FromSeconds(8))
+                        frame.Continue = false;
+                };
+                timer.Start();
+                Dispatcher.PushFrame(frame);
+                Assert.True(executed, "Text entered during cold startup did not execute; echoed input cannot match the marker.");
+            }
+            catch (Exception ex)
+            {
+                threadEx = ex;
+            }
+            finally
+            {
+                timer?.Stop();
+                control?.Dispose();
+                window?.Close();
+            }
+        });
+        try
+        {
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            Assert.True(thread.Join(15000), "Buffered startup input test did not finish.");
+            Assert.Null(threadEx);
+        }
+        finally
+        {
+            Model.AppSettings.Instance.ShellId = originalShellId;
+            Model.AppSettings.Instance.Flush();
+        }
+    }
+
+    [Fact]
+    public void NativeTerminalControl_ColdStart_PublishesSessionWithoutDispatcherPump()
+    {
+        TerminalSessionPrewarmer.Dispose();
+        Exception? threadEx = null;
+        var thread = new Thread(() =>
+        {
+            NativeTerminalControl? control = null;
+            try
+            {
+                control = new NativeTerminalControl(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                // Startup queries must have a response destination while WPF
+                // is still building the window and cannot pump its dispatcher.
+                Assert.True(SpinWait.SpinUntil(() => control.ProcessId is not null, 5000),
+                    "Cold session publication waited for the UI dispatcher.");
+            }
+            catch (Exception ex)
+            {
+                threadEx = ex;
+            }
+            finally
+            {
+                control?.Dispose();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(10000), "Cold session startup/dispose did not finish.");
+        Assert.Null(threadEx);
     }
 
     [Fact]

@@ -10,7 +10,7 @@ public static class SessionStore
     private static readonly string SessionPath = Path.Combine(AppProfile.DirectoryPath, "session.json");
 
     /// <summary>The workspace this process loaded at startup; app-wide
-    /// services (e.g. appearance flips re-tinting open editors) walk live
+    /// services (e.g. icon refreshes) walk live
     /// panes through it instead of plumb­ing references through every view.</summary>
     public static Workspace Current { get; internal set; } = new();
 
@@ -119,7 +119,7 @@ public static class SessionStore
         }
     }
 
-    private static SessionSnapshot Capture(Workspace workspace)
+    internal static SessionSnapshot Capture(Workspace workspace)
     {
         var session = new SessionSnapshot
         {
@@ -162,7 +162,6 @@ public static class SessionStore
     private static PaneSnapshot CapturePane(PaneNode node) => node switch
     {
         TerminalPane leaf => new TerminalPaneSnapshot { IsFocused = leaf.IsFocused },
-        EditorPane leaf => new EditorPaneSnapshot { FilePath = leaf.FilePath, IsFocused = leaf.IsFocused },
         SplitPane split => new SplitPaneSnapshot
         {
             Orientation = split.Orientation == Orientation.Horizontal ? "Horizontal" : "Vertical",
@@ -203,7 +202,7 @@ public static class SessionStore
         {
             Ratio = split.Ratio,
         },
-        EditorPaneSnapshot editor => new EditorPane(editor.FilePath) { IsFocused = editor.IsFocused },
+        LegacyEditorPaneSnapshot editor => new TerminalPane(workingDirectory) { IsFocused = editor.IsFocused },
         TerminalPaneSnapshot terminal => new TerminalPane(workingDirectory) { IsFocused = terminal.IsFocused },
         _ => new TerminalPane(workingDirectory),
     };

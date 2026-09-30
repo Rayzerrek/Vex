@@ -338,12 +338,6 @@ public sealed partial class MainWindow : Window
                 ToggleProjectPicker();
                 e.Handled = true;
                 break;
-            case WorkspaceShortcut.SaveFile:
-                if (SaveCurrentFile())
-                {
-                    e.Handled = true;
-                }
-                break;
         }
     }
 
@@ -478,7 +472,6 @@ public sealed partial class MainWindow : Window
         else if (modifiers == System.Windows.Input.ModifierKeys.Control)
         {
             if (key == System.Windows.Input.Key.Tab) { shortcut = WorkspaceShortcut.NextTab; return true; }
-            if (key == System.Windows.Input.Key.S) { shortcut = WorkspaceShortcut.SaveFile; return true; }
         }
 
         shortcut = default;
@@ -612,16 +605,6 @@ public sealed partial class MainWindow : Window
                 return;
             _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
         }, DispatcherPriority.ContextIdle);
-    }
-
-    private bool SaveCurrentFile()
-    {
-        if (_workspace.SelectedProject?.SelectedTab?.ActiveLeaf is EditorPane editorPane)
-        {
-            editorPane.Save();
-            return true;
-        }
-        return false;
     }
 
     private void ShowCommandPalette()
@@ -1295,5 +1278,4 @@ public enum WorkspaceShortcut
     PreviousProject,
     ProjectPicker,
     SwitchProject,
-    SaveFile,
 }

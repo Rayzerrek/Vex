@@ -950,6 +950,10 @@ internal static class RenderSelfTest
             ? "PASS scheduling: input precedes output redraw and final output is applied"
             : "FAIL scheduling: output redraw delays input or final output is missing");
 
+        Report(control, control.SelfTestCursorBlinkModes()
+            ? "PASS cursor blink modes: steady/hidden stop timer, steady stays painted, reveal restarts"
+            : "FAIL cursor blink modes: stale timer or incorrect steady/hidden caret");
+        ParityCheck(control, "cursor-blink-modes");
         Report(control, "done");
     }
 

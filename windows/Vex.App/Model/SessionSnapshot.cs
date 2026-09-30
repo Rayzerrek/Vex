@@ -30,7 +30,7 @@ public sealed class TabSnapshot
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(TerminalPaneSnapshot), "terminal")]
-[JsonDerivedType(typeof(EditorPaneSnapshot), "editor")]
+[JsonDerivedType(typeof(LegacyEditorPaneSnapshot), "editor")]
 [JsonDerivedType(typeof(SplitPaneSnapshot), "split")]
 public class PaneSnapshot
 {
@@ -41,9 +41,9 @@ public sealed class TerminalPaneSnapshot : PaneSnapshot
     public bool IsFocused { get; set; }
 }
 
-public sealed class EditorPaneSnapshot : PaneSnapshot
+/// <summary>Reads old editor leaves so their layout and focus can migrate to terminal panes.</summary>
+public sealed class LegacyEditorPaneSnapshot : PaneSnapshot
 {
-    public string FilePath { get; set; } = "";
     public bool IsFocused { get; set; }
 }
 

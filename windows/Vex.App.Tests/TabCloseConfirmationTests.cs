@@ -39,47 +39,6 @@ public sealed class TabCloseConfirmationTests
     }
 
     [Fact]
-    public void GetCloseInfo_DirtyEditorPane_RequiresConfirmation()
-    {
-        var tempFile = System.IO.Path.GetTempFileName();
-        try
-        {
-            var editor = new EditorPane(tempFile);
-            editor.IsDirty = true;
-
-            var info = TabCloseConfirmation.GetCloseInfo(editor);
-
-            Assert.True(info.NeedsConfirmation);
-            Assert.True(info.IsDirty);
-            Assert.False(info.IsAgent);
-            Assert.Contains(editor.Title, info.Message);
-        }
-        finally
-        {
-            System.IO.File.Delete(tempFile);
-        }
-    }
-
-    [Fact]
-    public void GetCloseInfo_CleanEditorPane_DoesNotRequireConfirmation()
-    {
-        var tempFile = System.IO.Path.GetTempFileName();
-        try
-        {
-            var editor = new EditorPane(tempFile);
-            editor.IsDirty = false;
-
-            var info = TabCloseConfirmation.GetCloseInfo(editor);
-
-            Assert.False(info.NeedsConfirmation);
-        }
-        finally
-        {
-            System.IO.File.Delete(tempFile);
-        }
-    }
-
-    [Fact]
     public void GetCloseInfo_DirtyTerminalPane_RequiresConfirmation()
     {
         var terminal = new TerminalPane(@"C:\work");

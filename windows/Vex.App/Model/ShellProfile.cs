@@ -71,6 +71,17 @@ public static class ShellRegistry
                 var exe = PowerShellPath(shellId == "pwsh");
                 result = exe is null ? null : (exe, "");
                 break;
+            case "cmd":
+                result = (Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"), "");
+                break;
+            case "gitbash":
+                var bashPath = GitBashPath();
+                result = bashPath is null ? null : (bashPath, "--login -i");
+                break;
+            case "wsl":
+                var wslPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe");
+                result = File.Exists(wslPath) ? (wslPath, "") : null;
+                break;
             default:
                 var custom = AppSettings.Instance.CustomShells.FirstOrDefault(p => p.Id == shellId);
                 if (custom is not null && !string.IsNullOrWhiteSpace(custom.Program))
@@ -88,7 +99,7 @@ public static class ShellRegistry
                 break;
         }
 
-        if (result.HasValue && shellId is "nu" or "pwsh" or "powershell")
+        if (result.HasValue && shellId is "nu" or "pwsh" or "powershell" or "cmd" or "gitbash" or "wsl")
         {
             lock (_resolvedCache)
             {
@@ -142,19 +153,27 @@ public static class ShellRegistry
             Path.Combine(system32, "WindowsPowerShell", "v1.0", "powershell.exe"));
         Add("cmd", "Command Prompt", Path.Combine(system32, "cmd.exe"));
 
-        // Git Bash ships in three usual roots depending on installer scope.
-        var localPrograms = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
-        foreach (var root in new[] { programFiles,
-                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                     localPrograms })
-            Add("gitbash", "Git Bash", Path.Combine(root, "Git", "bin", "bash.exe"), "--login -i");
+        Add("gitbash", "Git Bash", GitBashPath(), "--login -i");
 
         Add("wsl", "WSL", Path.Combine(system32, "wsl.exe"));
 
         return found;
     }
 
+    private static string? GitBashPath()
+    {
+        // Detection and startup must agree on the selected installation.
+        var localPrograms = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
+        foreach (var root in new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), localPrograms })
+        {
+            var path = Path.Combine(root, "Git", "bin", "bash.exe");
+            if (File.Exists(path))
+                return path;
+        }
+        return null;
+    }
     private static string? FindOnPath(string fileName)
     {
         var path = Environment.GetEnvironmentVariable("PATH");
