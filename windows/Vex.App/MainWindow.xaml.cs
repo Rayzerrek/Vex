@@ -204,7 +204,7 @@ public sealed partial class MainWindow : Window
         }
 
         WindowBackdrop.Disable(this);
-        Background = (Brush)FindResource("VexBackground");
+        SetResourceReference(BackgroundProperty, "VexBackground");
     }
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)

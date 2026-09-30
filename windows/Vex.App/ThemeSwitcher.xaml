@@ -5,9 +5,9 @@
              xmlns:vex="clr-namespace:Vex.App"
              Visibility="Collapsed">
     <Grid>
-        <Border x:Name="Backdrop" Background="{StaticResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
-        <Border x:Name="Panel" Background="{StaticResource VexSurface}"
-                BorderBrush="{StaticResource VexBorder}"
+        <Border x:Name="Backdrop" Background="{DynamicResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+        <Border x:Name="Panel" Background="{DynamicResource VexSurface}"
+                BorderBrush="{DynamicResource VexBorder}"
                 BorderThickness="1"
                 CornerRadius="12"
                 Width="580"
@@ -30,9 +30,9 @@
                     <Button x:Name="EditToggle" DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
                             Padding="10,4" FontSize="11" Click="EditToggle_Click"
                             Content="Edit"/>
-                    <TextBlock Text="Theme" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource VexText}" VerticalAlignment="Center"/>
+                    <TextBlock Text="Theme" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource VexText}" VerticalAlignment="Center"/>
                 </DockPanel>
-                <TextBlock x:Name="HintText" Text="← → move · Enter keep · Esc revert" FontSize="11" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,14"/>
+                <TextBlock x:Name="HintText" Text="← → move · Enter keep · Esc revert" FontSize="11" Foreground="{DynamicResource VexTextDim}" Margin="0,0,0,14"/>
 
                 <!-- Theme card grid -->
                 <ListBox x:Name="ThemeList"
@@ -69,7 +69,7 @@
                             <StackPanel Width="120" Cursor="Hand" Background="Transparent">
                                 <Grid Width="120" Height="78">
                                     <Border x:Name="ring" CornerRadius="11" BorderThickness="2" BorderBrush="Transparent" Padding="2">
-                                        <Border x:Name="swatch" CornerRadius="9" Background="{Binding Background}" BorderBrush="{StaticResource VexCardBorder}" BorderThickness="1">
+                                        <Border x:Name="swatch" CornerRadius="9" Background="{Binding Background}" BorderBrush="{DynamicResource VexCardBorder}" BorderThickness="1">
                                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,0,10">
                                                 <Ellipse Width="9" Height="9" Fill="{Binding Blue}" Margin="0,0,4,0"/>
                                                 <Ellipse Width="9" Height="9" Fill="{Binding Green}" Margin="0,0,4,0"/>
@@ -82,7 +82,7 @@
                                     </Border>
                                     <Grid x:Name="badge" Width="20" Height="20"
                                           HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Visibility="Collapsed">
-                                        <Ellipse Fill="{StaticResource VexAccentBlue}"/>
+                                        <Ellipse Fill="{DynamicResource VexAccentBlue}"/>
                                         <Path Data="M 3,7 L 6.5,10.5 L 13,3.5"
                                               Stroke="White" StrokeThickness="1.8"
                                               StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
@@ -91,13 +91,13 @@
                                     </Grid>
                                 </Grid>
                                 <TextBlock x:Name="name" Text="{Binding Name}" FontSize="12" Margin="2,6,0,0"
-                                           Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
+                                           Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"/>
                             </StackPanel>
                             <DataTemplate.Triggers>
                                 <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
-                                    <Setter TargetName="ring" Property="BorderBrush" Value="{StaticResource VexAccentBlue}"/>
+                                    <Setter TargetName="ring" Property="BorderBrush" Value="{DynamicResource VexAccentBlue}"/>
                                     <Setter TargetName="badge" Property="Visibility" Value="Visible"/>
-                                    <Setter TargetName="name" Property="Foreground" Value="{StaticResource VexText}"/>
+                                    <Setter TargetName="name" Property="Foreground" Value="{DynamicResource VexText}"/>
                                     <Setter TargetName="name" Property="FontWeight" Value="SemiBold"/>
                                 </DataTrigger>
                             </DataTemplate.Triggers>
@@ -107,7 +107,7 @@
 
                 <!-- Theme editor panel (collapsed by default) -->
                 <Border x:Name="EditorPanel" Visibility="Collapsed" Margin="0,4,0,0"
-                        BorderBrush="{StaticResource VexBorder}" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+                        BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,1,0,0" Padding="0,14,0,0">
                     <StackPanel>
                         <WrapPanel x:Name="ColorGrid" Orientation="Horizontal"/>
 
@@ -116,7 +116,7 @@
                                     Padding="10,4" FontSize="11" Click="ExportButton_Click" Content="Copy JSON"/>
                             <Button x:Name="ResetButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
                                     Padding="10,4" FontSize="11" Margin="0,0,8,0" Click="ResetButton_Click" Content="Reset"/>
-                            <TextBlock Text="Custom" FontSize="12" Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"/>
+                            <TextBlock Text="Custom" FontSize="12" Foreground="{DynamicResource VexTextDim}" VerticalAlignment="Center"/>
                         </DockPanel>
                     </StackPanel>
                 </Border>

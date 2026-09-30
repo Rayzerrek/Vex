@@ -29,9 +29,9 @@
         <!-- ComboBox/CheckBox chrome, used only by this overlay. Lives here
              instead of App.xaml so the startup App.xaml parse stays lean. -->
         <Style TargetType="ComboBox" x:Key="DarkComboBox">
-            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
-            <Setter Property="Background" Value="{StaticResource VexSurface}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource VexBorder}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
+            <Setter Property="Background" Value="{DynamicResource VexSurface}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource VexBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -57,7 +57,7 @@
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter Property="Background" Value="{StaticResource VexHover}"/>
+                                                <Setter Property="Background" Value="{DynamicResource VexHover}"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -66,7 +66,7 @@
                             <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" Margin="10,6,24,6" VerticalAlignment="Center" HorizontalAlignment="Left" />
                             <Popup x:Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
                                 <Grid x:Name="DropDown" SnapsToDevicePixels="True" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
-                                    <Border x:Name="DropDownBorder" Background="{StaticResource VexSurface}" BorderThickness="1" BorderBrush="{StaticResource VexBorder}" CornerRadius="4"/>
+                                    <Border x:Name="DropDownBorder" Background="{DynamicResource VexSurface}" BorderThickness="1" BorderBrush="{DynamicResource VexBorder}" CornerRadius="4"/>
                                     <ScrollViewer Margin="0,4" SnapsToDevicePixels="True">
                                         <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained" />
                                     </ScrollViewer>
@@ -79,7 +79,7 @@
         </Style>
 
         <Style TargetType="ComboBoxItem" x:Key="DarkComboBoxItem">
-            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Padding" Value="10,6"/>
             <Setter Property="Template">
@@ -90,11 +90,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="{StaticResource VexHover}"/>
+                                <Setter TargetName="Border" Property="Background" Value="{DynamicResource VexHover}"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="{StaticResource VexAccent}"/>
-                                <Setter Property="Foreground" Value="{StaticResource VexOnAccent}"/>
+                                <Setter TargetName="Border" Property="Background" Value="{DynamicResource VexAccent}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource VexOnAccent}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -102,19 +102,19 @@
             </Setter>
         </Style>
         <Style TargetType="CheckBox" x:Key="DarkCheckBox">
-            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderBrush" Value="{StaticResource VexBorder}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource VexBorder}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
                         <StackPanel Orientation="Horizontal" Background="Transparent">
                             <Grid Width="16" Height="16" VerticalAlignment="Center">
-                                <Border x:Name="box" Background="{StaticResource VexSurface}"
-                                        BorderBrush="{StaticResource VexBorder}" BorderThickness="1" CornerRadius="3"/>
+                                <Border x:Name="box" Background="{DynamicResource VexSurface}"
+                                        BorderBrush="{DynamicResource VexBorder}" BorderThickness="1" CornerRadius="3"/>
                                 <Path x:Name="check" Data="M 3,8 L 6.5,11.5 L 13,4"
-                                      Stroke="{StaticResource VexText}" StrokeThickness="1.6"
+                                      Stroke="{DynamicResource VexText}" StrokeThickness="1.6"
                                       StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                       Visibility="Collapsed"/>
                             </Grid>
@@ -122,11 +122,11 @@
                         </StackPanel>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource VexAccent}"/>
+                                <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource VexAccent}"/>
                                 <Setter TargetName="check" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource VexAccent}"/>
+                                <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource VexAccent}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -136,7 +136,7 @@
 
         <!-- Sidebar navigation pill. -->
         <Style x:Key="SettingsNavItem" TargetType="RadioButton">
-            <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexTextDim}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Margin" Value="4,1"/>
@@ -153,7 +153,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="pill" Property="Opacity" Value="1"/>
-                                <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
                                 <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
                             </Trigger>
                             <MultiTrigger>
@@ -161,7 +161,7 @@
                                     <Condition Property="IsMouseOver" Value="True"/>
                                     <Condition Property="IsChecked" Value="False"/>
                                 </MultiTrigger.Conditions>
-                                <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
                             </MultiTrigger>
                             <EventTrigger RoutedEvent="MouseEnter">
                                 <BeginStoryboard>
@@ -196,7 +196,7 @@
                     <ControlTemplate TargetType="CheckBox">
                         <Grid Width="42" Height="24" Background="Transparent">
                             <Border x:Name="track" Width="42" Height="24" CornerRadius="12" Background="{StaticResource TrackSurface}"/>
-                            <Ellipse x:Name="thumb" Width="18" Height="18" Fill="{StaticResource VexToggleThumb}"
+                            <Ellipse x:Name="thumb" Width="18" Height="18" Fill="{DynamicResource VexToggleThumb}"
                                      HorizontalAlignment="Left" Margin="3,0,0,0"
                                      RenderTransformOrigin="0.5,0.5">
                                 <Ellipse.RenderTransform>
@@ -238,14 +238,14 @@
         <!-- Single-line input for custom shell rows: field with an accent
              border on keyboard focus so edits read clearly. -->
         <Style x:Key="SettingsInput" TargetType="TextBox">
-            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
-            <Setter Property="Background" Value="{StaticResource VexInput}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
+            <Setter Property="Background" Value="{DynamicResource VexInput}"/>
             <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <!-- An explicit Style replaces the app-level TextBox one, so the
                  caret has to be set here too; VexTextDim left it barely
                  visible against the input surface. -->
-            <Setter Property="CaretBrush" Value="{StaticResource VexText}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource VexText}"/>
             <Setter Property="Padding" Value="6,4"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="FontSize" Value="12"/>
@@ -259,10 +259,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="field" Property="BorderBrush" Value="{StaticResource VexAccentBlue}"/>
+                                <Setter TargetName="field" Property="BorderBrush" Value="{DynamicResource VexAccentBlue}"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="field" Property="BorderBrush" Value="{StaticResource VexTrack}"/>
+                                <Setter TargetName="field" Property="BorderBrush" Value="{DynamicResource VexTrack}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -274,8 +274,8 @@
              confirming a new custom shell. Rides the same blue→violet
              gradient as the toggle track and theme badges. -->
         <Style x:Key="AccentButton" TargetType="Button">
-            <Setter Property="Foreground" Value="{StaticResource VexOnAccent}"/>
-            <Setter Property="Background" Value="{StaticResource VexAccent}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexOnAccent}"/>
+            <Setter Property="Background" Value="{DynamicResource VexAccent}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="14,7"/>
             <Setter Property="FontSize" Value="12"/>
@@ -291,7 +291,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="bg" Property="Opacity" Value="0.35"/>
-                                <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource VexTextDim}"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="bg" Property="Opacity" Value="0.86"/>
@@ -329,7 +329,7 @@
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
                                                 <Grid>
-                                                    <Ellipse x:Name="knob" Fill="{StaticResource VexToggleThumb}"/>
+                                                    <Ellipse x:Name="knob" Fill="{DynamicResource VexToggleThumb}"/>
                                                     <Ellipse x:Name="halo" Fill="#338B939E" Opacity="0" RenderTransformOrigin="0.5,0.5">
                                                         <Ellipse.RenderTransform>
                                                             <ScaleTransform ScaleX="0.7" ScaleY="0.7"/>
@@ -368,18 +368,18 @@
         <Style x:Key="SettingsSectionTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexTextDim}"/>
             <Setter Property="Margin" Value="2,0,0,8"/>
         </Style>
 
         <Style x:Key="RowTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
         </Style>
 
         <Style x:Key="RowDesc" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11"/>
-            <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexTextDim}"/>
             <Setter Property="Margin" Value="0,1,0,0"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
         </Style>
@@ -387,19 +387,19 @@
         <Style x:Key="PageTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="20"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
         </Style>
 
         <Style x:Key="PageSubtitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexTextDim}"/>
             <Setter Property="Margin" Value="0,4,0,22"/>
         </Style>
     </UserControl.Resources>
 
     <Grid PreviewKeyDown="Overlay_PreviewKeyDown">
         <!-- Dimmed backdrop -->
-        <Border x:Name="Backdrop" Background="{StaticResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+        <Border x:Name="Backdrop" Background="{DynamicResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
 
         <!-- Centered panel -->
         <Border x:Name="Panel"
@@ -432,38 +432,38 @@
                 <Border Grid.Column="0" Background="{StaticResource SidebarSurface}" CornerRadius="13,0,0,13">
                     <DockPanel Margin="0,10,0,12">
                         <StackPanel DockPanel.Dock="Top" Margin="12,6,12,12">
-                            <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource VexText}"/>
+                            <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource VexText}"/>
                         </StackPanel>
 
                         <StackPanel DockPanel.Dock="Bottom" Margin="12,0">
-                            <TextBlock x:Name="SidebarVersionText" FontSize="11" Foreground="{StaticResource VexTextDim}"/>
+                            <TextBlock x:Name="SidebarVersionText" FontSize="11" Foreground="{DynamicResource VexTextDim}"/>
                         </StackPanel>
 
                         <StackPanel>
                             <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="general" IsChecked="True" Checked="Nav_Checked">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource VexTextDim}"/>
+                                    <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource VexTextDim}"/>
                                     <TextBlock Text="General" FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
 
                             <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="appearance" Checked="Nav_Checked">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE790;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource VexTextDim}"/>
+                                    <TextBlock Text="&#xE790;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource VexTextDim}"/>
                                     <TextBlock Text="Appearance" FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
 
                             <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="terminal" Checked="Nav_Checked">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource VexTextDim}"/>
+                                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource VexTextDim}"/>
                                     <TextBlock Text="Terminal" FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
 
                             <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="about" Checked="Nav_Checked">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource VexTextDim}"/>
+                                    <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource VexTextDim}"/>
                                     <TextBlock Text="About" FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
@@ -524,7 +524,7 @@
                                                                 <ColumnDefinition Width="Auto"/>
                                                             </Grid.ColumnDefinitions>
                                                             <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="15"
-                                                                       Foreground="{StaticResource VexTextDim}" Margin="4,0,12,0"
+                                                                       Foreground="{DynamicResource VexTextDim}" Margin="4,0,12,0"
                                                                        VerticalAlignment="Center"/>
                                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                                 <TextBlock Text="{Binding Name}" Style="{StaticResource RowTitle}"
@@ -591,7 +591,7 @@
                                                              ToolTip="Optional command-line arguments"/>
                                                 </Grid>
                                                 <TextBlock x:Name="CustomShellFormHint" Style="{StaticResource RowDesc}"
-                                                           Foreground="{StaticResource VexTextDim}" Margin="0,0,0,10" Visibility="Collapsed"/>
+                                                           Foreground="{DynamicResource VexTextDim}" Margin="0,0,0,10" Visibility="Collapsed"/>
                                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                                     <Button Style="{StaticResource GhostButton}" Content="Cancel"
                                                             Click="CustomShellCancel_Click" Margin="0,0,8,0"/>
@@ -606,9 +606,9 @@
                                                     ToolTip="Add a custom shell">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                                               Foreground="{StaticResource VexText}" VerticalAlignment="Center"/>
+                                                               Foreground="{DynamicResource VexText}" VerticalAlignment="Center"/>
                                                     <TextBlock Text="Add shell" FontSize="12" Margin="6,0,0,0"
-                                                               Foreground="{StaticResource VexText}" VerticalAlignment="Center"/>
+                                                               Foreground="{DynamicResource VexText}" VerticalAlignment="Center"/>
                                                 </StackPanel>
                                             </Button>
                                             <TextBlock Text="Launches any program with its arguments in a new pane."
@@ -712,7 +712,7 @@
                                                         </StackPanel.RenderTransform>
                                                         <Grid Width="120" Height="78">
                                                             <Border x:Name="ring" CornerRadius="11" BorderThickness="2" BorderBrush="Transparent" Padding="2">
-                                                                <Border x:Name="swatch" CornerRadius="9" Background="{Binding Background}" BorderBrush="{StaticResource VexCardBorder}" BorderThickness="1">
+                                                                <Border x:Name="swatch" CornerRadius="9" Background="{Binding Background}" BorderBrush="{DynamicResource VexCardBorder}" BorderThickness="1">
                                                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10,0,0,10">
                                                                         <Ellipse Width="9" Height="9" Fill="{Binding Red}" Margin="0,0,4,0"/>
                                                                         <Ellipse Width="9" Height="9" Fill="{Binding Green}" Margin="0,0,4,0"/>
@@ -725,7 +725,7 @@
                                                             </Border>
                                                             <Grid x:Name="badge" Width="20" Height="20"
                                                                   HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Visibility="Collapsed">
-                                                                <Ellipse Fill="{StaticResource VexAccentBlue}"/>
+                                                                <Ellipse Fill="{DynamicResource VexAccentBlue}"/>
                                                                 <Path Data="M 3,7 L 6.5,10.5 L 13,3.5"
                                                                       Stroke="White" StrokeThickness="1.8"
                                                                       StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
@@ -734,13 +734,13 @@
                                                             </Grid>
                                                         </Grid>
                                                         <TextBlock x:Name="name" Text="{Binding Name}" FontSize="12" Margin="2,6,0,0"
-                                                                   Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
+                                                                   Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"/>
                                                     </StackPanel>
                                                     <DataTemplate.Triggers>
                                                         <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
-                                                            <Setter TargetName="ring" Property="BorderBrush" Value="{StaticResource VexAccentBlue}"/>
+                                                            <Setter TargetName="ring" Property="BorderBrush" Value="{DynamicResource VexAccentBlue}"/>
                                                             <Setter TargetName="badge" Property="Visibility" Value="Visible"/>
-                                                            <Setter TargetName="name" Property="Foreground" Value="{StaticResource VexText}"/>
+                                                            <Setter TargetName="name" Property="Foreground" Value="{DynamicResource VexText}"/>
                                                             <Setter TargetName="name" Property="FontWeight" Value="SemiBold"/>
                                                         </DataTrigger>
                                                         <EventTrigger RoutedEvent="MouseEnter">
@@ -821,7 +821,7 @@
                                                         VerticalAlignment="Center"/>
                                                 <Border Grid.Column="1" Background="{StaticResource TrackSurface}" CornerRadius="6"
                                                         MinWidth="34" Height="24" Margin="12,0,0,0" Padding="8,0">
-                                                    <TextBlock Text="{Binding Value, ElementName=FontSizeSlider, StringFormat=0}" FontSize="12" Foreground="{StaticResource VexText}"
+                                                    <TextBlock Text="{Binding Value, ElementName=FontSizeSlider, StringFormat=0}" FontSize="12" Foreground="{DynamicResource VexText}"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                 </Border>
                                             </Grid>
@@ -857,11 +857,11 @@
                                     <StackPanel HorizontalAlignment="Center" Margin="0,8">
                                         <Image Source="/Assets/app-5.png" Width="84" Height="84" HorizontalAlignment="Center"
                                                RenderOptions.BitmapScalingMode="HighQuality"/>
-                                        <TextBlock Text="Vex" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource VexText}"
+                                        <TextBlock Text="Vex" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource VexText}"
                                                    HorizontalAlignment="Center" Margin="0,16,0,4"/>
-                                        <TextBlock x:Name="AboutVersionText" FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
+                                        <TextBlock x:Name="AboutVersionText" FontSize="12" Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"/>
                                         <TextBlock Text="Tabs and split panes over ConPTY sessions."
-                                                   FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"
+                                                   FontSize="12" Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"
                                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,0" MaxWidth="340"/>
                                     </StackPanel>
                                 </Border>
@@ -873,7 +873,7 @@
                 <!-- Close button -->
                 <Button Style="{StaticResource GhostButton}" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top"
                         Margin="0,12,12,0" Width="30" Height="30" Padding="0" Click="CloseButton_Click" ToolTip="Close Settings">
-                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{StaticResource VexTextDim}"/>
+                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource VexTextDim}"/>
                 </Button>
             </Grid>
         </Border>

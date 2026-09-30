@@ -15,6 +15,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="..\Vex.App\*.xaml" Link="ThemeXaml\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Vex.App\Vex.App.csproj" />
   </ItemGroup>
 

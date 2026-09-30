@@ -5,11 +5,11 @@
              Visibility="Collapsed">
     <Grid>
         <!-- Backdrop Scrim -->
-        <Border x:Name="Backdrop" Background="{StaticResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+        <Border x:Name="Backdrop" Background="{DynamicResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
 
         <!-- Main Card Panel -->
-        <Border x:Name="Panel" Background="{StaticResource VexSurface}"
-                BorderBrush="{StaticResource VexBorder}"
+        <Border x:Name="Panel" Background="{DynamicResource VexSurface}"
+                BorderBrush="{DynamicResource VexBorder}"
                 BorderThickness="1"
                 CornerRadius="10"
                 Width="450"
@@ -39,19 +39,19 @@
                     <Grid Grid.Column="0" VerticalAlignment="Top" Margin="0,3,14,0">
                         <Image x:Name="IconImage" Width="26" Height="26" Stretch="Uniform" Visibility="Collapsed"/>
                         <TextBlock x:Name="WarningIcon" Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets"
-                                   FontSize="22" Foreground="{StaticResource VexAccent}"
+                                   FontSize="22" Foreground="{DynamicResource VexAccent}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Grid>
 
                     <!-- Text block -->
                     <StackPanel Grid.Column="1" VerticalAlignment="Top">
                         <TextBlock x:Name="TitleText" Text="Terminate session?"
-                                   Foreground="{StaticResource VexText}"
+                                   Foreground="{DynamicResource VexText}"
                                    FontSize="14" FontWeight="SemiBold"
                                    Margin="0,0,0,4"/>
                         <TextBlock x:Name="MessageText"
                                    Text="An agent is currently running in this tab. Closing will terminate the session."
-                                   Foreground="{StaticResource VexTextDim}"
+                                   Foreground="{DynamicResource VexTextDim}"
                                    FontSize="12" TextWrapping="Wrap"
                                    LineHeight="17"/>
                     </StackPanel>
@@ -59,8 +59,8 @@
 
                 <!-- Workspace Exit List (shown when exiting whole application with active sessions) -->
                 <StackPanel x:Name="ExitListPanel" Visibility="Collapsed" Margin="0,0,0,16">
-                    <TextBlock Text="Exit Vex?" FontSize="14.5" FontWeight="SemiBold" Foreground="{StaticResource VexText}" Margin="0,0,0,4"/>
-                    <TextBlock x:Name="ExitSummaryText" Text="Active applications will be terminated:" FontSize="12" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,10"/>
+                    <TextBlock Text="Exit Vex?" FontSize="14.5" FontWeight="SemiBold" Foreground="{DynamicResource VexText}" Margin="0,0,0,4"/>
+                    <TextBlock x:Name="ExitSummaryText" Text="Active applications will be terminated:" FontSize="12" Foreground="{DynamicResource VexTextDim}" Margin="0,0,0,10"/>
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="220">
                         <ItemsControl x:Name="ExitItemsList">
                             <ItemsControl.ItemTemplate>
@@ -73,11 +73,11 @@
                                         <Image Width="20" Height="20" Margin="0,0,10,0" Source="{Binding IconImage}" VerticalAlignment="Center"
                                                Visibility="{Binding IconVisibility}"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                            <TextBlock Foreground="{StaticResource VexText}" FontWeight="SemiBold" FontSize="12.5"
+                                            <TextBlock Foreground="{DynamicResource VexText}" FontWeight="SemiBold" FontSize="12.5"
                                                        TextTrimming="CharacterEllipsis">
                                                 <Run Text="{Binding AppName}"/>
-                                                <Run Text="  ·  " Foreground="{StaticResource VexTextDim}"/>
-                                                <Run Text="{Binding ProjectName}" Foreground="{StaticResource VexTextDim}" FontWeight="SemiBold"/>
+                                                <Run Text="  ·  " Foreground="{DynamicResource VexTextDim}"/>
+                                                <Run Text="{Binding ProjectName}" Foreground="{DynamicResource VexTextDim}" FontWeight="SemiBold"/>
                                             </TextBlock>
                                         </StackPanel>
                                     </Grid>
@@ -93,9 +93,9 @@
                             Click="Cancel_Click"
                             Padding="14,6" FontSize="12" FontWeight="Medium"
                             Cursor="Hand"
-                            Foreground="{StaticResource VexText}"
-                            Background="{StaticResource VexHover}"
-                            BorderBrush="{StaticResource VexBorder}"
+                            Foreground="{DynamicResource VexText}"
+                            Background="{DynamicResource VexHover}"
+                            BorderBrush="{DynamicResource VexBorder}"
                             BorderThickness="1"
                             Margin="0,0,8,0">
                         <Button.Template>
@@ -108,8 +108,8 @@
                                 </Border>
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter Property="Background" Value="{StaticResource VexPressFill}"/>
-                                        <Setter Property="BorderBrush" Value="{StaticResource VexFocusBorder}"/>
+                                        <Setter Property="Background" Value="{DynamicResource VexPressFill}"/>
+                                        <Setter Property="BorderBrush" Value="{DynamicResource VexFocusBorder}"/>
                                     </Trigger>
                                 </ControlTemplate.Triggers>
                             </ControlTemplate>

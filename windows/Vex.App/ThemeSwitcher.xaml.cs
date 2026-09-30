@@ -169,19 +169,21 @@ public sealed partial class ThemeSwitcher : OverlayControl
             var swatchBorder = new Border
             {
                 Width = 18, Height = 18, CornerRadius = new CornerRadius(4),
-                BorderBrush = (Brush)FindResource("VexBorder"), BorderThickness = new Thickness(1),
+                BorderThickness = new Thickness(1),
                 Background = new SolidColorBrush(FastColor.ParseHex(hex)),
             };
+
+            swatchBorder.SetResourceReference(Border.BorderBrushProperty, "VexBorder");
 
             var hexBox = new TextBox
             {
                 Text = hex, FontSize = 11, Width = 82, Margin = new Thickness(4,0,0,0),
-                Background = (Brush)FindResource("VexSurface"),
-                Foreground = (Brush)FindResource("VexText"),
-                BorderBrush = (Brush)FindResource("VexBorder"),
                 BorderThickness = new Thickness(1), Padding = new Thickness(4,2,4,2),
                 Tag = property, // store the property name for the change handler
             };
+            hexBox.SetResourceReference(Control.BackgroundProperty, "VexSurface");
+            hexBox.SetResourceReference(Control.ForegroundProperty, "VexText");
+            hexBox.SetResourceReference(Control.BorderBrushProperty, "VexBorder");
             hexBox.TextChanged += ColorInput_TextChanged;
             _colorInputs.Add(hexBox);
 
