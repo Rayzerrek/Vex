@@ -473,7 +473,7 @@
         </Style>
 
         <Style TargetType="MenuItem" x:Key="DarkMenuItem">
-            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Padding" Value="12,6"/>
             <Setter Property="Template">
@@ -486,12 +486,12 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/>
-                                <TextBlock Grid.Column="1" Text="{TemplateBinding InputGestureText}" Margin="16,0,0,0" Foreground="{StaticResource VexTextDim}"/>
+                                <TextBlock Grid.Column="1" Text="{TemplateBinding InputGestureText}" Margin="16,0,0,0" Foreground="{DynamicResource VexTextDim}"/>
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="{StaticResource VexHover}"/>
+                                <Setter TargetName="Border" Property="Background" Value="{DynamicResource VexHover}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

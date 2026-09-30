@@ -55,8 +55,8 @@ public sealed partial class SplitPaneView : UserControl
         first.SetBinding(ContentProperty, new Binding(nameof(SplitPane.First)) { Source = pane });
         var second = new ContentPresenter();
         second.SetBinding(ContentProperty, new Binding(nameof(SplitPane.Second)) { Source = pane });
-        var splitterBrush = (Brush)FindResource("VexBorder");
-        var splitter = new GridSplitter { Background = splitterBrush };
+        var splitter = new GridSplitter();
+        splitter.SetResourceReference(BackgroundProperty, "VexBorder");
 
         var ratio = pane.Ratio;
 

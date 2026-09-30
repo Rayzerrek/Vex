@@ -5,9 +5,9 @@
              xmlns:vex="clr-namespace:Vex.App"
              Visibility="Collapsed">
     <Grid>
-        <Border x:Name="Backdrop" Background="{StaticResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
-        <Border x:Name="Panel" Background="{StaticResource VexSurface}"
-                BorderBrush="{StaticResource VexBorder}"
+        <Border x:Name="Backdrop" Background="{DynamicResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
+        <Border x:Name="Panel" Background="{DynamicResource VexSurface}"
+                BorderBrush="{DynamicResource VexBorder}"
                 BorderThickness="1"
                 CornerRadius="12"
                 MaxWidth="900"
@@ -28,8 +28,8 @@
             </Border.Effect>
             <DockPanel Margin="20,18,20,20" LastChildFill="True">
                 <StackPanel DockPanel.Dock="Top">
-                    <TextBlock Text="All tabs" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource VexText}" Margin="0,0,0,4"/>
-                    <TextBlock x:Name="HintText" Text="← → move · Enter activate · Esc close" FontSize="11" Foreground="{StaticResource VexTextDim}" Margin="0,0,0,14"/>
+                    <TextBlock Text="All tabs" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource VexText}" Margin="0,0,0,4"/>
+                    <TextBlock x:Name="HintText" Text="← → move · Enter activate · Esc close" FontSize="11" Foreground="{DynamicResource VexTextDim}" Margin="0,0,0,14"/>
                 </StackPanel>
 
                 <ListBox x:Name="TabList"
@@ -67,7 +67,7 @@
                             <StackPanel Width="250" Cursor="Hand">
                                 <Grid Width="250" Height="153">
                                     <Border x:Name="ring" CornerRadius="10" BorderThickness="2" BorderBrush="Transparent" Padding="2">
-                                        <Border CornerRadius="8" Background="{StaticResource VexBackground}" ClipToBounds="True">
+                                        <Border CornerRadius="8" Background="{DynamicResource VexBackground}" ClipToBounds="True">
                                             <Grid>
                                                 <!-- Tabs that have not been displayed yet use their split layout;
                                                      visited tabs paint their last real rendered frame over it. -->
@@ -83,17 +83,17 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock x:Name="name" Grid.Column="0" Text="{Binding Title}" FontSize="12"
-                                               Foreground="{StaticResource VexTextDim}"
+                                               Foreground="{DynamicResource VexTextDim}"
                                                TextTrimming="CharacterEllipsis"/>
                                     <TextBlock x:Name="count" Grid.Column="1" Text="{Binding PaneCount, StringFormat={}{0} panes}"
-                                               FontSize="10" Foreground="{StaticResource VexTextDim}" Opacity="0.7"
+                                               FontSize="10" Foreground="{DynamicResource VexTextDim}" Opacity="0.7"
                                                Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </Grid>
                             </StackPanel>
                             <DataTemplate.Triggers>
                                 <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
-                                    <Setter TargetName="ring" Property="BorderBrush" Value="{StaticResource VexAccentBlue}"/>
-                                    <Setter TargetName="name" Property="Foreground" Value="{StaticResource VexText}"/>
+                                    <Setter TargetName="ring" Property="BorderBrush" Value="{DynamicResource VexAccentBlue}"/>
+                                    <Setter TargetName="name" Property="Foreground" Value="{DynamicResource VexText}"/>
                                     <Setter TargetName="name" Property="FontWeight" Value="SemiBold"/>
                                 </DataTrigger>
                             </DataTemplate.Triggers>

@@ -52,7 +52,8 @@ public static class ChromePalette
     /// (e.g. through style/template sealing or cross-thread resource promotion).
     /// Mutating an in-place unfrozen brush invalidates all visual consumers without
     /// allocation; replacing a frozen brush avoids InvalidOperationException and
-    /// updates all DynamicResource bindings.</summary>
+    /// updates all DynamicResource bindings. Consumers must use DynamicResource,
+    /// not StaticResource, so they also observe replacements after a theme switch.</summary>
     private static void SyncBrushes(ResourceDictionary res)
     {
         foreach (var (brushKey, colorKey) in BrushColorPairs)

@@ -151,7 +151,7 @@
         <Style x:Key="ProjectPillButtonStyle" TargetType="Button">
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="Padding" Value="7,3,7,3"/>
@@ -170,11 +170,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="pillBorder" Property="Background" Value="{StaticResource VexHover}"/>
-                                <Setter TargetName="pillBorder" Property="BorderBrush" Value="{StaticResource VexBorder}"/>
+                                <Setter TargetName="pillBorder" Property="Background" Value="{DynamicResource VexHover}"/>
+                                <Setter TargetName="pillBorder" Property="BorderBrush" Value="{DynamicResource VexBorder}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="pillBorder" Property="Background" Value="{StaticResource VexPressFill}"/>
+                                <Setter TargetName="pillBorder" Property="Background" Value="{DynamicResource VexPressFill}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -202,7 +202,7 @@
                          these wants me". -->
                     <Ellipse x:Name="AttentionDot" Width="6" Height="6" Margin="0,0,6,0"
                              VerticalAlignment="Center"
-                             Fill="{StaticResource VexAccentBlue}"
+                             Fill="{DynamicResource VexAccentBlue}"
                              ToolTip="Waiting for you">
                         <Ellipse.Style>
                             <Style TargetType="Ellipse">
@@ -212,7 +212,7 @@
                                         <Setter Property="Visibility" Value="Visible"/>
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding ActiveLeaf.State}" Value="{x:Static m:PaneState.Exited}">
-                                        <Setter Property="Fill" Value="{StaticResource VexPaneExited}"/>
+                                        <Setter Property="Fill" Value="{DynamicResource VexPaneExited}"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -233,7 +233,7 @@
                         </Image.Style>
                     </Image>
                     <!-- Terminal glyph shown when no app icon is available -->
-                    <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform">
+                    <Path Data="M 2,2 L 6,5 L 2,8 M 6,8 L 10,8" Stroke="{DynamicResource VexTextDim}" StrokeThickness="1.2" Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center" Stretch="Uniform">
                         <Path.Style>
                             <Style TargetType="Path">
                                 <Setter Property="Visibility" Value="Collapsed"/>
@@ -253,9 +253,9 @@
                 <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="2" Text="{Binding Title}"
                          Visibility="Collapsed" FontSize="14"
                          VerticalAlignment="Center" HorizontalAlignment="Stretch"
-                         Foreground="{StaticResource VexText}"
-                         Background="{StaticResource VexSurface}"
-                         BorderBrush="{StaticResource VexBorder}"
+                         Foreground="{DynamicResource VexText}"
+                         Background="{DynamicResource VexSurface}"
+                         BorderBrush="{DynamicResource VexBorder}"
                          KeyDown="TitleEditBox_KeyDown"
                          LostFocus="TitleEditBox_LostFocus"/>
                 <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource CloseButton}"
@@ -326,14 +326,14 @@
                         <!-- Folder Icon -->
                         <Path Data="M22,19 C22,20.1 21.1,21 20,21 L4,21 C2.9,21 2,20.1 2,19 L2,5 C2,3.9 2.9,3 4,3 L9,3 L11,6 L20,6 C21.1,6 22,6.9 22,8 Z"
                               Stretch="Uniform" Width="13" Height="13"
-                              Fill="{StaticResource VexAccentTranslucent}"
-                              Stroke="{StaticResource VexAccent}" StrokeThickness="1.5"
+                              Fill="{DynamicResource VexAccentTranslucent}"
+                              Stroke="{DynamicResource VexAccent}" StrokeThickness="1.5"
                               StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                               VerticalAlignment="Center" Margin="0,0,6,0"/>
 
                         <!-- Folder Name -->
                         <TextBlock Text="{Binding SelectedProject.Name}"
-                                   Foreground="{StaticResource VexText}"
+                                   Foreground="{DynamicResource VexText}"
                                    FontSize="12" FontWeight="SemiBold"
                                    VerticalAlignment="Center"
                                    MaxWidth="140"
@@ -353,20 +353,20 @@
                             </StackPanel.Style>
 
                             <!-- Dot separator -->
-                            <TextBlock Text="·" Foreground="{StaticResource VexGitBranch}"
+                            <TextBlock Text="·" Foreground="{DynamicResource VexGitBranch}"
                                        FontSize="11" Margin="5,0,5,0" VerticalAlignment="Center"/>
 
                             <!-- Git branch glyph -->
                             <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
                                   Stretch="Uniform" Width="10" Height="12"
-                                  Stroke="{StaticResource VexGitBranch}" StrokeThickness="1.3"
+                                  Stroke="{DynamicResource VexGitBranch}" StrokeThickness="1.3"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                   Fill="Transparent"
                                   VerticalAlignment="Center" Margin="0,0,4,0"/>
 
                             <!-- Branch name -->
                             <TextBlock Text="{Binding SelectedProject.GitBranch}"
-                                       Foreground="{StaticResource VexGitBranch}"
+                                       Foreground="{DynamicResource VexGitBranch}"
                                        FontSize="11" FontWeight="SemiBold"
                                        MaxWidth="110"
                                        TextTrimming="CharacterEllipsis"
@@ -375,7 +375,7 @@
 
                         <!-- Dropdown Caret -->
                         <Path Data="M 1,1 L 4,4 L 7,1"
-                              Stroke="{StaticResource VexTextDim}" StrokeThickness="1.2"
+                              Stroke="{DynamicResource VexTextDim}" StrokeThickness="1.2"
                               StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                               Width="7" Height="4"
                               Stretch="Uniform"
@@ -394,8 +394,8 @@
                        PopupAnimation="None"
                        Opened="ProjectPickerPopup_Opened"
                        Closed="ProjectPickerPopup_Closed">
-                    <Border Background="{StaticResource VexSurface}"
-                            BorderBrush="{StaticResource VexBorder}"
+                    <Border Background="{DynamicResource VexSurface}"
+                            BorderBrush="{DynamicResource VexBorder}"
                             BorderThickness="1"
                             CornerRadius="8"
                             MinWidth="300"
@@ -412,15 +412,15 @@
                             </Grid.RowDefinitions>
 
                             <!-- Header: "PROJECTS [count]" + Add button -->
-                            <Border Grid.Row="0" Padding="14,9,10,7" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,0,0,1">
+                            <Border Grid.Row="0" Padding="14,9,10,7" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,0,0,1">
                                 <DockPanel LastChildFill="False">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="PROJECTS" FontSize="10.5" FontWeight="Bold"
-                                                   Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"/>
-                                        <Border Background="{StaticResource VexHover}" CornerRadius="7" Padding="5,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                                   Foreground="{DynamicResource VexTextDim}" VerticalAlignment="Center"/>
+                                        <Border Background="{DynamicResource VexHover}" CornerRadius="7" Padding="5,1" Margin="6,0,0,0" VerticalAlignment="Center">
                                             <TextBlock Text="{Binding Projects.Count}"
                                                        FontSize="10" FontWeight="SemiBold"
-                                                       Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
+                                                       Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"/>
                                         </Border>
                                     </StackPanel>
                                     <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
@@ -431,7 +431,7 @@
                                                    VerticalAlignment="Center" HorizontalAlignment="Center"/>
                                     </Button>
                                     <TextBlock DockPanel.Dock="Right" Text="Ctrl+Shift+1..9" FontSize="10"
-                                               Foreground="{StaticResource VexTextDim}" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource VexTextDim}" VerticalAlignment="Center"
                                                Margin="0,0,8,0"/>
                                 </DockPanel>
                             </Border>
@@ -460,7 +460,7 @@
                                                             </Grid.ColumnDefinitions>
                                                             <!-- Subtle active indicator bar on the left edge -->
                                                             <Border x:Name="activeBar" Width="3" Height="16" CornerRadius="1.5"
-                                                                    Background="{StaticResource VexAccentBlue}"
+                                                                    Background="{DynamicResource VexAccentBlue}"
                                                                     HorizontalAlignment="Left" VerticalAlignment="Center"
                                                                     Margin="-4,0,4,0" Visibility="Collapsed"/>
                                                             <ContentPresenter Grid.Column="1"/>
@@ -468,12 +468,12 @@
                                                     </Border>
                                                     <ControlTemplate.Triggers>
                                                         <Trigger Property="IsSelected" Value="True">
-                                                            <Setter Property="Background" Value="{StaticResource VexHover}" TargetName="chrome"/>
+                                                            <Setter Property="Background" Value="{DynamicResource VexHover}" TargetName="chrome"/>
                                                             <Setter Property="Visibility" Value="Visible" TargetName="activeBar"/>
                                                             <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
                                                         </Trigger>
                                                         <Trigger Property="IsMouseOver" Value="True">
-                                                            <Setter Property="Background" Value="{StaticResource VexHover}" TargetName="chrome"/>
+                                                            <Setter Property="Background" Value="{DynamicResource VexHover}" TargetName="chrome"/>
                                                         </Trigger>
                                                     </ControlTemplate.Triggers>
                                                 </ControlTemplate>
@@ -494,19 +494,19 @@
                                             <Grid Grid.Column="0" Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center">
                                                 <Path Data="M22,19 C22,20.1 21.1,21 20,21 L4,21 C2.9,21 2,20.1 2,19 L2,5 C2,3.9 2.9,3 4,3 L9,3 L11,6 L20,6 C21.1,6 22,6.9 22,8 Z"
                                                       Stretch="Uniform"
-                                                      Fill="{StaticResource VexAccentTranslucent}"
-                                                      Stroke="{StaticResource VexAccent}" StrokeThickness="1.5"
+                                                      Fill="{DynamicResource VexAccentTranslucent}"
+                                                      Stroke="{DynamicResource VexAccent}" StrokeThickness="1.5"
                                                       StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
                                             </Grid>
 
                                             <!-- Project Name + Branch + Working Directory -->
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}" Foreground="{StaticResource VexText}"
+                                                    <TextBlock Text="{Binding Name}" Foreground="{DynamicResource VexText}"
                                                                FontSize="12.5" FontWeight="SemiBold"
                                                                TextTrimming="CharacterEllipsis"/>
                                                     <!-- Git Branch badge if repo has branch -->
-                                                    <Border Background="{StaticResource VexHover}" CornerRadius="4" Padding="5,1,5,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                                    <Border Background="{DynamicResource VexHover}" CornerRadius="4" Padding="5,1,5,1" Margin="6,0,0,0" VerticalAlignment="Center">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
                                                                 <Setter Property="Visibility" Value="Collapsed"/>
@@ -520,17 +520,17 @@
                                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                             <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
                                                                   Stretch="Uniform" Width="9" Height="11"
-                                                                  Stroke="{StaticResource VexGitBranch}" StrokeThickness="1.2"
+                                                                  Stroke="{DynamicResource VexGitBranch}" StrokeThickness="1.2"
                                                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                                   Fill="Transparent"
                                                                   VerticalAlignment="Center" Margin="0,0,3,0"/>
-                                                            <TextBlock Text="{Binding GitBranch}" Foreground="{StaticResource VexGitBranch}"
+                                                            <TextBlock Text="{Binding GitBranch}" Foreground="{DynamicResource VexGitBranch}"
                                                                        FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="120"/>
                                                         </StackPanel>
                                                     </Border>
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding WorkingDirectory}" FontSize="10.5"
-                                                           Foreground="{StaticResource VexTextDim}"
+                                                           Foreground="{DynamicResource VexTextDim}"
                                                            TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
                                                            ToolTip="{Binding WorkingDirectory}"/>
                                             </StackPanel>
@@ -559,7 +559,7 @@
                             </ListBox>
 
                             <!-- Footer: Open Project Folder action -->
-                            <Border Grid.Row="2" Padding="6,5" BorderBrush="{StaticResource VexBorder}" BorderThickness="0,1,0,0">
+                            <Border Grid.Row="2" Padding="6,5" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,1,0,0">
                                 <Button Style="{StaticResource GhostButton}"
                                         HorizontalContentAlignment="Left"
                                         Padding="8,5"
@@ -567,10 +567,10 @@
                                         Click="ProjectPickerAddFolder_Click">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                                   Foreground="{StaticResource VexAccentBlue}"
+                                                   Foreground="{DynamicResource VexAccentBlue}"
                                                    VerticalAlignment="Center" Margin="0,0,8,0"/>
                                         <TextBlock Text="Open Project Folder..." FontSize="11.5"
-                                                   Foreground="{StaticResource VexText}"
+                                                   Foreground="{DynamicResource VexText}"
                                                    VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
@@ -587,8 +587,8 @@
                        Placement="Bottom"
                        VerticalOffset="6"
                        Closed="TabClosePopup_Closed">
-                    <Border Background="{StaticResource VexSurface}"
-                            BorderBrush="{StaticResource VexBorder}"
+                    <Border Background="{DynamicResource VexSurface}"
+                            BorderBrush="{DynamicResource VexBorder}"
                             BorderThickness="1"
                             CornerRadius="10"
                             Width="320"
@@ -607,19 +607,19 @@
                                 <Grid Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
                                     <Image x:Name="TabClosePopupIcon" Width="22" Height="22" Stretch="Uniform" VerticalAlignment="Center" Visibility="Collapsed"/>
                                     <TextBlock x:Name="TabClosePopupWarning" Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets"
-                                               FontSize="18" Foreground="{StaticResource VexAccent}"
+                                               FontSize="18" Foreground="{DynamicResource VexAccent}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </Grid>
                                 <TextBlock x:Name="TabClosePopupTitle" Grid.Column="1"
                                            Text="Terminate session?"
-                                           Foreground="{StaticResource VexText}"
+                                           Foreground="{DynamicResource VexText}"
                                            FontSize="13" FontWeight="SemiBold"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis"/>
                             </Grid>
                             <TextBlock x:Name="TabClosePopupMessage"
                                        Text="Agent is running in this tab."
-                                       Foreground="{StaticResource VexTextDim}"
+                                       Foreground="{DynamicResource VexTextDim}"
                                        FontSize="12" TextWrapping="Wrap"
                                        LineHeight="17" Margin="0,0,0,14"/>
                             <!-- Action buttons with natural, balanced desktop padding -->
@@ -627,9 +627,9 @@
                                 <Button Content="Cancel" Click="TabClosePopupCancel_Click"
                                         Margin="0,0,8,0" Padding="14,6" FontSize="12" FontWeight="Medium"
                                         Cursor="Hand"
-                                        Foreground="{StaticResource VexText}"
-                                        Background="{StaticResource VexHover}"
-                                        BorderBrush="{StaticResource VexBorder}"
+                                        Foreground="{DynamicResource VexText}"
+                                        Background="{DynamicResource VexHover}"
+                                        BorderBrush="{DynamicResource VexBorder}"
                                         BorderThickness="1">
                                     <Button.Template>
                                         <ControlTemplate TargetType="Button">
@@ -641,8 +641,8 @@
                                             </Border>
                                             <ControlTemplate.Triggers>
                                                 <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter Property="Background" Value="{StaticResource VexPressFill}"/>
-                                                    <Setter Property="BorderBrush" Value="{StaticResource VexFocusBorder}"/>
+                                                    <Setter Property="Background" Value="{DynamicResource VexPressFill}"/>
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource VexFocusBorder}"/>
                                                 </Trigger>
                                             </ControlTemplate.Triggers>
                                         </ControlTemplate>
@@ -702,7 +702,7 @@
                         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                         <Setter Property="Padding" Value="12,0"/>
                         <Setter Property="Margin" Value="2,4"/>
-                        <Setter Property="Foreground" Value="{StaticResource VexTextDim}"/>
+                        <Setter Property="Foreground" Value="{DynamicResource VexTextDim}"/>
                         <Setter Property="MaxWidth" Value="220"/>
                         <!-- Narrow enough that a busy strip keeps every tab
                              (and the new-tab button) on screen. -->
@@ -715,12 +715,12 @@
                                     </Border>
                                     <ControlTemplate.Triggers>
                                         <Trigger Property="IsSelected" Value="True">
-                                            <Setter Property="Background" Value="{StaticResource VexTabSelected}" TargetName="fill"/>
+                                            <Setter Property="Background" Value="{DynamicResource VexTabSelected}" TargetName="fill"/>
                                             <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
-                                            <Setter Property="Foreground" Value="{StaticResource VexText}"/>
+                                            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
                                         </Trigger>
                                         <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="{StaticResource VexTabHover}" TargetName="fill"/>
+                                            <Setter Property="Background" Value="{DynamicResource VexTabHover}" TargetName="fill"/>
                                         </Trigger>
                                     </ControlTemplate.Triggers>
                                 </ControlTemplate>
@@ -738,9 +738,9 @@
             <!-- Insertion marker + drag ghost shown while reordering tabs. -->
             <Canvas x:Name="TabDragCanvas" Grid.Column="1" IsHitTestVisible="False">
                 <Border x:Name="TabDropMarker" Width="2" Height="22"
-                        CornerRadius="1" Background="{StaticResource VexAccent}" Opacity="0"/>
+                        CornerRadius="1" Background="{DynamicResource VexAccent}" Opacity="0"/>
                 <Border x:Name="TabDragGhostHost" CornerRadius="8"
-                        Background="{StaticResource VexTabSelected}"
+                        Background="{DynamicResource VexTabSelected}"
                         Opacity="0" Visibility="Collapsed" IsHitTestVisible="False">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.45" Color="#000000"/>
