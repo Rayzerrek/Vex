@@ -7,7 +7,7 @@ process, with Ghostty's terminal core doing the VT emulation.
 
 ```text
 windows/
-  Vex.App/           WPF shell: window, tabs, splits, editor,
+  Vex.App/           WPF shell: window, tabs, splits,
                      overlays. Owns all UI state.
   Vex.Terminal/      ConPTY process lifecycle: spawn, resize, resize-safe
                      teardown, process tree cleanup.

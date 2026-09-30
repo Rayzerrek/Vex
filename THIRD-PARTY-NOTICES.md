@@ -16,21 +16,10 @@ their own licenses. Full license texts are reproduced below where required.
 Used as the VT stream emulator behind `Vex.Libghostty`. The DLL is checked into
 this repository and redistributed unmodified.
 
-### AvalonEdit syntax highlighting definitions
-
-- **Files:** `windows/Vex.App/Highlighting/*.xshd`
-- **Source:** https://github.com/icsharpcode/AvalonEdit
-- **License:** MIT
-- **Copyright:** Copyright (c) AvalonEdit Contributors
-
-The One Dark and One Light `.xshd` definitions are derived from the samples
-shipped with AvalonEdit and adapted to Vex's editor themes.
-
 ## NuGet dependencies
 
 | Package | License | Used by |
 |---|---|---|
-| AvalonEdit | MIT | `Vex.App` |
 | Microsoft.NET.Test.Sdk | MIT | `Vex.Libghostty.Tests` |
 | xunit, xunit.core, xunit.runner.visualstudio | Apache-2.0 | `Vex.Libghostty.Tests` |
 

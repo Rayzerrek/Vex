@@ -53,6 +53,48 @@ public sealed partial class NativeTerminalControl
         return (bg is SolidColorBrush brush ? brush.Color : (Color?)null, baseColor);
     }
 
+    /// <summary>Checks VT cursor mode changes stop and restart blinking immediately.</summary>
+    internal bool SelfTestCursorBlinkModes()
+    {
+        var cursor = _terminal.Cursor;
+        var blinkSetting = _cursorBlinkSetting;
+        var selfTestCaret = _selfTestCaret;
+        var restoreStyle = cursor.Shape switch
+        {
+            CursorShape.Block => 1,
+            CursorShape.Underline => 3,
+            _ => 5,
+        };
+        if (!cursor.Blinking)
+            restoreStyle++;
+        try
+        {
+            Window.GetWindow(this)?.Activate();
+            Focus();
+            if (!IsKeyboardFocused)
+                return false;
+            _cursorBlinkSetting = true;
+            _selfTestCaret = true;
+            SelfTestFeed("\x1b[?25h\x1b[1 q");
+            var blinking = _terminal.Cursor.Blinking && _blinkTimer.IsEnabled;
+            SelfTestFeed("\x1b[2 q");
+            _caretBlinkVisible = false;
+            DrawCaret();
+            var steady = !_terminal.Cursor.Blinking && !_blinkTimer.IsEnabled && _caretCacheShouldDraw;
+            SelfTestFeed("\x1b[?25l\x1b[1 q");
+            var hidden = !_terminal.Cursor.Visible && !_blinkTimer.IsEnabled && !_caretCacheShouldDraw;
+            SelfTestFeed("\x1b[?25h");
+            return blinking && steady && hidden && _blinkTimer.IsEnabled && _caretCacheShouldDraw;
+        }
+        finally
+        {
+            _cursorBlinkSetting = blinkSetting;
+            _selfTestCaret = selfTestCaret;
+            SelfTestFeed($"\x1b[{restoreStyle} q\x1b[?25{(cursor.Visible ? "h" : "l")}");
+            UpdateBlinkTimer();
+        }
+    }
+
     /// <summary>Checks input precedence over a queued output flush without timing thresholds.</summary>
     internal bool SelfTestInputPrecedesOutputRedraw()
     {

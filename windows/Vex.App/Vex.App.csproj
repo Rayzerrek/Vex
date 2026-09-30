@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <PackageReference Include="Microsoft.Windows.Console.ConPTY" Version="1.24.260710001" />
     <ProjectReference Include="..\Vex.Terminal\Vex.Terminal.csproj" />
     <ProjectReference Include="..\Vex.Libghostty\Vex.Libghostty.csproj" />
@@ -10,11 +9,6 @@
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
     <Resource Include="Assets\app-5.png" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- One Dark syntax-highlighting definitions for AvalonEdit. -->
-    <EmbeddedResource Include="Highlighting\*.xshd" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -33,7 +27,7 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <AssemblyTitle>Vex</AssemblyTitle>
     <Product>Vex</Product>
-    <Description>ConPTY terminal workspace with split panes, file tree, and editor.</Description>
+    <Description>ConPTY terminal workspace with tabs and split panes.</Description>
     <Company>Vex</Company>
     <Authors>Vex</Authors>
     <!-- Single source of truth for the app version. The SDK derives
@@ -72,7 +66,8 @@
        single-file bundle. Microsoft.WindowsDesktop.App unconditionally pulls in Windows Forms,
        System.Data, Active Directory, VB, unused networking/diagnostics, XPS/Printing, and CLR debugging engines
        even though Vex never touches them. Removing them saves over ~55 MB uncompressed.
-       NOTE: System.Configuration.ConfigurationManager and presentation assemblies (Ribbon,
+       NOTE: System.IO.Pipelines is required by .NET 10 JSON serialization.
+       System.Configuration.ConfigurationManager and presentation assemblies (Ribbon,
        WindowsFormsIntegration, PresentationUI) MUST NOT be pruned: WPF loads them dynamically
        at startup via BaseCompatibilityPreferences and Baml2006SchemaContext.EnsureXmlnsAssembliesLoaded. -->
   <Target Name="PruneUnusedSingleFileAssemblies" BeforeTargets="_ComputeFilesToBundle">
@@ -109,7 +104,6 @@
           $([System.String]::Copy('%(Filename)').StartsWith('System.Reflection.Metadata')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Linq.AsyncEnumerable')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Threading.Tasks.Dataflow')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Pipelines')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Text.Encoding.CodePages')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Compression.Brotli')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Compression.ZipFile')) or

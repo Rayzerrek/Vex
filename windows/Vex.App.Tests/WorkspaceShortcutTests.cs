@@ -64,19 +64,6 @@ public sealed class WorkspaceShortcutTests
         Assert.Equal(WorkspaceShortcut.NextTab, shortcut);
     }
 
-    [Fact]
-    public void TryGetWorkspaceShortcut_CtrlS_MapsToSaveFile()
-    {
-        var matched = MainWindow.TryGetWorkspaceShortcut(
-            ModifierKeys.Control,
-            Key.S,
-            out var shortcut,
-            out _);
-
-        Assert.True(matched);
-        Assert.Equal(WorkspaceShortcut.SaveFile, shortcut);
-    }
-
     [Theory]
     [InlineData(Key.W)]
     [InlineData(Key.R)]
@@ -87,11 +74,12 @@ public sealed class WorkspaceShortcutTests
     [InlineData(Key.C)]
     [InlineData(Key.V)]
     [InlineData(Key.X)]
+    [InlineData(Key.S)]
     [InlineData(Key.A)]
     [InlineData(Key.Z)]
     public void TryGetWorkspaceShortcut_PlainCtrl_DoesNotInterceptTuiKeys(Key key)
     {
-        // Plain Ctrl+key (except Ctrl+Tab and Ctrl+S) belongs to the terminal/TUI.
+        // Plain Ctrl+key (except Ctrl+Tab) belongs to the terminal/TUI.
         var matched = MainWindow.TryGetWorkspaceShortcut(
             ModifierKeys.Control,
             key,

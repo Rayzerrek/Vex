@@ -860,7 +860,7 @@
                                         <TextBlock Text="Vex" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource VexText}"
                                                    HorizontalAlignment="Center" Margin="0,16,0,4"/>
                                         <TextBlock x:Name="AboutVersionText" FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"/>
-                                        <TextBlock Text="Split panes, a file tree and an editor over ConPTY sessions."
+                                        <TextBlock Text="Tabs and split panes over ConPTY sessions."
                                                    FontSize="12" Foreground="{StaticResource VexTextDim}" HorizontalAlignment="Center"
                                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,0" MaxWidth="340"/>
                                     </StackPanel>

@@ -42,28 +42,4 @@ public sealed class WorkspaceTabTests
         Assert.Equal(1, layoutChanged);
     }
 
-    [Fact]
-    public void Split_WhenActiveLeafIsEditorPane_CreatesSplitWithNewTerminalLeaf()
-    {
-        var tempFile = System.IO.Path.GetTempFileName();
-        try
-        {
-            var editor = new EditorPane(tempFile);
-            using var tab = new WorkspaceTab("edit", "C:\\work", editor, hasCustomTitle: false);
-            Assert.Same(editor, tab.ActiveLeaf);
-
-            tab.Split(Orientation.Horizontal);
-
-            Assert.Equal(2, tab.PaneCount);
-            var split = Assert.IsType<SplitPane>(tab.DisplayRoot);
-            Assert.Same(editor, split.First);
-            Assert.IsType<TerminalPane>(split.Second);
-            Assert.Same(split.Second, tab.ActiveLeaf);
-        }
-        finally
-        {
-            if (System.IO.File.Exists(tempFile))
-                System.IO.File.Delete(tempFile);
-        }
-    }
 }

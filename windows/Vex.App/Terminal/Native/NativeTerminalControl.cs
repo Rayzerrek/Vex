@@ -421,7 +421,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void UpdateBlinkTimer()
     {
         var cursor = _terminal.Cursor;
-        var blink = _cursorBlinkSetting && cursor.Blinking;
+        var blink = _cursorBlinkSetting && cursor.Blinking && cursor.Visible;
         if (blink && IsKeyboardFocused && IsVisible)
             _blinkTimer.Start();
         else
@@ -678,6 +678,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             }
 
             _terminal.UpdateFrame();
+            UpdateBlinkTimer();
             var dirty = _terminal.FrameDirty;
             _mouseTracking = _terminal.MouseTracking;
             var scrollbar = _terminal.Scrollbar;
@@ -1265,7 +1266,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var hidden = (!_selfTestCaret && _session is null) || !cursor.Visible;
         var row = hidden ? -1 : cursor.Y;
         var col = hidden ? -1 : Math.Min(cursor.X, _cols - 1);
-        var blinkOn = !_cursorBlinkSetting || !IsKeyboardFocused || _caretBlinkVisible;
+        var blinkOn = !_cursorBlinkSetting || !cursor.Blinking || !IsKeyboardFocused || _caretBlinkVisible;
         var style = (int)cursor.Shape;
         // A cursor above the viewport (scrolled-up scrollback) is hidden.
         var shouldDraw = !hidden && blinkOn && row >= 0 && row < _rows;
@@ -1337,6 +1338,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // lock and stops feeding, so the emulator below cannot be freed
         // mid-feed.
         _disposed = true;
+        _pendingSessionInput = null;
         _blinkTimer.Stop();
         _scrollbarAnimTimer.Stop();
         _scrollbarHideTimer.Stop();

@@ -62,6 +62,7 @@ public sealed class TabPeekPreview : ObservableObject
         var label = new TextBlock
         {
             Text = leaf.Title,
+            ToolTip = leaf.Title,
             FontSize = 9,
             Foreground = isActive
                 ? ResourceBrush("VexText")
@@ -70,7 +71,7 @@ public sealed class TabPeekPreview : ObservableObject
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        var panel = new DockPanel { LastChildFill = true };
         panel.Children.Add(dot);
         panel.Children.Add(label);
 

@@ -290,12 +290,12 @@ public sealed partial class NativeTerminalControl
 
     private void PasteClipboard()
     {
-        if (_session is null || !TryGetClipboardText(out var text) || text.Length == 0)
+        if (_disposed || !TryGetClipboardText(out var text) || text.Length == 0)
             return;
         text = text.Replace("\r\n", "\r").Replace("\n", "\r");
         if (_terminal.BracketedPaste)
             text = "\x1b[200~" + text + "\x1b[201~";
-        _session.Write(Encoding.UTF8.GetBytes(text));
+        WriteUserInput(Encoding.UTF8.GetBytes(text));
     }
 
     internal static bool TryGetClipboardText(out string text)

@@ -108,6 +108,11 @@ is not resumed.
 If a recorded project directory no longer exists, Vex drops that project rather
 than opening an empty workspace. To start clean, delete the file.
 
+Older sessions may contain built-in editor panes ("type": "editor").
+They now restore as terminal panes in the project's working directory,
+preserving the split layout and focused pane. The next save records them as
+terminal panes. Referenced files are not opened or modified during migration.
+
 ## Resetting
 
 To return to defaults, close Vex and delete both files:
