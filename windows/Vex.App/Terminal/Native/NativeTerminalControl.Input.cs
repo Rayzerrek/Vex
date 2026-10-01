@@ -134,6 +134,12 @@ public sealed partial class NativeTerminalControl
             return;
         }
 
+        if (key == Key.Back && mods == ModifierKeys.None && TryDeleteKeyboardSelection())
+        {
+            e.Handled = true;
+            return;
+        }
+
         ClearSelection();
 
         // Viewport scroll keybindings (the alternate screen has no scrollback).
@@ -336,6 +342,7 @@ public sealed partial class NativeTerminalControl
         var (col, row) = CellFromPoint(pos);
         ClearLinkHover();
         StopCopyAnimation();
+        _kbSelectionActive = false;
 
         // Ctrl+click on a detected URL opens it in the browser instead of
         // selecting or forwarding the click to the app's mouse mode.
@@ -450,7 +457,7 @@ public sealed partial class NativeTerminalControl
             if (!madeSelection)
                 FinishClickSelection();
             else
-                CopySelection();
+                FinishMouseSelection();
 
             _selectionDragged = false;
             _mouseSelectionOverride = false;
@@ -472,7 +479,7 @@ public sealed partial class NativeTerminalControl
             if (!madeSelection)
                 FinishClickSelection();
             else
-                CopySelection();
+                FinishMouseSelection();
 
             _selectionDragged = false;
         }
@@ -498,7 +505,7 @@ public sealed partial class NativeTerminalControl
             if (!madeSelection)
                 FinishClickSelection();
             else
-                CopySelection();
+                FinishMouseSelection();
         }
 
         _scrollbarDragging = false;

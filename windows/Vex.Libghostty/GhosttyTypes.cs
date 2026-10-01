@@ -1,7 +1,12 @@
 namespace Vex.Libghostty;
 
+/// <summary>Viewport cursor cell and wrap state from the same terminal frame.</summary>
 public readonly record struct CursorState(
-    int X, int Y, bool Visible, bool Blinking, CursorShape Shape);
+    int X, int Y, bool Visible, bool Blinking, CursorShape Shape, bool PendingWrap = false)
+{
+    /// <summary>Keyboard caret boundary; pending wrap places it after the last cell, not inside it.</summary>
+    public int CaretColumn => X + (PendingWrap ? 1 : 0);
+}
 
 /// <summary>
 /// One rendered cell: the grapheme text ("" for empty cells and wide-char

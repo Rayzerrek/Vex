@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -970,23 +971,102 @@ internal static class RenderSelfTest
             ? "PASS selection: scrolled-up drag selects"
             : "FAIL selection: scrolled-up drag failed");
 
-        // Keyboard-style selection: the Shift+Arrow handler replays the full
-        // press-drag-release gesture (ghostty commits only on release) even
-        // though no pointer button exists. The result must be copyable.
-        control.SelfTestFeed("\x1b[2J\x1b[Hkeyboard sel line\r\n");
+        // Rapid repeats must extend by characters, never turn into mouse multi-clicks.
+        control.SelfTestClearSelection();
+        control.SelfTestFeed("\x1b[2J\x1b[Hkeyboard sel line\x1b[H");
         // The scrolled-selection scenario above leaves the viewport up in
         // scrollback; row 0 must be the freshly fed line again.
         control.SelfTestScrollToBottom();
-        control.SelfTestKeyboardSelect(pressCol: 0, pressRow: 0, dragCol: 4, dragRow: 0);
+        for (var i = 0; i < 5; i++)
+        {
+            control.SelfTestKeyboardSelectionKey(Key.Right);
+            Assert(control, control.SelfTestSelectedText() == "keyboard"[..(i + 1)],
+                $"selection: Shift+Right repeat {i + 1} selects exactly {i + 1} characters");
+        }
         var kbSel = control.SelfTestSelectedText();
         var kbLum = CellCornerLum(control, Capture(control), col: 2, row: 0);
         Report(control, $"selection keyboard='{kbSel}' bandLum={kbLum}");
         Report(control, kbSel == "keybo"
-            ? "PASS selection: keyboard press-drag-release selects"
-            : $"FAIL selection: keyboard press-drag-release selected '{kbSel}'");
+            ? "PASS selection: keyboard caret range selects"
+            : $"FAIL selection: keyboard caret range selected '{kbSel}'");
         Report(control, kbLum > 170
             ? "PASS selection: keyboard band painted"
             : $"FAIL selection: keyboard band not painted (lum={kbLum})");
+
+        for (var i = 0; i < 5; i++)
+            control.SelfTestKeyboardSelectionKey(Key.Left);
+        Assert(control, control.SelfTestSelectedText() is null, "selection: returning to anchor clears selection");
+        control.SelfTestKeyboardSelectionKey(Key.Right, byWord: true);
+        Assert(control, control.SelfTestSelectedText() == "keyboard", "selection: word-right stops after word");
+        control.SelfTestKeyboardSelectionKey(Key.Left, byWord: true);
+        Assert(control, control.SelfTestSelectedText() is null, "selection: word-left returns to anchor");
+        control.SelfTestClearSelection();
+        control.SelfTestFeed("\x1b[1;9H");
+        for (var i = 0; i < 5; i++)
+        {
+            control.SelfTestKeyboardSelectionKey(Key.Left);
+            Assert(control, control.SelfTestSelectedText() == "keyboard"[(7 - i)..],
+                $"selection: Shift+Left repeat {i + 1} selects exactly {i + 1} characters");
+        }
+        control.SelfTestClearSelection();
+
+        control.SelfTestFeed("\x1b[2J\x1b[Halpha beta");
+        for (var i = 0; i < 10; i++)
+            control.SelfTestKeyboardSelectionKey(Key.Left);
+        Assert(control, control.SelfTestSelectionBackspace().SequenceEqual(Enumerable.Repeat((byte)0x7f, 10)),
+            "selection: Backspace deletes all selected input, including spaces");
+        Assert(control, control.SelfTestSelectedText() is null, "selection: Backspace clears selection");
+
+        foreach (var inputLength in new[] { control.SelfTestCols - 1, control.SelfTestCols,
+            control.SelfTestCols + 1, control.SelfTestCols * 2, control.SelfTestCols * 2 + 7 })
+        {
+            var longInput = new string('x', inputLength - 1) + "Z";
+            control.SelfTestFeed("\x1b[2J\x1b[H" + longInput);
+            control.SelfTestKeyboardSelectionKey(Key.Left);
+            Assert(control, control.SelfTestSelectedText() == "Z",
+                $"selection: Shift+Left includes the last character of {inputLength}-character input");
+            control.SelfTestKeyboardSelectionKey(Key.Right);
+            Assert(control, control.SelfTestSelectedText() is null,
+                $"selection: returning to anchor clears {inputLength}-character input selection");
+            for (var i = 0; i < inputLength; i++)
+                control.SelfTestKeyboardSelectionKey(Key.Left);
+            Assert(control, control.SelfTestSelectedText() == longInput,
+                $"selection: selects all {inputLength} characters across soft wraps");
+            Assert(control, control.SelfTestSelectionBackspace().SequenceEqual(Enumerable.Repeat((byte)0x7f, inputLength)),
+                $"selection: Backspace deletes all {inputLength} characters across soft wraps");
+        }
+
+        control.SelfTestFeed("\x1b[2J\x1b[H  e\u0301\U0001F9EA  ");
+        for (var i = 0; i < 7; i++)
+            control.SelfTestKeyboardSelectionKey(Key.Left);
+        Assert(control, control.SelfTestSelectionBackspace().Length == 6,
+            "selection: deletion preserves spaces and counts Unicode graphemes, not UTF-16 units");
+
+        control.SelfTestFeed("\x1b[2J\x1b[Houtput\r\ninput");
+        control.SelfTestKeyboardSelectionKey(Key.Up);
+        Assert(control, control.SelfTestSelectionBackspace().Length == 1,
+            "selection: crossing hard newlines keeps ordinary Backspace behavior");
+
+        control.SelfTestFeed("\x1b[2J\x1b[Halpha beta\x1b[1;7H");
+        control.SelfTestKeyboardSelectionKey(Key.Right);
+        Assert(control, control.SelfTestSelectionBackspace().Length == 1,
+            "selection: text beyond the shell cursor is not bulk-deleted");
+
+        var copyOnSelect = AppSettings.Instance.CopyOnSelect;
+        try
+        {
+            AppSettings.Instance.CopyOnSelect = false;
+            control.SelfTestFeed("\x1b[2J\x1b[Hselection stays");
+            control.SelfTestSelect(0, 0, 4, 0);
+            control.SelfTestSelectionMouseUp();
+            Assert(control, control.SelfTestSelectedText() == "selec",
+                "selection: disabling copy on select retains mouse selection on release");
+        }
+        finally
+        {
+            AppSettings.Instance.CopyOnSelect = copyOnSelect;
+            control.SelfTestClearSelection();
+        }
 
         // Mouse input must follow the mode negotiated by the TUI rather than
         // always emitting SGR. These asymmetric cases catch both a hard-coded

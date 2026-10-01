@@ -780,7 +780,7 @@
                         <ScrollViewer x:Name="PageTerminal" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
                             <StackPanel Margin="28,26,28,20">
                                 <TextBlock Text="Terminal" Style="{StaticResource PageTitle}"/>
-                                <TextBlock Text="Fonts and cursor behavior." Style="{StaticResource PageSubtitle}"/>
+                                <TextBlock Text="Fonts, cursor and selection behavior." Style="{StaticResource PageSubtitle}"/>
 
                                 <TextBlock Text="FONT" Style="{StaticResource SettingsSectionTitle}"/>
                                 <Border Style="{StaticResource SettingsCard}">
@@ -842,6 +842,23 @@
                                         </StackPanel>
                                         <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggle}" VerticalAlignment="Center"
                                                   IsChecked="{Binding CursorBlink}"/>
+                                    </Grid>
+                                </Border>
+
+                                <TextBlock Text="SELECTION" Style="{StaticResource SettingsSectionTitle}"/>
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Copy on select" Style="{StaticResource RowTitle}"/>
+                                            <TextBlock Text="Automatically copy mouse selections to the clipboard."
+                                                       Style="{StaticResource RowDesc}"/>
+                                        </StackPanel>
+                                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggle}" VerticalAlignment="Center"
+                                                  IsChecked="{Binding CopyOnSelect}"/>
                                     </Grid>
                                 </Border>
                             </StackPanel>

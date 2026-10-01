@@ -933,7 +933,9 @@ public sealed class GhosttyTerminal : IDisposable
             Check(Native.ghostty_render_state_get(_renderState, RenderStateData.CursorViewportX, (IntPtr)(&cursorX)), "cursor x");
             Check(Native.ghostty_render_state_get(_renderState, RenderStateData.CursorViewportY, (IntPtr)(&cursorY)), "cursor y");
         }
-        Cursor = new CursorState(cursorX, cursorY, cursorVisible != 0, cursorBlink != 0, cursorStyle);
+        var pendingWrap = cursorInViewport != 0
+            && TryGet(TerminalData.CursorPendingWrap, out byte cursorPendingWrap) && cursorPendingWrap != 0;
+        Cursor = new CursorState(cursorX, cursorY, cursorVisible != 0, cursorBlink != 0, cursorStyle, pendingWrap);
 
         // Nothing changed since the last consumed snapshot: keep managed
         // cells as-is. Avoids a full grid P/Invoke walk on caret/UI pumps.
@@ -1140,6 +1142,40 @@ public sealed class GhosttyTerminal : IDisposable
         }
     }
 
+    /// <summary>
+    /// Sets keyboard selection between viewport caret boundaries (columns 0 through
+    /// the grid width). Mouse multi-click history must not affect keyboard selection.
+    /// </summary>
+    public void SetKeyboardSelection(int anchorCol, int anchorRow, int focusCol, int focusRow)
+    {
+        lock (_vtLock)
+        {
+            ClearSelection();
+            anchorCol = Math.Clamp(anchorCol, 0, _cols);
+            focusCol = Math.Clamp(focusCol, 0, _cols);
+            anchorRow = Math.Clamp(anchorRow, 0, _rows - 1);
+            focusRow = Math.Clamp(focusRow, 0, _rows - 1);
+            var start = anchorRow * _cols + anchorCol;
+            var end = focusRow * _cols + focusCol;
+            if (start == end)
+                return;
+            if (start > end)
+                (start, end) = (end, start);
+
+            // Ghostty selects inclusive cells; keyboard carets delimit a half-open range.
+            end--;
+            var startCol = start % _cols;
+            var startRow = start / _cols;
+            var endCol = end % _cols;
+            var endRow = end / _cols;
+            SelectionPress(startCol, startRow, (startCol + 0.2) * _cellWidthPx,
+                (startRow + 0.5) * _cellHeightPx);
+            SelectionDrag(endCol, endRow, (endCol + 0.8) * _cellWidthPx,
+                (endRow + 0.5) * _cellHeightPx);
+            SelectionRelease(endCol, endRow);
+        }
+    }
+
     public unsafe int SelectionPress(int viewportCol, int viewportRow, double xPx, double yPx)
     {
         lock (_vtLock)
@@ -1230,7 +1266,8 @@ public sealed class GhosttyTerminal : IDisposable
         }
     }
 
-    public unsafe string? GetSelectedText()
+    /// <summary>Formats selection text, unwrapping soft wraps; disabling trim preserves spaces for deletion.</summary>
+    public unsafe string? GetSelectedText(bool trim = true)
     {
         lock (_vtLock)
         {
@@ -1239,7 +1276,7 @@ public sealed class GhosttyTerminal : IDisposable
                 size = (nuint)sizeof(Native.GhosttyTerminalSelectionFormatOptions),
                 emit = (int)Native.FormatterFormat.Plain,
                 unwrap = true,
-                trim = true,
+                trim = trim,
                 selection = IntPtr.Zero,
             };
             var result = Native.ghostty_terminal_selection_format_alloc(_terminal, IntPtr.Zero, options, out var ptr, out var len);
