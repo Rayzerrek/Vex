@@ -49,6 +49,8 @@ internal static class RenderSelfTest
     /// grid resizes, each checked for pixels the incremental paint left
     /// stale.</summary>
     public static bool IncrementalMode { get; } = Environment.GetEnvironmentVariable("VEX_SELFTEST_INCR") == "1";
+    private static bool RendererBenchMode { get; } = Environment.GetEnvironmentVariable("VEX_SELFTEST_BENCH") == "1";
+    private static bool _failed;
 
     /// <summary>With VEX_LIVE=1, run the nvim mouse round-trip instead: mouse
     /// tracking must engage from nvim's own output, a press-drag-release must
@@ -92,11 +94,13 @@ internal static class RenderSelfTest
                     catch (Exception e)
                     {
                         Report(control, $"EXCEPTION {e}");
-                        Application.Current.Shutdown();
+                        ShutdownSelfTest();
                     }
                     return;
                 }
-                if (IncrementalMode)
+                if (RendererBenchMode)
+                    RunRendererBench(control);
+                else if (IncrementalMode)
                     RunIncrementalParity(control);
                 else
                     RunCore(control);
@@ -110,7 +114,7 @@ internal static class RenderSelfTest
                 // Self-test runs are disposable: close the app once the
                 // report is written so the caller knows it finished.
                 if (!LiveMode)
-                    Application.Current.Shutdown();
+                    ShutdownSelfTest();
             }
         };
         t.Start();
@@ -175,7 +179,7 @@ internal static class RenderSelfTest
         steps.Enqueue((200, () =>
         {
             Report(control, "stress done");
-            Application.Current.Shutdown();
+            ShutdownSelfTest();
         }));
 
         var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
@@ -251,7 +255,7 @@ internal static class RenderSelfTest
         steps.Enqueue((200, () =>
         {
             Report(control, "live-file done");
-            Application.Current.Shutdown();
+            ShutdownSelfTest();
         }));
 
         var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
@@ -304,6 +308,7 @@ internal static class RenderSelfTest
         catch (Exception e)
         {
             Report(control, $"live setup EXCEPTION {e.GetType().Name}: {e.Message}");
+            ShutdownSelfTest();
             return;
         }
 
@@ -346,7 +351,7 @@ internal static class RenderSelfTest
         steps.Enqueue((200, () =>
         {
             Report(control, "live done");
-            Application.Current.Shutdown();
+            ShutdownSelfTest();
         }));
 
         var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
@@ -400,6 +405,7 @@ internal static class RenderSelfTest
         catch (Exception e)
         {
             Report(control, $"live-mouse setup EXCEPTION {e.GetType().Name}: {e.Message}");
+            ShutdownSelfTest();
             return;
         }
 
@@ -440,7 +446,7 @@ internal static class RenderSelfTest
                 ? "PASS mouse: nvim deleted exactly the mouse selection on d"
                 : "FAIL mouse: selection not deleted exactly by d");
             Report(control, "live-mouse done");
-            Application.Current.Shutdown();
+            ShutdownSelfTest();
         }));
 
         var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
@@ -527,7 +533,7 @@ internal static class RenderSelfTest
         steps.Enqueue((500, () =>
         {
             Report(control, "prompt done");
-            Application.Current.Shutdown();
+            ShutdownSelfTest();
         }));
 
         var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
@@ -585,8 +591,105 @@ internal static class RenderSelfTest
 
     private static void Report(NativeTerminalControl c, string line)
     {
+        if (line.StartsWith("FAIL", StringComparison.Ordinal) || line.Contains("EXCEPTION", StringComparison.Ordinal))
+            _failed = true;
         try { File.AppendAllText(ReportPath!, $"{line}\n"); }
-        catch { }
+        catch { _failed = true; }
+    }
+
+    private static void ShutdownSelfTest() => Application.Current.Shutdown(_failed ? 1 : 0);
+
+    private static void RunRendererBench(NativeTerminalControl control)
+    {
+        control.SelfTestStabilizeCaret();
+        Report(control, $"bench grid={control.SelfTestCols}x{control.SelfTestRows} cell={control.SelfTestCellWidth:F3}x{control.SelfTestCellHeight:F3} dpi={VisualTreeHelper.GetDpi(control).PixelsPerDip} font={AppSettings.Instance.FontFamily} size={AppSettings.Instance.FontSize}");
+        foreach (var (name, text) in new[]
+        {
+            ("ascii", "the quick brown fox jumps over the lazy dog 0123456789 "),
+            ("ansi", "\u001b[31mred\u001b[0m \u001b[32mgreen\u001b[0m \u001b[1;34mbold\u001b[0m "),
+            ("graphemes", "e\u0301 \U0001F9EA tail \U0001F469\u200D\U0001F4BB "),
+        })
+        {
+            var screen = new StringBuilder("\u001b[2J");
+            for (var row = 1; row <= control.SelfTestRows; row++)
+            {
+                screen.Append($"\u001b[{row};1H");
+                for (var repeat = 0; repeat < 3; repeat++)
+                    screen.Append(text);
+            }
+            control.SelfTestFeed(screen.ToString());
+            for (var sample = 0; sample < 3; sample++)
+                Report(control, $"{name} sample={sample} {control.SelfTestBenchRendering(100)}");
+        }
+        Report(control, "done");
+    }
+
+    private static void CheckCopyFeedback(NativeTerminalControl control)
+    {
+        control.SelfTestClearSelection();
+        control.SelfTestFeed("\x1b[2J\x1b[Hprefix first line\r\nsecond line end\x1b[3;1H");
+        var plain = Capture(control);
+        control.SelfTestSelect(7, 0, 5, 1);
+        var selected = Capture(control);
+        control.SelfTestCopyFeedback(0);
+        var initial = Capture(control);
+        DumpPng(control, selected, Path.ChangeExtension(ReportPath!, ".selection.png"));
+        DumpPng(control, initial, Path.ChangeExtension(ReportPath!, ".copy.png"));
+        if (SystemParameters.ClientAreaAnimation)
+        {
+            Assert(control, !PixelsEqual(plain, initial), "copy feedback: selected text remains visible after deselection");
+            Assert(control, CellCornerLum(control, plain, 2, 0) == CellCornerLum(control, initial, 2, 0),
+                "copy feedback: unselected gap outside multiline selection stays untouched");
+            control.SelfTestCopyFeedback(0.5);
+            Assert(control, !PixelsEqual(initial, Capture(control)), "copy feedback: snapshot fades and lifts");
+        }
+        control.SelfTestCopyFeedback(1);
+        Assert(control, PixelsEqual(plain, Capture(control)), "copy feedback: completion restores clean terminal pixels");
+        Report(control, "PASS copy feedback: multiline footprint, fade, clean completion");
+    }
+
+    private static void CheckGlyphGridAlignment(NativeTerminalControl control)
+    {
+        for (var columns = 2; columns <= 12; columns++)
+        {
+            var prefix = new string('.', columns);
+            control.SelfTestFeed($"\u001b[2J\u001b[H{prefix}tail\r\n\u001b[31m{prefix}\u001b[0mtail\r\n\U0001F9EA{new string('.', columns - 2)}tail\u001b[4;1H");
+            var shot = Capture(control);
+            foreach (var (name, row) in new[] { ("color", 1), ("emoji", 2) })
+            {
+                var (shift, best, zero) = BandAlignment(control, shot, 0, row, columns, columns + 4, 3);
+                Report(control, shift == 0
+                    ? $"PASS glyph-grid {name} col={columns}: segment boundary preserves alignment"
+                    : $"FAIL glyph-grid {name} col={columns}: shift={shift} best={best} zero={zero}");
+            }
+        }
+        control.SelfTestFeed("\u001b[2J\u001b[He\u0301\r\n\u00E9\u001b[3;1H");
+        var accent = Capture(control);
+        var (_, accentDifference, _) = BandAlignment(control, accent, 0, 1, 0, 1, 0);
+        Report(control, $"combining accent pixel difference={accentDifference}");
+        Report(control, CellInk(control, accent, 1, 0) > CellInk(control, accent, 1, 1) + 3
+            ? "FAIL combining accent: mark escapes its terminal cell"
+            : "PASS combining accent: mark stays with its base letter");
+        DumpPng(control, accent, Path.ChangeExtension(ReportPath!, ".accent.png"));
+    }
+
+    private static void CheckFontGridAlignment(NativeTerminalControl control)
+    {
+        var originalFamily = AppSettings.Instance.FontFamily;
+        var originalSize = AppSettings.Instance.FontSize;
+        try
+        {
+            foreach (var (family, size) in new[] { ("Consolas", 13.0), ("Global Monospace", 14.0) })
+            {
+                control.SelfTestFontMetrics(family, size);
+                Report(control, $"font-grid family={family} size={size}");
+                CheckGlyphGridAlignment(control);
+            }
+        }
+        finally
+        {
+            control.SelfTestFontMetrics(originalFamily, originalSize);
+        }
     }
 
     private static void RunCore(NativeTerminalControl control)
@@ -660,6 +763,11 @@ internal static class RenderSelfTest
         var (bestShift, diffAtBest, _) = BandAlignment(control, mixedShot, rowA: 0, rowB: 1, colFrom: tCol + 1, colTo: tCol + 4, maxShift: 3);
         Report(control, $"mixed-run tail alignment bestShift={bestShift} diff={diffAtBest}");
         Report(control, bestShift == 0 ? "PASS mixed-run: text after emoji is grid-aligned" : "FAIL mixed-run: fallback drift after emoji");
+        CheckGlyphGridAlignment(control);
+        CheckFontGridAlignment(control);
+        Report(control, control.SelfTestFallbackDpiChange()
+            ? "PASS fallback DPI: retained glyphs match the new monitor scale"
+            : "FAIL fallback DPI: retained glyphs use the previous monitor scale");
 
         // Scroll up two pages and back: the snap-back bitmap must be
         // pixel-identical to the pre-scroll one, otherwise stale rows remain.
@@ -819,6 +927,8 @@ internal static class RenderSelfTest
             ? "PASS selection: band painted"
             : $"FAIL selection: band not painted (lum={selCellLum})");
 
+        CheckCopyFeedback(control);
+
         // Selecting while scrolled up resolves viewport points into
         // scrollback; it must select content, not throw.
         control.SelfTestScroll(-2);
@@ -913,6 +1023,17 @@ internal static class RenderSelfTest
         Report(control, linkLineInk > 0 && plainLineInk == 0
             ? "PASS link: underline painted under url only"
             : "FAIL link: underline wrong");
+
+        control.SelfTestLinkHover(6, 0);
+        var hoveredLinkShot = Capture(control);
+        Assert(control, !PixelsEqual(linkShot, hoveredLinkShot), "link hover: URL visibly highlighted");
+        Assert(control, CellCornerLum(control, linkShot, 1, 0) == CellCornerLum(control, hoveredLinkShot, 1, 0),
+            "link hover: neighboring text unchanged");
+        Assert(control, control.SelfTestLinkPreview(Path.ChangeExtension(ReportPath!, ".link-preview.png")),
+            "link hover: delayed address preview opens");
+        control.SelfTestLinkHover(0, 0);
+        Assert(control, PixelsEqual(linkShot, Capture(control)), "link hover: leaving URL clears feedback");
+        Report(control, "PASS link hover: highlight, delayed preview, clean dismissal");
 
         // Link flood: a screen full of URLs (the worst case for the scan)
         // must stay cheap. The feed+flush wall time over repeated floods is
@@ -1138,6 +1259,7 @@ internal static class RenderSelfTest
     private static void InkGhostCheck(NativeTerminalControl control, string label)
     {
         var shot = Capture(control);
+        var backgroundLum = MinLum(shot);
         var caret = control.SelfTestCaretCell();
         var ghosts = 0;
         for (var row = 0; row < Math.Min(control.SelfTestRows, 24); row++)
@@ -1156,7 +1278,7 @@ internal static class RenderSelfTest
                     continue;
                 if (col + 1 < cells.Length && cells[col + 1].Text.Length > 0)
                     continue;
-                if (!HasInkAt(control, shot, col, row))
+                if (!HasInkAt(control, shot, col, row, backgroundLum))
                     continue;
                 ghosts++;
                 if (ghosts <= 8)
@@ -1519,19 +1641,12 @@ internal static class RenderSelfTest
     }
 
     /// <summary>True when the cell at (col,row) contains any ink.</summary>
-    private static bool HasInkAt(NativeTerminalControl control, byte[] pixels, int col, int row)
+    private static bool HasInkAt(NativeTerminalControl control, byte[] pixels, int col, int row, int? backgroundLum = null)
     {
         var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
         var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
         var height = pixels.Length / (width * 4);
-        var minLum = 765;
-        for (var i = 0; i < pixels.Length; i += 4)
-        {
-            var lum = pixels[i] + pixels[i + 1] + pixels[i + 2];
-            if (lum < minLum)
-                minLum = lum;
-        }
-
+        var minLum = backgroundLum ?? MinLum(pixels);
         var cx = (int)Math.Round((col + 0.5) * control.SelfTestCellWidth * dpi);
         var cy = (int)Math.Round((row + 0.5) * control.SelfTestCellHeight * dpi);
         for (var dy = -2; dy <= 2; dy++)

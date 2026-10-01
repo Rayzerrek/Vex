@@ -1,8 +1,10 @@
 #if DEBUG || VEX_SELFTEST
+using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Vex.Libghostty;
 
@@ -25,6 +27,58 @@ public sealed partial class NativeTerminalControl
     internal int SelfTestRows => _rows;
     internal double SelfTestCellWidth => _cellWidth;
     internal double SelfTestCellHeight => _cellHeight;
+
+    /// <summary>Changes rendering metrics without persisting the user's font settings.</summary>
+    internal void SelfTestFontMetrics(string family, double size)
+    {
+        ApplyTypefaces(family);
+        _fontSize = size;
+        RebuildFontMetrics();
+        FlushRedraw();
+    }
+
+    /// <summary>Checks retained fallback glyphs are rebuilt for a monitor's new DPI.</summary>
+    internal bool SelfTestFallbackDpiChange()
+    {
+        var originalDpi = _pixelsPerDip;
+        var changedDpi = originalDpi * 1.2;
+        SelfTestFeed("\u001b[2J\u001b[He\u0301 \U0001F9EA\u001b[2;1H");
+        try
+        {
+            OnDpiChanged(new DpiScale(originalDpi, originalDpi), new DpiScale(changedDpi, changedDpi));
+            FlushRedraw();
+            var glyphRuns = _fallbackCellDrawings.Values.SelectMany(FallbackGlyphRuns).ToArray();
+            return glyphRuns.Length > 0 && glyphRuns.All(run => Math.Abs(run.PixelsPerDip - changedDpi) < 0.001);
+        }
+        finally
+        {
+            OnDpiChanged(new DpiScale(changedDpi, changedDpi), new DpiScale(originalDpi, originalDpi));
+            FlushRedraw();
+        }
+
+        static IEnumerable<GlyphRun> FallbackGlyphRuns(Drawing drawing)
+        {
+            if (drawing is GlyphRunDrawing { GlyphRun: { } run })
+                yield return run;
+            else if (drawing is DrawingGroup group)
+                foreach (var child in group.Children)
+                    foreach (var childRun in FallbackGlyphRuns(child))
+                        yield return childRun;
+        }
+    }
+
+    /// <summary>Measures forced row rendering on the UI thread, including retained WPF allocations.</summary>
+    internal string SelfTestBenchRendering(int iterations)
+    {
+        for (var warmup = 0; warmup < 10; warmup++)
+            RedrawAll(force: true);
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
+            RedrawAll(force: true);
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+        return FormattableString.Invariant($"render ms/frame={elapsed.TotalMilliseconds / iterations:F3} bytes/frame={(GC.GetAllocatedBytesForCurrentThread() - allocated) / iterations}");
+    }
 
     /// <summary>The visible frame row for a viewport row, or null.</summary>
     internal FrameRow? SelfTestLine(int row)
@@ -349,6 +403,51 @@ public sealed partial class NativeTerminalControl
 
     /// <summary>Plain text of the active selection, or null when there is none.</summary>
     internal string? SelfTestSelectedText() => _terminal.HasSelection ? _terminal.GetSelectedText() : null;
+
+    /// <summary>Clears selection before comparing terminal feedback pixels.</summary>
+    internal void SelfTestClearSelection() => ClearSelection();
+
+    /// <summary>Samples copy feedback without taking ownership of the system clipboard.</summary>
+    internal void SelfTestCopyFeedback(double progress)
+    {
+        if (progress == 0)
+        {
+            StartCopyAnimation();
+            ClearSelection();
+        }
+        else if (progress >= 1)
+            StopCopyAnimation();
+        else
+            DrawCopyAnimation(progress);
+    }
+
+    /// <summary>Drives link hover without moving the user's desktop pointer.</summary>
+    internal void SelfTestLinkHover(int col, int row) => UpdateLinkHover(col, row);
+
+    /// <summary>Checks delayed link preview through WPF layout and captures its popup.</summary>
+    internal bool SelfTestLinkPreview(string path)
+    {
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            frame.Continue = false;
+        };
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        if (_linkToolTip is not { IsOpen: true, ActualWidth: > 0, ActualHeight: > 0 } preview)
+            return false;
+        var dpi = VisualTreeHelper.GetDpi(preview).PixelsPerDip;
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(preview.ActualWidth * dpi),
+            (int)Math.Ceiling(preview.ActualHeight * dpi), 96 * dpi, 96 * dpi, PixelFormats.Pbgra32);
+        bitmap.Render(preview);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+        return true;
+    }
 
     /// <summary>Full press-drag-release sequence the keyboard-selection
     /// handler replays on every Shift+Arrow: ghostty commits the selection

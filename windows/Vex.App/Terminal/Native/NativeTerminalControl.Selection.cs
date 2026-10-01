@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -20,9 +19,10 @@ public sealed partial class NativeTerminalControl
     private int _kbFocusCol, _kbFocusRow;
     private bool _selectionVisualDrawn;
 
-    private DrawingVisual? _copyAnimVisual;
+    private readonly DrawingVisual _copyAnimVisual = new();
     private TimeSpan? _copyAnimStartTime;
-    private Rect _copyAnimRect;
+    private DrawingGroup? _copyAnimDrawing;
+    private Geometry? _copyAnimGeometry;
 
     private void DrawSelection()
     {
@@ -61,8 +61,8 @@ public sealed partial class NativeTerminalControl
             if (toCol < fromCol)
                 continue;
 
-            dc.DrawRectangle(_palette.Selection, null,
-                new Rect(fromCol * _cellWidth, row * _cellHeight, (toCol - fromCol + 1) * _cellWidth, _cellHeight));
+            var rect = new Rect(fromCol * _cellWidth, row * _cellHeight, (toCol - fromCol + 1) * _cellWidth, _cellHeight);
+            dc.DrawRoundedRectangle(_palette.Selection, null, rect, 2, 2);
         }
     }
 
@@ -71,27 +71,12 @@ public sealed partial class NativeTerminalControl
         if (!_selectionActive && !_terminal.HasSelection)
             return;
 
-        var unionRect = Rect.Empty;
-        for (var row = 0; row < _rows && row < _terminal.FrameRows.Length; row++)
-        {
-            var frameRow = _terminal.FrameRows[row];
-            if (!frameRow.HasSelection) continue;
-
-            var fromCol = frameRow.SelectionStart;
-            var toCol = Math.Min(frameRow.SelectionEnd, _cols - 1);
-            if (toCol < fromCol) continue;
-
-            var rect = new Rect(fromCol * _cellWidth, row * _cellHeight, (toCol - fromCol + 1) * _cellWidth, _cellHeight);
-            unionRect.Union(rect);
-        }
-
         var text = _terminal.GetSelectedText();
         if (!string.IsNullOrEmpty(text))
         {
             if (!TrySetClipboardText(text))
                 return;
-            if (!unionRect.IsEmpty)
-                StartCopyAnimation(unionRect);
+            StartCopyAnimation();
         }
         // Copied text is deselected, matching the copy-then-clear convention.
         ClearSelection();
@@ -108,88 +93,88 @@ public sealed partial class NativeTerminalControl
         }
     }
 
-    private void StartCopyAnimation(Rect rect)
+    private void StartCopyAnimation()
     {
-        if (_copyAnimVisual == null)
+        StopCopyAnimation();
+        var geometry = new GeometryGroup();
+        var drawing = new DrawingGroup();
+        using (var dc = drawing.Open())
         {
-            _copyAnimVisual = new DrawingVisual();
-            _children.Add(_copyAnimVisual);
+            for (var row = 0; row < Math.Min(_rows, _terminal.FrameRows.Length); row++)
+            {
+                var frameRow = _terminal.FrameRows[row];
+                if (!frameRow.HasSelection || row >= _rowVisuals.Count)
+                    continue;
+                var fromCol = Math.Max(0, frameRow.SelectionStart);
+                var toCol = Math.Min(frameRow.SelectionEnd, _cols - 1);
+                if (toCol < fromCol)
+                    continue;
+                var rect = new Rect(fromCol * _cellWidth, row * _cellHeight,
+                    (toCol - fromCol + 1) * _cellWidth, _cellHeight);
+                var clip = new RectangleGeometry(rect, 2, 2);
+                geometry.Children.Add(clip);
+                dc.PushClip(clip);
+                dc.DrawRectangle(_palette.Background, null, rect);
+                dc.DrawRectangle(_palette.Selection, null, rect);
+                // Retain the painted glyphs, not a live VisualBrush: output
+                // arriving during the fade must not change the copied text.
+                dc.DrawDrawing(_rowVisuals[row].Drawing);
+                dc.Pop();
+            }
         }
-
-        _copyAnimRect = rect;
-        _copyAnimStartTime = TimeSpan.Zero;
-        CompositionTarget.Rendering -= OnCopyAnimFrame;
+        if (geometry.Children.Count == 0)
+            return;
+        geometry.Freeze();
+        drawing.Freeze();
+        _copyAnimGeometry = geometry;
+        _copyAnimDrawing = drawing;
+        DrawCopyAnimation(0);
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            StopCopyAnimation();
+            return;
+        }
         CompositionTarget.Rendering += OnCopyAnimFrame;
     }
 
     private void OnCopyAnimFrame(object? sender, EventArgs e)
     {
-        if (_copyAnimVisual == null) return;
-
-        var renderingEventArgs = (RenderingEventArgs)e;
-        if (_copyAnimStartTime == TimeSpan.Zero)
+        var renderingTime = ((RenderingEventArgs)e).RenderingTime;
+        _copyAnimStartTime ??= renderingTime;
+        var elapsed = (renderingTime - _copyAnimStartTime.Value).TotalMilliseconds;
+        if (_disposed || !IsVisible || elapsed >= 420)
         {
-            _copyAnimStartTime = renderingEventArgs.RenderingTime;
-        }
-
-        var elapsed = _copyAnimStartTime.HasValue
-            ? (renderingEventArgs.RenderingTime - _copyAnimStartTime.Value).TotalMilliseconds
-            : 0;
-
-        var duration = 1200.0;
-
-        if (elapsed >= duration)
-        {
-            CompositionTarget.Rendering -= OnCopyAnimFrame;
-            using (var dc = _copyAnimVisual.RenderOpen()) { } // clear
+            StopCopyAnimation();
             return;
         }
+        DrawCopyAnimation(elapsed / 420);
+    }
 
-        var t = elapsed / duration;
-        var opacity = t < 0.6 ? 1.0 : 1.0 - (t - 0.6) / 0.4;
+    private void DrawCopyAnimation(double progress)
+    {
+        if (_copyAnimDrawing is null || _copyAnimGeometry is null)
+            return;
+        var ease = 1 - Math.Pow(1 - progress, 3);
+        using var dc = _copyAnimVisual.RenderOpen();
+        dc.PushClip(new RectangleGeometry(new Rect(RenderSize)));
+        dc.PushOpacity(Math.Pow(1 - progress, 2));
+        dc.PushTransform(new TranslateTransform(0, -4 * ease));
+        dc.DrawDrawing(_copyAnimDrawing);
+        dc.PushOpacity(0.18 * Math.Max(0, 1 - progress * 3));
+        dc.DrawGeometry(_palette.Foreground, null, _copyAnimGeometry);
+        dc.Pop();
+        dc.Pop();
+        dc.Pop();
+        dc.Pop();
+    }
 
-        var popEaseOut = 1 - Math.Pow(1 - Math.Min(1.0, t * 5), 4);
-        var yOffset = 16 * (1 - popEaseOut);
-
-        var flashOpacity = 1.0 - Math.Min(1.0, t * 4); // Fades out in first 25% of animation
-
-        using (var dc = _copyAnimVisual.RenderOpen())
-        {
-            dc.PushOpacity(opacity);
-
-            var fgColor = ((SolidColorBrush)_palette.Foreground).Color;
-            var glowAlpha = (byte)(0x40 + 0x80 * flashOpacity);
-            var glowBrush = FrozenBrush(System.Windows.Media.Color.FromArgb(glowAlpha, fgColor.R, fgColor.G, fgColor.B));
-            var framePen = new Pen(_palette.Foreground, 1.5 + 1.5 * flashOpacity);
-            var glowPen = new Pen(glowBrush, 5.0 + 8.0 * flashOpacity);
-
-            dc.DrawRectangle(null, glowPen, _copyAnimRect);
-            dc.DrawRectangle(null, framePen, _copyAnimRect);
-
-            var textBrush = _palette.Background;
-            var bgBrush = _palette.Foreground;
-
-            var text = new FormattedText("Copied", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal),
-                12, textBrush, _pixelsPerDip);
-
-            var toastWidth = text.Width + 24;
-            var toastHeight = text.Height + 12;
-
-            var paddingX = 16.0;
-            if (_scrollbarOpacity > 0.2)
-                paddingX += _scrollbarWidth;
-
-            var x = ActualWidth - paddingX - toastWidth;
-            var y = 16.0 - yOffset;
-
-            var rectToast = new Rect(x, y, toastWidth, toastHeight);
-
-            dc.DrawRoundedRectangle(bgBrush, null, rectToast, 6, 6);
-            dc.DrawText(text, new Point(rectToast.X + 12, rectToast.Y + 6));
-
-            dc.Pop();
-        }
+    private void StopCopyAnimation()
+    {
+        CompositionTarget.Rendering -= OnCopyAnimFrame;
+        _copyAnimStartTime = null;
+        _copyAnimDrawing = null;
+        _copyAnimGeometry = null;
+        using var dc = _copyAnimVisual.RenderOpen();
     }
 
     /// <summary>

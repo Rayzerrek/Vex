@@ -1,7 +1,7 @@
 # Testing
 
-Vex has three layers of tests. The first two run in CI; the third needs a real
-window and is run manually.
+Vex has three layers of tests. Unit and emulator integration tests run in CI.
+Renderer tests need a desktop session and run locally in Debug.
 
 ## Unit and integration tests
 
@@ -11,7 +11,8 @@ dotnet test windows/Vex.slnx
 
 ### Vex.App.Tests
 
-Covers the shell's pure logic, with no window and no PTY:
+Covers the shell's pure logic, with no window and no PTY, plus renderer
+regressions in Debug:
 
 | Area | File |
 |---|---|
@@ -19,10 +20,13 @@ Covers the shell's pure logic, with no window and no PTY:
 | Fuzzy search scoring and ordering | `FileSearchEngineTests` |
 | Debounce timing and coalescing | `HalfDebouncerTests` |
 | Theme resolution and color parsing | `TerminalThemeTests` |
+| Dimmed foreground and contrast caching | `TerminalPaletteTests` |
 | Displayed version derivation | `AppInfoTests` |
+| Real-window core and incremental rendering (Debug) | `TerminalRendererRegressionTests` |
 
-These use a temp directory for filesystem cases and never touch
-`%LocalAppData%`, so they are safe to run in parallel.
+Filesystem cases use a temp directory. Renderer tests launch the built app
+with an isolated temporary profile, enforce a 60-second timeout, and retain
+reports and screenshots on failure. They never touch the user's profile.
 
 ### Vex.Libghostty.Tests
 
@@ -42,13 +46,16 @@ allowed to be verbose and is not part of the correctness contract.
 
 ## Renderer self-test
 
-The renderer needs a real window, so it is not part of `dotnet test`. It runs
-inside the app and writes a report to a path you choose.
+The renderer runs inside the Debug app. Debug `dotnet test` launches both
+the core and incremental scenarios automatically. Release tests omit these
+scenarios because CI runners have no desktop session. You can also launch
+the harness manually and choose the report path.
 
 Set `VEX_SELFTEST` to a report path and launch the app:
 
 ```powershell
 $env:VEX_SELFTEST = "$PWD\selftest.txt"
+$env:VEX_PROFILE_DIR = "$env:TEMP\vex-selftest-profile"
 dotnet run --project windows/Vex.App
 ```
 
@@ -56,7 +63,13 @@ Instead of driving a shell, it feeds scripted VT output straight into the
 emulator through the same pump the live shell uses, then renders the control to
 a bitmap and checks the pixels: a full screen of text, a clean screen after
 ED2 (no ghost rows), wide-character rendering, and pixel-identical snap-back
-after scrolling.
+after scrolling. It also checks glyph alignment, combining marks, font and
+DPI changes, copy feedback, link previews, and renderer lifecycle cleanup.
+Failures produce a nonzero exit code.
+
+Set `VEX_SELFTEST_BENCH=1` to measure full redraw time and allocation for
+ASCII, ANSI-colored text, and graphemes. The report includes font, grid size,
+and DPI so results can be compared with the same settings.
 
 Set `VEX_SELFTEST_INCR=1` to run only the incremental-repaint scenario. It
 streams chunked output, scrolls, resizes the grid, commits synchronized-output

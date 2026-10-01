@@ -192,8 +192,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _children = new VisualCollection(this)
         {
             _selectionVisual,
+            _linkHoverVisual,
             _scrollbarVisual,
             _caretVisual,
+            _copyAnimVisual,
         };
 
         _blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
@@ -221,6 +223,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             if (_disposed)
                 return;
+            if (!IsVisible)
+            {
+                StopCopyAnimation();
+                ClearLinkHover();
+            }
             if (IsVisible)
             {
                 _terminal.InvalidateCellCache();
@@ -229,6 +236,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                     FlushRedraw();
             }
             UpdateBlinkTimer();
+        };
+        Unloaded += (_, _) =>
+        {
+            StopCopyAnimation();
+            ClearLinkHover();
         };
         // Start the shell immediately instead of waiting for layout to finish
         // calculating the exact grid size. This hides the 50-200ms ConPTY startup
@@ -408,6 +420,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     /// and OSC color queries resolve against them.</summary>
     private void ApplyTerminalColors()
     {
+        _fallbackCellDrawings.Clear();
         var fg = ((SolidColorBrush)_palette.Foreground).Color;
         var bg = ((SolidColorBrush)_palette.Background).Color;
         var cursor = ((SolidColorBrush)_palette.Cursor).Color;
@@ -435,6 +448,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void RebuildFontMetrics()
     {
+        _fallbackCellDrawings.Clear();
+        StopCopyAnimation();
+        ClearLinkHover();
         // Cell geometry is part of every row's pixels; any rebuild invalidates
         // all row caches so the next pass repaints the surface.
         _renderVersion++;
@@ -545,9 +561,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             var visual = new DrawingVisual();
             _rowVisuals.Add(visual);
-            // Rows sit between the selection overlay and the scrollbar; the
-            // caret stays on top. The scrollbar is the second-to-last child.
-            _children.Insert(_children.Count - 2, visual);
+            // Keep feedback above every row even when a resize adds visuals.
+            _children.Insert(_children.IndexOf(_linkHoverVisual), visual);
         }
         if (_rowHashes.Length != _rows)
         {
@@ -587,6 +602,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
     {
         base.OnRenderSizeChanged(sizeInfo);
+        StopCopyAnimation();
+        ClearLinkHover();
         _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         // Coalesce to one pass per rendered frame: while the window edge is
         // being dragged, size events can fire several times per frame and each
@@ -604,6 +621,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
         base.OnDpiChanged(oldDpi, newDpi);
+        StopCopyAnimation();
+        ClearLinkHover();
+        _fallbackCellDrawings.Clear();
         _pixelsPerDip = newDpi.PixelsPerDip;
         // Glyph rasterization scales with pixels-per-dip even when the DIP
         // cell size does not, so the cached row pixels and native mouse
@@ -735,6 +755,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _needsFullRedraw = false;
 
             DrawSelection();
+            RefreshLinkHover();
             DrawCaret();
             if (!IsScrollbarVisible() && _scrollbarTargetOpacity > 0)
                 SetScrollbarOpacity(0);
@@ -1053,9 +1074,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                         }
                     }
 
-                    var cellOk = true;
+                    // A multi-codepoint cell needs shaping (combining marks,
+                    // variation selectors and joiners), even when the face
+                    // has every glyph. Raw advances detach accents from the
+                    // base character and bypass ligature composition.
+                    var cellOk = singleCp != 0;
                     var u = unitStart;
-                    while (u < i)
+                    while (cellOk && u < i)
                     {
                         var ch = trimmedText[u];
                         int cp;
@@ -1091,23 +1116,19 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                     }
                     if (cellOk)
                     {
-                        // True cell advance: a wide glyph consumes two
-                        // columns, so the next cell starts where the grid
-                        // places it.
-                        segAdvances[firstGlyph] = widths[unitStart] * _cellWidth;
+                        // Snap both endpoints to the same physical grid used
+                        // by segment origins and cell backgrounds. Fractional
+                        // advances otherwise accumulate a different phase
+                        // after emoji or an ANSI style splits the GlyphRun.
+                        segAdvances[firstGlyph] = (Math.Round((colCursor + widths[unitStart]) * _cellWidth * _pixelsPerDip)
+                            - Math.Round(colCursor * _cellWidth * _pixelsPerDip)) / _pixelsPerDip;
                     }
                     else
                     {
                         segUnits = firstGlyph;
                         FlushSegment();
-                        var formatted = new FormattedText(
-                            trimmedText.ToString(unitStart, i - unitStart),
-                            CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                            face, _fontSize, fg, _pixelsPerDip);
-                        var fx = Math.Round(colCursor * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
-                        context.DrawText(formatted, new Point(fx, rowY));
-                        if (syntheticBold)
-                            context.DrawText(formatted, new Point(fx + (1.0 / _pixelsPerDip), rowY));
+                        DrawFallbackCell(context, trimmedText.ToString(unitStart, i - unitStart), face, fg,
+                            syntheticBold, widths[unitStart], colCursor, rowY);
                     }
                     colCursor += widths[unitStart];
                 }
@@ -1115,12 +1136,19 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             }
             else
             {
-                // No usable face at all: shape the whole trimmed run through
-                // FormattedText's font fallback. StringBuilder.ToString(start,
-                // length) avoids copying the trailing-whitespace tail.
-                var formatted = new FormattedText(trimmedText.ToString(0, contentLength), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                    face, _fontSize, fg, _pixelsPerDip);
-                context.DrawText(formatted, new Point(x, rowY));
+                // Composite font families can have no single GlyphTypeface.
+                // They still need the terminal grid, rather than the natural
+                // advances of a whole-run FormattedText fallback.
+                var i = 0;
+                while (i < contentLength)
+                {
+                    var unitStart = i++;
+                    while (i < contentLength && widths[i] == 0)
+                        i++;
+                    DrawFallbackCell(context, trimmedText.ToString(unitStart, i - unitStart), face, fg,
+                        syntheticBold, widths[unitStart], colCursor, rowY);
+                    colCursor += widths[unitStart];
+                }
             }
             RecordRun(textRunIndex, startCol, cellsSpanned, fg, flags);
             return textRunIndex + 1;
@@ -1338,6 +1366,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // lock and stops feeding, so the emulator below cannot be freed
         // mid-feed.
         _disposed = true;
+        StopCopyAnimation();
+        ClearLinkHover();
         _pendingSessionInput = null;
         _blinkTimer.Stop();
         _scrollbarAnimTimer.Stop();

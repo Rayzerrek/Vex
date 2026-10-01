@@ -15,7 +15,7 @@ public sealed class TerminalPalette
 {
     private readonly Brush[] _ansi = new Brush[256];
     private readonly Dictionary<int, Brush> _rgbCache = new();
-    private readonly Dictionary<int, Brush> _dimCache = new();
+    private readonly Dictionary<Brush, Brush> _dimCache = new();
 
     private readonly GhosttyColorRgb[] _paletteRgb = new GhosttyColorRgb[256];
 
@@ -182,11 +182,13 @@ public sealed class TerminalPalette
 
         if ((flags & CellFlags.Faint) != 0 && foreground is SolidColorBrush solid)
         {
-            if (!_dimCache.TryGetValue(fgValue, out var dim))
+            // The numeric value alone aliases default, RGB and palette
+            // colors, as well as regular/bold and contrast-repaired colors.
+            if (!_dimCache.TryGetValue(foreground, out var dim))
             {
                 var c = solid.Color;
                 dim = Freeze(Color.FromArgb((byte)(c.A * 0.6), c.R, c.G, c.B));
-                _dimCache[fgValue] = dim;
+                _dimCache[foreground] = dim;
             }
             foreground = dim;
         }
