@@ -21,6 +21,39 @@ namespace Vex.Libghostty.Tests;
 /// </summary>
 public sealed class FrameCoherenceTests
 {
+    [Fact]
+    public async Task InBandResize_ReadWaitsForTerminalLock()
+    {
+        using var terminal = new GhosttyTerminal(80, 24);
+        using var started = new ManualResetEventSlim();
+        using var finished = new ManualResetEventSlim();
+        Task<bool> read;
+        bool completedWhileLocked;
+        lock (terminal.SyncRoot)
+        {
+            read = Task.Run(() =>
+            {
+                started.Set();
+                try
+                {
+                    return terminal.InBandResize;
+                }
+                finally
+                {
+                    finished.Set();
+                }
+            });
+            Assert.True(started.Wait(TimeSpan.FromSeconds(5)), "Mode reader did not start.");
+            completedWhileLocked = finished.Wait(TimeSpan.FromMilliseconds(200));
+            terminal.Feed("\x1b[?2048h");
+        }
+        var modeEnabled = await read.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(completedWhileLocked, "In-band resize mode read bypassed the terminal lock.");
+        Assert.True(modeEnabled);
+        terminal.Feed("\x1b[?2048l");
+        Assert.False(terminal.InBandResize);
+    }
+
     private static GhosttyTerminal NewTerm(int cols, int rows)
     {
         var term = new GhosttyTerminal(cols, rows);

@@ -732,7 +732,14 @@ public sealed class GhosttyTerminal : IDisposable
     /// CSI 48;rows;cols;yPx;xPx t reports on every resize. Vex advertises
     /// mode 2048 through libghostty-vt's DECRQM answers, which creates the
     /// obligation to emit those reports.</summary>
-    public bool InBandResize => GetMode(2048);
+    public bool InBandResize
+    {
+        get
+        {
+            lock (_vtLock)
+                return GetMode(2048);
+        }
+    }
 
     private MouseTrackingMode TrackingModeLocked =>
         GetMode(1003) ? MouseTrackingMode.Any
