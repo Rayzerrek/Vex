@@ -388,6 +388,7 @@ public sealed partial class NativeTerminalControl
     /// and the drag right of it (like a real left-to-right drag).</summary>
     internal void SelfTestSelect(int pressCol, int pressRow, int dragCol, int dragRow)
     {
+        _kbSelectionActive = false;
         _selectionActive = true;
         _selectionDragged = true;
         var pressX = pressCol * _cellWidth + _cellWidth * 0.2;
@@ -454,24 +455,29 @@ public sealed partial class NativeTerminalControl
         return true;
     }
 
-    /// <summary>Full press-drag-release sequence the keyboard-selection
-    /// handler replays on every Shift+Arrow: ghostty commits the selection
-    /// only on release, so the gesture must complete despite there being no
-    /// real pointer button.</summary>
-    internal void SelfTestKeyboardSelect(int pressCol, int pressRow, int dragCol, int dragRow)
+    /// <summary>Captures bytes from the real Backspace key handler without writing to a shell.</summary>
+    internal byte[] SelfTestSelectionBackspace()
     {
-        _selectionActive = true;
-        var pressX = pressCol * _cellWidth + _cellWidth * 0.2;
-        var pressY = pressRow * _cellHeight + _cellHeight * 0.5;
-        var dragX = dragCol * _cellWidth + _cellWidth * 0.8;
-        var dragY = dragRow * _cellHeight + _cellHeight * 0.5;
-        var nativePress = NativePoint(new Point(pressX, pressY));
-        var nativeDrag = NativePoint(new Point(dragX, dragY));
-        _terminal.SelectionPress(pressCol, pressRow, nativePress.X, nativePress.Y);
-        _terminal.SelectionDrag(dragCol, dragRow, nativeDrag.X, nativeDrag.Y);
-        _terminal.SelectionRelease(dragCol, dragRow);
-        FlushRedraw();
+        var starting = _sessionStarting;
+        var pending = _pendingSessionInput;
+        try
+        {
+            _sessionStarting = true;
+            _pendingSessionInput = new List<byte[]>();
+            OnKeyDown(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this),
+                Environment.TickCount, Key.Back) { RoutedEvent = Keyboard.KeyDownEvent });
+            return _pendingSessionInput.SelectMany(static bytes => bytes).ToArray();
+        }
+        finally
+        {
+            _sessionStarting = starting;
+            _pendingSessionInput = pending;
+        }
     }
+
+    /// <summary>Exercises the real Shift+Arrow caret movement and selection path.</summary>
+    internal void SelfTestKeyboardSelectionKey(Key key, bool byWord = false)
+        => ExtendKeyboardSelection(key, byWord);
 
     /// <summary>The detected URL under a viewport cell, or null. Recomputes
     /// the row's spans directly so the harness can query rows that were not

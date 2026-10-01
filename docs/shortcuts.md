@@ -38,6 +38,7 @@ and Shift combinations themselves.
 | Copy selection | `Ctrl+C` or `Ctrl+Shift+C` |
 | Paste | `Ctrl+Shift+V` |
 | Cut selection | `Ctrl+Shift+X` |
+| Delete selected input ending at the shell cursor | `Backspace` |
 | Extend selection | `Shift+Arrow`, `Shift+Home`, `Shift+End` |
 | Extend selection by word | `Shift+Ctrl+Arrow` |
 | Scroll to top | `Ctrl+Home` |
@@ -50,6 +51,12 @@ and Shift combinations themselves.
 expect; it only copies when a selection exists. `Ctrl+Backspace` sends `0x17`,
 which readline and PSReadLine bind to backward-kill-word, matching Windows
 Terminal.
+
+`Backspace` deletes a keyboard selection ending at the live shell cursor within
+one logical line, including text soft-wrapped across rows. It sends one backspace
+per selected grapheme, preserving spaces. Selections in scrollback, across hard
+newlines, or beyond the cursor keep ordinary Backspace behavior. Cut uses the
+same deletion rules; terminal output itself is not editable.
 
 Copy, paste, and cut also work while a full-screen application is running,
 since `Ctrl+Shift` chords pass through to Vex there.
@@ -65,6 +72,11 @@ since `Ctrl+Shift` chords pass through to Vex there.
 | Drag pane title bar | Split toward an edge, with a per-pane preview |
 | Middle-click tab | Close tab |
 | Ctrl+Click | Open the URL under the pointer |
+
+Mouse selections are automatically copied and cleared on release by default.
+Disable **Settings → Terminal → Selection → Copy on select** to keep selections
+highlighted until you explicitly copy them. Keyboard selections are always copied
+explicitly. The setting takes effect immediately and is saved across restarts.
 
 When a TUI requests mouse reporting (vim with `mouse=a`, tmux, htop), clicks,
 drags, and wheel events are encoded in the negotiated format and sent to it, and

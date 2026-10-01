@@ -1,8 +1,10 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using Vex.App.Model;
 using Vex.Libghostty;
 
 namespace Vex.App.Terminal.Native;
@@ -80,6 +82,14 @@ public sealed partial class NativeTerminalControl
         }
         // Copied text is deselected, matching the copy-then-clear convention.
         ClearSelection();
+    }
+
+    private void FinishMouseSelection()
+    {
+        if (AppSettings.Instance.CopyOnSelect)
+            CopySelection();
+        else
+            FlushRedraw();
     }
 
     private void ClearSelection()
@@ -178,20 +188,16 @@ public sealed partial class NativeTerminalControl
     }
 
     /// <summary>
-    /// Moves the keyboard-selection caret and re-drives the selection
-    /// gesture. Every key replays the full press-drag-release sequence:
-    /// ghostty only commits the selection snapshot on release, so a bare
-    /// press+drag (no pointer button ever releases here) leaves nothing
-    /// selectable. The caret wraps at line boundaries but stays inside the
-    /// viewport; <paramref name="byWord"/> steps a whole word (left) or is
-    /// reserved for the Home/End line jumps.
+    /// Moves the keyboard-selection caret between cells, keeping the anchor
+    /// fixed while the focus extends or shrinks the selection. Keyboard ranges
+    /// are independent of mouse clicks and stay inside the viewport.
     /// </summary>
     private void ExtendKeyboardSelection(Key key, bool byWord)
     {
         if (!_kbSelectionActive)
         {
             var cursor = _terminal.Cursor;
-            _kbAnchorCol = Math.Clamp(cursor.X, 0, _cols - 1);
+            _kbAnchorCol = Math.Clamp(cursor.CaretColumn, 0, _cols);
             _kbAnchorRow = Math.Clamp(cursor.Y, 0, _rows - 1);
             _kbFocusCol = _kbAnchorCol;
             _kbFocusRow = _kbAnchorRow;
@@ -207,8 +213,8 @@ public sealed partial class NativeTerminalControl
                 break;
             case Key.Right:
                 if (byWord) _kbFocusCol = WordBoundaryCol(_kbFocusRow, _kbFocusCol, forward: true);
-                else if (_kbFocusCol < _cols - 1) _kbFocusCol++;
-                else if (_kbFocusRow < _rows - 1) { _kbFocusRow++; _kbFocusCol = 0; }
+                else if (_kbFocusCol < _cols) _kbFocusCol++;
+                else if (_kbFocusRow < _rows - 1) { _kbFocusRow++; _kbFocusCol = 1; }
                 break;
             case Key.Up:
                 if (_kbFocusRow > 0) _kbFocusRow--;
@@ -220,19 +226,11 @@ public sealed partial class NativeTerminalControl
                 _kbFocusCol = 0;
                 break;
             case Key.End:
-                _kbFocusCol = _cols - 1;
+                _kbFocusCol = _cols;
                 break;
         }
 
-        var pressX = _kbAnchorCol * _cellWidth + _cellWidth * 0.2;
-        var rowY = _kbAnchorRow * _cellHeight + _cellHeight * 0.5;
-        var focusX = _kbFocusCol * _cellWidth + _cellWidth * 0.8;
-        var focusY = _kbFocusRow * _cellHeight + _cellHeight * 0.5;
-        var nativePress = NativePoint(new Point(pressX, rowY));
-        var nativeFocus = NativePoint(new Point(focusX, focusY));
-        _terminal.SelectionPress(_kbAnchorCol, _kbAnchorRow, nativePress.X, nativePress.Y);
-        _terminal.SelectionDrag(_kbFocusCol, _kbFocusRow, nativeFocus.X, nativeFocus.Y);
-        _terminal.SelectionRelease(_kbFocusCol, _kbFocusRow);
+        _terminal.SetKeyboardSelection(_kbAnchorCol, _kbAnchorRow, _kbFocusCol, _kbFocusRow);
         FlushRedraw();
     }
 
@@ -248,7 +246,7 @@ public sealed partial class NativeTerminalControl
         if ((uint)row >= (uint)frameRows.Length)
             return col;
         var cells = frameRows[row].Cells;
-        var last = Math.Max(0, cells.Length - 1);
+        var end = cells.Length;
 
         static bool IsSeparator(in CellInfo cell)
         {
@@ -256,17 +254,16 @@ public sealed partial class NativeTerminalControl
             return text.Length == 0 || char.IsWhiteSpace(text[0]);
         }
 
-        if ((uint)col >= (uint)cells.Length)
-            return last;
+        col = Math.Clamp(col, 0, end);
         if (forward)
         {
-            while (col < last && IsSeparator(cells[col]))
+            while (col < end && IsSeparator(cells[col]))
                 col++;
-            while (col < last && !IsSeparator(cells[col + 1]))
+            while (col < end && !IsSeparator(cells[col]))
                 col++;
             return col;
         }
-        while (col > 0 && IsSeparator(cells[col]))
+        while (col > 0 && IsSeparator(cells[col - 1]))
             col--;
         while (col > 0 && !IsSeparator(cells[col - 1]))
             col--;
@@ -311,10 +308,8 @@ public sealed partial class NativeTerminalControl
     }
 
     /// <summary>
-    /// Copies the selection and, when it is single-line input ending exactly
-    /// at the shell cursor (a leftward keyboard selection from the prompt),
-    /// deletes it with backspaces — the only text a terminal can truly "cut"
-    /// is unsubmitted line input.
+    /// Copies the selection and deletes it only when it ends at the shell
+    /// cursor within one logical input line (which may soft-wrap).
     /// </summary>
     private void CutSelection()
     {
@@ -326,22 +321,35 @@ public sealed partial class NativeTerminalControl
         if (!TrySetClipboardText(text))
             return;
 
-        var cursor = _terminal.Cursor;
-        var nearestCursorCol = _kbFocusRow == _kbAnchorRow
-            ? Math.Max(_kbAnchorCol, _kbFocusCol)
-            : -1;
-        var deletable = _kbSelectionActive
-            && _kbFocusRow == _kbAnchorRow
-            && _kbFocusRow == cursor.Y
-            && nearestCursorCol == cursor.X;
-        ClearSelection();
+        if (!TryDeleteKeyboardSelection())
+            ClearSelection();
+    }
 
-        if (deletable && _session is not null)
-        {
-            var backspaces = new byte[text.Length];
-            Array.Fill(backspaces, (byte)0x7f);
-            _session.Write(backspaces);
-        }
+    private bool TryDeleteKeyboardSelection()
+    {
+        if (!_kbSelectionActive || !_terminal.HasSelection || _terminal.IsAlternateScreen)
+            return false;
+
+        // Cursor coordinates refer to the live screen, not a scrolled viewport.
+        var scrollbar = _terminal.Scrollbar;
+        if (scrollbar.Offset + scrollbar.Len < scrollbar.Total)
+            return false;
+        var cursor = _terminal.Cursor;
+        var anchor = _kbAnchorRow * _cols + _kbAnchorCol;
+        var focus = _kbFocusRow * _cols + _kbFocusCol;
+        if (Math.Max(anchor, focus) != cursor.Y * _cols + cursor.CaretColumn)
+            return false;
+
+        var text = _terminal.GetSelectedText(trim: false);
+        // Soft wraps are unwrapped by Ghostty; a hard newline crosses into
+        // another logical line and cannot safely be deleted at this cursor.
+        if (string.IsNullOrEmpty(text) || text.IndexOfAny(['\r', '\n']) >= 0)
+            return false;
+        var backspaces = new byte[StringInfo.ParseCombiningCharacters(text).Length];
+        Array.Fill(backspaces, (byte)0x7f);
+        ClearSelection();
+        WriteUserInput(backspaces);
+        return true;
     }
 
     private void FinishClickSelection()

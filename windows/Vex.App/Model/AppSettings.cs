@@ -151,6 +151,14 @@ public sealed class AppSettings : ObservableObject
         set { if (Set(ref _cursorBlink, value)) Save(); }
     }
 
+    private bool _copyOnSelect = true;
+    /// <summary>Copies mouse selections to the clipboard automatically on release.</summary>
+    public bool CopyOnSelect
+    {
+        get => _copyOnSelect;
+        set { if (Set(ref _copyOnSelect, value)) Save(); }
+    }
+
     private bool _confirmOnExit = true;
     /// <summary>Whether to prompt for confirmation before closing the window when processes or agents are running.</summary>
     public bool ConfirmOnExit
