@@ -214,6 +214,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
         Loaded += (_, _) =>
         {
+            if (_disposed)
+                return;
             _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
             RebuildFontMetrics();
             if (_needsFullRedraw && IsVisible)
@@ -483,7 +485,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void RecalculateGridSize()
     {
-        if (!IsLoaded || ActualWidth < 150 || ActualHeight < 80)
+        // WPF can run queued layout callbacks before the deferred Unloaded
+        // event; IsLoaded alone does not protect a freed native emulator.
+        if (_disposed || !IsLoaded || ActualWidth < 150 || ActualHeight < 80)
             return;
 
         var cols = Math.Max(2, (int)(ActualWidth / _cellWidth));
@@ -602,6 +606,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
     {
         base.OnRenderSizeChanged(sizeInfo);
+        if (_disposed)
+            return;
         StopCopyAnimation();
         ClearLinkHover();
         _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
@@ -621,6 +627,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
         base.OnDpiChanged(oldDpi, newDpi);
+        if (_disposed)
+            return;
         StopCopyAnimation();
         ClearLinkHover();
         _fallbackCellDrawings.Clear();
@@ -670,6 +678,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void FlushRedraw()
     {
+        if (_disposed)
+            return;
         // Copy the static so the null state of the stopwatch matches the
         // guard below without flow-tracking a static field read.
         var diagPath = DiagPath;

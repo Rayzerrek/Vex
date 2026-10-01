@@ -277,6 +277,63 @@ public class TerminalStartupRegressionTests
     }
 
     [Fact]
+    public void NativeTerminalControl_PendingResizeAfterDisposal_DoesNotCrash()
+    {
+        Exception? threadEx = null;
+        var thread = new Thread(() =>
+        {
+            NativeTerminalControl? control = null;
+            Window? window = null;
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            DispatcherUnhandledExceptionEventHandler onUnhandledException = (_, e) =>
+            {
+                threadEx = e.Exception;
+                e.Handled = true;
+            };
+            dispatcher.UnhandledException += onUnhandledException;
+            try
+            {
+                control = new NativeTerminalControl(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                window = new Window { Content = control, Width = 800, Height = 500, ShowActivated = false };
+                window.Show();
+                window.UpdateLayout();
+                PumpPendingLayout();
+                Assert.True(control.IsLoaded);
+
+                window.Width = 1000;
+                window.UpdateLayout();
+                window.Content = null;
+                control.Dispose();
+                // WPF unload is deferred: the pending Render-priority resize
+                // can still see IsLoaded after the native emulator is freed.
+                Assert.True(control.IsLoaded);
+                PumpPendingLayout();
+            }
+            catch (Exception ex)
+            {
+                threadEx = ex;
+            }
+            finally
+            {
+                control?.Dispose();
+                window?.Close();
+                dispatcher.UnhandledException -= onUnhandledException;
+            }
+        }) { IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(10000), "Disposed terminal resize test did not finish.");
+        Assert.Null(threadEx);
+
+        static void PumpPendingLayout()
+        {
+            var frame = new DispatcherFrame();
+            Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => frame.Continue = false);
+            Dispatcher.PushFrame(frame);
+        }
+    }
+
+    [Fact]
     public void NativeTerminalControl_ColdStart_DoesNotDeadlockOnResize()
     {
         Exception? threadEx = null;
