@@ -22,4 +22,12 @@
     <ProjectReference Include="..\Vex.App\Vex.App.csproj" />
   </ItemGroup>
 
+  <Target Name="WriteRendererSelfTestHostPath" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug'">
+    <MSBuild Projects="..\Vex.App\Vex.App.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_RendererSelfTestAssembly" />
+    </MSBuild>
+    <WriteLinesToFile File="$(TargetDir)Vex.RendererSelfTestHost.txt"
+                      Lines="@(_RendererSelfTestAssembly->'%(RootDir)%(Directory)Vex.App.exe')" Overwrite="true" />
+  </Target>
+
 </Project>

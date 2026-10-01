@@ -28,6 +28,7 @@ public sealed partial class NativeTerminalControl
     protected override void OnLostKeyboardFocus(KeyboardFocusChangedEventArgs e)
     {
         base.OnLostKeyboardFocus(e);
+        ClearLinkHover();
         if (_session is not null || _sessionStarting)
         {
             foreach (var (key, modifiers) in _terminalKeysDown)
@@ -50,6 +51,8 @@ public sealed partial class NativeTerminalControl
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var mods = Keyboard.Modifiers;
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift)
+            RefreshLinkHover();
 
         // Modifier-only presses are the first half of chords like Ctrl+C used
         // to copy the selection; clearing here would tear the selection down
@@ -213,6 +216,7 @@ public sealed partial class NativeTerminalControl
     protected override void OnKeyUp(KeyEventArgs e)
     {
         base.OnKeyUp(e);
+        RefreshLinkHover();
         if (_disposed)
             return;
 
@@ -330,6 +334,8 @@ public sealed partial class NativeTerminalControl
         }
 
         var (col, row) = CellFromPoint(pos);
+        ClearLinkHover();
+        StopCopyAnimation();
 
         // Ctrl+click on a detected URL opens it in the browser instead of
         // selecting or forwarding the click to the app's mouse mode.
@@ -393,17 +399,7 @@ public sealed partial class NativeTerminalControl
         var overScrollbar = IsOverScrollbar(pos);
         SetScrollbarHovered(overScrollbar);
 
-        // Hand cursor over detected links, except while dragging a selection
-        // or the scrollbar thumb (where the pointer means something else).
-        if (!_scrollbarDragging && !overScrollbar && e.LeftButton != MouseButtonState.Pressed)
-        {
-            var (hoverCol, hoverRow) = CellFromPoint(pos);
-            Cursor = IsOverLink(hoverCol, hoverRow) && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
-                ? Cursors.Hand
-                : _mouseTracking && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)
-                    ? Cursors.Arrow
-                    : Cursors.IBeam;
-        }
+        RefreshLinkHover();
 
         // The overlay scrollbar owns unbuttoned hover at the right edge. A
         // drag that started in the terminal remains captured by the TUI.
@@ -573,6 +569,7 @@ public sealed partial class NativeTerminalControl
     protected override void OnMouseLeave(MouseEventArgs e)
     {
         base.OnMouseLeave(e);
+        ClearLinkHover();
         SetScrollbarHovered(false);
     }
 

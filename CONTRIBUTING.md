@@ -41,8 +41,9 @@ Two projects hold tests:
 - `windows/Vex.Libghostty.Tests` — VT emulation, feed filtering, and mouse
   encoding against the vendored `ghostty-vt.dll`.
 
-Rendering has a separate self-test harness that is not part of `dotnet test`
-because it needs a real window. See [docs/testing.md](docs/testing.md).
+Debug `dotnet test` also launches the renderer self-test harness in a real
+window with an isolated temporary profile. Release tests omit these checks
+because CI has no desktop session. See [docs/testing.md](docs/testing.md).
 
 For the landing page:
 

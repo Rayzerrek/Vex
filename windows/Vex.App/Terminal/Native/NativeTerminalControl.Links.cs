@@ -1,6 +1,10 @@
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Vex.Libghostty;
 
 namespace Vex.App.Terminal.Native;
@@ -21,11 +25,19 @@ public sealed partial class NativeTerminalControl
     private int[] _linkCharToCol = Array.Empty<int>();
     private LinkSpan[] _linkSpans = Array.Empty<LinkSpan>();
     private Pen _linkPen = new(Brushes.Blue, 1);
+    private readonly DrawingVisual _linkHoverVisual = new();
+    private int _hoveredLinkRow = -1;
+    private LinkSpan _hoveredLink;
+    private string? _hoveredLinkText;
+    private ToolTip? _linkToolTip;
+    private DispatcherTimer? _linkToolTipTimer;
 
     private readonly record struct LinkSpan(int StartCol, int EndCol, int TextStart, int TextLength);
 
     private void RebuildLinkPen()
     {
+        ClearLinkHover();
+        StopCopyAnimation();
         var pen = new Pen(_palette.Link, 1);
         pen.Freeze();
         _linkPen = pen;
@@ -163,8 +175,8 @@ public sealed partial class NativeTerminalControl
         return end;
     }
 
-    /// <summary>The URL under the given viewport cell, or null. Materializes
-    /// the substring, so hot paths use <see cref="IsOverLink"/> instead.</summary>
+    /// <summary>The URL under the given viewport cell, or null. Only click
+    /// handlers materialize it; hover uses cached spans directly.</summary>
     private string? LinkUriAt(int col, int row)
     {
         if (!TryFindLink(col, row, out var link, out var rowText) || rowText is null)
@@ -172,10 +184,99 @@ public sealed partial class NativeTerminalControl
         return rowText.Substring(link.TextStart, link.TextLength);
     }
 
-    /// <summary>True when a detected URL covers the viewport cell. Called on
-    /// every mouse move, so it must not allocate.</summary>
-    private bool IsOverLink(int col, int row)
-        => TryFindLink(col, row, out _, out _);
+    private void RefreshLinkHover()
+    {
+        if (_disposed || !IsMouseOver || _scrollbarDragging || _selectionGestureActive
+            || Mouse.LeftButton == MouseButtonState.Pressed || IsOverScrollbar(Mouse.GetPosition(this)))
+        {
+            ClearLinkHover();
+            return;
+        }
+        var (col, row) = CellFromPoint(Mouse.GetPosition(this));
+        UpdateLinkHover(col, row);
+    }
+
+    private void UpdateLinkHover(int col, int row)
+    {
+        if (!TryFindLink(col, row, out var link, out var rowText))
+        {
+            ClearLinkHover();
+            Cursor = _mouseTracking && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)
+                ? Cursors.Arrow : Cursors.IBeam;
+            return;
+        }
+        Cursor = Keyboard.Modifiers.HasFlag(ModifierKeys.Control) ? Cursors.Hand
+            : _mouseTracking && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? Cursors.Arrow : Cursors.IBeam;
+        if (_hoveredLinkRow == row && _hoveredLink == link && ReferenceEquals(_hoveredLinkText, rowText))
+            return;
+        ClearLinkHover();
+        _hoveredLinkRow = row;
+        _hoveredLink = link;
+        _hoveredLinkText = rowText;
+        var rect = new Rect(link.StartCol * _cellWidth, row * _cellHeight,
+            (link.EndCol - link.StartCol + 1) * _cellWidth, _cellHeight);
+        using (var dc = _linkHoverVisual.RenderOpen())
+        {
+            dc.PushOpacity(0.12);
+            dc.DrawRoundedRectangle(_palette.Link, null, rect, 3, 3);
+            dc.Pop();
+            dc.DrawLine(new Pen(_palette.Link, 2), new Point(rect.Left, rect.Bottom - 1),
+                new Point(rect.Right, rect.Bottom - 1));
+        }
+
+        var content = new StackPanel();
+        content.Children.Add(new TextBlock
+        {
+            Text = rowText!.Substring(link.TextStart, link.TextLength),
+            TextWrapping = TextWrapping.Wrap,
+            FontWeight = FontWeights.SemiBold,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "Ctrl + click to open \u2197",
+            Foreground = _palette.Link,
+            Margin = new Thickness(0, 6, 0, 0),
+        });
+        _linkToolTip ??= new ToolTip
+        {
+            PlacementTarget = this,
+            Placement = PlacementMode.Bottom,
+            Padding = new Thickness(10, 8, 10, 8),
+            BorderThickness = new Thickness(1),
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 12,
+            IsHitTestVisible = false,
+        };
+        _linkToolTip.Background = _palette.Background;
+        _linkToolTip.Foreground = _palette.Foreground;
+        _linkToolTip.BorderBrush = _palette.Link;
+        _linkToolTip.MaxWidth = Math.Max(120, Math.Min(480, ActualWidth));
+        _linkToolTip.PlacementRectangle = rect;
+        _linkToolTip.Content = content;
+        if (_linkToolTipTimer is null)
+        {
+            _linkToolTipTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+            _linkToolTipTimer.Tick += (_, _) =>
+            {
+                _linkToolTipTimer.Stop();
+                if (!_disposed && IsVisible && _hoveredLinkRow >= 0)
+                    _linkToolTip.IsOpen = true;
+            };
+        }
+        _linkToolTipTimer.Start();
+    }
+
+    private void ClearLinkHover()
+    {
+        _linkToolTipTimer?.Stop();
+        if (_linkToolTip is not null)
+            _linkToolTip.IsOpen = false;
+        if (_hoveredLinkRow < 0)
+            return;
+        _hoveredLinkRow = -1;
+        _hoveredLinkText = null;
+        using var dc = _linkHoverVisual.RenderOpen();
+    }
 
     private bool TryFindLink(int col, int row, out LinkSpan link, out string? rowText)
     {
@@ -197,6 +298,8 @@ public sealed partial class NativeTerminalControl
 
     private static void OpenLink(string uri)
     {
+        if (uri.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
+            uri = "https://" + uri;
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri) { UseShellExecute = true });
