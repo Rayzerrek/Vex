@@ -22,11 +22,19 @@ regressions in Debug:
 | Theme resolution and color parsing | `TerminalThemeTests` |
 | Dimmed foreground and contrast caching | `TerminalPaletteTests` |
 | Displayed version derivation | `AppInfoTests` |
-| Real-window core and incremental rendering (Debug) | `TerminalRendererRegressionTests` |
+| Real-window rendering and corrupt-profile startup (Debug) | `TerminalRendererRegressionTests` |
+| Recovery of null session entries and selected indices | `SessionRecoveryTests` |
+| Shell-profile normalization without save timers | `AppSettingsRecoveryTests` |
+| Bounded prewarm buffers, ownership, and live ConPTY output flood | `TerminalPrewarmBufferTests` |
+| Rejected/replaced session exits and early-exit replay | `TerminalSessionExitRegressionTests` |
+| Bounded crash reports and fatal-process termination (Debug) | `AppCrashLogTests` |
 
 Filesystem cases use a temp directory. Renderer tests launch the built app
 with an isolated temporary profile, enforce a 60-second timeout, and retain
 reports and screenshots on failure. They never touch the user's profile.
+Renderer subprocesses clear inherited `VEX_*` flags and assert the selected
+scenario's report header, so clipboard/fatal/replay diagnostics cannot silently
+replace the intended test.
 
 ### Vex.Libghostty.Tests
 
@@ -79,6 +87,23 @@ scans cells the buffer says are blank for leftover ink. That is the harness for
 duplicated/ghost text: a stale row, a half-applied synchronized-output frame,
 or a redraw pass that threw all show up as a phase that fails.
 
+### Published clipboard regression
+
+The clipboard also needs testing in a published single-file Release build: unit
+tests do not exercise the framework-assembly pruning target. On an interactive
+Windows desktop, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File windows/test-published-clipboard.ps1
+```
+
+This publishes a disposable app with the self-test harness enabled, replays a
+mouse selection and release through the real copy path, and checks the clipboard
+text and selection cleanup. It uses an isolated profile but **replaces the system
+clipboard text**. Failures retain the report and published app in the printed
+temporary directory. `-AppPath` can reuse a build published with
+`-p:DefineConstants=VEX_SELFTEST`.
+
 ### Live scenarios
 
 These drive a real ConPTY session and pixel-check the result against the
@@ -109,6 +134,7 @@ dotnet run --project windows/Vex.App
 | Variable | Effect |
 |---|---|
 | `VEX_DIAG` | Emit redraw and pump diagnostics while running. |
+| `crash.log` in the profile directory | Latest managed fatal exception; handlers log but do not suppress the crash. |
 | `VEX_STARTUP_DIAG` | Print startup timing marks gathered by `StartupMark`. |
 
 ## Landing page

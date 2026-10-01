@@ -17,41 +17,7 @@ public static class SessionStore
     public static Workspace Load()
     {
         var workspace = new Workspace();
-
-        try
-        {
-            if (File.Exists(SessionPath))
-            {
-                var json = File.ReadAllText(SessionPath);
-                var appSnapshot = JsonSerializer.Deserialize(json, VexJsonContext.Default.AppSnapshot);
-                if (appSnapshot?.Windows.Count > 0)
-                {
-                    var sessionSnapshot = appSnapshot.Windows[0];
-                    foreach (var projectSnapshot in sessionSnapshot.Projects)
-                        workspace.Projects.Add(RestoreProject(projectSnapshot));
-
-                    if (sessionSnapshot.SelectedProjectIndex is { } projectIndex &&
-                        projectIndex >= 0 && projectIndex < workspace.Projects.Count)
-                    {
-                        workspace.SelectedProject = workspace.Projects[projectIndex];
-                    }
-                    else if (workspace.Projects.Count > 0)
-                    {
-                        workspace.SelectedProject = workspace.Projects[0];
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // A corrupt or old-format session must not block startup; fall
-            // through to a single fresh project.
-        }
-
-        if (workspace.Projects.Count == 0)
-            workspace.NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-
-        Current = workspace;
+        Populate(workspace, ReadSnapshot());
         return workspace;
     }
 
@@ -59,26 +25,34 @@ public static class SessionStore
     /// the snapshot data. Does not instantiate UI-bound model objects.</summary>
     public static Task<SessionSnapshot?> ReadSnapshotAsync()
     {
-        return Task.Run(() =>
+        return Task.Run(ReadSnapshot);
+    }
+
+    private static SessionSnapshot? ReadSnapshot()
+    {
+        try
         {
-            try
-            {
-                if (!File.Exists(SessionPath))
-                    return null;
-                var bytes = File.ReadAllBytes(SessionPath);
-                var appSnapshot = JsonSerializer.Deserialize(bytes, VexJsonContext.Default.AppSnapshot);
-                return appSnapshot?.Windows.Count > 0 ? appSnapshot.Windows[0] : null;
-            }
-            catch
-            {
-                return null;
-            }
-        });
+            return File.Exists(SessionPath) ? DeserializeSessionSnapshot(File.ReadAllBytes(SessionPath)) : null;
+        }
+        catch
+        {
+            // A corrupt or old-format session must not block startup.
+            return null;
+        }
+    }
+
+    /// <summary>Validates session JSON on the reader thread, before shell prewarm inspects projects.</summary>
+    internal static SessionSnapshot? DeserializeSessionSnapshot(byte[] bytes)
+    {
+        var appSnapshot = JsonSerializer.Deserialize(bytes, VexJsonContext.Default.AppSnapshot);
+        return SessionSnapshotRecovery.NormalizeSessionSnapshot(appSnapshot?.Windows?.FirstOrDefault(static window => window is not null));
     }
 
     /// <summary>Populates an existing workspace with the given snapshot on the UI thread.</summary>
     public static void Populate(Workspace workspace, SessionSnapshot? sessionSnapshot)
     {
+        // Also accept callers that construct snapshots without the JSON reader.
+        sessionSnapshot = SessionSnapshotRecovery.NormalizeSessionSnapshot(sessionSnapshot);
         if (sessionSnapshot != null)
         {
             foreach (var projectSnapshot in sessionSnapshot.Projects)
@@ -193,14 +167,14 @@ public static class SessionStore
         return project;
     }
 
-    private static PaneNode RestorePane(PaneSnapshot snapshot, string workingDirectory) => snapshot switch
+    private static PaneNode RestorePane(PaneSnapshot? snapshot, string workingDirectory) => snapshot switch
     {
         SplitPaneSnapshot split => new SplitPane(
             split.Orientation == "Vertical" ? Orientation.Vertical : Orientation.Horizontal,
             RestorePane(split.First, workingDirectory),
             RestorePane(split.Second, workingDirectory))
         {
-            Ratio = split.Ratio,
+            Ratio = double.IsFinite(split.Ratio) ? split.Ratio : 0.5,
         },
         LegacyEditorPaneSnapshot editor => new TerminalPane(workingDirectory) { IsFocused = editor.IsFocused },
         TerminalPaneSnapshot terminal => new TerminalPane(workingDirectory) { IsFocused = terminal.IsFocused },

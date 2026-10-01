@@ -25,6 +25,7 @@ internal static class TerminalSessionPrewarmer
         internal TerminalSession? Session { get; set; }
         internal Action<ArraySegment<byte>>? OutputHandler { get; set; }
         internal List<ArraySegment<byte>> BufferedOutput { get; } = new();
+        internal int BufferedByteCount { get; set; }
         internal bool Claimed { get; set; }
         internal bool Invalidated { get; set; }
     }
@@ -43,19 +44,21 @@ internal static class TerminalSessionPrewarmer
 
         internal Task<TerminalSession> SessionTask { get; }
 
-        internal void AttachOutputHandler(Action<ArraySegment<byte>> outputHandler)
+        /// <summary>Returns false for an invalidated VT stream; the caller must cold-start.</summary>
+        internal bool AttachOutputHandler(Action<ArraySegment<byte>> outputHandler)
         {
             lock (Sync)
             {
                 if (_disposed || _slot.Invalidated)
                 {
                     ReturnBufferedOutputLocked(_slot);
-                    return;
+                    return false;
                 }
 
                 _slot.OutputHandler = outputHandler;
                 FlushBufferedOutputLocked(_slot);
                 _attached = true;
+                return true;
             }
         }
 
@@ -73,16 +76,18 @@ internal static class TerminalSessionPrewarmer
                 _slot.Session = null;
                 ReturnBufferedOutputLocked(_slot);
 
-                if (session is null && SessionTask.IsCompletedSuccessfully)
-                    session = SessionTask.Result;
             }
 
             session?.Dispose();
         }
     }
 
+    // PTY reads rent 64 KiB even for a short prompt; bound retained capacity,
+    // not just payload size. Normal prompts need only a handful of buffers.
+    internal const int MaxBufferedOutputBytes = 1024 * 1024;
     private static readonly object Sync = new();
     private static Slot? _slot;
+    private static Slot? _overflowedSlot;
     private static bool _disposed;
 
     public static void StartPrewarm(string workingDirectory, string? shellId)
@@ -90,6 +95,8 @@ internal static class TerminalSessionPrewarmer
         lock (Sync)
         {
             _disposed = false;
+            if (IsPrewarmDisabledLocked(workingDirectory, shellId))
+                return;
             if (_slot is { } current && !current.Claimed && !current.Invalidated
                 && Matches(current, workingDirectory, shellId))
                 return;
@@ -101,10 +108,7 @@ internal static class TerminalSessionPrewarmer
     private static void StartPrewarmLocked(string workingDirectory, string? shellId)
     {
         if (_slot is { } current)
-        {
-            InvalidateLocked(current);
-            _slot = null;
-        }
+            DisposeSessionInBackground(InvalidateLocked(current));
 
         var slot = new Slot(workingDirectory, shellId);
         _slot = slot;
@@ -155,28 +159,33 @@ internal static class TerminalSessionPrewarmer
                 throw;
             }
         }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
 
         StartupMark.Note("terminal prewarm spawn end");
         var disposeAfterBuild = false;
         lock (Sync)
         {
             if (slot.Invalidated)
-            {
                 disposeAfterBuild = true;
-            }
             else
-            {
                 slot.Session = session;
-            }
         }
 
         if (disposeAfterBuild)
+        {
             session.Dispose();
+            throw new OperationCanceledException("Prewarm stream was invalidated during startup.");
+        }
 
         return session;
     }
 
-    private static void OnOutput(Slot slot, ArraySegment<byte> data)
+    /// <summary>Takes ownership of a pooled PTY buffer, or transfers it to the attached handler.</summary>
+    internal static void OnOutput(Slot slot, ArraySegment<byte> data)
     {
         if (data.Array is not { } array)
             return;
@@ -195,13 +204,26 @@ internal static class TerminalSessionPrewarmer
                 return;
             }
 
+            if (array.Length > MaxBufferedOutputBytes - slot.BufferedByteCount)
+            {
+                // Dropping individual chunks corrupts VT parsing. Disable this
+                // configuration until it changes and let panes cold-start.
+                _overflowedSlot = slot;
+                System.Buffers.ArrayPool<byte>.Shared.Return(array);
+                DisposeSessionInBackground(InvalidateLocked(slot));
+                if (_slot is { } replacement && Matches(replacement, slot.WorkingDirectory, slot.ShellId))
+                {
+                    DisposeSessionInBackground(InvalidateLocked(replacement));
+                    _slot = null;
+                }
+                return;
+            }
+
             if (slot.BufferedOutput.Count == 0)
                 StartupMark.Note("prewarmed first terminal output");
 
-            var copy = System.Buffers.ArrayPool<byte>.Shared.Rent(data.Count);
-            Buffer.BlockCopy(array, data.Offset, copy, 0, data.Count);
-            System.Buffers.ArrayPool<byte>.Shared.Return(array);
-            slot.BufferedOutput.Add(new ArraySegment<byte>(copy, 0, data.Count));
+            slot.BufferedOutput.Add(data);
+            slot.BufferedByteCount += array.Length;
         }
     }
 
@@ -209,9 +231,11 @@ internal static class TerminalSessionPrewarmer
     {
         lock (Sync)
         {
+            if (IsPrewarmDisabledLocked(workingDirectory, shellId))
+                return null;
             if (_slot is { } existing && !existing.Claimed && !existing.Invalidated && !Matches(existing, workingDirectory, shellId))
             {
-                InvalidateLocked(existing);
+                DisposeSessionInBackground(InvalidateLocked(existing));
                 _slot = null;
             }
 
@@ -233,25 +257,43 @@ internal static class TerminalSessionPrewarmer
 
     public static void Dispose()
     {
+        TerminalSession? session;
         lock (Sync)
         {
-            if (_disposed)
-                return;
             _disposed = true;
-            if (_slot is not { } slot)
-                return;
-
-            InvalidateLocked(slot);
+            _overflowedSlot = null;
+            session = _slot is { } slot ? InvalidateLocked(slot) : null;
             _slot = null;
         }
+        session?.Dispose();
     }
 
-    private static void InvalidateLocked(Slot slot)
+    private static bool IsPrewarmDisabledLocked(string workingDirectory, string? shellId)
+    {
+        if (_overflowedSlot is null)
+            return false;
+        if (Matches(_overflowedSlot, workingDirectory, shellId))
+            return true;
+        _overflowedSlot = null;
+        return false;
+    }
+
+    private static TerminalSession? InvalidateLocked(Slot slot)
     {
         slot.Invalidated = true;
-        slot.Session?.Dispose();
+        var session = slot.Session;
         slot.Session = null;
+        slot.OutputHandler = null;
         ReturnBufferedOutputLocked(slot);
+        return session;
+    }
+
+    private static void DisposeSessionInBackground(TerminalSession? session)
+    {
+        // ClosePseudoConsole can wait for the reader. Never close from that
+        // reader itself or under the lock its output callback needs.
+        if (session is not null)
+            _ = Task.Run(session.Dispose);
     }
 
     private static void FlushBufferedOutputLocked(Slot slot)
@@ -259,9 +301,17 @@ internal static class TerminalSessionPrewarmer
         if (slot.OutputHandler is not { } handler)
             return;
 
-        foreach (var chunk in slot.BufferedOutput)
+        for (var index = 0; index < slot.BufferedOutput.Count; index++)
+        {
+            var chunk = slot.BufferedOutput[index];
+            // The handler owns this buffer even if it throws. Leave only
+            // unreplayed chunks for cancellation cleanup to return to the pool.
+            slot.BufferedOutput[index] = default;
+            slot.BufferedByteCount -= chunk.Array!.Length;
             handler(chunk);
+        }
         slot.BufferedOutput.Clear();
+        slot.BufferedByteCount = 0;
     }
 
     private static void ReturnBufferedOutputLocked(Slot slot)
@@ -272,5 +322,6 @@ internal static class TerminalSessionPrewarmer
                 System.Buffers.ArrayPool<byte>.Shared.Return(array);
         }
         slot.BufferedOutput.Clear();
+        slot.BufferedByteCount = 0;
     }
 }

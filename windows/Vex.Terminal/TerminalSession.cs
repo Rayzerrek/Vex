@@ -39,6 +39,8 @@ public sealed class TerminalSession : IDisposable
     private IntPtr _threadHandle;
     private RegisteredWaitHandle? _exitWaitHandle;
     private int _exitedRaised;
+    private int _exitCode;
+    private int _exitCodeKnown;
     private bool _disposed;
 
     // Input-pipe writes come from two threads now: the UI thread (keystrokes,
@@ -51,6 +53,9 @@ public sealed class TerminalSession : IDisposable
 
     /// <summary>Raised once, with the process exit code, when the child exits.</summary>
     public event Action<int>? Exited;
+
+    /// <summary>Cached process exit code, or null until exit is observed; safe after handle disposal.</summary>
+    public int? ExitCode => Volatile.Read(ref _exitCodeKnown) != 0 ? _exitCode : null;
 
     public int ProcessId { get; private set; }
 
@@ -369,6 +374,8 @@ public sealed class TerminalSession : IDisposable
         if (_processHandle != IntPtr.Zero &&
             NativeMethods.GetExitCodeProcess(_processHandle, out var code))
             exitCode = unchecked((int)code);
+        _exitCode = exitCode;
+        Volatile.Write(ref _exitCodeKnown, 1);
         Exited?.Invoke(exitCode);
     }
 

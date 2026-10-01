@@ -1395,9 +1395,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         if (session is not null)
         {
             session.OutputReceived -= OnSessionOutput;
-            session.Exited -= OnSessionExited;
+            if (_sessionExitedHandler is { } exitHandler)
+                session.Exited -= exitHandler;
             session.Dispose();
         }
+        _sessionExitedHandler = null;
         lock (_terminal.SyncRoot)
         {
             _terminal.Dispose();

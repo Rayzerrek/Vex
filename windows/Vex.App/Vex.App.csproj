@@ -69,7 +69,9 @@
        NOTE: System.IO.Pipelines is required by .NET 10 JSON serialization.
        System.Configuration.ConfigurationManager and presentation assemblies (Ribbon,
        WindowsFormsIntegration, PresentationUI) MUST NOT be pruned: WPF loads them dynamically
-       at startup via BaseCompatibilityPreferences and Baml2006SchemaContext.EnsureXmlnsAssembliesLoaded. -->
+       at startup via BaseCompatibilityPreferences and Baml2006SchemaContext.EnsureXmlnsAssembliesLoaded.
+       System.Reflection.Metadata is also required by the .NET 10 WPF clipboard
+       path when a mouse selection is copied. -->
   <Target Name="PruneUnusedSingleFileAssemblies" BeforeTargets="_ComputeFilesToBundle">
     <ItemGroup>
       <_UnusedPublishFiles Include="@(ResolvedFileToPublish)"
@@ -101,7 +103,6 @@
           $([System.String]::Copy('%(Filename)').StartsWith('System.Security.Cryptography.Xml')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Formats.Tar')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Formats.Nrbf')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Reflection.Metadata')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Linq.AsyncEnumerable')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Threading.Tasks.Dataflow')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Text.Encoding.CodePages')) or

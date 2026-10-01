@@ -8,6 +8,7 @@ namespace Vex.App.Terminal.Native;
 public sealed partial class NativeTerminalControl
 {
     private volatile TerminalSession? _session;
+    private Action<int>? _sessionExitedHandler;
     private TerminalSessionPrewarmer.Lease? _prewarmLease;
     private bool _sessionStarting;
     private List<byte[]>? _pendingSessionInput;
@@ -133,9 +134,8 @@ public sealed partial class NativeTerminalControl
                 try
                 {
                     var prewarmed = await prewarmLease.SessionTask.ConfigureAwait(false);
-                    _session = prewarmed;
-                    prewarmed.Exited += OnSessionExited;
-                    prewarmLease.AttachOutputHandler(OnSessionOutput);
+                    if (!TryAttachPrewarmedSession(prewarmLease, prewarmed))
+                        throw new OperationCanceledException("Prewarm output was invalidated before attachment.");
                     prewarmLease.Dispose();
                     _prewarmLease = null;
                     _ = Dispatcher.BeginInvoke(() =>
@@ -237,7 +237,6 @@ public sealed partial class NativeTerminalControl
         };
 
         session.OutputReceived += data => outputHandler(data);
-        session.Exited += OnSessionExited;
         session.OutputReceived += data =>
         {
             if (Interlocked.Exchange(ref _firstOutputNoted, 1) == 0)
@@ -274,7 +273,37 @@ public sealed partial class NativeTerminalControl
             buffered.Clear();
         }
 
+        ObserveSessionExit(session);
         return session;
+    }
+
+    /// <summary>Only accepted prewarm streams may report process exit and close this pane.</summary>
+    internal bool TryAttachPrewarmedSession(TerminalSessionPrewarmer.Lease lease, TerminalSession session)
+    {
+        // Query responses during replay need the session before it is accepted.
+        _session = session;
+        if (!lease.AttachOutputHandler(OnSessionOutput))
+        {
+            _session = null;
+            return false;
+        }
+        ObserveSessionExit(session);
+        return true;
+    }
+
+    /// <summary>Replays an exit that raced acceptance, without double-reporting the event.</summary>
+    internal void ObserveSessionExit(TerminalSession session)
+    {
+        var reported = 0;
+        Action<int> handler = code =>
+        {
+            if (Interlocked.Exchange(ref reported, 1) == 0)
+                OnSessionExited(session, code);
+        };
+        _sessionExitedHandler = handler;
+        session.Exited += handler;
+        if (session.ExitCode is { } exitCode)
+            handler(exitCode);
     }
 
     private void OnSessionOutput(ArraySegment<byte> chunk)
@@ -317,11 +346,12 @@ public sealed partial class NativeTerminalControl
         ScheduleRedraw();
     }
 
-    private void OnSessionExited(int exitCode)
+    private void OnSessionExited(TerminalSession source, int exitCode)
     {
         _ = Dispatcher.BeginInvoke(() =>
         {
-            if (_disposed)
+            // A rejected or replaced session can already have queued an exit.
+            if (_disposed || !ReferenceEquals(_session, source))
                 return;
             _terminal.Feed($"\r\n\x1b[2m[process exited with code {exitCode}]\x1b[m\r\n");
             FlushRedraw();

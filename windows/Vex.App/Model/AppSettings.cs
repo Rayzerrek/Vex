@@ -26,6 +26,9 @@ public sealed class AppSettings : ObservableObject
     private long _writeVersion;
     private long _lastWrittenVersion;
     private bool _savePending;
+    // Only the loaded singleton owns settings.json. Deserialization must not
+    // start save timers or persist a partially populated object.
+    private bool _persistenceEnabled;
 
     public AppSettings()
     {
@@ -191,19 +194,37 @@ public sealed class AppSettings : ObservableObject
             if (File.Exists(SettingsPath))
             {
                 var bytes = File.ReadAllBytes(SettingsPath);
-                var settings = JsonSerializer.Deserialize(bytes, VexJsonContext.Default.AppSettings);
-                if (settings != null)
-                {
-                    MigrateLegacyShell(settings, bytes);
-                    return settings;
-                }
+                var settings = DeserializeSettings(bytes);
+                settings._persistenceEnabled = true;
+                MigrateLegacyShell(settings, bytes);
+                return settings;
             }
         }
         catch
         {
             // Fallback to defaults
         }
-        return new AppSettings();
+        return new AppSettings { _persistenceEnabled = true };
+    }
+
+    /// <summary>Normalizes persisted shell profiles without starting timers or writing settings.</summary>
+    internal static AppSettings DeserializeSettings(byte[] bytes)
+    {
+        var settings = JsonSerializer.Deserialize(bytes, VexJsonContext.Default.AppSettings) ?? new AppSettings();
+        settings._customShells ??= new();
+        settings._customShells.RemoveAll(static shell => shell is null
+            || string.IsNullOrWhiteSpace(shell.Id) || string.IsNullOrWhiteSpace(shell.Program));
+        foreach (var shell in settings._customShells)
+        {
+            if (string.IsNullOrWhiteSpace(shell.Name))
+                shell.Name = shell.Id;
+            shell.Arguments ??= "";
+        }
+        settings._fontFamily = string.IsNullOrWhiteSpace(settings._fontFamily) ? "Cascadia Mono" : settings._fontFamily;
+        settings._fontSize = Math.Clamp(settings._fontSize, 8, 72);
+        settings._themeName ??= "Vex Dark";
+        settings._shellId ??= ShellRegistry.SystemDefaultId;
+        return settings;
     }
 
     // Settings written before shells had profile ids carry only a display
@@ -231,6 +252,8 @@ public sealed class AppSettings : ObservableObject
 
     private void Save()
     {
+        if (!_persistenceEnabled)
+            return;
         _savePending = true;
         _saveDebouncer ??= new HalfDebouncer(TimeSpan.FromMilliseconds(400), () =>
         {
