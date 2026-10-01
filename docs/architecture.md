@@ -67,11 +67,33 @@ State lives in `%LocalAppData%\Vex\`:
 |---|---|
 | `settings.json` | Appearance, theme, font, cursor, shell profiles. |
 | `session.json` | Projects, tabs, split tree, divider ratios, focus. |
+| `crash.log` | Latest managed fatal exception and stack trace; best-effort, local only. |
 
 Both are written by source-generated `System.Text.Json` contexts
 (`VexJsonContext`), not reflection. Writes are debounced through
 `HalfDebouncer` — leading edge fires immediately, the trailing edge coalesces
 further edits — and flushed on window close so the last change is never lost.
+
+Session snapshots are repaired before shell prewarm inspects them: null list
+entries are skipped while preserving the selected project/tab, and missing lists
+or pane leaves fall back to fresh terminals. Settings normalize custom shell
+profiles before the UI uses them; only the loaded singleton may schedule writes,
+so deserialization does not start save timers for partially populated objects.
+
+Each unattached prewarm session retains at most 1 MiB of pooled buffer capacity.
+It transfers buffer ownership without copying. Overflow invalidates the entire
+VT stream and disables prewarm for that directory/shell until the configuration
+changes (or the app restarts); panes cold-start instead of replaying truncated
+output. Closing an invalidated ConPTY session happens off the reader thread and
+outside its output lock. A pane subscribes to process exit only after accepting
+the prewarm stream. Cached exit codes preserve very fast process exits, while
+queued callbacks from replaced sessions are ignored on the UI thread.
+
+Fatal exception handlers do no normal-startup I/O and do not mark exceptions as
+handled. They synchronously overwrite a bounded `crash.log` on the first managed
+fatal exception. Native crashes and severe resource exhaustion may not produce
+a report; disk failures must never replace the original exception. Reports may
+contain local paths from stack traces; they are not uploaded.
 
 `AppSettings` is a singleton loaded on a background thread during startup so
 the UI thread does not block on disk I/O. A legacy `Shell` name is migrated

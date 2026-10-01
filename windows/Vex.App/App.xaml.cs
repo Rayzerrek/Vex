@@ -12,6 +12,7 @@ public sealed partial class App : Application
 
     public App()
     {
+        Model.AppCrashLog.RegisterFatalExceptionHandlers(this);
         try
         {
             var profileDir = Model.AppProfile.DirectoryPath;

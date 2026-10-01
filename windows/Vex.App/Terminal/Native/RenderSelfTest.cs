@@ -71,6 +71,13 @@ internal static class RenderSelfTest
             if (control.SelfTestCols == 0 || control.SelfTestRows == 0)
                 return;
             t.Stop();
+            if (Environment.GetEnvironmentVariable("VEX_SELFTEST_FATAL") == "1")
+            {
+                // Run outside the harness catch so the real fatal handlers
+                // log the exception without turning it into a passing report.
+                _ = control.Dispatcher.BeginInvoke(() => throw new InvalidOperationException("Vex fatal exception self-test"));
+                return;
+            }
             try
             {
                 if (LiveMode)
@@ -98,7 +105,9 @@ internal static class RenderSelfTest
                     }
                     return;
                 }
-                if (RendererBenchMode)
+                if (Environment.GetEnvironmentVariable("VEX_SELFTEST_CLIPBOARD") == "1")
+                    RunClipboardSelection(control);
+                else if (RendererBenchMode)
                     RunRendererBench(control);
                 else if (IncrementalMode)
                     RunIncrementalParity(control);
@@ -621,6 +630,19 @@ internal static class RenderSelfTest
             for (var sample = 0; sample < 3; sample++)
                 Report(control, $"{name} sample={sample} {control.SelfTestBenchRendering(100)}");
         }
+        Report(control, "done");
+    }
+
+    private static void RunClipboardSelection(NativeTerminalControl control)
+    {
+        const string text = "vex clipboard regression";
+        control.SelfTestFeed($"\x1b[2J\x1b[H{text}");
+        control.SelfTestSelect(0, 0, text.Length - 1, 0);
+        Assert(control, control.SelfTestSelectedText() == text, "clipboard: mouse drag selects the fixture");
+        control.SelfTestSelectionMouseUp();
+        Assert(control, NativeTerminalControl.TryGetClipboardText(out var copied) && copied == text,
+            "clipboard: mouse release copies selected text through WPF");
+        Assert(control, control.SelfTestSelectedText() is null, "clipboard: successful copy clears selection");
         Report(control, "done");
     }
 

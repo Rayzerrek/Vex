@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -400,6 +401,10 @@ public sealed partial class NativeTerminalControl
         _terminal.SelectionRelease(dragCol, dragRow);
         FlushRedraw();
     }
+
+    /// <summary>Completes a mouse selection through the real release and clipboard path.</summary>
+    internal void SelfTestSelectionMouseUp() => OnMouseLeftButtonUp(new MouseButtonEventArgs(
+        Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left));
 
     /// <summary>Plain text of the active selection, or null when there is none.</summary>
     internal string? SelfTestSelectedText() => _terminal.HasSelection ? _terminal.GetSelectedText() : null;
