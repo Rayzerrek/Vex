@@ -9,7 +9,7 @@ foreach ($attempt in 1..2) {
     dotnet publish (Join-Path $PSScriptRoot '../Vex.App') -c Release -o $OutputDirectory '-p:DefineConstants=VEX_SELFTEST'
     if ($LASTEXITCODE -ne 0) { throw 'Publishing the self-test app failed' }
 }
-foreach ($nativeLibrary in 'ghostty-vt.dll', 'conpty.dll', 'wpfgfx_cor3.dll') {
+foreach ($nativeLibrary in 'ghostty-vt.dll', 'conpty.dll', 'wpfgfx_cor3.dll', 'x64/OpenConsole.exe') {
     if (!(Test-Path -LiteralPath (Join-Path $OutputDirectory $nativeLibrary))) {
         throw "Published native library missing: $nativeLibrary"
     }

@@ -10,7 +10,7 @@
           Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
       <_VexPublishSidecars Include="@(ResolvedFileToPublish)"
-                          Condition="('%(ResolvedFileToPublish.AssetType)' == 'native' and '$(IncludeNativeLibrariesForSelfExtract)' != 'true' and '$(IncludeAllContentForSelfExtract)' != 'true') or ('%(ResolvedFileToPublish.Extension)' == '.pdb' and '$(IncludeSymbolsInSingleFile)' != 'true')" />
+                          Condition="(('%(ResolvedFileToPublish.AssetType)' == 'native' or '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'OpenConsole.exe') and '$(IncludeNativeLibrariesForSelfExtract)' != 'true' and '$(IncludeAllContentForSelfExtract)' != 'true') or ('%(ResolvedFileToPublish.Extension)' == '.pdb' and '$(IncludeSymbolsInSingleFile)' != 'true')" />
       <ResolvedFileToPublish Remove="@(_VexPublishSidecars)" />
       <ResolvedFileToPublish Include="@(_VexPublishSidecars)" ExcludeFromSingleFile="true" />
     </ItemGroup>
