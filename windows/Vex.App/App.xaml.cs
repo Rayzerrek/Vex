@@ -7,8 +7,9 @@ namespace Vex.App;
 /// </summary>
 public sealed partial class App : Application
 {
-    private readonly Task _settingsTask;
-    private readonly Task<Model.SessionSnapshot?> _sessionTask;
+    // Instance field initializers run before Application's base constructor,
+    // letting profile I/O and shell creation overlap WPF initialization too.
+    private readonly (Task Settings, Task<Model.SessionSnapshot?> Session) _startupTasks = StartStartupTasks();
 
     public App()
     {
@@ -21,21 +22,33 @@ public sealed partial class App : Application
             System.Runtime.ProfileOptimization.StartProfile("startup.profile");
         }
         catch { }
-        // Required for ported TUI applications and shells to output VT
-        // sequences properly under ConPTY; set before any prewarm starts.
-        Environment.SetEnvironmentVariable("TERM", "xterm-256color");
-        Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
         Model.StartupMark.Note("app constructed");
 
-        // Start settings and session I/O immediately. The prewarmer is started
-        // once both values are available, without a second JSON parser that can
-        // disagree with the source-generated deserializer.
-        _settingsTask = Task.Run(Model.AppSettings.Preload);
-        _sessionTask = Model.SessionStore.ReadSnapshotAsync();
-
-        _ = Task.WhenAll(_settingsTask, _sessionTask).ContinueWith(_ =>
+        if (Model.StartupMark.IsEnabled)
         {
-            var snapshot = _sessionTask.Result;
+            _ = _startupTasks.Session.ContinueWith(t =>
+            {
+                if (t.Status == TaskStatus.RanToCompletion)
+                    Model.StartupMark.Note("session task done");
+                else
+                    Model.StartupMark.Note("session task faulted");
+            }, TaskScheduler.Default);
+        }
+    }
+
+    private static (Task Settings, Task<Model.SessionSnapshot?> Session) StartStartupTasks()
+    {
+        Model.StartupMark.Note("startup tasks begin");
+        // Shell creation now overlaps the base constructor too, so establish
+        // terminal capabilities before scheduling any prewarm work.
+        Environment.SetEnvironmentVariable("TERM", "xterm-256color");
+        Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
+        var settingsTask = Task.Run(Model.AppSettings.Preload);
+        var sessionTask = Model.SessionStore.ReadSnapshotAsync();
+
+        _ = Task.WhenAll(settingsTask, sessionTask).ContinueWith(_ =>
+        {
+            var snapshot = sessionTask.Result;
             var projects = snapshot?.Projects;
             var selectedProjectIndex = snapshot?.SelectedProjectIndex ?? 0;
             var workingDirectory = projects is { Count: > 0 }
@@ -47,25 +60,36 @@ public sealed partial class App : Application
             Terminal.Native.TerminalSessionPrewarmer.StartPrewarm(workingDirectory, shellId);
         }, TaskScheduler.Default);
 
-        _ = _settingsTask.ContinueWith(_ =>
+        _ = settingsTask.ContinueWith(_ =>
         {
             Model.StartupMark.Note("terminal prewarm font begin");
             var settings = Model.AppSettings.Instance;
             Terminal.Native.NativeTerminalControl.Prewarm(settings.ThemeName, settings.FontFamily);
             Model.StartupMark.Note("terminal prewarm font ready");
+            PrewarmWindowText();
         }, TaskScheduler.Default);
 
-        if (Model.StartupMark.IsEnabled)
-        {
-            _ = _sessionTask.ContinueWith(t =>
-            {
-                if (t.Status == TaskStatus.RanToCompletion)
-                    Model.StartupMark.Note("session task done");
-                else
-                    Model.StartupMark.Note("session task faulted");
-            }, TaskScheduler.Default);
-        }
+        return (settingsTask, sessionTask);
+    }
 
+    private static void PrewarmWindowText()
+    {
+        try
+        {
+            // Terminal glyph lookup does not initialize WPF text layout.
+            // Prime the shared chrome font/layout caches while XAML loads.
+            Model.StartupMark.Note("window text prewarm begin");
+            foreach (var (family, text) in new[]
+                { ("Segoe UI", "Vex Terminal Projects"), ("Segoe MDL2 Assets", "\uE710\uE8BB\uE921\uE922\uE923") })
+            {
+                var formatted = new System.Windows.Media.FormattedText(text,
+                    System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                    new System.Windows.Media.Typeface(family), 13, System.Windows.Media.Brushes.White, 1);
+                _ = formatted.Width;
+            }
+            Model.StartupMark.Note("window text prewarm ready");
+        }
+        catch { /* Font prewarm is optional; WPF can initialize on first use. */ }
     }
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -91,7 +115,7 @@ public sealed partial class App : Application
             typeof(System.Windows.Media.Animation.Timeline),
             new PropertyMetadata(120));
 
-        await _settingsTask.ConfigureAwait(true);
+        await _startupTasks.Settings.ConfigureAwait(true);
         Model.StartupMark.Note("settings ready");
 
         // Chrome colors follow the active terminal theme (tab strip,
@@ -116,10 +140,10 @@ public sealed partial class App : Application
         };
 
         var workspace = new Model.Workspace();
-        var sessionReady = _sessionTask.IsCompletedSuccessfully;
+        var sessionReady = _startupTasks.Session.IsCompletedSuccessfully;
         if (sessionReady)
         {
-            Model.SessionStore.Populate(workspace, _sessionTask.Result);
+            Model.SessionStore.Populate(workspace, _startupTasks.Session.Result);
             Model.StartupMark.Note("session populated before window");
         }
 
@@ -134,7 +158,7 @@ public sealed partial class App : Application
         // retain the skeleton fallback for the uncommon unfinished read.
         if (!sessionReady)
         {
-            var snapshot = await _sessionTask.ConfigureAwait(true);
+            var snapshot = await _startupTasks.Session.ConfigureAwait(true);
             Model.SessionStore.Populate(workspace, snapshot);
             Model.StartupMark.Note("session populated after window");
         }

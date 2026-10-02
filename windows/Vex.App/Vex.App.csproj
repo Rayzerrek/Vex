@@ -35,11 +35,11 @@
          from the assembly for the UI, so nothing else needs updating. -->
     <Version>1.3.0</Version>
     <PublishSingleFile>true</PublishSingleFile>
-    <!-- Favor launch latency: decompression runs before any startup work can overlap. -->
+    <!-- Keep startup assemblies directly accessible without decompression. -->
     <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
-    <!-- Composite R2R precompiles WPF template/binding startup too. With an
-         uncompressed bundle this reduced launch latency in desktop measurements. -->
+    <!-- PublishOptimization.targets roots the measured startup assemblies;
+         cold framework methods retain IL and compile on demand. -->
     <PublishReadyToRun>true</PublishReadyToRun>
     <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
     <!-- Native libraries (ghostty-vt.dll, hostfxr, ...) ship beside the exe
@@ -53,6 +53,8 @@
     <SatelliteResourceLanguages>none</SatelliteResourceLanguages>
   </PropertyGroup>
 
+  <Import Project="PublishOptimization.targets" />
+
   <Target Name="LimitReadyToRunToVex" BeforeTargets="_PrepareForReadyToRunCompilation"
           Condition="'$(PublishReadyToRun)' == 'true' and '$(PublishReadyToRunComposite)' != 'true'">
     <ItemGroup>
@@ -64,15 +66,15 @@
 
   <!-- Prune completely unused framework assemblies and debug engines from the self-contained
        single-file bundle. Microsoft.WindowsDesktop.App unconditionally pulls in Windows Forms,
-       System.Data, Active Directory, VB, unused networking/diagnostics, XPS/Printing, and CLR debugging engines
-       even though Vex never touches them. Removing them saves over ~55 MB uncompressed.
+       System.Data, Active Directory, VB, unused diagnostics, XPS/Printing, and CLR debugging engines.
+       Keep System.Net: WPF converters reference WebRequest even for local cursors/images.
        NOTE: System.IO.Pipelines is required by .NET 10 JSON serialization.
        System.Configuration.ConfigurationManager and presentation assemblies (Ribbon,
        WindowsFormsIntegration, PresentationUI) MUST NOT be pruned: WPF loads them dynamically
        at startup via BaseCompatibilityPreferences and Baml2006SchemaContext.EnsureXmlnsAssembliesLoaded.
        System.Reflection.Metadata is also required by the .NET 10 WPF clipboard
        path when a mouse selection is copied. -->
-  <Target Name="PruneUnusedSingleFileAssemblies" BeforeTargets="_ComputeFilesToBundle">
+  <Target Name="IdentifyUnusedPublishFiles" BeforeTargets="_PrepareForReadyToRunCompilation;_ComputeFilesToBundle">
     <ItemGroup>
       <_UnusedPublishFiles Include="@(ResolvedFileToPublish)"
         Condition="
@@ -82,7 +84,6 @@
           $([System.String]::Copy('%(Filename)').StartsWith('System.DirectoryServices')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Private.DataContractSerialization')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Drawing')) or
-          $([System.String]::Copy('%(Filename)').StartsWith('System.Net')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Linq.Parallel')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Diagnostics.PerformanceCounter')) or
           $([System.String]::Copy('%(Filename)').StartsWith('System.Diagnostics.EventLog')) or
@@ -121,6 +122,16 @@
           $([System.String]::Copy('%(Filename)').StartsWith('PresentationFramework.Classic')) or
           '%(Filename)' == 'clrgcexp'
         " />
+      <!-- Keep compiler references, but do not put discarded libraries into the
+           composite image: pruning the bundle alone leaves their native code. -->
+      <ResolvedFileToPublish Remove="@(_UnusedPublishFiles)" />
+      <ResolvedFileToPublish Include="@(_UnusedPublishFiles)" ReferenceOnly="true" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="PruneUnusedSingleFileAssemblies" BeforeTargets="_ComputeFilesToBundle"
+          DependsOnTargets="IdentifyUnusedPublishFiles">
+    <ItemGroup>
       <ResolvedFileToPublish Remove="@(_UnusedPublishFiles)" />
     </ItemGroup>
   </Target>

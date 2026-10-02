@@ -112,6 +112,8 @@ internal static class RenderSelfTest
                     RunRendererBench(control);
                 else if (IncrementalMode)
                     RunIncrementalParity(control);
+                else if (Environment.GetEnvironmentVariable("VEX_SELFTEST_STARTUP") == "1")
+                    RunStartupOnly(control);
                 else
                     RunCore(control);
             }
@@ -719,8 +721,7 @@ internal static class RenderSelfTest
     {
         Report(control, $"start cols={control.SelfTestCols} rows={control.SelfTestRows} cell={control.SelfTestCellWidth:0.0}x{control.SelfTestCellHeight:0.0}");
 
-        if (Application.Current.MainWindow is MainWindow window)
-            Assert(control, window.SelfTestDeferredPopups(), "deferred popups: bindings, placement and confirmation");
+        CheckStartupOverlays(control);
 
         // A steady caret so bitmaps from different captures are comparable.
         control.SelfTestStabilizeCaret();
@@ -1181,6 +1182,27 @@ internal static class RenderSelfTest
             : "FAIL cursor blink modes: stale timer or incorrect steady/hidden caret");
         ParityCheck(control, "cursor-blink-modes");
         Report(control, "done");
+    }
+
+    private static void RunStartupOnly(NativeTerminalControl control)
+    {
+        Report(control, $"startup start cols={control.SelfTestCols} rows={control.SelfTestRows}");
+        CheckStartupOverlays(control);
+        control.SelfTestStabilizeCaret();
+        control.SelfTestFeed("\u001b[2J\u001b[HVex startup 漢🦀e\u0301\r\n\u001b[31mcolor\u001b[0m");
+        ParityCheck(control, "startup-text");
+        control.SelfTestFeed("\u001b[2J\u001b[H");
+        ParityCheck(control, "startup-clear");
+        Report(control, "startup done");
+    }
+
+    private static void CheckStartupOverlays(NativeTerminalControl control)
+    {
+        var window = Window.GetWindow(control) as MainWindow
+            ?? throw new InvalidOperationException("Startup self-test terminal has no MainWindow host.");
+        Assert(control, window.SelfTestDeferredPopups(), "deferred popups: bindings, placement and confirmation");
+        Assert(control, window.SelfTestStartupOverlays(), "startup overlays: settings, command palette and theme switcher");
+        Report(control, "PASS startup overlays: popups, settings, command palette and theme switcher");
     }
 
     /// <summary>

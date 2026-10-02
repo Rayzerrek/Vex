@@ -8,6 +8,7 @@ dotnet publish Vex.App -c Release -o Vex.Performance/bin/published
     -Executable ./Vex.Performance/bin/published/Vex.App.exe `
     -OutputDirectory ./Vex.Performance/bin/startup
 dotnet run --project Vex.Performance -c Release
+./Vex.Performance/Test-PublishedApp.ps1
 ```
 
 The startup script creates a separate profile for every sample, clears inherited
@@ -45,8 +46,71 @@ after:  858.4 719.5 714.7 700.5 678.3 662.9 650.4
 Compression alone changed the median of nine sequential launches from 896.0
 to 765.1 ms. Composite ReadyToRun also precompiles the WPF startup path.
 Closed project/confirmation popups are created from templates on first use.
-The default publish configuration favors launch latency over download size;
+This first iteration favored launch latency over download size;
 compression and composite R2R remain overridable MSBuild properties.
+
+## Startup and package size followup
+
+Baseline: `38ff3a7`, compared with the startup-roots/text-prewarm configuration.
+Same machine, SDK, appearance, font and Command Prompt fixture as above. Nine
+fresh-profile pairs with no concurrent builds or tests; pair order reverses on
+alternate pairs. These measurements are a separate session, so compare values
+within this table rather than combining percentages with the earlier session.
+
+| Median / size | Before | After | Reduction |
+| --- | ---: | ---: | ---: |
+| Process start to first window frame | 657.3 ms | 623.0 ms | 5.2% |
+| Process start to first PTY output | 163.9 ms | 122.9 ms | 25.0% |
+| Published EXE | 128.0 MB | 92.3 MB | 27.9% |
+| Complete published app, excluding PDBs | 139.7 MB | 104.0 MB | 25.5% |
+
+Sizes use decimal MB. Individual first-frame samples in pair order, including
+the first launch of the new executable:
+
+```text
+before: 646.3 657.3 768.9 681.0 777.3 644.2 640.9 638.5 674.5
+after:  833.9 634.2 622.5 628.5 659.5 611.0 611.7 620.8 623.0
+```
+
+Profile I/O, font lookup and shell prewarm now start before WPF's base
+constructor. `TERM` and `COLORTERM` are set before those tasks can create a
+child. Shared Segoe UI/icon text-layout caches are warmed in the background
+alongside the terminal font cache. There is no duplicate settings/session
+parser; the UI and prewarmer consume the same task results.
+
+Self-contained deployment remains the default. The publish target roots the
+startup assemblies, including reflection-driven WPF converters, DirectWrite
+and UI Automation. Other shipped assemblies retain their IL/resources and
+crossgen compiles transitive calls into them, following the
+[SDK's composite-roots behavior](https://github.com/dotnet/sdk/blob/v10.0.302/src/Tasks/Microsoft.NET.Build.Tasks/PrepareForReadyToRunCompilation.cs).
+Unused assemblies are compiler references rather than composite inputs, so
+their discarded native code no longer remains in the EXE. Networking libraries
+are retained: `CursorConverter`'s fallback JIT path references `WebRequest`,
+even when the XAML specifies a local cursor such as `Hand`.
+
+`-p:VexUseStartupReadyToRunRoots=false` restores full composite compilation.
+The target also works around SDK 10.0.302's duplicate unrooted publish entries
+and records compiler inputs/options so switching variants without cleaning
+cannot reuse the wrong image. Default → full → default publishing was exercised.
+The compiler input record is only rewritten when its contents change.
+Native DLLs and external symbols are excluded before bundling so an unchanged
+publish also copies them; the SDK otherwise loses its bundler-produced sidecar
+list and can remove those files from the destination. Published self-tests
+repeat publication and check the native payload before launching the app.
+
+Whole-bundle compression reduced an experimental full-composite EXE to 53.4 MB,
+but its five-launch median was 920.5 ms. App-only roots produced a 60.1 MB EXE
+with a 1433.5 ms median. Those variants were rejected for the default; these
+exploratory samples were sequential and are not the paired comparison above.
+
+Followup validation: Release solution build with no warnings/errors; all 399
+Debug app tests, 391 Release app tests and 92 Release emulator tests passed, including the clipboard
+test that the earlier desktop session could not establish. The published
+Release self-test script passed core/incremental rendering, corrupt-profile
+recovery, and light-appearance startup. Startup checks open settings, the
+command palette, theme switcher and confirmation/project popups in the bundled
+app. Light startup uses text/clear parity against full repaints; the older core
+pixel heuristics assume a dark background and are not used for that scenario.
 
 The terminal benchmark forces a complete 160-by-50 viewport snapshot, excluding
 VT feeding and WPF drawing. Medians of five samples, 500 frames per sample after
