@@ -1,0 +1,64 @@
+<Project>
+  <PropertyGroup>
+    <VexUseStartupReadyToRunRoots Condition="'$(VexUseStartupReadyToRunRoots)' == ''">true</VexUseStartupReadyToRunRoots>
+  </PropertyGroup>
+
+  <!-- GenerateBundle reports sidecars only when it runs. On an unchanged
+       publish the SDK can otherwise remove native DLLs from the destination.
+       Exclude them up front so copying also works when bundling is skipped. -->
+  <Target Name="PreserveSingleFilePublishSidecars" BeforeTargets="_ComputeFilesToBundle"
+          Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <_VexPublishSidecars Include="@(ResolvedFileToPublish)"
+                          Condition="('%(ResolvedFileToPublish.AssetType)' == 'native' and '$(IncludeNativeLibrariesForSelfExtract)' != 'true' and '$(IncludeAllContentForSelfExtract)' != 'true') or ('%(ResolvedFileToPublish.Extension)' == '.pdb' and '$(IncludeSymbolsInSingleFile)' != 'true')" />
+      <ResolvedFileToPublish Remove="@(_VexPublishSidecars)" />
+      <ResolvedFileToPublish Include="@(_VexPublishSidecars)" ExcludeFromSingleFile="true" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Root complete assemblies that startup actually uses. Other assemblies
+       retain their IL/resources; crossgen also compiles their transitive calls.
+       The list includes reflection-driven WPF converters, fonts and automation,
+       which are missing from a roots list inferred from application calls alone. -->
+  <Target Name="SelectStartupReadyToRunRoots" BeforeTargets="_PrepareForReadyToRunCompilation"
+          Condition="'$(PublishReadyToRun)' == 'true' and '$(PublishReadyToRunComposite)' == 'true' and '$(VexUseStartupReadyToRunRoots)' == 'true'">
+    <ItemGroup>
+      <PublishReadyToRunCompositeRoots Include="Vex.App.dll;Vex.Terminal.dll;Vex.Libghostty.dll" />
+      <PublishReadyToRunCompositeRoots Include="System.Private.CoreLib.dll" />
+      <PublishReadyToRunCompositeRoots Include="PresentationFramework.dll;PresentationCore.dll;WindowsBase.dll;System.Xaml.dll" />
+      <PublishReadyToRunCompositeRoots Include="DirectWriteForwarder.dll;PresentationFramework.Aero2.dll" />
+      <PublishReadyToRunCompositeRoots Include="System.ComponentModel.TypeConverter.dll;System.ComponentModel.Primitives.dll" />
+      <PublishReadyToRunCompositeRoots Include="UIAutomationTypes.dll;UIAutomationProvider.dll" />
+      <PublishReadyToRunCompositeRoots Include="System.Text.Json.dll;System.Text.Encodings.Web.dll" />
+      <PublishReadyToRunCompositeRoots Include="System.Linq.dll;System.Collections.dll;System.Collections.Concurrent.dll;System.Collections.Immutable.dll" />
+      <PublishReadyToRunCompositeRoots Include="System.Collections.NonGeneric.dll;System.Collections.Specialized.dll;System.ObjectModel.dll" />
+      <PublishReadyToRunCompositeRoots Include="System.Private.Uri.dll;System.IO.Packaging.dll" />
+      <PublishReadyToRunCompositeRoots Include="System.Console.dll;System.Diagnostics.Process.dll" />
+      <PublishReadyToRunCompositeRoots Include="System.Configuration.ConfigurationManager.dll;Microsoft.Win32.Registry.dll" />
+    </ItemGroup>
+  </Target>
+
+  <!-- SDK 10.0.302 replaces rooted inputs after crossgen but leaves unrooted
+       originals in the publish list, producing duplicate destination paths. -->
+  <Target Name="RemoveOriginalUnrootedReadyToRunInputs" AfterTargets="CreateReadyToRunImages"
+          Condition="'$(PublishReadyToRun)' == 'true' and '$(PublishReadyToRunComposite)' == 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(_ReadyToRunCompositeUnrootedBuildInput)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The SDK's timestamp check omits unrooted inputs and compiler options.
+       Switching publish variants can otherwise reuse an incompatible image or
+       refer to component DLLs the previous compilation never generated. -->
+  <Target Name="RecordReadyToRunCompilationInputs" BeforeTargets="_CreateR2RImages"
+          Condition="'$(PublishReadyToRun)' == 'true'">
+    <PropertyGroup>
+      <_VexReadyToRunInputsFile>$(IntermediateOutputPath)Vex.ReadyToRun.inputs</_VexReadyToRunInputsFile>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_VexReadyToRunInputsFile)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="composite:$(PublishReadyToRunComposite);symbols:$(PublishReadyToRunEmitSymbols);args:$(PublishReadyToRunCrossgen2ExtraArgs);@(Crossgen2Tool->'compiler:%(FullPath)');@(_ReadyToRunPgoFiles->'pgo:%(FullPath)');@(_ReadyToRunCompileList->'compile:%(FullPath)');@(_ReadyToRunCompositeBuildInput->'root:%(FullPath)');@(_ReadyToRunCompositeUnrootedBuildInput->'unrooted:%(FullPath)');@(_ReadyToRunAssembliesToReference->'reference:%(FullPath)')" />
+    <PropertyGroup>
+      <MSBuildAllProjects>$(MSBuildAllProjects);$(_VexReadyToRunInputsFile);@(_ReadyToRunCompositeUnrootedBuildInput);@(_ReadyToRunAssembliesToReference)</MSBuildAllProjects>
+    </PropertyGroup>
+  </Target>
+</Project>
