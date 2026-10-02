@@ -8,9 +8,8 @@ using Vex.Terminal;
 namespace Vex.App.Model;
 
 /// <summary>
-/// Operational state of a pane, surfaced in the title bar so a user (or a
-/// teammate reviewing an agent session) can tell at a glance whether a pane
-/// is waiting for input, running a full-screen TUI, or has exited.
+/// Operational state of a pane, used by pane previews and tab attention
+/// markers to distinguish input, full-screen TUIs, and exited processes.
 /// </summary>
 public enum PaneState
 {
@@ -52,8 +51,7 @@ public abstract class LeafPane : PaneNode, IDisposable
         set => Set(ref _isDirty, value);
     }
 
-    /// <summary>Operational state shown as a coloured dot in the pane title
-    /// bar. Idle = dim, Busy (TUI) = accent, Exited = red.</summary>
+    /// <summary>Operational state used by pane previews and tab attention markers.</summary>
     public PaneState State
     {
         get => _state;
