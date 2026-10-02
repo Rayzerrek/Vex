@@ -10,6 +10,20 @@ namespace Vex.App.Tests;
 public sealed class TerminalSessionExitRegressionTests
 {
     [Fact]
+    public void DisposedPane_RejectsPrewarmThatFinishesAfterClose()
+    {
+        RunOnStaThread(control =>
+        {
+            control.Dispose();
+            using var lateSession = new TerminalSession();
+            var slot = new TerminalSessionPrewarmer.Slot("C:\\late-prewarm-test", "cmd") { Session = lateSession };
+            using var lease = new TerminalSessionPrewarmer.Lease(slot, Task.FromResult(lateSession));
+            Assert.False(control.TryAttachPrewarmedSession(lease, lateSession));
+            Assert.Null(control.ProcessId);
+        });
+    }
+
+    [Fact]
     public void QueuedExit_FromReplacedSessionDoesNotCloseCurrentPane()
     {
         RunOnStaThread(control =>

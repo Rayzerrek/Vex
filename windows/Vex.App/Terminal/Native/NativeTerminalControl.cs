@@ -1370,12 +1370,15 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     public void Dispose()
     {
-        if (_disposed)
-            return;
-        // Publish first: the reader thread checks this under the terminal
-        // lock and stops feeding, so the emulator below cannot be freed
-        // mid-feed.
-        _disposed = true;
+        TerminalSession? session;
+        lock (_sessionLock)
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            session = _session;
+            _session = null;
+        }
         StopCopyAnimation();
         ClearLinkHover();
         _pendingSessionInput = null;
@@ -1390,8 +1393,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         AppSettings.Instance.PropertyChanged -= OnSettingsChanged;
         _prewarmLease?.Dispose();
         _prewarmLease = null;
-        var session = _session;
-        _session = null;
         if (session is not null)
         {
             session.OutputReceived -= OnSessionOutput;

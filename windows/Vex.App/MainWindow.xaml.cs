@@ -258,7 +258,7 @@ public sealed partial class MainWindow : Window
         // terminal (or any focused control inside it) sees the key.
         if (key == System.Windows.Input.Key.Escape && modifiers == System.Windows.Input.ModifierKeys.None)
         {
-            if (TabClosePopup.IsOpen)
+            if (_tabClosePopup is { IsOpen: true })
             {
                 TabClosePopup.IsOpen = false;
                 _pendingBackgroundCloseTab = null;
@@ -381,7 +381,8 @@ public sealed partial class MainWindow : Window
     {
         if (_workspace.SelectProjectByIndex(index))
         {
-            ProjectPickerPopup.IsOpen = false;
+            if (_projectPickerPopup is { } popup)
+                popup.IsOpen = false;
             _tabPeek?.Hide();
             _paletteOverlay?.Hide();
             _settingsOverlay?.Hide();
@@ -394,7 +395,8 @@ public sealed partial class MainWindow : Window
     {
         if (_workspace.CycleProject(direction))
         {
-            ProjectPickerPopup.IsOpen = false;
+            if (_projectPickerPopup is { } popup)
+                popup.IsOpen = false;
             _tabPeek?.Hide();
             _paletteOverlay?.Hide();
             _settingsOverlay?.Hide();

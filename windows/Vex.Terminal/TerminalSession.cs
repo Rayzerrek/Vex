@@ -41,7 +41,8 @@ public sealed class TerminalSession : IDisposable
     private int _exitedRaised;
     private int _exitCode;
     private int _exitCodeKnown;
-    private bool _disposed;
+    private volatile bool _disposed;
+    private int _disposeStarted;
 
     // Input-pipe writes come from two threads now: the UI thread (keystrokes,
     // mouse reports, pastes) and the PTY reader thread (synchronous terminal
@@ -309,18 +310,26 @@ public sealed class TerminalSession : IDisposable
             {
                 while (true)
                 {
-                    var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(BufferSize);
-                    var read = output.Read(buffer, 0, buffer.Length);
-                    if (read <= 0)
+                    byte[]? buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(BufferSize);
+                    try
                     {
-                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-                        break;
+                        var read = output.Read(buffer, 0, buffer.Length);
+                        if (read <= 0)
+                            break;
+                        if (OutputReceived is { } handler)
+                        {
+                            var chunk = new ArraySegment<byte>(buffer, 0, read);
+                            // The handler owns the buffer even if it throws.
+                            buffer = null;
+                            handler.Invoke(chunk);
+                        }
                     }
-                    var handler = OutputReceived;
-                    if (handler != null)
-                        handler.Invoke(new ArraySegment<byte>(buffer, 0, read));
-                    else
-                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                    finally
+                    {
+                        // A close can interrupt Read before ownership transfers.
+                        if (buffer is not null)
+                            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                    }
                 }
             }
             catch (IOException)
@@ -381,7 +390,9 @@ public sealed class TerminalSession : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        // Startup cancellation and pane teardown can reach the same session
+        // concurrently. Native handles must be closed by exactly one owner.
+        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
             return;
         _disposed = true;
 

@@ -719,6 +719,9 @@ internal static class RenderSelfTest
     {
         Report(control, $"start cols={control.SelfTestCols} rows={control.SelfTestRows} cell={control.SelfTestCellWidth:0.0}x{control.SelfTestCellHeight:0.0}");
 
+        if (Application.Current.MainWindow is MainWindow window)
+            Assert(control, window.SelfTestDeferredPopups(), "deferred popups: bindings, placement and confirmation");
+
         // A steady caret so bitmaps from different captures are comparable.
         control.SelfTestStabilizeCaret();
 

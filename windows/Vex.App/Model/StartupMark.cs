@@ -34,7 +34,7 @@ internal static class StartupMark
 
         internal void Note(string stage)
         {
-            var line = $"{_clock.Elapsed.TotalMilliseconds:F1}ms {stage}";
+            var line = FormattableString.Invariant($"{_clock.Elapsed.TotalMilliseconds:F1}ms {stage}");
             lock (_sync)
                 _lines.Add(line);
             // Buffer the burst of startup marks and write them after a quiet

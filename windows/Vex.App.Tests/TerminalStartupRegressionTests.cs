@@ -14,6 +14,35 @@ namespace Vex.App.Tests;
 [Collection("CustomTheme")]
 public class TerminalStartupRegressionTests
 {
+    [Fact]
+    public async Task LiveSession_ConcurrentDisposalClosesChildAndReader()
+    {
+        using var session = new TerminalSession();
+        var output = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.OutputReceived += data =>
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(data.Array!);
+            output.TrySetResult();
+        };
+        session.Exited += _ => exited.TrySetResult();
+        session.Start(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), 80, 24,
+            TerminalSession.DefaultShell(), "/q /k echo VEX_DISPOSE_READY");
+        using var child = Process.GetProcessById(session.ProcessId);
+        await output.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var barrier = new Barrier(8);
+        var closers = Enumerable.Range(0, 8).Select(_ => Task.Factory.StartNew(() =>
+        {
+            Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(5)));
+            session.Dispose();
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
+        await Task.WhenAll(closers).WaitAsync(TimeSpan.FromSeconds(10));
+        await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await exited.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        session.Write("ignored after close"u8);
+        Assert.True(session.Resize(100, 30));
+    }
+
     [Theory]
     [InlineData("cmd")]
     [InlineData("gitbash")]

@@ -35,13 +35,13 @@
          from the assembly for the UI, so nothing else needs updating. -->
     <Version>1.3.0</Version>
     <PublishSingleFile>true</PublishSingleFile>
-    <!-- Compression halves the EXE size and improved repeated startup samples. -->
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Favor launch latency: decompression runs before any startup work can overlap. -->
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
-    <!-- Precompile only Vex assemblies: isolated paired measurements improved
-         the first frame by ~5% for ~0.3 MB. Full R2R grew the bundle and was slower. -->
+    <!-- Composite R2R precompiles WPF template/binding startup too. With an
+         uncompressed bundle this reduced launch latency in desktop measurements. -->
     <PublishReadyToRun>true</PublishReadyToRun>
-    <PublishReadyToRunComposite>false</PublishReadyToRunComposite>
+    <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
     <!-- Native libraries (ghostty-vt.dll, hostfxr, ...) ship beside the exe
          instead of inside the bundle. Self-extracting them costs a
          first-launch extraction pass into %TEMP% before the first frame.
