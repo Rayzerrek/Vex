@@ -600,11 +600,18 @@ internal static class Native
     internal static extern void ghostty_render_state_row_cells_free(IntPtr cells);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition] // Pinned implementation only advances a cell index; no allocation or callbacks.
     [return: MarshalAs(UnmanagedType.I1)]
     internal static extern bool ghostty_render_state_row_cells_next(IntPtr cells);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     internal static extern Result ghostty_render_state_row_cells_get(IntPtr cells, RenderStateRowCellsData data, IntPtr outValue);
+
+    // Only Raw may use this binding: it copies one u64. Other selectors can
+    // walk an arbitrarily long grapheme cluster and must allow GC suspension.
+    [DllImport(Dll, EntryPoint = "ghostty_render_state_row_cells_get", CallingConvention = CallingConvention.Cdecl)]
+    [SuppressGCTransition]
+    internal static extern Result ghostty_render_state_row_cells_get_raw(IntPtr cells, RenderStateRowCellsData data, out ulong raw);
 
     // --- Cell helpers ---------------------------------------------------
 

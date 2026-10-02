@@ -8,6 +8,7 @@ namespace Vex.App.Terminal.Native;
 public sealed partial class NativeTerminalControl
 {
     private volatile TerminalSession? _session;
+    private readonly object _sessionLock = new();
     private Action<int>? _sessionExitedHandler;
     private TerminalSessionPrewarmer.Lease? _prewarmLease;
     private bool _sessionStarting;
@@ -180,6 +181,8 @@ public sealed partial class NativeTerminalControl
             }
             catch
             {
+                if (_disposed)
+                    return;
                 try
                 {
                     session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
@@ -224,21 +227,20 @@ public sealed partial class NativeTerminalControl
         var session = new TerminalSession();
         var buffered = new List<ArraySegment<byte>>();
         var outputLock = new object();
-        Action<ArraySegment<byte>> outputHandler = data =>
+        var outputReady = false;
+        var outputAbandoned = false;
+        session.OutputReceived += data =>
         {
             if (data.Array is not { } array) return;
             lock (outputLock)
             {
-                var copy = System.Buffers.ArrayPool<byte>.Shared.Rent(data.Count);
-                Buffer.BlockCopy(array, data.Offset, copy, 0, data.Count);
-                System.Buffers.ArrayPool<byte>.Shared.Return(array);
-                buffered.Add(new ArraySegment<byte>(copy, 0, data.Count));
+                if (outputAbandoned)
+                    System.Buffers.ArrayPool<byte>.Shared.Return(array);
+                else if (outputReady)
+                    OnSessionOutput(data);
+                else
+                    buffered.Add(data);
             }
-        };
-
-        session.OutputReceived += data => outputHandler(data);
-        session.OutputReceived += data =>
-        {
             if (Interlocked.Exchange(ref _firstOutputNoted, 1) == 0)
                 StartupMark.Note("first terminal output");
         };
@@ -246,11 +248,16 @@ public sealed partial class NativeTerminalControl
         try
         {
             session.Start(workingDirectory, cols, rows, shell, arguments);
+            // Responses during replay need a published session. Publication
+            // and disposal serialize so closing a pane rejects late startup.
+            if (!TryPublishSession(session))
+                throw new OperationCanceledException("Terminal pane closed during session startup.");
         }
         catch
         {
             lock (outputLock)
             {
+                outputAbandoned = true;
                 foreach (var chunk in buffered)
                 {
                     if (chunk.Array is { } array)
@@ -262,12 +269,11 @@ public sealed partial class NativeTerminalControl
             throw;
         }
 
-        // Feeding startup output can synchronously answer ConPTY's DA query.
-        // Publish the session before replay so the answer has a destination.
-        _session = session;
         lock (outputLock)
         {
-            outputHandler = OnSessionOutput;
+            // The reader holds this lock before choosing its output route;
+            // a callback queued before publication cannot re-buffer after replay.
+            outputReady = true;
             foreach (var chunk in buffered)
                 OnSessionOutput(chunk);
             buffered.Clear();
@@ -281,7 +287,8 @@ public sealed partial class NativeTerminalControl
     internal bool TryAttachPrewarmedSession(TerminalSessionPrewarmer.Lease lease, TerminalSession session)
     {
         // Query responses during replay need the session before it is accepted.
-        _session = session;
+        if (!TryPublishSession(session))
+            return false;
         if (!lease.AttachOutputHandler(OnSessionOutput))
         {
             _session = null;
@@ -289,6 +296,19 @@ public sealed partial class NativeTerminalControl
         }
         ObserveSessionExit(session);
         return true;
+    }
+
+    private bool TryPublishSession(TerminalSession session)
+    {
+        // Disposal claims the session under the same lock, so late startup
+        // cannot leave a live shell owned by an already closed pane.
+        lock (_sessionLock)
+        {
+            if (_disposed)
+                return false;
+            _session = session;
+            return true;
+        }
     }
 
     /// <summary>Replays an exit that raced acceptance, without double-reporting the event.</summary>

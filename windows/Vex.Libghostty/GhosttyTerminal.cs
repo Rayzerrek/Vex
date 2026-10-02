@@ -1001,8 +1001,13 @@ public sealed class GhosttyTerminal : IDisposable
 
     private unsafe void ReadCell(ref CellInfo cell)
     {
+        Check(Native.ghostty_render_state_row_cells_get_raw(_rowCells, RenderStateRowCellsData.Raw, out var raw), "cell raw");
         var style = Native.GhosttyStyle.New();
-        Check(Native.ghostty_render_state_row_cells_get(_rowCells, RenderStateRowCellsData.Style, (IntPtr)(&style)), "cell style");
+        // The pinned ABI packs the u16 style ID at bits 26-41 and the two
+        // width bits at 42-43. ID zero always means the default style; avoid
+        // a native style conversion for the majority of prompt/scrollback cells.
+        if (((raw >> 26) & 0xFFFF) != 0)
+            Check(Native.ghostty_render_state_row_cells_get(_rowCells, RenderStateRowCellsData.Style, (IntPtr)(&style)), "cell style");
 
         cell.Flags = CellFlags.None;
         if (style.bold != 0) cell.Flags |= CellFlags.Bold;
@@ -1023,10 +1028,7 @@ public sealed class GhosttyTerminal : IDisposable
             ? (style.bgColor.value.rgb.r << 16) | (style.bgColor.value.rgb.g << 8) | style.bgColor.value.rgb.b
             : (int)style.bgColor.value.palette;
 
-        ulong raw = 0;
-        Check(Native.ghostty_render_state_row_cells_get(_rowCells, RenderStateRowCellsData.Raw, (IntPtr)(&raw)), "cell raw");
-        var wide = Native.CellWide.Narrow;
-        Check(Native.ghostty_cell_get(raw, CellData.Wide, (IntPtr)(&wide)), "cell wide");
+        var wide = (Native.CellWide)((raw >> 42) & 0b11);
         cell.Wide = wide == Native.CellWide.Wide;
         cell.Tail = wide == Native.CellWide.WideSpacerTail;
 
@@ -1054,6 +1056,25 @@ public sealed class GhosttyTerminal : IDisposable
             var cb = (content >> 16) & 0xFF;
             cell.BgTag = ColorTag.Rgb;
             cell.BgValue = (cr << 16) | (cg << 8) | cb;
+        }
+
+        // The pinned ghostty@f64f4aca cell stores a single Unicode scalar in
+        // bits 2-22. Only grapheme clusters need the native buffer walk;
+        // ordinary text and empty/color-only cells need no further calls.
+        if (contentTag != 1 || cell.Tail)
+        {
+            var cp = contentTag == 0 && !cell.Tail ? (uint)((raw >> 2) & 0x1FFFFF) : 0;
+            if (cp == 0)
+                cell.Text = "";
+            else if (cp < (uint)s_asciiStrings.Length)
+                cell.Text = s_asciiStrings[(int)cp];
+            else
+            {
+                Span<uint> scalar = stackalloc uint[1] { cp };
+                if (!MatchesCodepoints(cell.Text, scalar))
+                    cell.Text = char.ConvertFromUtf32((int)cp);
+            }
+            return;
         }
 
         uint graphemesLen = 0;

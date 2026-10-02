@@ -291,6 +291,302 @@
                 </Grid.Triggers>
             </Grid>
         </DataTemplate>
+        <ControlTemplate x:Key="ProjectPickerTemplate">
+            <Popup x:Name="ProjectPickerPopup"
+                   Placement="Bottom"
+                   VerticalOffset="5"
+                   HorizontalOffset="0"
+                   AllowsTransparency="True"
+                   StaysOpen="False"
+                   PopupAnimation="None"
+                   Opened="ProjectPickerPopup_Opened"
+                   Closed="ProjectPickerPopup_Closed">
+                <Border Background="{DynamicResource VexSurface}"
+                        BorderBrush="{DynamicResource VexBorder}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        MinWidth="300"
+                        MaxWidth="400"
+                        Padding="0">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="22" ShadowDepth="6" Opacity="0.5" Color="#000000"/>
+                    </Border.Effect>
+                    <Grid PreviewKeyDown="ProjectPicker_PreviewKeyDown">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Header: "PROJECTS [count]" + Add button -->
+                        <Border Grid.Row="0" Padding="14,9,10,7" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,0,0,1">
+                            <DockPanel LastChildFill="False">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="PROJECTS" FontSize="10.5" FontWeight="Bold"
+                                               Foreground="{DynamicResource VexTextDim}" VerticalAlignment="Center"/>
+                                    <Border Background="{DynamicResource VexHover}" CornerRadius="7" Padding="5,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Projects.Count}"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"/>
+                                    </Border>
+                                </StackPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
+                                        Width="24" Height="24" Padding="0"
+                                        ToolTip="Add Project Folder"
+                                        Click="ProjectPickerAddFolder_Click">
+                                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                </Button>
+                                <TextBlock DockPanel.Dock="Right" Text="Ctrl+Shift+1..9" FontSize="10"
+                                           Foreground="{DynamicResource VexTextDim}" VerticalAlignment="Center"
+                                           Margin="0,0,8,0"/>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Projects list -->
+                        <ListBox x:Name="ProjectPickerList" Grid.Row="1"
+                                 ItemsSource="{Binding Projects}"
+                                 SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
+                                 Background="Transparent" BorderThickness="0" Padding="4,4"
+                                 MaxHeight="300"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 PreviewMouseLeftButtonUp="ProjectPickerList_PreviewMouseLeftButtonUp">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="8,7"/>
+                                    <Setter Property="Margin" Value="2,1"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListBoxItem">
+                                                <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="6" Background="Transparent">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <!-- Subtle active indicator bar on the left edge -->
+                                                        <Border x:Name="activeBar" Width="3" Height="16" CornerRadius="1.5"
+                                                                Background="{DynamicResource VexAccentBlue}"
+                                                                HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                                Margin="-4,0,4,0" Visibility="Collapsed"/>
+                                                        <ContentPresenter Grid.Column="1"/>
+                                                    </Grid>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter Property="Background" Value="{DynamicResource VexHover}" TargetName="chrome"/>
+                                                        <Setter Property="Visibility" Value="Visible" TargetName="activeBar"/>
+                                                        <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Background" Value="{DynamicResource VexHover}" TargetName="chrome"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Folder icon -->
+                                        <Grid Grid.Column="0" Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center">
+                                            <Path Data="M22,19 C22,20.1 21.1,21 20,21 L4,21 C2.9,21 2,20.1 2,19 L2,5 C2,3.9 2.9,3 4,3 L9,3 L11,6 L20,6 C21.1,6 22,6.9 22,8 Z"
+                                                  Stretch="Uniform"
+                                                  Fill="{DynamicResource VexAccentTranslucent}"
+                                                  Stroke="{DynamicResource VexAccent}" StrokeThickness="1.5"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                        </Grid>
+
+                                        <!-- Project Name + Branch + Working Directory -->
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource VexText}"
+                                                           FontSize="12.5" FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <!-- Git Branch badge if repo has branch -->
+                                                <Border Background="{DynamicResource VexHover}" CornerRadius="4" Padding="5,1,5,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasGitBranch}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
+                                                              Stretch="Uniform" Width="9" Height="11"
+                                                              Stroke="{DynamicResource VexGitBranch}" StrokeThickness="1.2"
+                                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              Fill="Transparent"
+                                                              VerticalAlignment="Center" Margin="0,0,3,0"/>
+                                                        <TextBlock Text="{Binding GitBranch}" Foreground="{DynamicResource VexGitBranch}"
+                                                                   FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="120"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding WorkingDirectory}" FontSize="10.5"
+                                                       Foreground="{DynamicResource VexTextDim}"
+                                                       TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
+                                                       ToolTip="{Binding WorkingDirectory}"/>
+                                        </StackPanel>
+
+                                        <!-- Remove project button (visible on hover) -->
+                                        <Button x:Name="RemoveBtn" Grid.Column="2"
+                                                Margin="6,0,0,0" ToolTip="Remove Project"
+                                                Click="RemoveProject_Click"
+                                                Width="20" Height="20"
+                                                Opacity="0">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource CloseButton}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsMouseOver}" Value="True">
+                                                            <Setter Property="Opacity" Value="1"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                                                       VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                        </Button>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <!-- Footer: Open Project Folder action -->
+                        <Border Grid.Row="2" Padding="6,5" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,1,0,0">
+                            <Button Style="{StaticResource GhostButton}"
+                                    HorizontalContentAlignment="Left"
+                                    Padding="8,5"
+                                    Height="28"
+                                    Click="ProjectPickerAddFolder_Click">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                               Foreground="{DynamicResource VexAccentBlue}"
+                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Text="Open Project Folder..." FontSize="11.5"
+                                               Foreground="{DynamicResource VexText}"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Popup>
+        </ControlTemplate>
+        <ControlTemplate x:Key="TabCloseTemplate">
+            <Popup x:Name="TabClosePopup"
+                   AllowsTransparency="True"
+                   StaysOpen="False"
+                   PopupAnimation="Fade"
+                   Placement="Bottom"
+                   VerticalOffset="6"
+                   Closed="TabClosePopup_Closed">
+                <Border Background="{DynamicResource VexSurface}"
+                        BorderBrush="{DynamicResource VexBorder}"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Width="320"
+                        Padding="16,14,16,12"
+                        PreviewKeyDown="TabClosePopup_PreviewKeyDown">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.45" Color="#000000"/>
+                    </Border.Effect>
+                    <StackPanel>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <!-- Favicon without any border wrapper -->
+                            <Grid Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
+                                <Image x:Name="TabClosePopupIcon" Width="22" Height="22" Stretch="Uniform" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <TextBlock x:Name="TabClosePopupWarning" Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="18" Foreground="{DynamicResource VexAccent}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
+                            <TextBlock x:Name="TabClosePopupTitle" Grid.Column="1"
+                                       Text="Terminate session?"
+                                       Foreground="{DynamicResource VexText}"
+                                       FontSize="13" FontWeight="SemiBold"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </Grid>
+                        <TextBlock x:Name="TabClosePopupMessage"
+                                   Text="Agent is running in this tab."
+                                   Foreground="{DynamicResource VexTextDim}"
+                                   FontSize="12" TextWrapping="Wrap"
+                                   LineHeight="17" Margin="0,0,0,14"/>
+                        <!-- Action buttons with natural, balanced desktop padding -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Cancel" Click="TabClosePopupCancel_Click"
+                                    Margin="0,0,8,0" Padding="14,6" FontSize="12" FontWeight="Medium"
+                                    Cursor="Hand"
+                                    Foreground="{DynamicResource VexText}"
+                                    Background="{DynamicResource VexHover}"
+                                    BorderBrush="{DynamicResource VexBorder}"
+                                    BorderThickness="1">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="cb" Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="5">
+                                            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource VexPressFill}"/>
+                                                <Setter Property="BorderBrush" Value="{DynamicResource VexFocusBorder}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                            <Button x:Name="TabClosePopupConfirmBtn" Content="Close Tab" Click="TabClosePopupConfirm_Click"
+                                    Padding="16,6" FontSize="12" FontWeight="SemiBold"
+                                    Cursor="Hand"
+                                    Foreground="White"
+                                    Background="#D32F2F"
+                                    BorderBrush="#EF5350"
+                                    BorderThickness="1">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="db" Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="5">
+                                            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="#E53935"/>
+                                                <Setter Property="BorderBrush" Value="#FF7043"/>
+                                            </Trigger>
+                                            <Trigger Property="IsPressed" Value="True">
+                                                <Setter Property="Background" Value="#B71C1C"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Popup>
+        </ControlTemplate>
     </Window.Resources>
 
     <Grid x:Name="MainGrid">
@@ -383,302 +679,6 @@
                     </StackPanel>
                 </Button>
 
-                <!-- Project Picker Dropdown Popover -->
-                <Popup x:Name="ProjectPickerPopup"
-                       PlacementTarget="{Binding ElementName=ProjectPillButton}"
-                       Placement="Bottom"
-                       VerticalOffset="5"
-                       HorizontalOffset="0"
-                       AllowsTransparency="True"
-                       StaysOpen="False"
-                       PopupAnimation="None"
-                       Opened="ProjectPickerPopup_Opened"
-                       Closed="ProjectPickerPopup_Closed">
-                    <Border Background="{DynamicResource VexSurface}"
-                            BorderBrush="{DynamicResource VexBorder}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            MinWidth="300"
-                            MaxWidth="400"
-                            Padding="0">
-                        <Border.Effect>
-                            <DropShadowEffect BlurRadius="22" ShadowDepth="6" Opacity="0.5" Color="#000000"/>
-                        </Border.Effect>
-                        <Grid PreviewKeyDown="ProjectPicker_PreviewKeyDown">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-
-                            <!-- Header: "PROJECTS [count]" + Add button -->
-                            <Border Grid.Row="0" Padding="14,9,10,7" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,0,0,1">
-                                <DockPanel LastChildFill="False">
-                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="PROJECTS" FontSize="10.5" FontWeight="Bold"
-                                                   Foreground="{DynamicResource VexTextDim}" VerticalAlignment="Center"/>
-                                        <Border Background="{DynamicResource VexHover}" CornerRadius="7" Padding="5,1" Margin="6,0,0,0" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding Projects.Count}"
-                                                       FontSize="10" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"/>
-                                        </Border>
-                                    </StackPanel>
-                                    <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}"
-                                            Width="24" Height="24" Padding="0"
-                                            ToolTip="Add Project Folder"
-                                            Click="ProjectPickerAddFolder_Click">
-                                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                    </Button>
-                                    <TextBlock DockPanel.Dock="Right" Text="Ctrl+Shift+1..9" FontSize="10"
-                                               Foreground="{DynamicResource VexTextDim}" VerticalAlignment="Center"
-                                               Margin="0,0,8,0"/>
-                                </DockPanel>
-                            </Border>
-
-                            <!-- Projects list -->
-                            <ListBox x:Name="ProjectPickerList" Grid.Row="1"
-                                     ItemsSource="{Binding Projects}"
-                                     SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
-                                     Background="Transparent" BorderThickness="0" Padding="4,4"
-                                     MaxHeight="300"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                     PreviewMouseLeftButtonUp="ProjectPickerList_PreviewMouseLeftButtonUp">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="Padding" Value="8,7"/>
-                                        <Setter Property="Margin" Value="2,1"/>
-                                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                        <Setter Property="Template">
-                                            <Setter.Value>
-                                                <ControlTemplate TargetType="ListBoxItem">
-                                                    <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="6" Background="Transparent">
-                                                        <Grid>
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="Auto"/>
-                                                                <ColumnDefinition Width="*"/>
-                                                            </Grid.ColumnDefinitions>
-                                                            <!-- Subtle active indicator bar on the left edge -->
-                                                            <Border x:Name="activeBar" Width="3" Height="16" CornerRadius="1.5"
-                                                                    Background="{DynamicResource VexAccentBlue}"
-                                                                    HorizontalAlignment="Left" VerticalAlignment="Center"
-                                                                    Margin="-4,0,4,0" Visibility="Collapsed"/>
-                                                            <ContentPresenter Grid.Column="1"/>
-                                                        </Grid>
-                                                    </Border>
-                                                    <ControlTemplate.Triggers>
-                                                        <Trigger Property="IsSelected" Value="True">
-                                                            <Setter Property="Background" Value="{DynamicResource VexHover}" TargetName="chrome"/>
-                                                            <Setter Property="Visibility" Value="Visible" TargetName="activeBar"/>
-                                                            <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
-                                                        </Trigger>
-                                                        <Trigger Property="IsMouseOver" Value="True">
-                                                            <Setter Property="Background" Value="{DynamicResource VexHover}" TargetName="chrome"/>
-                                                        </Trigger>
-                                                    </ControlTemplate.Triggers>
-                                                </ControlTemplate>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-
-                                            <!-- Folder icon -->
-                                            <Grid Grid.Column="0" Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center">
-                                                <Path Data="M22,19 C22,20.1 21.1,21 20,21 L4,21 C2.9,21 2,20.1 2,19 L2,5 C2,3.9 2.9,3 4,3 L9,3 L11,6 L20,6 C21.1,6 22,6.9 22,8 Z"
-                                                      Stretch="Uniform"
-                                                      Fill="{DynamicResource VexAccentTranslucent}"
-                                                      Stroke="{DynamicResource VexAccent}" StrokeThickness="1.5"
-                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
-                                            </Grid>
-
-                                            <!-- Project Name + Branch + Working Directory -->
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}" Foreground="{DynamicResource VexText}"
-                                                               FontSize="12.5" FontWeight="SemiBold"
-                                                               TextTrimming="CharacterEllipsis"/>
-                                                    <!-- Git Branch badge if repo has branch -->
-                                                    <Border Background="{DynamicResource VexHover}" CornerRadius="4" Padding="5,1,5,1" Margin="6,0,0,0" VerticalAlignment="Center">
-                                                        <Border.Style>
-                                                            <Style TargetType="Border">
-                                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding HasGitBranch}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Visible"/>
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Border.Style>
-                                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                            <Path Data="M 4,4 A 1.8,1.8 0 1 0 4,4.01 M 4,12 A 1.8,1.8 0 1 0 4,12.01 M 11,6 A 1.8,1.8 0 1 0 11,6.01 M 4,5.8 L 4,10.2 M 4,8.5 C 6,8.5 8,8 10,6.8"
-                                                                  Stretch="Uniform" Width="9" Height="11"
-                                                                  Stroke="{DynamicResource VexGitBranch}" StrokeThickness="1.2"
-                                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                                                  Fill="Transparent"
-                                                                  VerticalAlignment="Center" Margin="0,0,3,0"/>
-                                                            <TextBlock Text="{Binding GitBranch}" Foreground="{DynamicResource VexGitBranch}"
-                                                                       FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="120"/>
-                                                        </StackPanel>
-                                                    </Border>
-                                                </StackPanel>
-                                                <TextBlock Text="{Binding WorkingDirectory}" FontSize="10.5"
-                                                           Foreground="{DynamicResource VexTextDim}"
-                                                           TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
-                                                           ToolTip="{Binding WorkingDirectory}"/>
-                                            </StackPanel>
-
-                                            <!-- Remove project button (visible on hover) -->
-                                            <Button x:Name="RemoveBtn" Grid.Column="2"
-                                                    Margin="6,0,0,0" ToolTip="Remove Project"
-                                                    Click="RemoveProject_Click"
-                                                    Width="20" Height="20"
-                                                    Opacity="0">
-                                                <Button.Style>
-                                                    <Style TargetType="Button" BasedOn="{StaticResource CloseButton}">
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsMouseOver}" Value="True">
-                                                                <Setter Property="Opacity" Value="1"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Button.Style>
-                                                <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="9"
-                                                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                            </Button>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-
-                            <!-- Footer: Open Project Folder action -->
-                            <Border Grid.Row="2" Padding="6,5" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,1,0,0">
-                                <Button Style="{StaticResource GhostButton}"
-                                        HorizontalContentAlignment="Left"
-                                        Padding="8,5"
-                                        Height="28"
-                                        Click="ProjectPickerAddFolder_Click">
-                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                                   Foreground="{DynamicResource VexAccentBlue}"
-                                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <TextBlock Text="Open Project Folder..." FontSize="11.5"
-                                                   Foreground="{DynamicResource VexText}"
-                                                   VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </Button>
-                            </Border>
-                        </Grid>
-                    </Border>
-                </Popup>
-
-                <!-- Tab close confirmation popover for background tabs -->
-                <Popup x:Name="TabClosePopup"
-                       AllowsTransparency="True"
-                       StaysOpen="False"
-                       PopupAnimation="Fade"
-                       Placement="Bottom"
-                       VerticalOffset="6"
-                       Closed="TabClosePopup_Closed">
-                    <Border Background="{DynamicResource VexSurface}"
-                            BorderBrush="{DynamicResource VexBorder}"
-                            BorderThickness="1"
-                            CornerRadius="10"
-                            Width="320"
-                            Padding="16,14,16,12"
-                            PreviewKeyDown="TabClosePopup_PreviewKeyDown">
-                        <Border.Effect>
-                            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.45" Color="#000000"/>
-                        </Border.Effect>
-                        <StackPanel>
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <!-- Favicon without any border wrapper -->
-                                <Grid Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
-                                    <Image x:Name="TabClosePopupIcon" Width="22" Height="22" Stretch="Uniform" VerticalAlignment="Center" Visibility="Collapsed"/>
-                                    <TextBlock x:Name="TabClosePopupWarning" Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets"
-                                               FontSize="18" Foreground="{DynamicResource VexAccent}"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Grid>
-                                <TextBlock x:Name="TabClosePopupTitle" Grid.Column="1"
-                                           Text="Terminate session?"
-                                           Foreground="{DynamicResource VexText}"
-                                           FontSize="13" FontWeight="SemiBold"
-                                           VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis"/>
-                            </Grid>
-                            <TextBlock x:Name="TabClosePopupMessage"
-                                       Text="Agent is running in this tab."
-                                       Foreground="{DynamicResource VexTextDim}"
-                                       FontSize="12" TextWrapping="Wrap"
-                                       LineHeight="17" Margin="0,0,0,14"/>
-                            <!-- Action buttons with natural, balanced desktop padding -->
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button Content="Cancel" Click="TabClosePopupCancel_Click"
-                                        Margin="0,0,8,0" Padding="14,6" FontSize="12" FontWeight="Medium"
-                                        Cursor="Hand"
-                                        Foreground="{DynamicResource VexText}"
-                                        Background="{DynamicResource VexHover}"
-                                        BorderBrush="{DynamicResource VexBorder}"
-                                        BorderThickness="1">
-                                    <Button.Template>
-                                        <ControlTemplate TargetType="Button">
-                                            <Border x:Name="cb" Background="{TemplateBinding Background}"
-                                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                                    CornerRadius="5">
-                                                <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                            </Border>
-                                            <ControlTemplate.Triggers>
-                                                <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter Property="Background" Value="{DynamicResource VexPressFill}"/>
-                                                    <Setter Property="BorderBrush" Value="{DynamicResource VexFocusBorder}"/>
-                                                </Trigger>
-                                            </ControlTemplate.Triggers>
-                                        </ControlTemplate>
-                                    </Button.Template>
-                                </Button>
-                                <Button x:Name="TabClosePopupConfirmBtn" Content="Close Tab" Click="TabClosePopupConfirm_Click"
-                                        Padding="16,6" FontSize="12" FontWeight="SemiBold"
-                                        Cursor="Hand"
-                                        Foreground="White"
-                                        Background="#D32F2F"
-                                        BorderBrush="#EF5350"
-                                        BorderThickness="1">
-                                    <Button.Template>
-                                        <ControlTemplate TargetType="Button">
-                                            <Border x:Name="db" Background="{TemplateBinding Background}"
-                                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                                    CornerRadius="5">
-                                                <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                            </Border>
-                                            <ControlTemplate.Triggers>
-                                                <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter Property="Background" Value="#E53935"/>
-                                                    <Setter Property="BorderBrush" Value="#FF7043"/>
-                                                </Trigger>
-                                                <Trigger Property="IsPressed" Value="True">
-                                                    <Setter Property="Background" Value="#B71C1C"/>
-                                                </Trigger>
-                                            </ControlTemplate.Triggers>
-                                        </ControlTemplate>
-                                    </Button.Template>
-                                </Button>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-                </Popup>
             </StackPanel>
 
             <!-- Tabs: natural width, left-aligned from the toggle -->
