@@ -125,13 +125,14 @@ public class TerminalStartupRegressionTests
                 try
                 {
                     terminal.Feed(buffer, chunk.Offset, chunk.Count);
-                    terminal.UpdateFrame();
                     lock (output)
+                    {
                         output.Append(Encoding.UTF8.GetString(buffer, chunk.Offset, chunk.Count));
-                    var screen = string.Concat(terminal.FrameRows.SelectMany(row => row.Cells).Select(cell => cell.Text));
-                    if (screen.Contains(marker, StringComparison.Ordinal))
-                        ready.TrySetResult();
+                        if (output.ToString().Contains(marker, StringComparison.Ordinal))
+                            ready.TrySetResult();
+                    }
                 }
+                catch (Exception ex) { ready.TrySetException(ex); }
                 finally { System.Buffers.ArrayPool<byte>.Shared.Return(buffer); }
             }));
             try { await ready.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
@@ -140,6 +141,11 @@ public class TerminalStartupRegressionTests
                 lock (output)
                     Assert.Fail($"DA1 fixture did not render its ready marker; output: {output}");
             }
+            // Session disposal can leave a PTY callback in flight; snapshot only
+            // on the test thread that owns the terminal's lifetime.
+            terminal.UpdateFrame();
+            var screen = string.Concat(terminal.FrameRows.SelectMany(row => row.Cells).Select(cell => cell.Text));
+            Assert.Contains(marker, screen, StringComparison.Ordinal);
         }
         finally
         {
