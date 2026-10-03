@@ -125,6 +125,7 @@ public sealed partial class NativeTerminalControl
         var rows = _rows >= 5 ? (short)_rows : (short)24;
         var workingDirectory = _workingDirectory;
         var shellId = AppSettings.Instance.ShellId;
+        _sessionShellId = shellId;
 
         var prewarmLease = TerminalSessionPrewarmer.Take(workingDirectory, shellId);
         _prewarmLease = prewarmLease;
@@ -185,6 +186,7 @@ public sealed partial class NativeTerminalControl
                     return;
                 try
                 {
+                    _sessionShellId = "system";
                     session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
                 }
                 catch

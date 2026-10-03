@@ -16,6 +16,7 @@ Two rules decide which key goes where:
 | Command palette | `Ctrl+Shift+P` |
 | Theme picker | `Ctrl+Shift+M` |
 | Tab peek (visual overview) | `Ctrl+Shift+Space` |
+| Insert file or directory path | `Ctrl+Shift+F` |
 | New tab | `Ctrl+Shift+T` |
 | Close pane or tab | `Ctrl+Shift+W` |
 | Next tab | `Ctrl+Tab` |
@@ -26,6 +27,44 @@ Two rules decide which key goes where:
 
 `Ctrl+Tab` is the exception used for tab navigation. `Ctrl+S` goes to the
 terminal/TUI, including its save binding or terminal flow control.
+
+## Path picker
+
+`Ctrl+Shift+F` opens a compact path picker at the terminal cursor, including
+inside Claude and full-screen applications. Type to fuzzy-search file and
+directory paths. Search runs in memory on a background thread; it does not
+launch a process per keystroke.
+
+| Action | Keys |
+|---|---|
+| Select match | `Up` / `Down`, `PageUp` / `PageDown`, mouse wheel |
+| Insert selected path without executing the command | `Enter` |
+| Insert raw path for application prompts, without shell quoting | `Ctrl+Enter` |
+| Enter selected directory / insert selected file | `Tab` |
+| Enter selected directory | `Right` |
+| Parent directory | `Shift+Tab`, `Alt+Left`, or `Backspace` with an empty query |
+| Clear query | `Ctrl+Backspace` |
+| Paste a query or directory path | `Ctrl+Shift+V` |
+| Close | `Esc` or `Ctrl+Shift+F` |
+
+Typing a directory prefix followed by `/` or `\` navigates there; absolute
+paths, `..`, and `~/` are supported. Double-click enters a directory or inserts
+a file. Insertions use absolute paths and bracketed paste when supported.
+PowerShell, Nushell, cmd, Git Bash, and WSL paths use their respective quoting
+and drive syntax. Alternate-screen applications receive raw paths.
+
+The picker starts from the last local directory reported by the shell using
+OSC 7, or a recognized default cmd/PowerShell prompt. Otherwise it uses the
+pane's starting directory; custom prompts and remote shells may require
+manual navigation. WSL and Git Bash can insert paths to Windows files, but the
+index searches the Windows filesystem, not a remote/Linux filesystem.
+
+Indexing publishes immediate directory entries first and then discovers
+descendants. Recursive search skips `.git`, `node_modules`, build output,
+virtual environments, and junctions; these directories remain available for
+explicit navigation. Scans are bounded to 100,000 entries and 32 levels. Each
+pane retains up to four directory snapshots for 30 seconds, refreshing older
+ones when opened. The footer indicates indexing or a truncated scan.
 
 ## Terminal
 

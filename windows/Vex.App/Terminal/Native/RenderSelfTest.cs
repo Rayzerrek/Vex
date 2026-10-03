@@ -728,6 +728,9 @@ internal static class RenderSelfTest
 
         CheckIndexedThemeContrast(control);
 
+        control.SelfTestPathCompletion(() => DumpPng(control, Capture(control), Path.ChangeExtension(ReportPath!, ".path-completion.png")));
+        Report(control, "PASS path completion: fuzzy filtering, keyboard navigation, paste, alternate screen and cleanup");
+
         // 300 lines: the long-session stress case (scrollback + full redraws).
         var sb = new StringBuilder(300 * 60);
         for (var i = 1; i <= 300; i++)
