@@ -40,7 +40,7 @@ public sealed class PathCompletionTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task Index_ListsSkippedDirectoriesButOnlyScansThemWhenNavigatedInto()
+    public async Task Index_CachesLocalEntriesAndScansBuildDirectoriesWhenNavigatedInto()
     {
         var root = Path.Combine(Path.GetTempPath(), "vex-path-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "src"));
@@ -53,7 +53,8 @@ public sealed class PathCompletionTests(ITestOutputHelper output)
             index.ScanDirectory(root);
             await WaitForIndex(index);
             Assert.Null(index.Error);
-            Assert.Contains(index.Entries, entry => entry.RelativePath == @"src\Żółć.cs");
+            Assert.Contains(index.Entries, entry => entry.RelativePath == "src" && entry.IsDirectory);
+            Assert.DoesNotContain(index.Entries, entry => entry.RelativePath == @"src\Żółć.cs");
             Assert.Contains(index.Entries, entry => entry.RelativePath == "node_modules" && entry.IsDirectory);
             Assert.DoesNotContain(index.Entries, entry => entry.RelativePath == @"node_modules\package.json");
             var snapshot = index.Entries;
@@ -64,6 +65,60 @@ public sealed class PathCompletionTests(ITestOutputHelper output)
             index.ScanDirectory(root);
             Assert.False(index.IsScanning);
             Assert.Same(snapshot, index.Entries);
+            index.ScanDirectory(Path.Combine(root, "src"));
+            await WaitForIndex(index);
+            Assert.Equal("Żółć.cs", Assert.Single(index.Entries).RelativePath);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Index_SearchesOnlyTheCurrentDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vex-path-tests", Guid.NewGuid().ToString("N"));
+        var child = Directory.CreateDirectory(Path.Combine(root, "child")).FullName;
+        File.WriteAllText(Path.Combine(root, "local.txt"), "");
+        File.WriteAllText(Path.Combine(child, "nested.txt"), "");
+        try
+        {
+            using var index = new PathCompletionIndex();
+            index.ScanDirectory(root);
+            await WaitForIndex(index);
+            Assert.Equal(2, index.Entries.Length);
+            Assert.Equal("local.txt", Assert.Single(PathCompletionIndex.SearchPaths(index.Entries, "local", 50)).RelativePath);
+            Assert.Empty(PathCompletionIndex.SearchPaths(index.Entries, "nested", 50));
+            index.ScanDirectory(child);
+            await WaitForIndex(index);
+            Assert.Equal("nested.txt", Assert.Single(index.Entries).RelativePath);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task DirectoryScanBenchmark_ReportsLatencyWithLargeSubtrees()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vex-path-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        for (var directory = 0; directory < 100; directory++)
+        {
+            var child = Directory.CreateDirectory(Path.Combine(root, $"child-{directory}")).FullName;
+            for (var file = 0; file < 20; file++)
+                File.WriteAllText(Path.Combine(child, $"file-{file}.txt"), "");
+        }
+        try
+        {
+            using var index = new PathCompletionIndex();
+            var elapsed = new double[5];
+            for (var i = 0; i < elapsed.Length; i++)
+            {
+                var started = Stopwatch.GetTimestamp();
+                index.ScanDirectory(root);
+                await WaitForIndex(index);
+                elapsed[i] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                Assert.Null(index.Error);
+            }
+            Array.Sort(elapsed);
+            output.WriteLine($"100 directories with 2,000 descendants: median scan {elapsed[2]:F2} ms, indexed {index.Entries.Length} paths.");
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -130,10 +185,13 @@ public sealed class PathCompletionTests(ITestOutputHelper output)
     public void DirectoryFallback_RecognizesOnlyWindowsShellPrompts(string line, string shell, string? expected) =>
         Assert.Equal(expected, PathCompletionText.ReadPromptDirectory(line, shell));
 
-    [Fact]
-    public void SearchBenchmark_ReportsLatencyForOneHundredThousandPaths()
+    [Theory]
+    [InlineData(100)]
+    [InlineData(256)]
+    [InlineData(100_000)]
+    public void SearchBenchmark_ReportsLatencyForLocalAndLargeDirectories(int count)
     {
-        var paths = Enumerable.Range(0, 100_000).Select(i => Entry($@"projects\workspace-{i % 200}\src\NativeTerminalControl-{i}.cs")).ToArray();
+        var paths = Enumerable.Range(0, count).Select(i => Entry($"NativeTerminalControl-{i}.cs")).ToArray();
         for (var i = 0; i < 3; i++)
             PathCompletionIndex.SearchPaths(paths, "ntc", 50);
         var elapsed = new double[20];
@@ -144,6 +202,6 @@ public sealed class PathCompletionTests(ITestOutputHelper output)
             elapsed[i] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         }
         Array.Sort(elapsed);
-        output.WriteLine($"100,000 paths, query 'ntc': median {elapsed[10]:F2} ms, p95 {elapsed[18]:F2} ms (search only).");
+        output.WriteLine($"{count:N0} local paths, query 'ntc': median {elapsed[10]:F3} ms, p95 {elapsed[18]:F3} ms (search only).");
     }
 }

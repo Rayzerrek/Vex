@@ -44,8 +44,20 @@ public sealed partial class NativeTerminalControl
             WaitForPathCompletion(() => _pathCompletionMatches.Length == 1 && _pathMatchedQuery == "");
             if (_pathCompletionDirectory != Path.Combine(root, "docs"))
                 throw new InvalidOperationException("Path completion did not navigate into the selected directory.");
+            TypePathCompletionQuery("ntc");
+            WaitForPathCompletion(() => _pathMatchedQuery == "ntc" && _pathCompletionMatches.Length == 0);
             HandlePathCompletionKey(Key.Tab, ModifierKeys.Shift);
-            WaitForPathCompletion(() => _pathCompletionMatches.Length == 2 && _pathMatchedQuery == "");
+            WaitForPathCompletion(() => _pathCompletionMatches.Length == 1 && _pathMatchedQuery == "ntc");
+            if (_pathCompletionDirectory != root || _pathCompletionQuery != "ntc")
+                throw new InvalidOperationException("Path completion did not preserve the query when moving to the parent directory.");
+            ChangePathCompletionDirectory(Path.Combine(root, "docs"));
+            TypePathCompletionQuery("ntc");
+            HandlePathCompletionKey(Key.Left, ModifierKeys.Alt);
+            WaitForPathCompletion(() => _pathCompletionMatches.Length == 1 && _pathMatchedQuery == "ntc");
+            if (_pathCompletionDirectory != root || _pathCompletionQuery != "ntc")
+                throw new InvalidOperationException("Alt+Left did not search the parent directory with the existing query.");
+            HandlePathCompletionKey(Key.Back, ModifierKeys.Control);
+            TypePathCompletionQuery("docs/");
             TypePathCompletionQuery("rdm");
             WaitForPathCompletion(() => _pathMatchedQuery == "rdm" && _pathCompletionMatches.Length == 1);
             if (!_pathCompletionBounds.IntersectsWith(new Rect(0, 0, ActualWidth, ActualHeight)))
@@ -65,6 +77,7 @@ public sealed partial class NativeTerminalControl
             SelfTestFeed("\x1b[?1049h\x1b[2J\x1b[Happlication> ");
             HandlePathCompletionKey(Key.F, ModifierKeys.Control | ModifierKeys.Shift);
             ChangePathCompletionDirectory(root);
+            TypePathCompletionQuery("docs/");
             TypePathCompletionQuery("rdm");
             WaitForPathCompletion(() => _pathMatchedQuery == "rdm" && _pathCompletionMatches.Length == 1);
             _sessionStarting = true;

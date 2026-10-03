@@ -83,64 +83,69 @@ public class TerminalStartupRegressionTests
     }
 
     [Fact]
-    public async Task ShellSessionReceivesDa1AndRendersPromptPromptly()
+    public async Task PrewarmedSession_ReceivesDa1AndRendersControlledPrompt()
     {
-        var resolved = Model.ShellRegistry.Resolve(Model.AppSettings.Instance.ShellId);
-        if (resolved is null)
-            return;
-
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        TerminalSessionPrewarmer.StartPrewarm(userProfile, Model.AppSettings.Instance.ShellId);
-
-        // Simulate short window startup interval
-        await Task.Delay(100);
-
-        var lease = TerminalSessionPrewarmer.Take(userProfile, Model.AppSettings.Instance.ShellId);
-        Assert.NotNull(lease);
-
-        var prewarmed = await lease.SessionTask;
-        using var terminal = new GhosttyTerminal(80, 24);
-        TerminalSession? activeSession = prewarmed;
-
-        terminal.WritePty += (data, len) =>
+        const string marker = "VEX_DA1_READY";
+        // Personal startup scripts and prompt glyphs must not decide whether DA1 works.
+        const string script = """
+            [Console]::Write([char]27 + '[c')
+            $response = ''
+            do { $response += [Console]::ReadKey($true).KeyChar } until ($response.EndsWith('c'))
+            if ($response.StartsWith([char]27 + '[?')) { [Console]::Write('VEX_DA1_READY') }
+            else { [Console]::Write('VEX_DA1_INVALID_RESPONSE') }
+            Start-Sleep -Seconds 30
+            """;
+        var shell = new Model.ShellProfile
         {
-            activeSession?.WriteResponse(data.AsSpan(0, len));
+            Id = "vex-da1-test",
+            Program = TerminalSession.PowerShell(),
+            Arguments = "-NoLogo -NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)),
         };
-
-        var promptTcs = new TaskCompletionSource<long>();
-        var sw = Stopwatch.StartNew();
-        var chunks = new List<string>();
-
-        lease.AttachOutputHandler(chunk =>
-        {
-            if (chunk.Array is not { } buffer) return;
-            try
-            {
-                var text = Encoding.UTF8.GetString(buffer, chunk.Offset, chunk.Count);
-                lock (chunks) chunks.Add(text);
-
-                if (text.Contains('❯') || text.Contains('>') || text.Contains('$'))
-                {
-                    promptTcs.TrySetResult(sw.ElapsedMilliseconds);
-                }
-
-                terminal.Feed(buffer, chunk.Offset, chunk.Count);
-            }
-            finally
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-            }
-        });
-
-        var completed = await Task.WhenAny(promptTcs.Task, Task.Delay(5000));
-        Assert.True(promptTcs.Task.IsCompleted, "Shell prompt did not arrive within 5000ms; DA1 response may be dropped or delayed.");
-
-        var fullOutput = string.Join("", chunks);
-        Assert.DoesNotContain("TERM=dumb", fullOutput);
-
-        prewarmed.Dispose();
-        lease.Dispose();
+        var settings = Model.AppSettings.Instance;
         TerminalSessionPrewarmer.Dispose();
+        settings.CustomShells.Add(shell);
+        try
+        {
+            var directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            TerminalSessionPrewarmer.StartPrewarm(directory, shell.Id);
+            await Task.Delay(100);
+            using var lease = TerminalSessionPrewarmer.Take(directory, shell.Id);
+            Assert.NotNull(lease);
+            using var terminal = new GhosttyTerminal(80, 24);
+            using var session = await lease.SessionTask.WaitAsync(TimeSpan.FromSeconds(5));
+            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var output = new StringBuilder();
+            terminal.WritePty += (data, length) =>
+            {
+                session.WriteResponse(data.AsSpan(0, length));
+            };
+            Assert.True(lease.AttachOutputHandler(chunk =>
+            {
+                if (chunk.Array is not { } buffer) return;
+                try
+                {
+                    terminal.Feed(buffer, chunk.Offset, chunk.Count);
+                    terminal.UpdateFrame();
+                    lock (output)
+                        output.Append(Encoding.UTF8.GetString(buffer, chunk.Offset, chunk.Count));
+                    var screen = string.Concat(terminal.FrameRows.SelectMany(row => row.Cells).Select(cell => cell.Text));
+                    if (screen.Contains(marker, StringComparison.Ordinal))
+                        ready.TrySetResult();
+                }
+                finally { System.Buffers.ArrayPool<byte>.Shared.Return(buffer); }
+            }));
+            try { await ready.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (TimeoutException)
+            {
+                lock (output)
+                    Assert.Fail($"DA1 fixture did not render its ready marker; output: {output}");
+            }
+        }
+        finally
+        {
+            TerminalSessionPrewarmer.Dispose();
+            settings.CustomShells.Remove(shell);
+        }
     }
 
     [Fact]

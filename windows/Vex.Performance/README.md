@@ -131,6 +131,39 @@ Only the constant-time raw-cell copy and iterator advance suppress GC transition
 style, grapheme, feed and allocating native calls retain normal transitions, as
 required by the [runtime's constraints](https://learn.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.suppressgctransitionattribute).
 
+## 2026-10-03 renderer followup
+
+Renderer baseline: `52ec471`. Release builds with `VEX_SELFTEST` enabled,
+.NET 10.0.12, SDK 10.0.303,
+Cascadia Mono 14, 135-by-36 cells, DPI 1. Five alternating before/after pairs,
+three samples of 100 forced redraws per process after warmup, with isolated
+profiles and no concurrent builds or tests. Medians across 15 samples:
+
+| Workload | Before (ms/frame) | After (ms/frame) | Before (bytes/frame) | After (bytes/frame) |
+| --- | ---: | ---: | ---: | ---: |
+| ASCII | 0.673 | 0.624 | 69,216 | 30,320 |
+| ANSI | 0.871 | 0.893 | 124,416 | 124,416 |
+| Grapheme clusters | 2.051 | 1.608 | 380,160 | 380,160 |
+
+Long single-column glyph segments share immutable advance arrays, bounded to
+256 cached shapes per pane and invalidated on font/DPI changes. Glyph indices
+still receive independent arrays for WPF's retained drawings. Short segments and
+wide glyphs keep the copy path. ASCII allocation falls by 56.2%, with a 7.3%
+reduction in this session's median redraw time. Timing for ANSI/graphemes varied
+between runs; no speed improvement is claimed for those workloads. These are
+UI-thread drawing costs, excluding VT parsing and GPU composition.
+
+The startup test now uses a profile-free PowerShell fixture that waits for a
+valid DA1 reply before emitting its ready marker, which the test reads from the
+emulated viewport. The previous test selected the user's configured shell and
+looked for three prompt characters in individual output chunks. A missing
+Nushell autoload file prevented the prompt and produced a misleading DA1 timeout.
+Session/prewarm cleanup now runs even when the assertion fails.
+
+Validation: all 517 Debug tests and 509 Release tests passed across the app and
+emulator suites. Debug includes the real WPF renderer, path picker navigation,
+retained glyph-spacing/DPI checks, and the controlled DA1 startup fixture.
+
 ## Validation
 
 Release solution build: no errors or warnings. Debug tests: 490 passed across

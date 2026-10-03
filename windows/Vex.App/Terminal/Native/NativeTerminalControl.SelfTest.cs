@@ -68,6 +68,37 @@ public sealed partial class NativeTerminalControl
         }
     }
 
+    /// <summary>Checks shared glyph advances stay immutable and follow the monitor's pixel grid.</summary>
+    internal bool SelfTestGlyphAdvanceDpiChange()
+    {
+        var originalDpi = _pixelsPerDip;
+        SelfTestFeed("\x1b[2J\x1b[Habcdefghijklmnop\x1b[31mqrstuvwxyz\x1b[0m");
+        var retained = _rowVisuals[0].Drawing.Children.OfType<GlyphRunDrawing>()
+            .Select(drawing => drawing.GlyphRun).OfType<GlyphRun>().ToArray();
+        var savedAdvances = retained.Select(run => run.AdvanceWidths.ToArray()).ToArray();
+        try
+        {
+            var changedDpi = originalDpi * 1.2;
+            OnDpiChanged(new DpiScale(originalDpi, originalDpi), new DpiScale(changedDpi, changedDpi));
+            SelfTestFeed("\x1b[H0123456789abcdef\x1b[31mghijklmnop\x1b[0m");
+            var current = _rowVisuals[0].Drawing.Children.OfType<GlyphRunDrawing>()
+                .Select(drawing => drawing.GlyphRun).OfType<GlyphRun>().ToArray();
+            return retained.Length >= 2 && current.Length >= 2
+                && retained.Select((run, i) => run.AdvanceWidths.SequenceEqual(savedAdvances[i])).All(equal => equal)
+                && current.All(run =>
+                {
+                    var endCol = Math.Round(run.BaselineOrigin.X / _cellWidth) + run.GlyphIndices.Count;
+                    var expectedEnd = Math.Round(endCol * _cellWidth * changedDpi) / changedDpi;
+                    return Math.Abs(run.BaselineOrigin.X + run.AdvanceWidths.Sum() - expectedEnd) < 0.001;
+                });
+        }
+        finally
+        {
+            OnDpiChanged(new DpiScale(_pixelsPerDip, _pixelsPerDip), new DpiScale(originalDpi, originalDpi));
+            FlushRedraw();
+        }
+    }
+
     /// <summary>Measures forced row rendering on the UI thread, including retained WPF allocations.</summary>
     internal string SelfTestBenchRendering(int iterations)
     {
