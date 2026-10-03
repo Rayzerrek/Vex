@@ -39,6 +39,7 @@ public sealed partial class NativeTerminalControl
         }
         _terminalKeysDown.Clear();
         _pendingTextKey = null;
+        ClosePathCompletion();
         UpdateBlinkTimer();
         DrawCaret();
     }
@@ -59,6 +60,14 @@ public sealed partial class NativeTerminalControl
         // before the chord completes.
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift
             or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
+            return;
+
+        if (HandlePathCompletionKey(key, mods))
+        {
+            e.Handled = true;
+            return;
+        }
+        if (_pathCompletionOpen)
             return;
 
         // Word/line-wise keyboard selection owns the Ctrl+Shift+arrow chords
@@ -273,6 +282,14 @@ public sealed partial class NativeTerminalControl
         if (_disposed || string.IsNullOrEmpty(e.Text))
             return;
 
+        if (_pathCompletionOpen)
+        {
+            _pendingTextKey = null;
+            TypePathCompletionQuery(e.Text);
+            e.Handled = true;
+            return;
+        }
+
         if (_pendingTextKey is { } pending)
         {
             _pendingTextKey = null;
@@ -314,6 +331,12 @@ public sealed partial class NativeTerminalControl
             return;
 
         var pos = e.GetPosition(this);
+
+        if (HandlePathCompletionClick(pos, e.ClickCount))
+        {
+            e.Handled = true;
+            return;
+        }
 
         // The scrollbar overlays the right edge. It yields to an app that
         // captured the mouse (Shift still reaches it) so a TUI never loses
@@ -393,6 +416,11 @@ public sealed partial class NativeTerminalControl
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        if (_pathCompletionOpen)
+        {
+            e.Handled = true;
+            return;
+        }
 
         var pos = e.GetPosition(this);
 
@@ -435,6 +463,12 @@ public sealed partial class NativeTerminalControl
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonUp(e);
+        if (_pathCompletionMouseDown)
+        {
+            _pathCompletionMouseDown = false;
+            e.Handled = true;
+            return;
+        }
 
         if (_scrollbarDragging)
         {
@@ -523,6 +557,12 @@ public sealed partial class NativeTerminalControl
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseRightButtonDown(e);
+        if (_pathCompletionOpen)
+        {
+            PasteClipboard();
+            e.Handled = true;
+            return;
+        }
         Focus();
         if (_mouseTracking)
         {
@@ -540,6 +580,11 @@ public sealed partial class NativeTerminalControl
     protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
     {
         base.OnMouseRightButtonUp(e);
+        if (_pathCompletionOpen)
+        {
+            e.Handled = true;
+            return;
+        }
         if (!_mouseTracking && !IsReportedButton(MouseInputButton.Right))
             return;
         SetReportedButton(MouseInputButton.Right, false);
@@ -552,6 +597,11 @@ public sealed partial class NativeTerminalControl
     {
         if (e.ChangedButton != MouseButton.Middle)
             return;
+        if (_pathCompletionOpen)
+        {
+            e.Handled = true;
+            return;
+        }
         Focus();
         if (!_mouseTracking)
             return;
@@ -565,6 +615,11 @@ public sealed partial class NativeTerminalControl
     {
         if (e.ChangedButton != MouseButton.Middle)
             return;
+        if (_pathCompletionOpen)
+        {
+            e.Handled = true;
+            return;
+        }
         if (!_mouseTracking && !IsReportedButton(MouseInputButton.Middle))
             return;
         SetReportedButton(MouseInputButton.Middle, false);
@@ -585,6 +640,13 @@ public sealed partial class NativeTerminalControl
         base.OnMouseWheel(e);
 
         var steps = ConsumeWheelSteps(e.Delta);
+        if (_pathCompletionOpen)
+        {
+            _pathCompletionSelected = Math.Clamp(_pathCompletionSelected - steps, 0, Math.Max(0, _pathCompletionMatches.Length - 1));
+            DrawPathCompletion();
+            e.Handled = true;
+            return;
+        }
 
         // Shift always addresses Vex's own scrollback, matching xterm and
         // Windows Terminal. Without the override an app that captured the

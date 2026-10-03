@@ -7,6 +7,7 @@ Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, and spl
 ## Features
 
 - Terminal: ConPTY + libghostty-vt emulation, WPF rendering. Kitty/xterm keyboard protocols, TUI mouse input, URL underline with Ctrl+Click, keyboard selection, Ctrl+Backspace word delete.
+- Path picker: `Ctrl+Shift+F` opens fuzzy file and directory completion at the cursor, including inside Claude and other terminal applications. Background indexing, highlighted matches, and directory navigation.
 - Shells: auto-detects PowerShell 7, Nushell, Windows PowerShell, cmd, Git Bash, WSL; plus custom shells (program + args) in Settings.
 - Tabs & panes: split right/down, focus mode, drag reorder, custom titles, tab peek preview, pane state indicators.
 - Workspace: multi-project workspace switching, git branch detection, session restore (projects, tabs, splits, focus).

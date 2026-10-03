@@ -274,6 +274,11 @@ public sealed partial class NativeTerminalControl
     {
         if (_disposed || !TryGetClipboardText(out var text) || text.Length == 0)
             return;
+        if (_pathCompletionOpen)
+        {
+            TypePathCompletionQuery(text);
+            return;
+        }
         text = text.Replace("\r\n", "\r").Replace("\n", "\r");
         if (_terminal.BracketedPaste)
             text = "\x1b[200~" + text + "\x1b[201~";

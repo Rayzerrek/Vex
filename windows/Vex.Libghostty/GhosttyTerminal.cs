@@ -38,6 +38,7 @@ public sealed class GhosttyTerminal : IDisposable
     private GCHandle _selfHandle;
     private uint[] _codepoints = new uint[MaxGraphemes];
     private bool _disposed;
+    private string? _workingDirectory;
 
     // Serializes every native terminal call. Feed runs on the PTY reader
     // thread while snapshots (UpdateFrame, modes, mouse, selection) run on
@@ -89,6 +90,9 @@ public sealed class GhosttyTerminal : IDisposable
     };
 
     public event Action<string>? TitleChanged;
+
+    /// <summary>Last local working directory reported by OSC 7; null when the shell does not report it.</summary>
+    public string? WorkingDirectory => Volatile.Read(ref _workingDirectory);
     public event Action<byte[], int>? WritePty;
 
     /// <summary>Raised when the application rings the terminal bell (BEL).
@@ -438,6 +442,7 @@ public sealed class GhosttyTerminal : IDisposable
     /// </summary>
     private void FlushOscBel(byte[] dst, ref int written)
     {
+        ReadWorkingDirectoryOsc();
         if (IsOsc133(_oscBuf, _oscLen))
             return;
         dst[written++] = 0x1B;
@@ -449,6 +454,7 @@ public sealed class GhosttyTerminal : IDisposable
 
     private void FlushOscSt(byte[] dst, ref int written)
     {
+        ReadWorkingDirectoryOsc();
         if (IsOsc133(_oscBuf, _oscLen))
             return;
         dst[written++] = 0x1B;
@@ -457,6 +463,22 @@ public sealed class GhosttyTerminal : IDisposable
             dst[written++] = _oscBuf[j];
         dst[written++] = 0x1B;
         dst[written++] = 0x5C;
+    }
+
+    private void ReadWorkingDirectoryOsc()
+    {
+        if (_oscLen < 3 || _oscBuf[0] != (byte)'7' || _oscBuf[1] != (byte)';')
+            return;
+        var text = Encoding.UTF8.GetString(_oscBuf, 2, _oscLen - 2);
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || !uri.IsFile ||
+            !(uri.Host.Length == 0 || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+              uri.Host.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase)))
+            return;
+        var path = uri.Host.Length == 0 ? uri.LocalPath : Uri.UnescapeDataString(uri.AbsolutePath);
+        if (path.Length >= 3 && path[0] == '/' && char.IsAsciiLetter(path[1]) && path[2] == ':')
+            path = path[1..].Replace('/', '\\');
+        if (System.IO.Path.IsPathFullyQualified(path) && !path.Any(char.IsControl))
+            Volatile.Write(ref _workingDirectory, path);
     }
 
     private static bool IsOsc133(byte[] buf, int len)

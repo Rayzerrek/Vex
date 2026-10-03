@@ -196,6 +196,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _scrollbarVisual,
             _caretVisual,
             _copyAnimVisual,
+            _pathCompletionVisual,
         };
 
         _blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
@@ -227,6 +228,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 return;
             if (!IsVisible)
             {
+                ClosePathCompletion();
                 StopCopyAnimation();
                 ClearLinkHover();
             }
@@ -241,6 +243,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         };
         Unloaded += (_, _) =>
         {
+            ClosePathCompletion();
             StopCopyAnimation();
             ClearLinkHover();
         };
@@ -771,6 +774,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 SetScrollbarOpacity(0);
             else
                 DrawScrollbar();
+            if (_pathCompletionOpen)
+                DrawPathCompletion(trackCursorOnly: true);
         }
         catch (Exception e)
         {
@@ -1382,6 +1387,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         StopCopyAnimation();
         ClearLinkHover();
         _pendingSessionInput = null;
+        ClosePathCompletion();
+        _pathSearchCancellation?.Dispose();
+        _pathCompletionIndex?.Dispose();
         _blinkTimer.Stop();
         _scrollbarAnimTimer.Stop();
         _scrollbarHideTimer.Stop();

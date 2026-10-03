@@ -18,6 +18,7 @@ regressions in Debug:
 |---|---|
 | Key events to VT byte sequences | `TerminalKeyMapTests` |
 | Fuzzy search scoring and ordering | `FileSearchEngineTests` |
+| Path picker ranking, shell quoting, directory indexing, cancellation, and search latency | `PathCompletionTests` |
 | Debounce timing and coalescing | `HalfDebouncerTests` |
 | Theme resolution and color parsing | `TerminalThemeTests` |
 | Dimmed foreground and contrast caching | `TerminalPaletteTests` |
@@ -45,6 +46,7 @@ under `Vendor/libghostty/` and copied to the test output by
 | Area | File |
 |---|---|
 | DCS stripping by ConPTY | `FeedFilterTests` |
+| Local working directories reported by chunked OSC 7 sequences | `WorkingDirectoryTests` |
 | Legacy/xterm/Kitty keyboard encoding | `KeyboardTests` |
 | Mouse tracking modes and wire encoding | `MouseTests` |
 | Ad-hoc encoder inspection | `Probe` |
@@ -74,6 +76,11 @@ ED2 (no ghost rows), wide-character rendering, and pixel-identical snap-back
 after scrolling. It also checks glyph alignment, combining marks, font and
 DPI changes, copy feedback, link previews, and renderer lifecycle cleanup.
 Failures produce a nonzero exit code.
+
+The core scenario also opens the path picker in the real terminal control,
+types overlapping queries, navigates directories, captures the popup, and
+checks the exact quoted/raw PTY input on primary and alternate screens.
+The popup screenshot is retained beside the report as `.path-completion.png`.
 
 Set `VEX_SELFTEST_BENCH=1` to measure full redraw time and allocation for
 ASCII, ANSI-colored text, and graphemes. The report includes font, grid size,
