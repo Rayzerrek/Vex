@@ -7,8 +7,23 @@ namespace Vex.App.Terminal.Native;
 public sealed partial class NativeTerminalControl
 {
     private const int MaxFallbackCellDrawings = 512;
+    private const int MaxCachedGlyphAdvances = 256;
+    private readonly Dictionary<(int StartCol, int GlyphCount), double[]> _glyphAdvanceCache = new();
     private readonly Dictionary<FallbackCellKey, DrawingGroup> _fallbackCellDrawings = new();
     private readonly record struct FallbackCellKey(string Text, Typeface Typeface, Brush Foreground, bool SyntheticBold, int Columns);
+
+    private double[] GetGlyphAdvances(ReadOnlySpan<double> advances, int startCol)
+    {
+        var key = (startCol, advances.Length);
+        if (_glyphAdvanceCache.TryGetValue(key, out var cached))
+            return cached;
+        var snapshot = advances.ToArray();
+        // WPF retains these arrays. Only immutable, single-column advances can be shared.
+        if (_glyphAdvanceCache.Count >= MaxCachedGlyphAdvances)
+            _glyphAdvanceCache.Clear();
+        _glyphAdvanceCache[key] = snapshot;
+        return snapshot;
+    }
 
     private void DrawFallbackCell(DrawingContext context, string text, Typeface face, Brush foreground,
         bool syntheticBold, int columns, int col, double rowY)

@@ -2,7 +2,7 @@ using System.IO;
 
 namespace Vex.App.Terminal.Native;
 
-/// <summary>Indexes local paths off the UI thread; snapshots can be searched while scanning continues.</summary>
+/// <summary>Indexes immediate directory entries off the UI thread for local path completion.</summary>
 internal sealed class PathCompletionIndex : IDisposable
 {
     internal sealed record PathEntry(string FullPath, string RelativePath, bool IsDirectory)
@@ -11,10 +11,6 @@ internal sealed class PathCompletionIndex : IDisposable
         internal int FilenameOffset { get; } = RelativePath.LastIndexOf('\\') + 1;
     }
     private const int MaximumEntries = 100_000;
-    private static readonly HashSet<string> SkippedDirectories = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".git", ".svn", ".hg", "node_modules", "bin", "obj", ".venv", "venv", "__pycache__",
-    };
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _publicationLock = new();
     private readonly Dictionary<string, (PathEntry[] Entries, DateTime Scanned)> _cache = new(StringComparer.OrdinalIgnoreCase);
@@ -67,44 +63,25 @@ internal sealed class PathCompletionIndex : IDisposable
             await Task.Run(() =>
             {
                 var entries = new List<PathEntry>();
-                var pending = new Queue<(string Path, int Depth)>();
-                pending.Enqueue((directory, 0));
                 var publishedAt = Environment.TickCount64;
-                while (pending.TryDequeue(out var current) && entries.Count < MaximumEntries)
+                var options = new EnumerationOptions
+                {
+                    IgnoreInaccessible = true,
+                    AttributesToSkip = FileAttributes.System,
+                };
+                // Parent and child directories are scanned only after explicit navigation.
+                foreach (var entry in new DirectoryInfo(directory).EnumerateFileSystemInfos("*", options))
                 {
                     cancellation.ThrowIfCancellationRequested();
-                    try
+                    var isDirectory = (entry.Attributes & FileAttributes.Directory) != 0;
+                    entries.Add(new PathEntry(entry.FullName, entry.Name, isDirectory));
+                    if (entries.Count >= MaximumEntries)
+                        break;
+                    if (entries.Count % 2048 == 0 && Environment.TickCount64 - publishedAt >= 100)
                     {
-                        var options = new EnumerationOptions
-                        {
-                            IgnoreInaccessible = true,
-                            AttributesToSkip = FileAttributes.System,
-                        };
-                        foreach (var entry in new DirectoryInfo(current.Path).EnumerateFileSystemInfos("*", options))
-                        {
-                            cancellation.ThrowIfCancellationRequested();
-                            var isDirectory = (entry.Attributes & FileAttributes.Directory) != 0;
-                            entries.Add(new PathEntry(entry.FullName, Path.GetRelativePath(directory, entry.FullName), isDirectory));
-                            // Junctions can cycle or escape into an entire disk. Excluded directories remain navigable.
-                            if (isDirectory && current.Depth < 32 && !SkippedDirectories.Contains(entry.Name) &&
-                                (entry.Attributes & FileAttributes.ReparsePoint) == 0)
-                                pending.Enqueue((entry.FullName, current.Depth + 1));
-                            if (entries.Count >= MaximumEntries)
-                                break;
-                            if (entries.Count % 2048 == 0 && Environment.TickCount64 - publishedAt >= 100)
-                            {
-                                PublishSnapshot(entries, cancellation);
-                                publishedAt = Environment.TickCount64;
-                            }
-                        }
-                    }
-                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-                    {
-                        if (current.Depth == 0)
-                            throw;
-                    }
-                    if (current.Depth == 0)
                         PublishSnapshot(entries, cancellation);
+                        publishedAt = Environment.TickCount64;
+                    }
                 }
                 cancellation.ThrowIfCancellationRequested();
                 PublishSnapshot(entries, cancellation, truncated: entries.Count >= MaximumEntries);

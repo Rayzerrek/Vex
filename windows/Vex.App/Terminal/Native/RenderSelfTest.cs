@@ -798,6 +798,9 @@ internal static class RenderSelfTest
         Report(control, control.SelfTestFallbackDpiChange()
             ? "PASS fallback DPI: retained glyphs match the new monitor scale"
             : "FAIL fallback DPI: retained glyphs use the previous monitor scale");
+        Report(control, control.SelfTestGlyphAdvanceDpiChange()
+            ? "PASS glyph advances: retained spacing is immutable and matches the new monitor scale"
+            : "FAIL glyph advances: cached spacing changed or uses the previous monitor scale");
 
         // Scroll up two pages and back: the snap-back bitmap must be
         // pixel-identical to the pre-scroll one, otherwise stale rows remain.

@@ -31,9 +31,10 @@ terminal/TUI, including its save binding or terminal flow control.
 ## Path picker
 
 `Ctrl+Shift+F` opens a compact path picker at the terminal cursor, including
-inside Claude and full-screen applications. Type to fuzzy-search file and
-directory paths. Search runs in memory on a background thread; it does not
-launch a process per keystroke.
+inside Claude and full-screen applications. Type to fuzzy-search the files and
+folders directly in the current directory. Subfolders are scanned only when you
+enter them; parent directories only when you move up. Search runs in memory;
+large lists are ranked on a background thread. No process launches per keystroke.
 
 | Action | Keys |
 |---|---|
@@ -42,7 +43,7 @@ launch a process per keystroke.
 | Insert raw path for application prompts, without shell quoting | `Ctrl+Enter` |
 | Enter selected directory / insert selected file | `Tab` |
 | Enter selected directory | `Right` |
-| Parent directory | `Shift+Tab`, `Alt+Left`, or `Backspace` with an empty query |
+| Parent directory, keeping the query | `Shift+Tab`, `Alt+Left`, or `Backspace` with an empty query |
 | Clear query | `Ctrl+Backspace` |
 | Paste a query or directory path | `Ctrl+Shift+V` |
 | Close | `Esc` or `Ctrl+Shift+F` |
@@ -59,12 +60,15 @@ pane's starting directory; custom prompts and remote shells may require
 manual navigation. WSL and Git Bash can insert paths to Windows files, but the
 index searches the Windows filesystem, not a remote/Linux filesystem.
 
-Indexing publishes immediate directory entries first and then discovers
-descendants. Recursive search skips `.git`, `node_modules`, build output,
-virtual environments, and junctions; these directories remain available for
-explicit navigation. Scans are bounded to 100,000 entries and 32 levels. Each
-pane retains up to four directory snapshots for 30 seconds, refreshing older
-ones when opened. The footer indicates indexing or a truncated scan.
+`Shift+Tab` and `Alt+Left` move up one directory without clearing the search,
+so you can look for the same name at successive levels. `Tab` or `Right` enters
+the selected folder and starts a fresh query. The footer shows the current scope.
+
+Indexing never walks descendants, including build output, dependencies, and
+junctions; all directories remain available for explicit navigation. Scans are
+bounded to 100,000 immediate entries. Each pane retains up to four directory
+snapshots for 30 seconds, refreshing older ones when opened. The footer indicates
+indexing or a truncated scan.
 
 ## Terminal
 

@@ -27,6 +27,7 @@ regressions in Debug:
 | Recovery of null session entries and selected indices | `SessionRecoveryTests` |
 | Shell-profile normalization without save timers | `AppSettingsRecoveryTests` |
 | Bounded prewarm buffers, ownership, and live ConPTY output flood | `TerminalPrewarmBufferTests` |
+| Controlled DA1 startup without personal shell profiles, buffered input, and disposal | `TerminalStartupRegressionTests` |
 | Rejected/replaced session exits and early-exit replay | `TerminalSessionExitRegressionTests` |
 | Bounded crash reports and fatal-process termination (Debug) | `AppCrashLogTests` |
 
@@ -77,9 +78,11 @@ after scrolling. It also checks glyph alignment, combining marks, font and
 DPI changes, copy feedback, link previews, and renderer lifecycle cleanup.
 Failures produce a nonzero exit code.
 
-The core scenario also opens the path picker in the real terminal control,
-types overlapping queries, navigates directories, captures the popup, and
-checks the exact quoted/raw PTY input on primary and alternate screens.
+The core scenario also checks that retained glyph spacing stays immutable across
+redraws and follows DPI changes. It opens the path picker in the real terminal
+control, types overlapping queries, navigates directories while preserving the
+query when moving up, captures the popup, and checks the exact quoted/raw PTY
+input on primary and alternate screens.
 The popup screenshot is retained beside the report as `.path-completion.png`.
 
 Set `VEX_SELFTEST_BENCH=1` to measure full redraw time and allocation for

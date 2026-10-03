@@ -454,6 +454,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private void RebuildFontMetrics()
     {
         _fallbackCellDrawings.Clear();
+        _glyphAdvanceCache.Clear();
         StopCopyAnimation();
         ClearLinkHover();
         // Cell geometry is part of every row's pixels; any rebuild invalidates
@@ -635,6 +636,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         StopCopyAnimation();
         ClearLinkHover();
         _fallbackCellDrawings.Clear();
+        _glyphAdvanceCache.Clear();
         _pixelsPerDip = newDpi.PixelsPerDip;
         // Glyph rasterization scales with pixels-per-dip even when the DIP
         // cell size does not, so the cached row pixels and native mouse
@@ -992,38 +994,38 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             var map = glyphFace?.CharacterToGlyphMap;
             var colCursor = startCol;
 
-            if (map is not null)
+            if (glyphFace is not null && map is not null)
             {
-                // Pending GlyphRun segment state. The flushed per-segment
-                // copies below must stay freshly allocated: WPF's
-                // retained-mode DrawingContext keeps a reference to the
-                // glyph/advance arrays until the render thread consumes the
-                // visual, so reusing those across runs corrupts already-queued
-                // runs (stale characters, jumbled glyphs). The staging area
-                // here is internal to this run and safe to reuse.
+                // WPF retains the final arrays until its render thread consumes
+                // the visual. Glyph indices need copies; immutable advances for
+                // single-column glyphs can be shared. Staging stays private.
                 EnsureSegScratch(contentLength);
                 var segIndices = _segIndicesScratch;
                 var segAdvances = _segAdvancesScratch;
                 var segUnits = 0;
                 var segStartCol = startCol;
+                var segSingleWidth = true;
 
                 void FlushSegment()
                 {
                     if (segUnits == 0)
                         return;
                     var indices = new ushort[segUnits];
-                    var advances = new double[segUnits];
+                    // Cache lookups outweigh allocation savings for short style/fallback fragments.
+                    var advances = segSingleWidth && segUnits >= 16
+                        ? GetGlyphAdvances(segAdvances.AsSpan(0, segUnits), segStartCol)
+                        : segAdvances.AsSpan(0, segUnits).ToArray();
                     Array.Copy(segIndices, indices, segUnits);
-                    Array.Copy(segAdvances, advances, segUnits);
                     var sx = Math.Round(segStartCol * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
                     DrawGlyph(indices, advances, sx);
                     segUnits = 0;
+                    segSingleWidth = true;
                 }
 
                 void DrawGlyph(ushort[] indices, double[] advances, double originX)
                 {
                     var run = new GlyphRun(
-                        glyphFace!,
+                        glyphFace,
                         0,
                         false,
                         _fontSize,
@@ -1038,7 +1040,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                     // Second pass offset by 1 physical pixel (fractional in DIPs
                     // for subpixel crispness), the classic cheap fake-bold.
                     var boldRun = new GlyphRun(
-                        glyphFace!,
+                        glyphFace,
                         0,
                         false,
                         _fontSize,
@@ -1131,6 +1133,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                     }
                     if (cellOk)
                     {
+                        segSingleWidth &= widths[unitStart] == 1;
                         // Snap both endpoints to the same physical grid used
                         // by segment origins and cell backgrounds. Fractional
                         // advances otherwise accumulate a different phase

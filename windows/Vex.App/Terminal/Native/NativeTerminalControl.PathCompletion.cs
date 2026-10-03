@@ -13,6 +13,8 @@ public sealed partial class NativeTerminalControl
     private readonly DrawingVisual _pathCompletionVisual = new();
     private PathCompletionIndex? _pathCompletionIndex;
     private CancellationTokenSource? _pathSearchCancellation;
+    private PathCompletionIndex.PathEntry[]? _pathSearchEntries;
+    private string _pathSearchQuery = "";
     private bool _pathCompletionOpen;
     private string _pathCompletionDirectory = "";
     private string _pathCompletionQuery = "";
@@ -71,18 +73,22 @@ public sealed partial class NativeTerminalControl
         _pathCompletionOpen = false;
         _pathSearchVersion++;
         _pathSearchCancellation?.Cancel();
+        _pathSearchEntries = null;
         _pathCompletionIndex?.CacheDirectory(_pathCompletionDirectory);
         using var dc = _pathCompletionVisual.RenderOpen();
     }
 
-    private void ChangePathCompletionDirectory(string directory)
+    private void ChangePathCompletionDirectory(string directory, string query = "")
     {
-        _pathCompletionIndex!.CacheDirectory(_pathCompletionDirectory);
+        if (_pathCompletionIndex is not { } index)
+            return;
+        index.CacheDirectory(_pathCompletionDirectory);
+        _pathSearchEntries = null;
         _pathCompletionDirectory = directory;
-        _pathCompletionQuery = "";
+        _pathCompletionQuery = query;
         _pathCompletionSelected = 0;
         _pathCompletionMatches = [];
-        _pathCompletionIndex.ScanDirectory(directory);
+        index.ScanDirectory(directory);
         RefreshPathCompletion();
     }
 
@@ -100,18 +106,27 @@ public sealed partial class NativeTerminalControl
 
     private async void RefreshPathCompletion(bool preserveSelection = false)
     {
+        if (_pathCompletionIndex is not { } index)
+            return;
+        var entries = index.Entries;
+        var query = _pathCompletionQuery;
+        DrawPathCompletion();
+        // Scan notifications can repeat the same snapshot while a search is already running.
+        if (ReferenceEquals(entries, _pathSearchEntries) && query == _pathSearchQuery)
+            return;
+        _pathSearchEntries = entries;
+        _pathSearchQuery = query;
         _pathSearchCancellation?.Cancel();
         _pathSearchCancellation?.Dispose();
         _pathSearchCancellation = new CancellationTokenSource();
         var cancellation = _pathSearchCancellation.Token;
         var version = ++_pathSearchVersion;
-        var entries = _pathCompletionIndex!.Entries;
-        var query = _pathCompletionQuery;
-        DrawPathCompletion();
         try
         {
-            // Ranking a large snapshot must never compete with terminal painting on the dispatcher.
-            var matches = await Task.Run(() => PathCompletionIndex.SearchPaths(entries, query, 50, cancellation), cancellation);
+            // Small local lists avoid thread-pool latency; large lists stay off the dispatcher.
+            var matches = entries.Length <= 256
+                ? PathCompletionIndex.SearchPaths(entries, query, 50, cancellation)
+                : await Task.Run(() => PathCompletionIndex.SearchPaths(entries, query, 50, cancellation), cancellation);
             if (_disposed || !_pathCompletionOpen || version != _pathSearchVersion)
                 return;
             var selectedPath = preserveSelection ? _pathCompletionMatches.ElementAtOrDefault(_pathCompletionSelected)?.FullPath : null;
@@ -154,7 +169,7 @@ public sealed partial class NativeTerminalControl
         {
             var parent = Path.GetDirectoryName(_pathCompletionDirectory);
             if (parent is not null)
-                ChangePathCompletionDirectory(parent);
+                ChangePathCompletionDirectory(parent, _pathCompletionQuery);
         }
         else if (key == Key.Back && modifiers == ModifierKeys.None && _pathCompletionQuery.Length > 0)
         {
@@ -195,8 +210,7 @@ public sealed partial class NativeTerminalControl
             {
                 var prefix = _pathCompletionQuery[..(separator + 1)];
                 var query = _pathCompletionQuery[(separator + 1)..];
-                ChangePathCompletionDirectory(PathCompletionText.ResolveDirectory(_pathCompletionDirectory, prefix));
-                _pathCompletionQuery = query;
+                ChangePathCompletionDirectory(PathCompletionText.ResolveDirectory(_pathCompletionDirectory, prefix), query);
             }
             catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
             {
@@ -244,7 +258,7 @@ public sealed partial class NativeTerminalControl
         _pathCompletionBounds = new Rect(x, y, width, height);
         dc.DrawRoundedRectangle(_palette.Background, new Pen(_palette.Link, 1), _pathCompletionBounds, 7, 7);
         dc.PushClip(new RectangleGeometry(_pathCompletionBounds));
-        DrawPathCompletionText(dc, _pathCompletionQuery.Length == 0 ? "Search paths…" : "› " + _pathCompletionQuery, x + 12, y + 7, width - 24, _palette.Foreground);
+        DrawPathCompletionText(dc, _pathCompletionQuery.Length == 0 ? "Search this directory…" : "› " + _pathCompletionQuery, x + 12, y + 7, width - 24, _palette.Foreground);
         dc.DrawLine(new Pen(_palette.Selection, 1), new Point(x + 8, y + 31), new Point(x + width - 8, y + 31));
         _pathCompletionFirstVisible = Math.Clamp(_pathCompletionSelected - count + 1, 0, Math.Max(0, _pathCompletionMatches.Length - count));
         for (var row = 0; row < count; row++)
@@ -264,7 +278,7 @@ public sealed partial class NativeTerminalControl
             DrawPathCompletionText(dc, entry.RelativePath + (entry.IsDirectory ? "\\" : ""), x + 30, rowY + 2, width - 42, _palette.Foreground, _pathCompletionQuery);
         }
         var status = _pathCompletionIndex?.IsScanning == true ? "  • indexing" : _pathCompletionIndex?.IsTruncated == true ? "  • 100k limit" : "";
-        DrawPathCompletionText(dc, _pathCompletionDirectory + status, x + 12, y + height - 23, width - 24, _palette.Link);
+        DrawPathCompletionText(dc, "Shift+Tab ↑  •  " + _pathCompletionDirectory + status, x + 12, y + height - 23, width - 24, _palette.Link);
         dc.Pop();
     }
 
