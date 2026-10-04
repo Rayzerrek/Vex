@@ -723,6 +723,11 @@ internal static class RenderSelfTest
 
         CheckStartupOverlays(control);
 
+        // Bitmap targets do not preserve screen subpixel antialiasing, so
+        // verify the live surface's mode rather than its captured pixels.
+        Assert(control, TextOptions.GetTextRenderingMode(control) == TextRenderingMode.ClearType,
+            "font smoothing: opaque terminal uses ClearType");
+
         // A steady caret so bitmaps from different captures are comparable.
         control.SelfTestStabilizeCaret();
 
