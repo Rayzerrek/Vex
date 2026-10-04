@@ -1392,7 +1392,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _pendingSessionInput = null;
         ClosePathCompletion();
         _pathSearchCancellation?.Dispose();
+        // WPF can deliver focus loss and Unloaded after the view is disposed.
+        _pathSearchCancellation = null;
         _pathCompletionIndex?.Dispose();
+        _pathCompletionIndex = null;
         _blinkTimer.Stop();
         _scrollbarAnimTimer.Stop();
         _scrollbarHideTimer.Stop();
