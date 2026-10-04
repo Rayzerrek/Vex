@@ -28,6 +28,7 @@ regressions in Debug:
 | Shell-profile normalization without save timers | `AppSettingsRecoveryTests` |
 | Bounded prewarm buffers, ownership, and live ConPTY output flood | `TerminalPrewarmBufferTests` |
 | Controlled DA1 startup without personal shell profiles, buffered input, and disposal | `TerminalStartupRegressionTests` |
+| Closing the first tab after path completion, followed by deferred WPF focus loss/unload | `TerminalCloseTabRegressionTests` |
 | Rejected/replaced session exits and early-exit replay | `TerminalSessionExitRegressionTests` |
 | Bounded crash reports and fatal-process termination (Debug) | `AppCrashLogTests` |
 
