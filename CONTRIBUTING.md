@@ -5,8 +5,9 @@ Vex, what is expected of a change, and how to get it merged.
 
 ## Prerequisites
 
-- **Windows 10 1809+ or Windows 11.** Vex is a WPF application and does not
-  build or run on other platforms.
+- **Windows 10 1809+ or Windows 11.** Vex is a WPF application. Running it,
+  native tests, and MSI packaging require Windows; Linux orbs can cross-compile
+  the managed projects as described below.
 - **.NET 10 SDK.** Check with `dotnet --list-sdks`; the project targets
   `net10.0` and `net10.0-windows`.
 - **Node.js 24 and pnpm 11.5.2** — only needed for the landing page in `web/`.
@@ -27,6 +28,40 @@ pwsh windows/build-installer.ps1
 
 This publishes `Vex.App` for `win-x64`, builds the WiX package, and writes
 `windows/publish/installer/Vex.msi`.
+
+### Amp orbs (Linux)
+
+Amp runs the executable `.agents/setup` hook to prepare a project snapshot:
+Debian prerequisites, .NET 10, Node.js 24, pnpm from `web/package.json`, locked
+web dependencies, and NuGet packages including Windows reference packs.
+Matching snapshots skip setup; warm setup reuses installed tools and caches.
+Toolchains are stored under `~/.local/share/vex` and added to login-shell PATH
+through `~/.bash_profile`.
+
+The setup hook enables `vm.overcommit_memory=1` inside the orb because Oxlint's
+JS plugins reserve large virtual-memory arenas that fail under the no-swap
+orb's default policy. `.agents/resume` repairs this setting if needed and
+checks cached tools; it performs no downloads or dependency installation.
+Neither hook requires personal credentials or starts background services.
+
+From the repository root in a prepared orb:
+
+```sh
+dotnet build windows/Vex.slnx --no-restore -c Release -p:EnableWindowsTargeting=true
+pnpm --dir web run check
+pnpm --dir web run build
+```
+
+The .NET command compiles the managed projects, not the MSI. WPF, ConPTY, and
+the vendored Windows `ghostty-vt.dll` cannot execute on Linux, so use Windows
+for application testing. The web checks and build run normally in the orb.
+Use `pnpm --dir web exec vp` for local Vite+ commands without a global CLI.
+
+To validate hook changes, run `.agents/setup` twice and `.agents/resume`,
+then verify tools in a new login shell. An already-running agent may still
+have the old PATH; use `bash -lc '<command>'` rather than reinstalling tools.
+The hooks become available to future project orbs once committed to the
+default branch; a local commit alone does not activate them.
 
 ## Testing
 

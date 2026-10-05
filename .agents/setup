@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+SECONDS=0
+
+echo "[setup ${SECONDS}s] Checking Debian prerequisites"
+missing_packages=()
+for package in ca-certificates curl xz-utils procps libc6 libgcc-s1 libgssapi-krb5-2 libicu72 libssl3 libstdc++6 zlib1g; do
+    if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != "install ok installed" ]]; then
+        missing_packages+=("$package")
+    fi
+done
+if ((${#missing_packages[@]})); then
+    sudo apt-get update
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing_packages[@]}"
+fi
+
+# Oxlint's JS plugins reserve multi-GiB virtual arenas. The no-swap orb rejects
+# these allocations under the default overcommit heuristic, before lint starts.
+echo "[setup ${SECONDS}s] Preparing Oxlint virtual memory reservations"
+if [[ "$(cat /proc/sys/vm/overcommit_memory)" != 1 ]]; then
+    sudo sysctl -q -w vm.overcommit_memory=1
+fi
+
+toolchain_root="$HOME/.local/share/vex"
+export DOTNET_ROOT="$toolchain_root/dotnet"
+export PATH="$toolchain_root/node/bin:$toolchain_root/npm/bin:$DOTNET_ROOT:$PATH"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+
+echo "[setup ${SECONDS}s] Preparing Node.js 24 (matching web CI)"
+if [[ ! -x "$toolchain_root/node/bin/node" ]] || [[ "$("$toolchain_root/node/bin/node" --version)" != v24.* ]]; then
+    case "$(uname -m)" in
+        x86_64) node_arch=x64 ;;
+        aarch64) node_arch=arm64 ;;
+        *) echo "Unsupported Node.js architecture: $(uname -m)" >&2; exit 1 ;;
+    esac
+    node_url="https://nodejs.org/dist/latest-v24.x"
+    curl -fsSL --retry 3 "$node_url/SHASUMS256.txt" -o "$scratch/SHASUMS256.txt"
+    node_archive="$(awk -v suffix="-linux-$node_arch.tar.xz" '$2 ~ (suffix "$") { print $2 }' "$scratch/SHASUMS256.txt")"
+    curl -fsSL --retry 3 "$node_url/$node_archive" -o "$scratch/$node_archive"
+    (cd "$scratch"; awk -v archive="$node_archive" '$2 == archive' SHASUMS256.txt | sha256sum --check -)
+    mkdir -p "$toolchain_root/node"
+    tar -xJf "$scratch/$node_archive" -C "$toolchain_root/node" --strip-components=1
+fi
+node --version
+
+echo "[setup ${SECONDS}s] Preparing pnpm from web/package.json"
+package_manager="$(node -p "JSON.parse(require('fs').readFileSync('web/package.json', 'utf8')).packageManager")"
+pnpm_version="${package_manager#pnpm@}"
+if [[ ! -x "$toolchain_root/npm/bin/pnpm" ]] || [[ "$("$toolchain_root/npm/bin/pnpm" --version)" != "$pnpm_version" ]]; then
+    npm install --global --prefix "$toolchain_root/npm" --no-audit --no-fund "$package_manager"
+fi
+pnpm --version
+
+echo "[setup ${SECONDS}s] Preparing .NET 10 SDK (matching Windows CI)"
+if [[ ! -x "$DOTNET_ROOT/dotnet" ]] || ! "$DOTNET_ROOT/dotnet" --list-sdks | grep -q '^10\.'; then
+    curl -fsSL --retry 3 https://dot.net/v1/dotnet-install.sh -o "$scratch/dotnet-install.sh"
+    bash "$scratch/dotnet-install.sh" --channel 10.0 --install-dir "$DOTNET_ROOT" --no-path
+fi
+dotnet --version
+
+# Later agents and supervised services start in new login shells, not this process.
+profile_marker="# Vex orb toolchains"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+    cat >> "$HOME/.bash_profile" <<'EOF'
+
+# Vex orb toolchains
+export DOTNET_ROOT="$HOME/.local/share/vex/dotnet"
+export PATH="$HOME/.local/share/vex/node/bin:$HOME/.local/share/vex/npm/bin:$DOTNET_ROOT:$PATH"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+EOF
+fi
+
+echo "[setup ${SECONDS}s] Installing locked web dependencies"
+pnpm --dir web install --frozen-lockfile
+
+# Linux needs Windows reference packs to restore the WPF projects. This does not
+# make WPF, ConPTY, the vendored Windows DLL, or MSI packaging runnable on Linux.
+echo "[setup ${SECONDS}s] Restoring .NET dependencies and Windows reference packs"
+dotnet restore windows/Vex.slnx -p:EnableWindowsTargeting=true
+
+echo "[setup ${SECONDS}s] Ready; Windows runtime tests still require Windows"
