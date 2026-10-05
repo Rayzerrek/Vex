@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dependencies and toolchains survive pause/resume; never reinstall them here.
+export DOTNET_ROOT="$HOME/.local/share/vex/dotnet"
+export PATH="$HOME/.local/share/vex/node/bin:$HOME/.local/share/vex/npm/bin:$DOTNET_ROOT:$PATH"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+
+# Kernel settings may reset on activation; Oxlint's virtual arenas need this.
+if [[ "$(cat /proc/sys/vm/overcommit_memory)" != 1 ]]; then
+    sudo sysctl -q -w vm.overcommit_memory=1
+fi
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+test -x "$DOTNET_ROOT/dotnet"
+test -x "$HOME/.local/share/vex/node/bin/node"
+test -x "$HOME/.local/share/vex/npm/bin/pnpm"
+test -d "$repo_root/web/node_modules"
+echo "[resume] Cached Vex toolchains and web dependencies are available"
