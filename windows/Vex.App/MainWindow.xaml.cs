@@ -280,6 +280,12 @@ public sealed partial class MainWindow : Window
                 e.Handled = true;
                 return;
             }
+            if (_savedLayoutOverlay is { Visibility: Visibility.Visible })
+            {
+                _savedLayoutOverlay.Hide();
+                e.Handled = true;
+                return;
+            }
         }
         if (!TryGetWorkspaceShortcut(modifiers, key, out var shortcut, out var projectIndex))
             return;
@@ -621,7 +627,8 @@ public sealed partial class MainWindow : Window
             else if (action == "NextProject") CycleProject(1);
             else if (action == "PrevProject") CycleProject(-1);
             else if (action == "ProjectPicker") ToggleProjectPicker();
-        });
+            else if (action == "SaveLayout") SaveCurrentLayout();
+        }, OpenSavedLayout);
         PaletteOverlay.Show(items);
     }
 

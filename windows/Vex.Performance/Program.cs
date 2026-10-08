@@ -2,6 +2,12 @@ using System.Diagnostics;
 using System.Text;
 using Vex.Libghostty;
 
+if (args.Length > 0 && args[0] == "--feed")
+{
+    TerminalFeedBenchmark.Run(args.Length > 1 ? args[1] : "current");
+    return;
+}
+
 foreach (var (name, line) in new[]
 {
     ("ascii", "the quick brown fox jumps over the lazy dog "),

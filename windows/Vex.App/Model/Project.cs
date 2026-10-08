@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading;
 using System.Windows.Threading;
+using Vex.Libghostty;
 
 namespace Vex.App.Model;
 
@@ -17,7 +18,27 @@ public sealed class Project : ObservableObject, IDisposable
     private string _name;
     private string? _gitBranch;
     private WorkspaceTab? _selectedTab;
+    private bool _isVisible;
 
+    /// <summary>Project selection determines real tab visibility, including attention in background projects.</summary>
+    internal bool IsVisible
+    {
+        get => _isVisible;
+        set
+        {
+            _isVisible = value;
+            foreach (var tab in Tabs) tab.IsActive = value && ReferenceEquals(tab, SelectedTab);
+        }
+    }
+
+    private WorkspaceTab? ProgramStatusTab => Tabs.MaxBy(tab => tab.ProgramStatus.DisplayPriority);
+
+    /// <summary>Highest-priority program status across this project's tabs.</summary>
+    public ProgramStatusSummary ProgramStatus => ProgramStatusTab?.ProgramStatus ?? ProgramStatusSummary.Empty;
+
+    /// <summary>Trusted tab and pane positions identify the aggregate status source.</summary>
+    public string ProgramStatusOrigin => ProgramStatusTab is { } tab && tab.ProgramStatusOrigin.Length > 0
+        ? $"Tab {Tabs.IndexOf(tab) + 1} · {tab.ProgramStatusOrigin}" : "";
 
     public bool CanCreateTab => Tabs.Count < MaxTabs;
 
@@ -38,11 +59,11 @@ public sealed class Project : ObservableObject, IDisposable
     {
         _name = name;
         WorkingDirectory = workingDirectory;
-        Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
+        Tabs.CollectionChanged += (_, _) => OnTabsChanged();
         var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
         if (tab is not null)
-            tab.IsActive = true;
+            tab.IsActive = IsVisible;
         RefreshGitBranch();
     }
 
@@ -52,7 +73,7 @@ public sealed class Project : ObservableObject, IDisposable
     {
         _name = name;
         WorkingDirectory = workingDirectory;
-        Tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanCreateTab));
+        Tabs.CollectionChanged += (_, _) => OnTabsChanged();
         foreach (var tab in tabs)
         {
             WireTabEvents(tab);
@@ -60,14 +81,29 @@ public sealed class Project : ObservableObject, IDisposable
         }
         _selectedTab = Tabs.FirstOrDefault();
         if (_selectedTab is not null)
-            _selectedTab.IsActive = true;
+            _selectedTab.IsActive = IsVisible;
         RefreshGitBranch();
     }
 
     private void WireTabEvents(WorkspaceTab tab)
     {
+        tab.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(WorkspaceTab.ProgramStatus) or nameof(WorkspaceTab.ProgramStatusOrigin))
+            {
+                OnPropertyChanged(nameof(ProgramStatus));
+                OnPropertyChanged(nameof(ProgramStatusOrigin));
+            }
+        };
         tab.NewTabRequested += () => NewTab();
         tab.TabClosedRequested += t => CloseTab(t);
+    }
+
+    private void OnTabsChanged()
+    {
+        OnPropertyChanged(nameof(CanCreateTab));
+        OnPropertyChanged(nameof(ProgramStatus));
+        OnPropertyChanged(nameof(ProgramStatusOrigin));
     }
 
     private int _gitBranchVersion;
@@ -203,7 +239,7 @@ public sealed class Project : ObservableObject, IDisposable
                 // focus its active pane once it's rendered.
                 if (value is not null)
                 {
-                    value.IsActive = true;
+                    value.IsActive = IsVisible;
                     Dispatcher.CurrentDispatcher.BeginInvoke(() => value.ActiveLeaf?.Focus());
                 }
             }
@@ -229,6 +265,18 @@ public sealed class Project : ObservableObject, IDisposable
         var tab = new WorkspaceTab(title, WorkingDirectory);
         WireTabEvents(tab);
         Tabs.Add(tab);
+        return tab;
+    }
+
+    /// <summary>Opens a saved layout in a new tab; validates all panes before starting any process.</summary>
+    public WorkspaceTab? OpenSavedLayout(SavedTerminalLayout layout)
+    {
+        if (!CanCreateTab || !SavedTerminalLayouts.ValidateLayout(layout)) return null;
+        var root = SavedTerminalLayouts.CreateLayoutPaneTree(layout.Root, WorkingDirectory);
+        var tab = new WorkspaceTab(layout.Name, WorkingDirectory, root, hasCustomTitle: true);
+        WireTabEvents(tab);
+        Tabs.Add(tab);
+        SelectedTab = tab;
         return tab;
     }
 

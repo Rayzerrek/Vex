@@ -49,12 +49,12 @@ public sealed class GhosttyTerminal : IDisposable
     private readonly object _vtLock = new();
     public object SyncRoot => _vtLock;
 
-    // OSC 133 (FTCS shell-integration) filter state. Vex does not implement
-    // shell integration, and ghostty-vt's "fresh line" handling of OSC 133;A
+    // Capture OSC 133 semantics here rather than passing them to ghostty-vt.
+    // Its "fresh line" handling of OSC 133;A
     // moves the cursor when it is not at column 0. A shell (nushell) sends
     // these markers on every prompt redraw, so after a full-screen TUI exits
     // the mid-line marker forces a line feed and the prompt is drawn twice.
-    // Stripping the sequence makes the emulator ignore it like an unknown OSC.
+    // Reading status before stripping the marker preserves the shell's cursor.
     //
     // The same filter also drops bare DCS query payloads. ConPTY eats the DCS
     // wrapper (introducer and terminator) of client queries such as nvim's
@@ -62,10 +62,12 @@ public sealed class GhosttyTerminal : IDisposable
     // the middles (`+q4D73`, `$qm`) reach the emulator — which would print
     // them as visible garbage. The payloads are matched against known probes
     // (whitelist, never a bare prefix) so ordinary text is never eaten.
-    private enum FeedState { Normal, EscapeSeen, InOsc, InOscEscapeSeen, InCsi, InDcs, InDcsEsc, PlusSeen, InPlusQuery, DollarSeen, DollarQSeen }
+    private enum FeedState { Normal, EscapeSeen, InOsc, InOscEscapeSeen, DropOsc, DropOscEscapeSeen, InCsi, InDcs, InDcsEsc, PlusSeen, InPlusQuery, DollarSeen, DollarQSeen }
     private FeedState _feedState;
-    private readonly byte[] _oscBuf = new byte[1024];
+    private readonly byte[] _oscBuf = new byte[4096];
     private int _oscLen;
+    private readonly ProgramStatusTracker _programStatus = new();
+    private static readonly byte[] ProgramStatusReply = "\x1b]7501;?\x1b\\"u8.ToArray();
     private readonly byte[] _plusBuf = new byte[256];
     private int _plusLen;
 
@@ -99,6 +101,18 @@ public sealed class GhosttyTerminal : IDisposable
     /// Fires on the feed thread, like <see cref="TitleChanged"/>.</summary>
     public event Action? Bell;
 
+    /// <summary>Program status changes on the feed thread; the boolean latches attention across UI batching.</summary>
+    public event Action<ProgramStatusSummary, bool>? ProgramStatusChanged;
+
+    /// <summary>Current program status, including shell integration fallback, independent of screen mode.</summary>
+    public ProgramStatusSummary ProgramStatus { get { lock (_vtLock) return _programStatus.Summary; } }
+
+    /// <summary>Acknowledges completed results when the user sends input to this terminal.</summary>
+    public void AcknowledgeProgramStatus() { lock (_vtLock) _programStatus.AcknowledgeProgramStatus(); }
+
+    /// <summary>Drops running status records when the process attached to this terminal exits.</summary>
+    public void NotifyProgramExited() { lock (_vtLock) _programStatus.OnProgramExited(); }
+
     public FrameDirty FrameDirty { get; private set; }
     public CursorState Cursor { get; private set; }
     public FrameRow[] FrameRows { get; private set; } = Array.Empty<FrameRow>();
@@ -114,6 +128,7 @@ public sealed class GhosttyTerminal : IDisposable
 
     public GhosttyTerminal(int cols, int rows)
     {
+        _programStatus.Changed += attention => ProgramStatusChanged?.Invoke(_programStatus.Summary, attention);
         _cols = cols;
         _rows = rows;
         Check(Native.ghostty_terminal_new(IntPtr.Zero, out _terminal, (ushort)cols, (ushort)rows), "terminal_new");
@@ -255,6 +270,8 @@ public sealed class GhosttyTerminal : IDisposable
                         }
                         else
                         {
+                            if (b == (byte)'c')
+                                _programStatus.ResetProgramStatus();
                             buffer[written++] = 0x1B;
                             buffer[written++] = b;
                             _feedState = FeedState.Normal;
@@ -276,17 +293,35 @@ public sealed class GhosttyTerminal : IDisposable
                         }
                         else
                         {
-                            // Pathological oversized OSC: emit verbatim and bail.
+                            // Oversized status reports are discarded through their terminator.
+                            if (_oscBuf.AsSpan(0, _oscLen).StartsWith("7501;"u8))
+                            {
+                                _feedState = FeedState.DropOsc;
+                                break;
+                            }
                             buffer[written++] = 0x1B;
                             buffer[written++] = 0x5D;
                             for (var j = 0; j < _oscLen; j++)
                                 buffer[written++] = _oscBuf[j];
                             buffer[written++] = b;
-                            _feedState = FeedState.Normal;
+                            _feedState = FeedState.InDcs;
                         }
                         break;
+                    case FeedState.DropOsc:
+                        if (b == 0x07) _feedState = FeedState.Normal;
+                        else if (b == 0x1B) _feedState = FeedState.DropOscEscapeSeen;
+                        break;
+                    case FeedState.DropOscEscapeSeen:
+                        _feedState = b is 0x5C or 0x07 ? FeedState.Normal : b == 0x1B ? FeedState.DropOscEscapeSeen : FeedState.DropOsc;
+                        break;
                     case FeedState.InOscEscapeSeen:
-                        if (b == 0x5C) // ST terminator: ESC \
+                        if (b == 0x07)
+                        {
+                            if (_oscLen < _oscBuf.Length) _oscBuf[_oscLen++] = 0x1B;
+                            FlushOscBel(buffer, ref written);
+                            _feedState = FeedState.Normal;
+                        }
+                        else if (b == 0x5C) // ST terminator: ESC \
                         {
                             FlushOscSt(buffer, ref written);
                             _feedState = FeedState.Normal;
@@ -296,9 +331,9 @@ public sealed class GhosttyTerminal : IDisposable
                             // A lone ESC inside the OSC string, not a terminator.
                             if (_oscLen < _oscBuf.Length)
                                 _oscBuf[_oscLen++] = 0x1B;
-                            if (_oscLen < _oscBuf.Length)
+                            if (b != 0x1B && _oscLen < _oscBuf.Length)
                                 _oscBuf[_oscLen++] = b;
-                            _feedState = FeedState.InOsc;
+                            _feedState = b == 0x1B ? FeedState.InOscEscapeSeen : FeedState.InOsc;
                         }
                         break;
                     case FeedState.PlusSeen:
@@ -436,14 +471,14 @@ public sealed class GhosttyTerminal : IDisposable
 
     /// <summary>
     /// Re-emits a buffered OSC sequence (with its terminator) unless it is an
-    /// OSC 133 semantic-prompt marker, which is dropped entirely. BEL and ST
+    /// program status or semantic-prompt marker, consumed outside the grid. BEL and ST
     /// are the only terminators the feed filter emits, so the terminator
     /// bytes are inlined instead of allocating a params array.
     /// </summary>
     private void FlushOscBel(byte[] dst, ref int written)
     {
         ReadWorkingDirectoryOsc();
-        if (IsOsc133(_oscBuf, _oscLen))
+        if (ReadProgramStatusOsc(1))
             return;
         dst[written++] = 0x1B;
         dst[written++] = 0x5D;
@@ -455,7 +490,7 @@ public sealed class GhosttyTerminal : IDisposable
     private void FlushOscSt(byte[] dst, ref int written)
     {
         ReadWorkingDirectoryOsc();
-        if (IsOsc133(_oscBuf, _oscLen))
+        if (ReadProgramStatusOsc(2))
             return;
         dst[written++] = 0x1B;
         dst[written++] = 0x5D;
@@ -463,6 +498,35 @@ public sealed class GhosttyTerminal : IDisposable
             dst[written++] = _oscBuf[j];
         dst[written++] = 0x1B;
         dst[written++] = 0x5C;
+    }
+
+    private bool ReadProgramStatusOsc(int terminatorLength)
+    {
+        var osc = _oscBuf.AsSpan(0, _oscLen);
+        if (osc.StartsWith("7501;"u8))
+        {
+            if (_oscLen + 2 + terminatorLength > 4096)
+                return true;
+            var body = osc[5..];
+            if (body.SequenceEqual("?"u8))
+                WritePty?.Invoke(ProgramStatusReply, ProgramStatusReply.Length);
+            else
+                _programStatus.ApplyProgramStatus(body);
+            return true;
+        }
+        if (IsOsc133(_oscBuf, _oscLen))
+        {
+            if (osc.StartsWith("133;"u8))
+                _programStatus.ApplyShellMarker(osc[4..]);
+            // Preserve the prompt-redraw workaround; consume semantics before stripping the marker.
+            return true;
+        }
+        if (osc.StartsWith("9;4;"u8))
+        {
+            _programStatus.ApplyProgressReport(osc[4..]);
+            return true;
+        }
+        return false;
     }
 
     private void ReadWorkingDirectoryOsc()
@@ -575,6 +639,7 @@ public sealed class GhosttyTerminal : IDisposable
             _feedState = FeedState.Normal;
             _oscLen = 0;
             _plusLen = 0;
+            _programStatus.ResetProgramStatus();
             Native.ghostty_terminal_reset(_terminal);
         }
     }

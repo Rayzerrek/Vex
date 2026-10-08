@@ -4,6 +4,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Vex.App.Terminal;
 using Vex.Terminal;
+using Vex.Libghostty;
 
 namespace Vex.App.Model;
 
@@ -38,6 +39,14 @@ public abstract class LeafPane : PaneNode, IDisposable
     private bool _isDirty;
     private PaneState _state = PaneState.Idle;
     private object? _view;
+    private ProgramStatusSummary _programStatus = ProgramStatusSummary.Empty;
+
+    /// <summary>Task status is independent of screen mode and process lifecycle.</summary>
+    public ProgramStatusSummary ProgramStatus
+    {
+        get => _programStatus;
+        internal set => Set(ref _programStatus, value);
+    }
 
     public string Title
     {
@@ -179,10 +188,15 @@ public sealed class TerminalPane : LeafPane
     /// <summary>The PID of the root process (shell) in this terminal pane, or null if view not created.</summary>
     public int? ProcessId => (ViewIfCreated as ITerminalView)?.ProcessId;
 
+    /// <summary>Launch command is run only when explicitly opening a saved layout, never on session restore.</summary>
+    public string? InitialCommand { get; }
+    public string WorkingDirectory => (ViewIfCreated as Terminal.Native.NativeTerminalControl)?.WorkingDirectory ?? _workingDirectory;
 
-    public TerminalPane(string workingDirectory)
+
+    public TerminalPane(string workingDirectory, string? initialCommand = null)
     {
         _workingDirectory = workingDirectory;
+        InitialCommand = initialCommand;
         Title = "Terminal";
     }
 
@@ -319,7 +333,7 @@ public sealed class TerminalPane : LeafPane
 
     protected override object CreateView()
     {
-        var view = new Terminal.Native.NativeTerminalControl(_workingDirectory);
+        var view = new Terminal.Native.NativeTerminalControl(_workingDirectory, InitialCommand);
         if (!_iconTrackingRegistered)
         {
             _iconTrackingRegistered = true;
@@ -354,6 +368,11 @@ public sealed class TerminalPane : LeafPane
         view.FocusGained += RequestFocus;
         view.TuiModeChanged += isTui => State = isTui ? PaneState.Busy : PaneState.Idle;
         view.Bell += RequestAttention;
+        view.ProgramStatusChanged += (status, attention) =>
+        {
+            ProgramStatus = status;
+            if (attention) RequestAttention();
+        };
         view.ProcessExited += exitCode =>
         {
             HasActiveProcess = false;

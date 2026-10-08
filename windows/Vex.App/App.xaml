@@ -479,19 +479,35 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="MenuItem">
-                        <Border x:Name="Border" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="4">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/>
-                                <TextBlock Grid.Column="1" Text="{TemplateBinding InputGestureText}" Margin="16,0,0,0" Foreground="{DynamicResource VexTextDim}"/>
-                            </Grid>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="Border" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/>
+                                    <TextBlock Grid.Column="1" Text="{TemplateBinding InputGestureText}" Margin="16,0,0,0" Foreground="{DynamicResource VexTextDim}"/>
+                                    <TextBlock x:Name="SubmenuArrow" Grid.Column="2" Text="›" Margin="10,0,0,0" Foreground="{DynamicResource VexTextDim}" Visibility="Collapsed"/>
+                                </Grid>
+                            </Border>
+                            <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsSubmenuOpen}" Placement="Right"
+                                   PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}" AllowsTransparency="True" Focusable="False">
+                                <Border Background="{DynamicResource VexSurface}" BorderBrush="{DynamicResource VexBorder}" BorderThickness="1" CornerRadius="6" Padding="4">
+                                    <ScrollViewer MaxHeight="480"><ItemsPresenter/></ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
                                 <Setter TargetName="Border" Property="Background" Value="{DynamicResource VexHover}"/>
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="True">
+                                <Setter TargetName="SubmenuArrow" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Border" Property="Opacity" Value="0.45"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

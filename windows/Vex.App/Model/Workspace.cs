@@ -24,7 +24,12 @@ public sealed class Workspace : ObservableObject
     public Project? SelectedProject
     {
         get => _selectedProject;
-        set => Set(ref _selectedProject, value);
+        set
+        {
+            if (ReferenceEquals(_selectedProject, value)) return;
+            if (_selectedProject is { } previous) previous.IsVisible = false;
+            if (Set(ref _selectedProject, value) && value is not null) value.IsVisible = true;
+        }
     }
 
     public Project NewProject(string workingDirectory)

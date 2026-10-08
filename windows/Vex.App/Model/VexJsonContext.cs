@@ -6,6 +6,7 @@ namespace Vex.App.Model;
 [JsonSerializable(typeof(AppSnapshot))]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(TerminalTheme))]
+[JsonSerializable(typeof(SavedTerminalLayout))]
 internal partial class VexJsonContext : JsonSerializerContext
 {
 }

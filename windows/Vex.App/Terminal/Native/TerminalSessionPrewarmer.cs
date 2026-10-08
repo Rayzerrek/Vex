@@ -133,9 +133,9 @@ internal static class TerminalSessionPrewarmer
         }
 
         StartupMark.Note("terminal prewarm spawn begin");
-        var resolved = ShellRegistry.Resolve(slot.ShellId);
-        var shellProgram = resolved?.Program ?? TerminalSession.DefaultShell();
-        var shellArguments = resolved?.Arguments;
+        var launch = ShellLaunchBuilder.BuildShellLaunch(slot.ShellId);
+        var shellProgram = launch.Program;
+        var shellArguments = launch.Arguments;
 
         var session = new TerminalSession();
         session.OutputReceived += data => OnOutput(slot, data);
@@ -151,7 +151,8 @@ internal static class TerminalSessionPrewarmer
             session.OutputReceived += data => OnOutput(slot, data);
             try
             {
-                session.Start(slot.WorkingDirectory, 80, 24, TerminalSession.DefaultShell(), null);
+                var fallback = ShellLaunchBuilder.BuildShellLaunch("system");
+                session.Start(slot.WorkingDirectory, 80, 24, fallback.Program, fallback.Arguments);
             }
             catch
             {

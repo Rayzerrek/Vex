@@ -192,6 +192,14 @@ public sealed class AppSettings : ObservableObject
         set { if (Set(ref _customShells, value)) Save(); }
     }
 
+    private List<SavedTerminalLayout> _savedLayouts = new();
+    /// <summary>Saved layouts are launch templates; restoring session.json never runs their commands.</summary>
+    public List<SavedTerminalLayout> SavedLayouts
+    {
+        get => _savedLayouts;
+        set { if (Set(ref _savedLayouts, value)) Save(); }
+    }
+
     [JsonIgnore]
     public bool ShellMigrated { get; set; }
 
@@ -220,6 +228,8 @@ public sealed class AppSettings : ObservableObject
     {
         var settings = JsonSerializer.Deserialize(bytes, VexJsonContext.Default.AppSettings) ?? new AppSettings();
         settings._customShells ??= new();
+        settings._savedLayouts = (settings._savedLayouts ?? new()).Where(SavedTerminalLayouts.ValidateLayout)
+            .DistinctBy(layout => layout.Name, StringComparer.OrdinalIgnoreCase).Take(SavedTerminalLayouts.MaxLayouts).ToList();
         settings._customShells.RemoveAll(static shell => shell is null
             || string.IsNullOrWhiteSpace(shell.Id) || string.IsNullOrWhiteSpace(shell.Program));
         foreach (var shell in settings._customShells)

@@ -14,6 +14,8 @@ public sealed partial class NativeTerminalControl
     private bool _sessionStarting;
     private List<byte[]>? _pendingSessionInput;
     private int _firstOutputNoted;
+    private readonly string? _initialCommand;
+    private bool _layoutCommandSent;
 
     // After a burst of size changes (window drag, pane split), one settle pass
     // re-syncs ConPTY and forces a full cell read so wrapped lines do not
@@ -85,6 +87,7 @@ public sealed partial class NativeTerminalControl
     {
         if (_disposed)
             return;
+        _terminal.AcknowledgeProgramStatus();
         if (_sessionStarting)
         {
             // Only the UI thread queues input. Replay waits until startup
@@ -97,6 +100,12 @@ public sealed partial class NativeTerminalControl
 
     private void FlushPendingSessionInput()
     {
+        if (!_layoutCommandSent && !string.IsNullOrWhiteSpace(_initialCommand)
+            && !ShellLaunchBuilder.RunsInitialCommandAtStartup(_sessionShellId))
+        {
+            _layoutCommandSent = true;
+            _session?.Write(System.Text.Encoding.UTF8.GetBytes(_initialCommand + "\r"));
+        }
         var pending = _pendingSessionInput;
         _pendingSessionInput = null;
         if (pending is null || _session is not { } session)
@@ -127,7 +136,7 @@ public sealed partial class NativeTerminalControl
         var shellId = AppSettings.Instance.ShellId;
         _sessionShellId = shellId;
 
-        var prewarmLease = TerminalSessionPrewarmer.Take(workingDirectory, shellId);
+        var prewarmLease = string.IsNullOrWhiteSpace(_initialCommand) ? TerminalSessionPrewarmer.Take(workingDirectory, shellId) : null;
         _prewarmLease = prewarmLease;
         if (prewarmLease != null)
         {
@@ -171,9 +180,9 @@ public sealed partial class NativeTerminalControl
 
         _ = Task.Run(() =>
         {
-            var resolved = ShellRegistry.Resolve(shellId);
-            var shellProgram = SelfTestShell ?? resolved?.Program ?? TerminalSession.DefaultShell();
-            var shellArguments = SelfTestShell is null ? resolved?.Arguments : null;
+            var launch = ShellLaunchBuilder.BuildShellLaunch(shellId, _initialCommand);
+            var shellProgram = SelfTestShell ?? launch.Program;
+            var shellArguments = SelfTestShell is null ? launch.Arguments : null;
 
             TerminalSession session;
             try
@@ -187,7 +196,8 @@ public sealed partial class NativeTerminalControl
                 try
                 {
                     _sessionShellId = "system";
-                    session = CreateAndStartSession(workingDirectory, cols, rows, TerminalSession.DefaultShell(), null);
+                    var fallback = ShellLaunchBuilder.BuildShellLaunch("system", _initialCommand);
+                    session = CreateAndStartSession(workingDirectory, cols, rows, fallback.Program, fallback.Arguments);
                 }
                 catch
                 {
@@ -375,6 +385,7 @@ public sealed partial class NativeTerminalControl
             // A rejected or replaced session can already have queued an exit.
             if (_disposed || !ReferenceEquals(_session, source))
                 return;
+            _terminal.NotifyProgramExited();
             _terminal.Feed($"\r\n\x1b[2m[process exited with code {exitCode}]\x1b[m\r\n");
             FlushRedraw();
             ProcessExited?.Invoke(exitCode);

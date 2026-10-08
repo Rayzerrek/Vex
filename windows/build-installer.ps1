@@ -53,7 +53,16 @@ Write-Step "Packing $baseName.zip"
 # into the publish directory.
 $payload = Get-ChildItem $AppPublishDir -Recurse -File |
     Where-Object { $_.Extension -ne ".pdb" }
-Compress-Archive -Path $payload.FullName -DestinationPath $zipPath -Force
+$archive = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
+try {
+    foreach ($file in $payload) {
+        # Preserve the OpenConsole and shell integration paths used at runtime.
+        $entry = [IO.Path]::GetRelativePath($AppPublishDir, $file.FullName).Replace('\', '/')
+        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $entry,
+            [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+}
+finally { $archive.Dispose() }
 
 Write-Step "Building MSI"
 dotnet build $SetupProj -c Release -p:TargetDir="$AppPublishDir\"

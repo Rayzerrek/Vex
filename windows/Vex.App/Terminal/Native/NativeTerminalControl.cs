@@ -130,9 +130,13 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     /// thread; drives the attention dot.</summary>
     public event Action? Bell;
 
-    public NativeTerminalControl(string workingDirectory)
+    /// <summary>Last directory reported by the shell, falling back to this pane's launch directory.</summary>
+    public string WorkingDirectory => _terminal.WorkingDirectory ?? _workingDirectory;
+
+    public NativeTerminalControl(string workingDirectory, string? initialCommand = null)
     {
         _workingDirectory = workingDirectory;
+        _initialCommand = initialCommand;
         Focusable = true;
         FocusVisualStyle = null;
         Cursor = Cursors.IBeam;
@@ -145,6 +149,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         SnapsToDevicePixels = true;
         UseLayoutRounding = true;
         _terminal = new GhosttyTerminal(80, 24);
+        _terminal.ProgramStatusChanged += QueueProgramStatus;
         _terminal.TitleChanged += title =>
         {
             // Feed now runs on the PTY reader thread, so titles arrive off
@@ -1378,6 +1383,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     public void Dispose()
     {
+        _programStatusTimer?.Stop();
         TerminalSession? session;
         lock (_sessionLock)
         {
