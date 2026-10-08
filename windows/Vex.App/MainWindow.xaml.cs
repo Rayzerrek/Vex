@@ -102,6 +102,13 @@ public sealed partial class MainWindow : Window
         ContentRendered += (_, _) =>
         {
             Model.StartupMark.Note("content rendered");
+#if DEBUG || VEX_SELFTEST
+            if (Environment.GetEnvironmentVariable("VEX_STARTUP_PROFILE") == "1")
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => Application.Current.Shutdown());
+                return;
+            }
+#endif
             Dispatcher.BeginInvoke(
                 () => _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus(),
                 DispatcherPriority.ContextIdle);

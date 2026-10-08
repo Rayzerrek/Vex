@@ -91,6 +91,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private readonly object _outputLock = new();
     private bool _redrawScheduled;
+    private DispatcherTimer? _outputRedrawTimer;
+    private long _lastOutputRedraw;
 
     private bool _caretBlinkVisible = true;
     private bool _cursorBlinkSetting = true;
@@ -661,29 +663,50 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void ScheduleRedraw()
     {
-        // Coalesce all output that arrives during a frame into one render
-        // pass. Feeding already happened above, so a redundant pass only
-        // repaints rows the emulator marked dirty since the last snapshot.
+        // A queued callback alone coalesces only until the dispatcher runs it:
+        // sustained output can otherwise rebuild the viewport hundreds of
+        // times per second, faster than WPF can present it.
         lock (_outputLock)
         {
-            if (_redrawScheduled)
+            if (_disposed || _redrawScheduled)
                 return;
             _redrawScheduled = true;
         }
 
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
-            lock (_outputLock)
+            if (_disposed)
+                return;
+            var interval = IsVisible ? 16 : 100;
+            var elapsed = Environment.TickCount64 - _lastOutputRedraw;
+            // Quiet output should not pay a frame delay (prompt/input echo).
+            if (elapsed >= interval)
             {
-                _redrawScheduled = false;
+                FlushScheduledOutput();
+                return;
             }
-            // Output that arrives during the flush sets the flag again and
-            // schedules its own pass; the emulator state it fed is picked up
-            // there, so no update is lost. Background priority lets input and
-            // WPF composition run between flushes during continuous output.
-            if (!_disposed)
-                FlushRedraw();
+            if (_outputRedrawTimer is null)
+            {
+                _outputRedrawTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
+                _outputRedrawTimer.Tick += (_, _) => FlushScheduledOutput();
+            }
+            // Hidden panes still publish alternate-screen transitions, but
+            // need no display-rate work. Idle panes have no timer ticks.
+            _outputRedrawTimer.Interval = TimeSpan.FromMilliseconds(interval - elapsed);
+            _outputRedrawTimer.Start();
         });
+    }
+
+    private void FlushScheduledOutput()
+    {
+        _outputRedrawTimer?.Stop();
+        _lastOutputRedraw = Environment.TickCount64;
+        // Clear before flushing so output arriving during the snapshot
+        // schedules the next frame, including its tail.
+        lock (_outputLock)
+            _redrawScheduled = false;
+        if (!_disposed)
+            FlushRedraw();
     }
 
     private void FlushRedraw()
@@ -694,6 +717,21 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // guard below without flow-tracking a static field read.
         var diagPath = DiagPath;
         var flushStarted = diagPath is null ? null : System.Diagnostics.Stopwatch.StartNew();
+#if DEBUG || VEX_SELFTEST
+        var performance = _performanceSample;
+        var performanceStarted = performance is null ? 0 : System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
+        // A busy reader must not stall every tab by making the UI wait for
+        // native parsing. Retry a later frame instead; keep the terminal gate
+        // for this pass so subsequent mode/selection reads cannot block either.
+        if (!Monitor.TryEnter(_terminal.SyncRoot))
+        {
+#if DEBUG || VEX_SELFTEST
+            if (performance is not null) performance.BusyParserSkips++;
+#endif
+            ScheduleRedraw();
+            return;
+        }
         try
         {
             // Detect alternate-screen transitions (TUI start/exit) and notify
@@ -717,7 +755,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 return;
             }
 
+#if DEBUG || VEX_SELFTEST
+            var snapshotStarted = performance is null ? 0 : System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
             _terminal.UpdateFrame();
+#if DEBUG || VEX_SELFTEST
+            if (performance is not null)
+                performance.SnapshotMilliseconds.Add(System.Diagnostics.Stopwatch.GetElapsedTime(snapshotStarted).TotalMilliseconds);
+#endif
             UpdateBlinkTimer();
             var dirty = _terminal.FrameDirty;
             _mouseTracking = _terminal.MouseTracking;
@@ -792,6 +837,14 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             _renderFailures++;
             _needsFullRedraw = true;
         }
+        finally
+        {
+            Monitor.Exit(_terminal.SyncRoot);
+#if DEBUG || VEX_SELFTEST
+            if (performance is not null)
+                performance.FlushMilliseconds.Add(System.Diagnostics.Stopwatch.GetElapsedTime(performanceStarted).TotalMilliseconds);
+#endif
+        }
     }
 
     private void RedrawAll(bool force = false)
@@ -827,6 +880,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var hash = RowHash(frameRow, _cols);
         if (!force && _rowVersions[row] == _renderVersion && _rowHashes[row] == hash)
             return;
+#if DEBUG || VEX_SELFTEST
+        if (_performanceSample is { } sample) sample.RowsDrawn++;
+#endif
 
         // The link scan is keyed by the same hash: equal hash means the row
         // content is identical, so the spans stay valid between redraws.
@@ -1383,6 +1439,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     public void Dispose()
     {
+        _outputRedrawTimer?.Stop();
         _programStatusTimer?.Stop();
         TerminalSession? session;
         lock (_sessionLock)

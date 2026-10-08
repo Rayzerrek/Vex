@@ -9,7 +9,7 @@ foreach ($attempt in 1..2) {
     dotnet publish (Join-Path $PSScriptRoot '../Vex.App') -c Release -o $OutputDirectory '-p:DefineConstants=VEX_SELFTEST'
     if ($LASTEXITCODE -ne 0) { throw 'Publishing the self-test app failed' }
 }
-foreach ($payloadFile in 'ghostty-vt.dll', 'conpty.dll', 'wpfgfx_cor3.dll', 'x64/OpenConsole.exe', 'ShellIntegration/Vex.cmd', 'ShellIntegration/Vex.nu') {
+foreach ($payloadFile in 'Vex.App.r2r.dll', 'ghostty-vt.dll', 'conpty.dll', 'wpfgfx_cor3.dll', 'x64/OpenConsole.exe', 'ShellIntegration/Vex.cmd', 'ShellIntegration/Vex.nu') {
     if (!(Test-Path -LiteralPath (Join-Path $OutputDirectory $payloadFile))) {
         throw "Published payload missing: $payloadFile"
     }
