@@ -71,7 +71,7 @@
                                             <ColumnDefinition Width="*"/>
                                         </Grid.ColumnDefinitions>
                                         <Image Width="20" Height="20" Margin="0,0,10,0" Source="{Binding IconImage}" VerticalAlignment="Center"
-                                               Visibility="{Binding IconVisibility}"/>
+                                               Visibility="{Binding IconVisibility}" Stretch="Uniform"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                             <TextBlock Foreground="{DynamicResource VexText}" FontWeight="SemiBold" FontSize="12.5"
                                                        TextTrimming="CharacterEllipsis">
@@ -90,6 +90,7 @@
                 <!-- Action buttons: right-aligned, normal balanced padding -->
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button x:Name="CancelButton" Content="Cancel"
+                            FocusVisualStyle="{x:Null}"
                             Click="Cancel_Click"
                             Padding="14,6" FontSize="12" FontWeight="Medium"
                             Cursor="Hand"
@@ -116,6 +117,7 @@
                         </Button.Template>
                     </Button>
                     <Button x:Name="ConfirmButton" Content="Close Tab"
+                            FocusVisualStyle="{x:Null}"
                             Click="Confirm_Click"
                             Padding="16,6" FontSize="12" FontWeight="SemiBold"
                             Cursor="Hand"

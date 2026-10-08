@@ -58,7 +58,7 @@
                             </StackPanel>
                             <DockPanel LastChildFill="True" VerticalAlignment="Center" Margin="9,0,0,0">
                                 <local:ProgramStatusBadge Status="{Binding ProgramStatus}" Margin="0,0,5,0"/>
-                                <Image Width="13" Height="13" Margin="0,0,6,0" Source="{Binding AppIcon.Image}" VerticalAlignment="Center">
+                                <Image Width="13" Height="13" Margin="0,0,6,0" Source="{Binding AppIcon.Image}" VerticalAlignment="Center" Stretch="Uniform">
                                     <Image.Style>
                                         <Style TargetType="Image">
                                             <Setter Property="Visibility" Value="Visible"/>
@@ -132,6 +132,7 @@
 
         <!-- Project Pill Button Style -->
         <Style x:Key="ProjectPillButtonStyle" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
@@ -521,6 +522,7 @@
                         <!-- Action buttons with natural, balanced desktop padding -->
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                             <Button Content="Cancel" Click="TabClosePopupCancel_Click"
+                                    FocusVisualStyle="{x:Null}"
                                     Margin="0,0,8,0" Padding="14,6" FontSize="12" FontWeight="Medium"
                                     Cursor="Hand"
                                     Foreground="{DynamicResource VexText}"
@@ -545,6 +547,7 @@
                                 </Button.Template>
                             </Button>
                             <Button x:Name="TabClosePopupConfirmBtn" Content="Close Tab" Click="TabClosePopupConfirm_Click"
+                                    FocusVisualStyle="{x:Null}"
                                     Padding="16,6" FontSize="12" FontWeight="SemiBold"
                                     Cursor="Hand"
                                     Foreground="White"
@@ -756,13 +759,20 @@
             <!-- Windows caption buttons: pinned to the top-right corner -->
             <StackPanel Grid.Column="4" Orientation="Horizontal">
                 <Button Style="{StaticResource WindowControlButton}" ToolTip="Minimize" Click="MinimizeWindow_Click">
-                    <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                    <Path Data="M 2,7 H 12" Width="14" Height="14"
+                          Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                          StrokeThickness="1.3" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
                 </Button>
                 <Button x:Name="MaximizeButton" Style="{StaticResource WindowControlButton}" ToolTip="Maximize" Click="MaximizeWindow_Click">
-                    <TextBlock x:Name="MaximizeButtonIcon" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                    <Path x:Name="MaximizeButtonIcon" Width="14" Height="14"
+                          Data="M 4,2 H 10 Q 12,2 12,4 V 10 Q 12,12 10,12 H 4 Q 2,12 2,10 V 4 Q 2,2 4,2 Z"
+                          Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                          StrokeThickness="1.3" StrokeLineJoin="Round"/>
                 </Button>
                 <Button Style="{StaticResource WindowCloseButton}" ToolTip="Close" Click="CloseWindow_Click">
-                    <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                    <Path Data="M 3,3 L 11,11 M 11,3 L 3,11" Width="14" Height="14"
+                          Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                          StrokeThickness="1.3" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
                 </Button>
             </StackPanel>
         </Grid>

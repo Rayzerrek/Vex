@@ -218,13 +218,13 @@ public sealed partial class MainWindow : Window
         {
             if (WindowState == WindowState.Maximized)
             {
-                MaximizeButtonIcon.Text = "\uE923";
+                MaximizeButtonIcon.Data = Geometry.Parse("M 5,4 V 3 Q 5,1 7,1 H 11 Q 13,1 13,3 V 7 Q 13,9 11,9 H 10 M 3,5 H 8 Q 10,5 10,7 V 11 Q 10,13 8,13 H 3 Q 1,13 1,11 V 7 Q 1,5 3,5 Z");
                 MaximizeButton.ToolTip = "Restore";
                 MainGrid.Margin = new Thickness(6);
             }
             else
             {
-                MaximizeButtonIcon.Text = "\uE922";
+                MaximizeButtonIcon.Data = Geometry.Parse("M 4,2 H 10 Q 12,2 12,4 V 10 Q 12,12 10,12 H 4 Q 2,12 2,10 V 4 Q 2,2 4,2 Z");
                 MaximizeButton.ToolTip = "Maximize";
                 MainGrid.Margin = new Thickness(0);
             }

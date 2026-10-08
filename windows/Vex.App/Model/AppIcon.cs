@@ -68,12 +68,18 @@ public sealed class AppIcon
         var drawing = new GeometryDrawing(brush, null, glyph);
         drawing.Freeze();
 
+        var artboard = new RectangleGeometry(new Rect(0, 0, 24, 24));
+        artboard.Freeze();
         var group = new DrawingGroup
         {
             // simple-icons ship a 24x24 viewBox; the tab renders 16x16.
             Transform = new ScaleTransform(16.0 / 24.0, 16.0 / 24.0),
+            ClipGeometry = artboard,
         };
         group.Children.Add(drawing);
+        // DrawingImage otherwise crops to the painted bounds, losing the SVG
+        // margins and stretching wide or tall logos when drawn into a square.
+        group.Children.Add(new GeometryDrawing(Brushes.Transparent, null, artboard));
         group.Freeze();
 
         var image = new DrawingImage(group);
