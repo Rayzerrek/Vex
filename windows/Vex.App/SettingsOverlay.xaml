@@ -274,6 +274,7 @@
              confirming a new custom shell. Rides the same blue→violet
              gradient as the toggle track and theme badges. -->
         <Style x:Key="AccentButton" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Foreground" Value="{DynamicResource VexOnAccent}"/>
             <Setter Property="Background" Value="{DynamicResource VexAccent}"/>
             <Setter Property="BorderThickness" Value="0"/>

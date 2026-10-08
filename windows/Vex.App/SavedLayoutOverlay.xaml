@@ -27,6 +27,7 @@
             </Setter>
         </Style>
         <Style TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
             <Setter Property="Background" Value="{DynamicResource VexHover}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource VexBorder}"/>
