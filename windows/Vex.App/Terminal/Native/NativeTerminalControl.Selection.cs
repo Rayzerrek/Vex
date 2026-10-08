@@ -22,9 +22,12 @@ public sealed partial class NativeTerminalControl
     private bool _selectionVisualDrawn;
 
     private readonly DrawingVisual _copyAnimVisual = new();
+    private const double CopyAnimationDurationMs = 560;
     private TimeSpan? _copyAnimStartTime;
     private DrawingGroup? _copyAnimDrawing;
     private Geometry? _copyAnimGeometry;
+    private Geometry? _copyAnimEdgeGeometry;
+    private Brush? _copyAnimSweepBrush;
 
     private void DrawSelection()
     {
@@ -106,7 +109,12 @@ public sealed partial class NativeTerminalControl
     private void StartCopyAnimation()
     {
         StopCopyAnimation();
+        if (!SystemParameters.ClientAreaAnimation)
+            return;
+
         var geometry = new GeometryGroup();
+        var edges = new GeometryGroup();
+        var edgeHeight = 1 / VisualTreeHelper.GetDpi(this).DpiScaleY;
         var drawing = new DrawingGroup();
         using (var dc = drawing.Open())
         {
@@ -123,6 +131,8 @@ public sealed partial class NativeTerminalControl
                     (toCol - fromCol + 1) * _cellWidth, _cellHeight);
                 var clip = new RectangleGeometry(rect, 2, 2);
                 geometry.Children.Add(clip);
+                edges.Children.Add(new RectangleGeometry(new Rect(rect.Left, rect.Bottom - edgeHeight,
+                    rect.Width, edgeHeight)));
                 dc.PushClip(clip);
                 dc.DrawRectangle(_palette.Background, null, rect);
                 dc.DrawRectangle(_palette.Selection, null, rect);
@@ -135,15 +145,28 @@ public sealed partial class NativeTerminalControl
         if (geometry.Children.Count == 0)
             return;
         geometry.Freeze();
+        edges.Freeze();
         drawing.Freeze();
+        var color = ((SolidColorBrush)_palette.Foreground).Color;
+        var transparent = Color.FromArgb(0, color.R, color.G, color.B);
+        var sweep = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0),
+            EndPoint = new Point(1, 0),
+            GradientStops =
+            {
+                new GradientStop(transparent, 0),
+                new GradientStop(Color.FromArgb(70, color.R, color.G, color.B), 0.3),
+                new GradientStop(color, 0.7),
+                new GradientStop(transparent, 1),
+            },
+        };
+        sweep.Freeze();
         _copyAnimGeometry = geometry;
+        _copyAnimEdgeGeometry = edges;
+        _copyAnimSweepBrush = sweep;
         _copyAnimDrawing = drawing;
         DrawCopyAnimation(0);
-        if (!SystemParameters.ClientAreaAnimation)
-        {
-            StopCopyAnimation();
-            return;
-        }
         CompositionTarget.Rendering += OnCopyAnimFrame;
     }
 
@@ -152,26 +175,46 @@ public sealed partial class NativeTerminalControl
         var renderingTime = ((RenderingEventArgs)e).RenderingTime;
         _copyAnimStartTime ??= renderingTime;
         var elapsed = (renderingTime - _copyAnimStartTime.Value).TotalMilliseconds;
-        if (_disposed || !IsVisible || elapsed >= 420)
+        if (_disposed || !IsVisible || elapsed >= CopyAnimationDurationMs)
         {
             StopCopyAnimation();
             return;
         }
-        DrawCopyAnimation(elapsed / 420);
+        DrawCopyAnimation(elapsed / CopyAnimationDurationMs);
     }
 
     private void DrawCopyAnimation(double progress)
     {
-        if (_copyAnimDrawing is null || _copyAnimGeometry is null)
+        if (_copyAnimDrawing is null || _copyAnimGeometry is null ||
+            _copyAnimEdgeGeometry is null || _copyAnimSweepBrush is null)
             return;
-        var ease = 1 - Math.Pow(1 - progress, 3);
+        progress = Math.Clamp(progress, 0, 1);
+        // Let the confirmation register before dissolving the snapshot;
+        // the sweep follows the selected cells, including multiline gaps.
+        var fade = Math.Clamp((progress - 0.3) / 0.7, 0, 1);
+        var opacity = 1 - fade * fade * (3 - 2 * fade);
+        var sweepProgress = Math.Min(1, progress / 0.78);
+        var sweepEase = sweepProgress * sweepProgress * (3 - 2 * sweepProgress);
+        var bounds = _copyAnimGeometry.Bounds;
+        var sweepWidth = Math.Max(3 * _cellWidth, bounds.Width * 0.28);
+        var sweepRect = new Rect(bounds.Left - sweepWidth + (bounds.Width + sweepWidth) * sweepEase,
+            bounds.Top, sweepWidth, bounds.Height);
+
         using var dc = _copyAnimVisual.RenderOpen();
         dc.PushClip(new RectangleGeometry(new Rect(RenderSize)));
-        dc.PushOpacity(Math.Pow(1 - progress, 2));
-        dc.PushTransform(new TranslateTransform(0, -4 * ease));
+        dc.PushOpacity(opacity);
+        dc.PushTransform(new TranslateTransform(0, -2 * fade * fade));
         dc.DrawDrawing(_copyAnimDrawing);
-        dc.PushOpacity(0.18 * Math.Max(0, 1 - progress * 3));
-        dc.DrawGeometry(_palette.Foreground, null, _copyAnimGeometry);
+
+        dc.PushClip(_copyAnimGeometry);
+        dc.PushOpacity(0.14);
+        dc.DrawRectangle(_copyAnimSweepBrush, null, sweepRect);
+        dc.Pop();
+        dc.PushClip(_copyAnimEdgeGeometry);
+        dc.PushOpacity(0.65);
+        dc.DrawRectangle(_copyAnimSweepBrush, null, sweepRect);
+        dc.Pop();
+        dc.Pop();
         dc.Pop();
         dc.Pop();
         dc.Pop();
@@ -184,6 +227,8 @@ public sealed partial class NativeTerminalControl
         _copyAnimStartTime = null;
         _copyAnimDrawing = null;
         _copyAnimGeometry = null;
+        _copyAnimEdgeGeometry = null;
+        _copyAnimSweepBrush = null;
         using var dc = _copyAnimVisual.RenderOpen();
     }
 
