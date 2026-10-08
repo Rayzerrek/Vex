@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <UseWPF>true</UseWPF>
+    <!-- Match the app's native layout: otherwise conpty.dll loads under runtimes/
+         and cannot find the packaged OpenConsole host beside the root DLL. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>

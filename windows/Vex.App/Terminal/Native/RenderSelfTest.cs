@@ -1213,6 +1213,8 @@ internal static class RenderSelfTest
             ?? throw new InvalidOperationException("Startup self-test terminal has no MainWindow host.");
         Assert(control, window.SelfTestDeferredPopups(), "deferred popups: bindings, placement and confirmation");
         Assert(control, window.SelfTestStartupOverlays(), "startup overlays: settings, command palette and theme switcher");
+        Assert(control, window.SelfTestSavedLayouts(), "saved layouts: deferred editor and pane bindings");
+        Assert(control, control.SelfTestProgramStatusBatch(), "program status: bounded UI updates and latched attention");
         Report(control, "PASS startup overlays: popups, settings, command palette and theme switcher");
     }
 

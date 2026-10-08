@@ -11,8 +11,11 @@ dotnet test windows/Vex.slnx
 
 ### Vex.App.Tests
 
-Covers the shell's pure logic, with no window and no PTY, plus renderer
-regressions in Debug:
+Covers the shell's pure logic, real ConPTY integration, and renderer
+regressions in Debug. The test project's `win-x64` runtime identifier keeps
+`conpty.dll` beside the packaged OpenConsole host. Without this layout the DLL
+can silently fall back to the system conhost and exercise a different transport
+from the application.
 
 | Area | File |
 |---|---|
@@ -27,6 +30,8 @@ regressions in Debug:
 | Recovery of null session entries and selected indices | `SessionRecoveryTests` |
 | Shell-profile normalization without save timers | `AppSettingsRecoveryTests` |
 | Bounded prewarm buffers, ownership, and live ConPTY output flood | `TerminalPrewarmBufferTests` |
+| OSC 7501 detection before DA1, direct/prewarmed startup, shell command execution and prompt status | `ProgramStatusTransportTests` |
+| Saved layout validation, pane limits, focus, relative directories, and status origins | `SavedTerminalLayoutTests` |
 | Controlled DA1 startup without personal shell profiles, buffered input, and disposal | `TerminalStartupRegressionTests` |
 | Closing the first tab after path completion, followed by deferred WPF focus loss/unload | `TerminalCloseTabRegressionTests` |
 | Rejected/replaced session exits and early-exit replay | `TerminalSessionExitRegressionTests` |
@@ -49,6 +54,7 @@ under `Vendor/libghostty/` and copied to the test output by
 |---|---|
 | DCS stripping by ConPTY | `FeedFilterTests` |
 | Local working directories reported by chunked OSC 7 sequences | `WorkingDirectoryTests` |
+| OSC 7501 parsing, atomic limits, reset/lifetime rules, inheritance, Unicode sanitization, and legacy progress | `ProgramStatusTests` |
 | Legacy/xterm/Kitty keyboard encoding | `KeyboardTests` |
 | Mouse tracking modes and wire encoding | `MouseTests` |
 | Ad-hoc encoder inspection | `Probe` |

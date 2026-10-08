@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Vex.Libghostty;
 
 namespace Vex.App.Model;
 
@@ -18,6 +19,14 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     private ImageSource? _preview;
     private bool _needsAttention;
     private bool _isActive;
+    private ProgramStatusSummary _programStatus = ProgramStatusSummary.Empty;
+    private int _programStatusPaneNumber;
+
+    /// <summary>Highest-priority task across every pane, including panes hidden by focus mode.</summary>
+    public ProgramStatusSummary ProgramStatus => _programStatus;
+
+    /// <summary>Trusted pane position identifies the source of status outside its own header.</summary>
+    public string ProgramStatusOrigin => _programStatusPaneNumber > 0 ? $"Pane {_programStatusPaneNumber}" : "";
 
     public WorkspaceTab(string title, string workingDirectory)
     {
@@ -48,6 +57,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             if (_activeLeaf != null)
                 _activeLeaf.IsFocused = true;
         }
+        RefreshProgramStatus();
     }
 
     private void AttachLeafEvents(LeafPane leaf)
@@ -103,7 +113,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     /// <summary>Whether the tab strip draws the attention dot: a background tab
     /// that rang, or one whose process exited while the user was elsewhere.
     /// The active tab never shows it — the user is already looking there.</summary>
-    public bool ShowAttentionDot => !IsActive && (NeedsAttention || ActiveLeaf?.State == PaneState.Exited);
+    public bool ShowAttentionDot => !IsActive && !ProgramStatus.NeedsAttention && (NeedsAttention || ActiveLeaf?.State == PaneState.Exited);
 
     /// <summary>True while this tab is the active one in its project. Set by
     /// <see cref="Project.SelectedTab"/>; the tab strip uses it to render the
@@ -133,6 +143,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             OnPropertyChanged(nameof(PaneCount));
             OnPropertyChanged(nameof(Leaves));
             OnPropertyChanged(nameof(DisplayRoot));
+            RefreshProgramStatus();
             LayoutChanged?.Invoke();
         }
     }
@@ -247,12 +258,33 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     private void OnLeafPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(LeafPane.ProgramStatus))
+            RefreshProgramStatus();
         if (e.PropertyName == nameof(LeafPane.State) && ReferenceEquals(sender, ActiveLeaf))
             OnPropertyChanged(nameof(ShowAttentionDot));
 
         if ((e.PropertyName == nameof(LeafPane.Title) || e.PropertyName == nameof(LeafPane.IsDirty)) 
             && _activeLeaf is { } active && ReferenceEquals(sender, active) && !HasCustomTitle)
             Title = active.Title + (active.IsDirty ? "*" : "");
+    }
+
+    private void RefreshProgramStatus()
+    {
+        var status = ProgramStatusSummary.Empty;
+        var number = 0;
+        var statusPaneNumber = 0;
+        foreach (var leaf in Leaves)
+        {
+            number++;
+            if (leaf.ProgramStatus.DisplayPriority <= status.DisplayPriority) continue;
+            status = leaf.ProgramStatus;
+            statusPaneNumber = number;
+        }
+        var originChanged = _programStatusPaneNumber != statusPaneNumber;
+        _programStatusPaneNumber = statusPaneNumber;
+        if (Set(ref _programStatus, status, nameof(ProgramStatus)))
+            OnPropertyChanged(nameof(ShowAttentionDot));
+        if (originChanged) OnPropertyChanged(nameof(ProgramStatusOrigin));
     }
 
     private LeafPane? FirstLeaf() => Root switch

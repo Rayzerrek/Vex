@@ -164,6 +164,14 @@ Validation: all 517 Debug tests and 509 Release tests passed across the app and
 emulator suites. Debug includes the real WPF renderer, path picker navigation,
 retained glyph-spacing/DPI checks, and the controlled DA1 startup fixture.
 
+## 2026-10-08 program status and saved layouts
+
+Program status and saved layouts have a separate
+[before/after comparison](ProgramStatusComparison.md), covering Release startup,
+ASCII/ANSI feed throughput, viewport snapshots, report floods and managed
+allocation. Run `dotnet run --project windows/Vex.Performance -c Release -- --feed`
+to reproduce the feed workloads.
+
 ## Validation
 
 Release solution build: no errors or warnings. Debug tests: 490 passed across

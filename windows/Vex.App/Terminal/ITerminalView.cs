@@ -20,6 +20,9 @@ public interface ITerminalView : IDisposable
     /// TUI is active. Used to surface pane state in the title bar.</summary>
     event Action<bool>? TuiModeChanged;
 
+    /// <summary>Current task status and a latched attention transition; always raised on the UI thread.</summary>
+    event Action<Vex.Libghostty.ProgramStatusSummary, bool>? ProgramStatusChanged;
+
     /// <summary>Raised when the application rings the terminal bell (BEL).
     /// Drives the workspace attention indicator. Note that alert OSC
     /// sequences (9/777) are not surfaced here: the emulator consumes them

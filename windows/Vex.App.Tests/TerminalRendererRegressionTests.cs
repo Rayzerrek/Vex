@@ -5,6 +5,8 @@ using Xunit;
 
 namespace Vex.App.Tests;
 
+// Real menus share desktop focus with the other startup fixtures.
+[Collection("CustomTheme")]
 public sealed class TerminalRendererRegressionTests
 {
     [Theory]

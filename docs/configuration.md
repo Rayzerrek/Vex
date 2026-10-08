@@ -68,6 +68,46 @@ Custom profiles are matched by `Id` and may use any `Program` and `Arguments`.
 Arguments are parsed as a command line, so quoting works the way it does in a
 shell.
 
+### Saved pane layouts
+
+Right-click a tab and choose **Save layout…**. The editor keeps the split tree,
+split ratios and focused pane; each pane has a directory and an optional startup
+command. Relative directories resolve against the project where the layout is
+opened. Use **Saved layouts** in the tab menu, or search the existing command
+palette for the layout name, to open it in a new tab. **Edit layout…** in the
+same menu changes or deletes a saved layout.
+
+`SavedLayouts` in `settings.json` stores these templates. Saving or editing never
+executes commands; opening a template explicitly starts them once in new shells.
+Ordinary session restoration does not replay template commands. Vex validates
+every directory before adding the new tab and lets you repair a missing path in
+the editor. Up to 32 templates with 32 panes each are supported.
+
+### Program status and shell integration
+
+Pane headers, tabs, project rows and the tab overview show a small static glyph:
+`◌` working, `?` needs input, `✓` finished, or `!` failed. Hover for the program's
+title, message and progress when supplied. Aggregate tooltips identify the
+source tab and pane separately from program-supplied text. A blocked pane takes priority over
+other statuses, including in background tabs and projects. Typing in a pane
+acknowledges completed/failed results; a request for input stays until the
+program clears it or returns to the shell prompt.
+
+Built-in PowerShell and Nushell launches provide prompt/command markers without
+editing the user's profile files. Short successful shell commands return to idle;
+successful commands lasting at least two seconds show a completion result.
+Command Prompt provides prompt markers only, so it does not claim command
+running/error detection. Other shell profiles retain their launch arguments and
+can supply their own OSC 133 or OSC 7501 reports.
+
+Vex consumes [OSC 7501 program status](https://www.superlogical.com/rex/docs/build/program-status)
+reports and capability queries, with bounded hierarchical records and messages.
+Applications must emit the protocol to report detailed status such as approval
+requests. OSC 9;4 progress is a fallback until the pane receives an explicit
+program status report. These statuses are separate from alternate-screen mode.
+Each pane's header updates are batched at most ten times a second without idle polling or
+animated status indicators.
+
 ### Appearance and themes
 
 `Appearance` is `"Dark"` or `"Light"`. On first run, and whenever the value is

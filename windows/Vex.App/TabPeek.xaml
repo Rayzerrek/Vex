@@ -82,9 +82,12 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="name" Grid.Column="0" Text="{Binding Title}" FontSize="12"
-                                               Foreground="{DynamicResource VexTextDim}"
-                                               TextTrimming="CharacterEllipsis"/>
+                                    <DockPanel Grid.Column="0">
+                                        <vex:ProgramStatusBadge Status="{Binding Tab.ProgramStatus}" Origin="{Binding Tab.ProgramStatusOrigin}" Margin="0,0,5,0"/>
+                                        <TextBlock x:Name="name" Text="{Binding Title}" FontSize="12"
+                                                   Foreground="{DynamicResource VexTextDim}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </DockPanel>
                                     <TextBlock x:Name="count" Grid.Column="1" Text="{Binding PaneCount, StringFormat={}{0} panes}"
                                                FontSize="10" Foreground="{DynamicResource VexTextDim}" Opacity="0.7"
                                                Margin="8,0,0,0" VerticalAlignment="Center"/>

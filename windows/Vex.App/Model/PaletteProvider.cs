@@ -5,12 +5,16 @@ namespace Vex.App.Model;
 
 public static class PaletteProvider
 {
-    public static IEnumerable<PaletteItem> GetItems(Workspace workspace, Action<string> uiAction)
+    public static IEnumerable<PaletteItem> GetItems(Workspace workspace, Action<string> uiAction, Action<SavedTerminalLayout>? openLayout = null)
     {
         yield return new PaletteItem("New Tab", "Open a new terminal tab · Ctrl+Shift+T", () => workspace.SelectedProject?.NewTab(), "Terminal");
         
         if (workspace.SelectedProject?.SelectedTab != null)
         {
+            yield return new PaletteItem("Save Layout…", "Save this pane layout and optional commands", () => uiAction("SaveLayout"), "Terminal");
+            if (workspace.SelectedProject.CanCreateTab && openLayout is not null)
+                foreach (var layout in AppSettings.Instance.SavedLayouts)
+                    yield return new PaletteItem("Open Layout: " + layout.Name, "Open saved panes in a new tab", () => openLayout(layout), "Terminal");
             yield return new PaletteItem("Show All Tabs", "Open visual tab overview · Ctrl+Shift+Space", () => uiAction("TabPeek"), "Terminal");
             yield return new PaletteItem("Close Tab", "Close current terminal tab · Middle-click / Ctrl+Shift+W", () => uiAction("CloseTab"), "Terminal");
             yield return new PaletteItem("Split Right", "Split current tab horizontally · Ctrl+Shift+R", () => workspace.SelectedProject.SelectedTab.Split(System.Windows.Controls.Orientation.Horizontal), "Terminal");
