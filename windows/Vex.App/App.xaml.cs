@@ -7,6 +7,8 @@ namespace Vex.App;
 /// </summary>
 public sealed partial class App : Application
 {
+    private readonly Task<System.Windows.Threading.Dispatcher> _compositionPrewarm = StartCompositionPrewarm();
+    private int _compositionPrewarmStopped;
     // Instance field initializers run before Application's base constructor,
     // letting profile I/O and shell creation overlap WPF initialization too.
     private readonly (Task Settings, Task<Model.SessionSnapshot?> Session) _startupTasks = StartStartupTasks();
@@ -92,6 +94,52 @@ public sealed partial class App : Application
         catch { /* Font prewarm is optional; WPF can initialize on first use. */ }
     }
 
+    private static Task<System.Windows.Threading.Dispatcher> StartCompositionPrewarm()
+    {
+        var ready = new TaskCompletionSource<System.Windows.Threading.Dispatcher>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+            try
+            {
+                Model.StartupMark.Note("composition prewarm begin");
+                // Adding the first visual connects WPF's process render engine.
+                // Keep this STA context alive until the window owns its channel.
+                var visual = new System.Windows.Media.DrawingVisual();
+                visual.Children.Add(new System.Windows.Media.DrawingVisual());
+                Model.StartupMark.Note("composition prewarm ready");
+                ready.SetResult(dispatcher);
+                System.Windows.Threading.Dispatcher.Run();
+                GC.KeepAlive(visual);
+            }
+            catch (Exception exception)
+            {
+                Model.StartupMark.Note($"composition prewarm failed: {exception}");
+                ready.TrySetException(exception);
+            }
+            finally
+            {
+                dispatcher.InvokeShutdown();
+            }
+        }) { IsBackground = true, Name = "Vex composition prewarm" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return ready.Task;
+    }
+
+    private void StopCompositionPrewarm()
+    {
+        if (Interlocked.Exchange(ref _compositionPrewarmStopped, 1) != 0)
+            return;
+        _ = _compositionPrewarm.ContinueWith(task =>
+        {
+            if (task.Status == TaskStatus.RanToCompletion)
+                task.Result.BeginInvokeShutdown(System.Windows.Threading.DispatcherPriority.Background);
+            else
+                Model.StartupMark.Note($"composition prewarm failed: {task.Exception}");
+        }, TaskScheduler.Default);
+    }
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -150,6 +198,7 @@ public sealed partial class App : Application
         Model.StartupMark.Note("window construction begin");
         var window = new MainWindow(workspace);
         Model.StartupMark.Note("window constructed");
+        window.ContentRendered += (_, _) => StopCompositionPrewarm();
         window.Show();
         Model.StartupMark.Note("window shown");
 
@@ -166,6 +215,7 @@ public sealed partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        StopCompositionPrewarm();
         Terminal.Native.TerminalSessionPrewarmer.Dispose();
         base.OnExit(e);
     }

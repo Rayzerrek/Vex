@@ -135,10 +135,12 @@ public sealed partial class NativeTerminalControl
                     rect.Width, edgeHeight)));
                 dc.PushClip(clip);
                 dc.DrawRectangle(_palette.Background, null, rect);
-                dc.DrawRectangle(_palette.Selection, null, rect);
                 // Retain the painted glyphs, not a live VisualBrush: output
                 // arriving during the fade must not change the copied text.
                 dc.DrawDrawing(_rowVisuals[row].Drawing);
+                // TUI rows paint opaque backgrounds; keep feedback above them,
+                // matching the selection overlay's position in the visual tree.
+                dc.DrawRectangle(_palette.Selection, null, rect);
                 dc.Pop();
             }
         }
@@ -371,6 +373,7 @@ public sealed partial class NativeTerminalControl
         if (!TrySetClipboardText(text))
             return;
 
+        StartCopyAnimation();
         if (!TryDeleteKeyboardSelection())
             ClearSelection();
     }

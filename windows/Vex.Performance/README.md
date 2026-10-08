@@ -1,5 +1,11 @@
 # Performance measurements
 
+The [terminal benchmark runner](TerminalBenchmarks.md) measures VT feeding,
+viewport snapshots, WPF/GlyphRun redraws, and responsiveness during output floods,
+scrollback and a real Neovim session.
+The [latest startup comparison](StartupOptimization.md) covers bundle loading
+and background initialization of WPF composition.
+
 Run from `windows/` in PowerShell 7 on a Windows desktop:
 
 ```powershell

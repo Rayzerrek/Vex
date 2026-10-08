@@ -182,7 +182,7 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <DockPanel Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center">
                     <local:ProgramStatusBadge Status="{Binding ProgramStatus}" Origin="{Binding ProgramStatusOrigin}" Margin="0,0,4,0"/>
                     <!-- Attention marker: lit for a background tab whose app
                          rang the bell, or whose process exited while the user
@@ -238,7 +238,7 @@
                                TextTrimming="CharacterEllipsis" FontSize="13"
                                ToolTip="{Binding Title}"
                                VerticalAlignment="Center"/>
-                </StackPanel>
+                </DockPanel>
                 <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="2" Text="{Binding Title}"
                          Visibility="Collapsed" FontSize="14"
                          VerticalAlignment="Center" HorizontalAlignment="Stretch"

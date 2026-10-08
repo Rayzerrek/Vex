@@ -108,6 +108,13 @@ internal static class RenderSelfTest
                 }
                 if (Environment.GetEnvironmentVariable("VEX_SELFTEST_CLIPBOARD") == "1")
                     RunClipboardSelection(control);
+                else if (Environment.GetEnvironmentVariable("VEX_SELFTEST_SMOOTHNESS") == "1")
+                {
+                    var directory = Path.GetDirectoryName(Path.GetFullPath(ReportPath)) ?? Path.GetTempPath();
+                    foreach (var sample in control.SelfTestBenchSmoothness(directory, Environment.GetEnvironmentVariable("VEX_PERF_NVIM")))
+                        Report(control, sample);
+                    Report(control, "done");
+                }
                 else if (RendererBenchMode)
                     RunRendererBench(control);
                 else if (IncrementalMode)
@@ -638,21 +645,73 @@ internal static class RenderSelfTest
 
     private static void RunClipboardSelection(NativeTerminalControl control)
     {
+        CheckClipboardSelection(control);
+        control.SelfTestFeed("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[48;2;35;55;75m");
+        try
+        {
+            CheckClipboardSelection(control);
+        }
+        finally
+        {
+            control.SelfTestFeed("\x1b[0m\x1b[?1000l\x1b[?1006l\x1b[?1049l");
+        }
+        Report(control, "done");
+    }
+
+    private static void CheckClipboardSelection(NativeTerminalControl control)
+    {
         const string text = "vex clipboard regression";
         control.SelfTestFeed($"\x1b[2J\x1b[H{text}");
-        control.SelfTestSelect(0, 0, text.Length - 1, 0);
-        Assert(control, control.SelfTestSelectedText() == text, "clipboard: mouse drag selects the fixture");
-        control.SelfTestSelectionMouseUp();
-        Assert(control, NativeTerminalControl.TryGetClipboardText(out var copied) && copied == text,
-            "clipboard: mouse release copies selected text through WPF");
-        Assert(control, control.SelfTestSelectedText() is null, "clipboard: successful copy clears selection");
-        Report(control, "done");
+        var plain = Capture(control);
+        var copyOnSelect = AppSettings.Instance.CopyOnSelect;
+        try
+        {
+            AppSettings.Instance.CopyOnSelect = true;
+            foreach (var copy in new Action[]
+            {
+                control.SelfTestSelectionMouseUp,
+                control.SelfTestCopySelection,
+                control.SelfTestCutSelection,
+            })
+            {
+                control.SelfTestSelect(0, 0, text.Length - 1, 0);
+                Assert(control, control.SelfTestSelectedText() == text, "clipboard: mouse drag selects the fixture");
+                copy();
+                Assert(control, NativeTerminalControl.TryGetClipboardText(out var copied) && copied == text,
+                    "clipboard: copy writes selected text through WPF");
+                Assert(control, control.SelfTestSelectedText() is null, "clipboard: successful copy clears selection");
+                if (SystemParameters.ClientAreaAnimation)
+                    Assert(control, CellCornerLum(control, plain, 9, 0) != CellCornerLum(control, Capture(control), 9, 0),
+                        "clipboard: automatic copy, manual copy and cut show feedback over application backgrounds");
+                control.SelfTestCopyFeedback(1);
+                Assert(control, PixelsEqual(plain, Capture(control)), "clipboard: feedback completion restores clean pixels");
+            }
+        }
+        finally
+        {
+            AppSettings.Instance.CopyOnSelect = copyOnSelect;
+        }
+        Report(control, "PASS clipboard: automatic copy, manual copy and cut with feedback");
     }
 
     private static void CheckCopyFeedback(NativeTerminalControl control)
     {
+        CheckCopyFeedback(control, "");
+        control.SelfTestFeed("\x1b[?1049h\x1b[?1000h\x1b[?1006h");
+        try
+        {
+            CheckCopyFeedback(control, "\x1b[48;2;35;55;75m");
+        }
+        finally
+        {
+            control.SelfTestFeed("\x1b[0m\x1b[?1000l\x1b[?1006l\x1b[?1049l");
+        }
+    }
+
+    private static void CheckCopyFeedback(NativeTerminalControl control, string background)
+    {
         control.SelfTestClearSelection();
-        control.SelfTestFeed("\x1b[2J\x1b[Hprefix first line\r\nsecond line end\x1b[3;1H");
+        control.SelfTestFeed($"{background}\x1b[2J\x1b[Hprefix first line\r\nsecond line end\x1b[3;1H");
         var plain = Capture(control);
         control.SelfTestSelect(7, 0, 5, 1);
         var selected = Capture(control);
@@ -663,6 +722,8 @@ internal static class RenderSelfTest
         if (SystemParameters.ClientAreaAnimation)
         {
             Assert(control, !PixelsEqual(plain, initial), "copy feedback: selected text remains visible after deselection");
+            Assert(control, CellCornerLum(control, plain, 9, 0) != CellCornerLum(control, initial, 9, 0),
+                "copy feedback: selection confirmation stays visible over application backgrounds");
             Assert(control, CellCornerLum(control, plain, 2, 0) == CellCornerLum(control, initial, 2, 0),
                 "copy feedback: unselected gap outside multiline selection stays untouched");
             control.SelfTestCopyFeedback(0.25);

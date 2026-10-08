@@ -181,7 +181,7 @@ public sealed partial class NativeTerminalControl
         }
     }
 
-    /// <summary>Checks input precedence over a queued output flush without timing thresholds.</summary>
+    /// <summary>Checks input precedence and eventual application of a queued output flush.</summary>
     internal bool SelfTestInputPrecedesOutputRedraw()
     {
         _terminal.Feed("\x1b[H!");
@@ -189,11 +189,28 @@ public sealed partial class NativeTerminalControl
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
             inputSawPendingRedraw = _redrawScheduled);
         ScheduleRedraw();
-        var frame = new DispatcherFrame();
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => frame.Continue = false);
-        Dispatcher.PushFrame(frame);
+        SelfTestWaitForOutputRedraw();
         return inputSawPendingRedraw && !_redrawScheduled
             && _terminal.FrameRows[0].Cells[0].Text == "!";
+    }
+
+    private void SelfTestWaitForOutputRedraw()
+    {
+        if (!_redrawScheduled)
+            return;
+        var frame = new DispatcherFrame();
+        // Output is frame-paced; dispatcher idle can precede the final redraw.
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var deadline = new DispatcherTimer(DispatcherPriority.ContextIdle, Dispatcher) { Interval = TimeSpan.FromMilliseconds(16) };
+        deadline.Tick += (_, _) =>
+        {
+            if (_redrawScheduled && started.Elapsed < TimeSpan.FromSeconds(2))
+                return;
+            deadline.Stop();
+            frame.Continue = false;
+        };
+        deadline.Start();
+        Dispatcher.PushFrame(frame);
     }
 
     /// <summary>Verifies hidden output is deferred while terminal events stay live.</summary>
@@ -435,8 +452,18 @@ public sealed partial class NativeTerminalControl
     }
 
     /// <summary>Completes a mouse selection through the real release and clipboard path.</summary>
-    internal void SelfTestSelectionMouseUp() => OnMouseLeftButtonUp(new MouseButtonEventArgs(
-        Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left));
+    internal void SelfTestSelectionMouseUp()
+    {
+        _mouseSelectionOverride = _mouseTracking;
+        OnMouseLeftButtonUp(new MouseButtonEventArgs(
+            Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left));
+    }
+
+    /// <summary>Copies through the same path used by the clipboard shortcut.</summary>
+    internal void SelfTestCopySelection() => CopySelection();
+
+    /// <summary>Cuts through the same path used by the clipboard shortcut.</summary>
+    internal void SelfTestCutSelection() => CutSelection();
 
     /// <summary>Plain text of the active selection, or null when there is none.</summary>
     internal string? SelfTestSelectedText() => _terminal.HasSelection ? _terminal.GetSelectedText() : null;
@@ -459,7 +486,13 @@ public sealed partial class NativeTerminalControl
     }
 
     /// <summary>Drives link hover without moving the user's desktop pointer.</summary>
-    internal void SelfTestLinkHover(int col, int row) => UpdateLinkHover(col, row);
+    internal void SelfTestLinkHover(int col, int row)
+    {
+        // A pending redraw refreshes hover from the real desktop pointer;
+        // let it finish before applying this fixture's synthetic pointer.
+        SelfTestWaitForOutputRedraw();
+        UpdateLinkHover(col, row);
+    }
 
     /// <summary>Checks delayed link preview through WPF layout and captures its popup.</summary>
     internal bool SelfTestLinkPreview(string path)

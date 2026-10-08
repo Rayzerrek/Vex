@@ -1,16 +1,18 @@
 <Project>
   <PropertyGroup>
     <VexUseStartupReadyToRunRoots Condition="'$(VexUseStartupReadyToRunRoots)' == ''">true</VexUseStartupReadyToRunRoots>
+    <VexExternalReadyToRunImage Condition="'$(VexExternalReadyToRunImage)' == ''">true</VexExternalReadyToRunImage>
   </PropertyGroup>
 
   <!-- GenerateBundle reports sidecars only when it runs. On an unchanged
        publish the SDK can otherwise remove native DLLs from the destination.
-       Exclude them up front so copying also works when bundling is skipped. -->
+       Exclude them up front so copying also works when bundling is skipped.
+       Memory-map the large composite image instead of loading its bundled copy. -->
   <Target Name="PreserveSingleFilePublishSidecars" BeforeTargets="_ComputeFilesToBundle"
           Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
       <_VexPublishSidecars Include="@(ResolvedFileToPublish)"
-                          Condition="(('%(ResolvedFileToPublish.AssetType)' == 'native' or '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'OpenConsole.exe') and '$(IncludeNativeLibrariesForSelfExtract)' != 'true' and '$(IncludeAllContentForSelfExtract)' != 'true') or ('%(ResolvedFileToPublish.Extension)' == '.pdb' and '$(IncludeSymbolsInSingleFile)' != 'true')" />
+                          Condition="(('%(ResolvedFileToPublish.AssetType)' == 'native' or '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'OpenConsole.exe') and '$(IncludeNativeLibrariesForSelfExtract)' != 'true' and '$(IncludeAllContentForSelfExtract)' != 'true') or ('%(ResolvedFileToPublish.Extension)' == '.pdb' and '$(IncludeSymbolsInSingleFile)' != 'true') or ('$(VexExternalReadyToRunImage)' == 'true' and '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'Vex.App.r2r.dll')" />
       <ResolvedFileToPublish Remove="@(_VexPublishSidecars)" />
       <ResolvedFileToPublish Include="@(_VexPublishSidecars)" ExcludeFromSingleFile="true" />
     </ItemGroup>
