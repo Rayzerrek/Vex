@@ -665,12 +665,20 @@ internal static class RenderSelfTest
             Assert(control, !PixelsEqual(plain, initial), "copy feedback: selected text remains visible after deselection");
             Assert(control, CellCornerLum(control, plain, 2, 0) == CellCornerLum(control, initial, 2, 0),
                 "copy feedback: unselected gap outside multiline selection stays untouched");
+            control.SelfTestCopyFeedback(0.25);
+            var sweep = Capture(control);
+            DumpPng(control, sweep, Path.ChangeExtension(ReportPath!, ".copy-sweep.png"));
+            Assert(control, !PixelsEqual(initial, sweep), "copy feedback: light sweeps across the held snapshot");
+            Assert(control, CellCornerLum(control, plain, 2, 0) == CellCornerLum(control, sweep, 2, 0),
+                "copy feedback: sweep stays inside the multiline selection");
             control.SelfTestCopyFeedback(0.5);
-            Assert(control, !PixelsEqual(initial, Capture(control)), "copy feedback: snapshot fades and lifts");
+            var fading = Capture(control);
+            DumpPng(control, fading, Path.ChangeExtension(ReportPath!, ".copy-fade.png"));
+            Assert(control, !PixelsEqual(sweep, fading), "copy feedback: snapshot dissolves and gently lifts");
         }
         control.SelfTestCopyFeedback(1);
         Assert(control, PixelsEqual(plain, Capture(control)), "copy feedback: completion restores clean terminal pixels");
-        Report(control, "PASS copy feedback: multiline footprint, fade, clean completion");
+        Report(control, "PASS copy feedback: multiline footprint, light sweep, dissolve, clean completion");
     }
 
     private static void CheckGlyphGridAlignment(NativeTerminalControl control)
