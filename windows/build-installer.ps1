@@ -53,11 +53,12 @@ Write-Step "Packing $baseName.zip"
 # into the publish directory.
 $payload = Get-ChildItem $AppPublishDir -Recurse -File |
     Where-Object { $_.Extension -ne ".pdb" }
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
 try {
     foreach ($file in $payload) {
         # Preserve the OpenConsole and shell integration paths used at runtime.
-        $entry = [IO.Path]::GetRelativePath($AppPublishDir, $file.FullName).Replace('\', '/')
+        $entry = $file.FullName.Substring($AppPublishDir.Length + 1).Replace('\', '/')
         [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $entry,
             [IO.Compression.CompressionLevel]::Optimal) | Out-Null
     }

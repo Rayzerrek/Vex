@@ -143,6 +143,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             OnPropertyChanged(nameof(PaneCount));
             OnPropertyChanged(nameof(Leaves));
             OnPropertyChanged(nameof(DisplayRoot));
+            OnPropertyChanged(nameof(TabIcons));
             RefreshProgramStatus();
             LayoutChanged?.Invoke();
         }
@@ -153,6 +154,19 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     /// <summary>All leaf panes in the split tree of this tab.</summary>
     public IEnumerable<LeafPane> Leaves => EnumerateLeaves(Root);
+
+    /// <summary>Tab icon stack in pane order, excluding shells unless the pane is alone.</summary>
+    public IReadOnlyList<AppIcon> TabIcons
+    {
+        get
+        {
+            var leaves = Leaves.ToArray();
+            return leaves.Select(leaf => leaf.AppIcon)
+                .OfType<AppIcon>()
+                .Where(icon => leaves.Length == 1 || !icon.IsShellIcon)
+                .ToArray();
+        }
+    }
 
     /// <summary>The tree currently rendered in the workspace. Focus mode
     /// displays only the active pane without changing the saved split layout.</summary>
@@ -258,6 +272,8 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     private void OnLeafPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(LeafPane.AppIcon))
+            OnPropertyChanged(nameof(TabIcons));
         if (e.PropertyName == nameof(LeafPane.ProgramStatus))
             RefreshProgramStatus();
         if (e.PropertyName == nameof(LeafPane.State) && ReferenceEquals(sender, ActiveLeaf))
