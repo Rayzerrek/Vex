@@ -7,7 +7,6 @@ public static class ProgramStatusPresentation
 {
     public static string StatusSymbol(ProgramStatusSummary status) => status.State switch
     {
-        ProgramStatusState.Working => "◌",
         ProgramStatusState.Blocked => "?",
         ProgramStatusState.Done => "✓",
         ProgramStatusState.Error => "!",
