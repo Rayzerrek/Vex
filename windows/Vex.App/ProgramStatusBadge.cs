@@ -16,6 +16,7 @@ public sealed class ProgramStatusBadge : TextBlock
 
     public ProgramStatusBadge()
     {
+        Visibility = Visibility.Collapsed;
         Width = 12;
         FontSize = 12;
         FontWeight = FontWeights.SemiBold;
@@ -42,6 +43,7 @@ public sealed class ProgramStatusBadge : TextBlock
         var badge = (ProgramStatusBadge)sender;
         var status = badge.Status;
         badge.Text = ProgramStatusPresentation.StatusSymbol(status);
+        badge.Visibility = badge.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         var tooltip = ProgramStatusPresentation.StatusTooltip(status);
         badge.ToolTip = tooltip.Length == 0 ? null : badge.Origin.Length == 0 ? tooltip : badge.Origin + "\n" + tooltip;
         AutomationProperties.SetName(badge, badge.ToolTip as string ?? "");
@@ -49,7 +51,6 @@ public sealed class ProgramStatusBadge : TextBlock
         {
             ProgramStatusState.Error => "VexPaneExited",
             ProgramStatusState.Blocked => "VexAccentPurple",
-            ProgramStatusState.Working => "VexAccentBlue",
             _ => "VexTextDim",
         });
     }
