@@ -15,13 +15,17 @@ public sealed class AppIcon
     private static readonly Typeface BadgeTypeface =
         new(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
 
-    private AppIcon(DrawingImage image)
+    private AppIcon(DrawingImage image, bool isShellIcon = false)
     {
         Image = image;
+        IsShellIcon = isShellIcon;
     }
 
     /// <summary>Vector image, 16x16 logical units, safe to bind to Image.Source.</summary>
     public DrawingImage Image { get; }
+
+    /// <summary>Shell icons appear only in tabs containing a single shell pane.</summary>
+    public bool IsShellIcon { get; }
 
     internal static AppIcon Glyph(string slug, bool? isDark = null)
     {
@@ -31,7 +35,8 @@ public sealed class AppIcon
             return cached;
         if (AppIconCatalog.GeometryFor(slug, dark) is { } resolved)
         {
-            var icon = new AppIcon(BuildGlyphImage(resolved.Geometry, resolved.Color));
+            var icon = new AppIcon(BuildGlyphImage(resolved.Geometry, resolved.Color),
+                slug is "powershell" or "gnubash" or "fishshell" or "nushell" or "zsh");
             Cache[key] = icon;
             return icon;
         }
@@ -46,12 +51,12 @@ public sealed class AppIcon
         return fallback;
     }
 
-    internal static AppIcon Badge(string text, Color color)
+    internal static AppIcon Badge(string text, Color color, bool isShellIcon = false)
     {
-        var key = $"badge:{text}:{color}";
+        var key = $"badge:{text}:{color}:{isShellIcon}";
         if (Cache.TryGetValue(key, out var cached))
             return cached;
-        var icon = new AppIcon(BuildBadgeImage(text, color));
+        var icon = new AppIcon(BuildBadgeImage(text, color), isShellIcon);
         Cache[key] = icon;
         return icon;
     }
