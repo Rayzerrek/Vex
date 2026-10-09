@@ -12,13 +12,9 @@
              DynamicResource so the whole overlay re-tints with the active
              appearance (dark or light chrome) without rebuilding. The accent
              ramp (blue → violet) is reused from App.xaml. -->
-        <SolidColorBrush x:Key="PanelSurface" Color="{DynamicResource VexSettingsPanelColor}"/>
-        <SolidColorBrush x:Key="SidebarSurface" Color="{DynamicResource VexSettingsSidebarColor}"/>
         <SolidColorBrush x:Key="CardSurface" Color="{DynamicResource VexCardColor}"/>
         <SolidColorBrush x:Key="CardBorder" Color="{DynamicResource VexCardBorderColor}"/>
         <SolidColorBrush x:Key="TrackSurface" Color="{DynamicResource VexTrackColor}"/>
-        <SolidColorBrush x:Key="NavHover" Color="{DynamicResource VexNavHoverColor}"/>
-        <SolidColorBrush x:Key="NavSelected" Color="{DynamicResource VexNavSelectedColor}"/>
         <LinearGradientBrush x:Key="AccentSolid" StartPoint="0,0" EndPoint="1,1">
             <GradientStop Color="{DynamicResource VexAccentBlueColor}" Offset="0"/>
             <GradientStop Color="{DynamicResource VexAccentPurpleColor}" Offset="1"/>
@@ -134,57 +130,50 @@
             </Setter>
         </Style>
 
-        <!-- Sidebar navigation pill. -->
         <Style x:Key="SettingsNavItem" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{DynamicResource VexTextDim}"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Focusable" Value="False"/>
-            <Setter Property="Margin" Value="4,1"/>
+            <Setter Property="MinWidth" Value="84"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Margin" Value="2,4"/>
+            <Setter Property="FontSize" Value="13"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
-                        <Border Background="Transparent" CornerRadius="7">
-                            <Grid>
-                                <Border x:Name="pill" Background="{StaticResource NavSelected}" CornerRadius="7" Opacity="0"/>
-                                <Border x:Name="hov" Background="{StaticResource NavHover}" CornerRadius="7" Opacity="0"/>
-                                <ContentPresenter Margin="10,6"/>
-                            </Grid>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="fill" Background="Transparent" CornerRadius="8" BorderBrush="Transparent" BorderThickness="1"/>
+                            <Border x:Name="hover" Background="{DynamicResource VexTabHover}" CornerRadius="8" Opacity="0"/>
+                            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="pill" Property="Opacity" Value="1"/>
+                                <Setter TargetName="fill" Property="Background" Value="{DynamicResource VexTabSelected}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
-                                <Setter Property="TextElement.FontWeight" Value="SemiBold"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
                             </Trigger>
-                            <MultiTrigger>
-                                <MultiTrigger.Conditions>
-                                    <Condition Property="IsMouseOver" Value="True"/>
-                                    <Condition Property="IsChecked" Value="False"/>
-                                </MultiTrigger.Conditions>
-                                <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
-                            </MultiTrigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="fill" Property="BorderBrush" Value="{DynamicResource VexAccent}"/>
+                            </Trigger>
                             <EventTrigger RoutedEvent="MouseEnter">
-                                <BeginStoryboard>
-                                    <Storyboard>
-                                        <DoubleAnimation Storyboard.TargetName="hov" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
-                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
-                                        </DoubleAnimation>
-                                    </Storyboard>
-                                </BeginStoryboard>
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="hover" Storyboard.TargetProperty="Opacity" To="1" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
+                                </Storyboard></BeginStoryboard>
                             </EventTrigger>
                             <EventTrigger RoutedEvent="MouseLeave">
-                                <BeginStoryboard>
-                                    <Storyboard>
-                                        <DoubleAnimation Storyboard.TargetName="hov" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
-                                            <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
-                                        </DoubleAnimation>
-                                    </Storyboard>
-                                </BeginStoryboard>
+                                <BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="hover" Storyboard.TargetProperty="Opacity" To="0" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
+                                </Storyboard></BeginStoryboard>
                             </EventTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <Style x:Key="SettingsAppearanceOption" TargetType="RadioButton" BasedOn="{StaticResource SettingsNavItem}">
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="MinWidth" Value="92"/>
+            <Setter Property="Margin" Value="0"/>
         </Style>
 
         <!-- iOS-style toggle switch with a sliding thumb. -->
@@ -213,18 +202,14 @@
                                 <Trigger.EnterActions>
                                     <BeginStoryboard>
                                         <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="thumbShift" Storyboard.TargetProperty="X" To="18" Duration="0:0:0.18">
-                                                <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
-                                            </DoubleAnimation>
+                                            <DoubleAnimation Storyboard.TargetName="thumbShift" Storyboard.TargetProperty="X" To="18" Duration="{x:Static local:UiMotion.RepositionDuration}" EasingFunction="{x:Static local:UiMotion.MovementEasing}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.EnterActions>
                                 <Trigger.ExitActions>
                                     <BeginStoryboard>
                                         <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="thumbShift" Storyboard.TargetProperty="X" To="0" Duration="0:0:0.18">
-                                                <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
-                                            </DoubleAnimation>
+                                            <DoubleAnimation Storyboard.TargetName="thumbShift" Storyboard.TargetProperty="X" To="0" Duration="{x:Static local:UiMotion.RepositionDuration}" EasingFunction="{x:Static local:UiMotion.MovementEasing}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.ExitActions>
@@ -404,16 +389,16 @@
 
         <!-- Centered panel -->
         <Border x:Name="Panel"
-                Background="{StaticResource PanelSurface}"
-                BorderBrush="{StaticResource CardBorder}"
+                Background="{DynamicResource VexSurface}"
+                BorderBrush="{DynamicResource VexBorder}"
                 BorderThickness="1"
                 CornerRadius="14"
                 MaxWidth="880"
-                MinWidth="620"
+                MinWidth="560"
                 Height="560"
                 HorizontalAlignment="Stretch"
                 VerticalAlignment="Center"
-                Margin="48,40"
+                Margin="24,24"
                 Opacity="0"
                 RenderTransformOrigin="0.5,0.5">
             <Border.RenderTransform>
@@ -424,56 +409,39 @@
             </Border.RenderTransform>
 
             <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="150"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="44"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
 
-                <!-- Navigation sidebar -->
-                <Border Grid.Column="0" Background="{StaticResource SidebarSurface}" CornerRadius="13,0,0,13">
-                    <DockPanel Margin="0,10,0,12">
-                        <StackPanel DockPanel.Dock="Top" Margin="12,6,12,12">
-                            <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource VexText}"/>
+                <Border Background="{DynamicResource VexTabStrip}" CornerRadius="13,13,0,0">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Settings" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource VexText}" VerticalAlignment="Center" Margin="16,0,14,0"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" KeyboardNavigation.DirectionalNavigation="Cycle">
+                            <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="general"
+                                         Content="General" IsChecked="True" Checked="Nav_Checked"/>
+                            <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="appearance"
+                                         Content="Appearance" Checked="Nav_Checked"/>
+                            <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="terminal"
+                                         Content="Terminal" Checked="Nav_Checked"/>
+                            <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="about"
+                                         Content="About" Checked="Nav_Checked"/>
                         </StackPanel>
-
-                        <StackPanel DockPanel.Dock="Bottom" Margin="12,0">
-                            <TextBlock x:Name="SidebarVersionText" FontSize="11" Foreground="{DynamicResource VexTextDim}"/>
-                        </StackPanel>
-
-                        <StackPanel>
-                            <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="general" IsChecked="True" Checked="Nav_Checked">
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource VexTextDim}"/>
-                                    <TextBlock Text="General" FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </RadioButton>
-
-                            <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="appearance" Checked="Nav_Checked">
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE790;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource VexTextDim}"/>
-                                    <TextBlock Text="Appearance" FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </RadioButton>
-
-                            <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="terminal" Checked="Nav_Checked">
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource VexTextDim}"/>
-                                    <TextBlock Text="Terminal" FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </RadioButton>
-
-                            <RadioButton Style="{StaticResource SettingsNavItem}" GroupName="SettingsNav" Tag="about" Checked="Nav_Checked">
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="14" Width="20" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource VexTextDim}"/>
-                                    <TextBlock Text="About" FontSize="13" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </RadioButton>
-                        </StackPanel>
-                    </DockPanel>
+                        <Button Grid.Column="2" Style="{StaticResource GhostButton}" Width="30" Height="30" Margin="8,0,8,0"
+                                Padding="0" Click="CloseButton_Click" ToolTip="Close Settings">
+                            <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                        </Button>
+                    </Grid>
                 </Border>
 
                 <!-- Content pages, clipped so the slide-in transition stays clean. -->
-                <Border Grid.Column="1" BorderBrush="{StaticResource CardBorder}" BorderThickness="1,0,0,0" ClipToBounds="True">
+<Border Grid.Row="1" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,1,0,0" ClipToBounds="True">
                     <Grid>
                         <!-- General -->
                         <ScrollViewer x:Name="PageGeneral" VerticalScrollBarVisibility="Auto" Visibility="Visible">
@@ -656,7 +624,7 @@
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                             <RadioButton x:Name="AppearanceDarkOption" Tag="dark" GroupName="VexAppearance"
-                                                         Style="{StaticResource SettingsNavItem}"
+                                                         Style="{StaticResource SettingsAppearanceOption}"
                                                          Checked="Appearance_Checked">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="&#xE793;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
@@ -665,7 +633,7 @@
                                             </RadioButton>
                                             <RadioButton x:Name="AppearanceLightOption" Tag="light" GroupName="VexAppearance"
                                                          Margin="10,0,0,0"
-                                                         Style="{StaticResource SettingsNavItem}"
+                                                         Style="{StaticResource SettingsAppearanceOption}"
                                                          Checked="Appearance_Checked">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="&#xE706;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
@@ -747,24 +715,16 @@
                                                         <EventTrigger RoutedEvent="MouseEnter">
                                                             <BeginStoryboard>
                                                                 <Storyboard>
-                                                                    <DoubleAnimation Storyboard.TargetName="cardScale" Storyboard.TargetProperty="ScaleX" To="1.05" Duration="0:0:0.14">
-                                                                        <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
-                                                                    </DoubleAnimation>
-                                                                    <DoubleAnimation Storyboard.TargetName="cardScale" Storyboard.TargetProperty="ScaleY" To="1.05" Duration="0:0:0.14">
-                                                                        <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
-                                                                    </DoubleAnimation>
+                                                                    <DoubleAnimation Storyboard.TargetName="cardScale" Storyboard.TargetProperty="ScaleX" To="1.05" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
+                                                                    <DoubleAnimation Storyboard.TargetName="cardScale" Storyboard.TargetProperty="ScaleY" To="1.05" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
                                                                 </Storyboard>
                                                             </BeginStoryboard>
                                                         </EventTrigger>
                                                         <EventTrigger RoutedEvent="MouseLeave">
                                                             <BeginStoryboard>
                                                                 <Storyboard>
-                                                                    <DoubleAnimation Storyboard.TargetName="cardScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.14">
-                                                                        <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
-                                                                    </DoubleAnimation>
-                                                                    <DoubleAnimation Storyboard.TargetName="cardScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.14">
-                                                                        <DoubleAnimation.EasingFunction><QuadraticEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
-                                                                    </DoubleAnimation>
+                                                                    <DoubleAnimation Storyboard.TargetName="cardScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
+                                                                    <DoubleAnimation Storyboard.TargetName="cardScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
                                                                 </Storyboard>
                                                             </BeginStoryboard>
                                                         </EventTrigger>
@@ -867,32 +827,19 @@
 
                         <!-- About -->
                         <ScrollViewer x:Name="PageAbout" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
-                            <StackPanel Margin="28,26,28,20">
-                                <TextBlock Text="About" Style="{StaticResource PageTitle}"/>
-                                <TextBlock Text="Vex is a ConPTY terminal workspace." Style="{StaticResource PageSubtitle}"/>
-
-                                <Border Style="{StaticResource SettingsCard}">
-                                    <StackPanel HorizontalAlignment="Center" Margin="0,8">
-                                        <Image Source="/Assets/app-5.png" Width="84" Height="84" HorizontalAlignment="Center"
-                                               RenderOptions.BitmapScalingMode="HighQuality"/>
-                                        <TextBlock Text="Vex" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource VexText}"
-                                                   HorizontalAlignment="Center" Margin="0,16,0,4"/>
-                                        <TextBlock x:Name="AboutVersionText" FontSize="12" Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"/>
-                                        <TextBlock Text="Tabs and split panes over ConPTY sessions."
-                                                   FontSize="12" Foreground="{DynamicResource VexTextDim}" HorizontalAlignment="Center"
-                                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,0" MaxWidth="340"/>
-                                    </StackPanel>
-                                </Border>
+                            <StackPanel Orientation="Horizontal" Margin="28,28" VerticalAlignment="Top">
+                                <Image Source="/Assets/app-5.png" Width="40" Height="40" VerticalAlignment="Top"
+                                       RenderOptions.BitmapScalingMode="HighQuality"/>
+                                <StackPanel Margin="16,0,0,0">
+                                    <TextBlock Text="Vex" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource VexText}"/>
+                                    <TextBlock x:Name="AboutVersionText" FontSize="12" Margin="0,4,0,0"
+                                               Foreground="{DynamicResource VexTextDim}"/>
+                                </StackPanel>
                             </StackPanel>
                         </ScrollViewer>
                     </Grid>
                 </Border>
 
-                <!-- Close button -->
-                <Button Style="{StaticResource GhostButton}" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Margin="0,12,12,0" Width="30" Height="30" Padding="0" Click="CloseButton_Click" ToolTip="Close Settings">
-                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource VexTextDim}"/>
-                </Button>
             </Grid>
         </Border>
     </Grid>

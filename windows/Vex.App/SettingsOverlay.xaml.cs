@@ -39,14 +39,6 @@ public sealed class SliderFillConverter : IMultiValueConverter
 
 public sealed partial class SettingsOverlay : OverlayControl
 {
-    private const double AnimDuration = 280;
-    private const double PageDuration = 130;
-
-    private bool _animInProgress;
-    private Stopwatch? _animClock;
-    private bool _animClosing;
-    private double _animFrom;
-
     private FrameworkElement? _activePage;
     private FrameworkElement? _outPage;
     private FrameworkElement? _inPage;
@@ -87,9 +79,7 @@ public sealed partial class SettingsOverlay : OverlayControl
 
         DataContext = AppSettings.Instance;
 
-        // Assembled here rather than hardcoded in XAML so a version bump only
-        // touches the csproj; the two forms differ by prefix and wording.
-        SidebarVersionText.Text = AppInfo.VersionLabel;
+        // Keep the displayed version tied to the assembly metadata.
         AboutVersionText.Text = $"Version {AppInfo.Version}";
     }
 
@@ -108,12 +98,6 @@ public sealed partial class SettingsOverlay : OverlayControl
 
     public void Show()
     {
-        if (_animInProgress && _animClosing)
-        {
-            CompositionTarget.Rendering -= OnAnimRendering;
-            _animInProgress = false;
-        }
-
         Visibility = Visibility.Visible;
         OpenPopup(this);
 
@@ -130,70 +114,21 @@ public sealed partial class SettingsOverlay : OverlayControl
         WarmFonts();
         WarmShells();
 
-        // Continue from wherever the panel currently sits mid-animation.
-        _animFrom = Panel.Opacity;
-        _animClosing = false;
-        _animInProgress = true;
-        _animClock = Stopwatch.StartNew();
-        CompositionTarget.Rendering -= OnAnimRendering;
-        CompositionTarget.Rendering += OnAnimRendering;
+        AnimateOverlayOpen(Backdrop, Panel, PanelScale, PanelTranslate,
+            () => Panel.CacheMode = null);
     }
 
     public void Hide()
     {
-        if (_animInProgress && !_animClosing)
-        {
-            CompositionTarget.Rendering -= OnAnimRendering;
-            _animInProgress = false;
-        }
-
-        Panel.CacheMode = new BitmapCache();
-
-        _animFrom = Panel.Opacity;
-        _animClosing = true;
-        _animInProgress = true;
-        _animClock = Stopwatch.StartNew();
-        CompositionTarget.Rendering -= OnAnimRendering;
-        CompositionTarget.Rendering += OnAnimRendering;
-    }
-
-    private void OnAnimRendering(object? sender, EventArgs e)
-    {
-        var elapsed = _animClock?.Elapsed.TotalMilliseconds ?? AnimDuration;
-        var t = Math.Min(elapsed / AnimDuration, 1.0);
-        // Smoothstep: gentle start and end, no lurch.
-        var eased = t * t * (3 - 2 * t);
-        var p = _animClosing ? 1 - eased : eased;
-
-        Backdrop.Opacity = p;
-        Panel.Opacity = p;
-        PanelScale.ScaleX = PanelScale.ScaleY = 0.96 + 0.04 * p;
-        PanelTranslate.Y = 16 * (1 - p);
-
-        if (eased < 1)
+        if (Visibility != Visibility.Visible)
             return;
 
-        CompositionTarget.Rendering -= OnAnimRendering;
-        _animInProgress = false;
-        _animClock = null;
-
-        if (_animClosing)
+        Panel.CacheMode = new BitmapCache();
+        HideWithAnimation(Backdrop, Panel, () =>
         {
-            Visibility = Visibility.Collapsed;
-            ClosePopup(this);
-            Backdrop.Opacity = 0;
-            Panel.Opacity = 0;
             Panel.CacheMode = null;
             Hidden?.Invoke();
-        }
-        else
-        {
-            Backdrop.Opacity = 1;
-            Panel.Opacity = 1;
-            // Drop the cache now: live content (theme cards, toggles) would
-            // otherwise re-render the whole panel raster on every change.
-            Panel.CacheMode = null;
-        }
+        });
     }
 
     private void Nav_Checked(object sender, RoutedEventArgs e)
@@ -265,8 +200,9 @@ public sealed partial class SettingsOverlay : OverlayControl
 
     private void OnPageRendering(object? sender, EventArgs e)
     {
-        var elapsed = _pageClock?.Elapsed.TotalMilliseconds ?? PageDuration;
-        var t = Math.Min(elapsed / PageDuration, 1.0);
+        var duration = UiMotion.PageTransitionDuration.TimeSpan.TotalMilliseconds;
+        var elapsed = _pageClock?.Elapsed.TotalMilliseconds ?? duration;
+        var t = Math.Min(elapsed / duration, 1.0);
         var eased = t * t * (3 - 2 * t);
 
         if (_pageFadingOut)

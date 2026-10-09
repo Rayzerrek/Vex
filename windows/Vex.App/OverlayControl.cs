@@ -15,15 +15,20 @@ namespace Vex.App;
 /// </summary>
 public abstract class OverlayControl : UserControl
 {
+    private enum OverlayAnimationState { Hidden, Visible, Closing }
+
+    private OverlayAnimationState _animationState;
+    private long _animationVersion;
+
     protected OverlayControl()
     {
         System.Windows.Shell.WindowChrome.SetIsHitTestVisibleInChrome(this, true);
     }
 
-    protected static DoubleAnimation Anim(double from, double to, double ms) =>
-        new(from, to, TimeSpan.FromMilliseconds(ms))
+    private static DoubleAnimation Anim(double from, double to, Duration duration) =>
+        new(from, to, duration)
         {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            EasingFunction = UiMotion.MovementEasing,
         };
     protected static void OpenPopup(FrameworkElement element)
     {
@@ -61,22 +66,34 @@ public abstract class OverlayControl : UserControl
     }
     protected abstract void HideCore();
 
-    protected static void AnimateOverlayOpen(FrameworkElement backdrop, FrameworkElement panel,
-        ScaleTransform scale, TranslateTransform translate)
+    protected void AnimateOverlayOpen(FrameworkElement backdrop, FrameworkElement panel,
+        ScaleTransform scale, TranslateTransform translate, Action? onOpened = null)
     {
-        backdrop.BeginAnimation(OpacityProperty, Anim(0, 1, 110));
-        panel.BeginAnimation(OpacityProperty, Anim(0, 1, 150));
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, Anim(0.96, 1, 170));
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, Anim(0.96, 1, 170));
-        translate.BeginAnimation(TranslateTransform.YProperty, Anim(8, 0, 170));
-    }
+        if (_animationState == OverlayAnimationState.Hidden)
+        {
+            backdrop.BeginAnimation(OpacityProperty, null);
+            panel.BeginAnimation(OpacityProperty, null);
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            translate.BeginAnimation(TranslateTransform.YProperty, null);
+            backdrop.Opacity = panel.Opacity = 0;
+            scale.ScaleX = scale.ScaleY = 0.96;
+            translate.Y = 8;
+        }
 
-    protected static void AnimateOverlayClose(FrameworkElement backdrop, FrameworkElement panel, Action onClosed)
-    {
-        var fade = Anim(1, 0, 90);
-        fade.Completed += (_, _) => onClosed();
-        backdrop.BeginAnimation(OpacityProperty, Anim(1, 0, 90));
-        panel.BeginAnimation(OpacityProperty, fade);
+        _animationState = OverlayAnimationState.Visible;
+        var version = ++_animationVersion;
+        var motion = Anim(translate.Y, 0, UiMotion.OverlayOpenDuration);
+        motion.Completed += (_, _) =>
+        {
+            if (_animationVersion == version && _animationState == OverlayAnimationState.Visible)
+                onOpened?.Invoke();
+        };
+        backdrop.BeginAnimation(OpacityProperty, Anim(backdrop.Opacity, 1, UiMotion.OverlayBackdropDuration));
+        panel.BeginAnimation(OpacityProperty, Anim(panel.Opacity, 1, UiMotion.OverlayFadeDuration));
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, Anim(scale.ScaleX, 1, UiMotion.OverlayOpenDuration));
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, Anim(scale.ScaleY, 1, UiMotion.OverlayOpenDuration));
+        translate.BeginAnimation(TranslateTransform.YProperty, motion);
     }
 
     /// <summary>Fade-out + collapse + popup close, the standard dismissal for
@@ -84,13 +101,24 @@ public abstract class OverlayControl : UserControl
     /// runs after the popup closed, so callers can restore focus.</summary>
     protected void HideWithAnimation(FrameworkElement backdrop, FrameworkElement panel, Action? onHidden = null)
     {
-        if (Visibility != Visibility.Visible)
+        if (Visibility != Visibility.Visible || _animationState == OverlayAnimationState.Closing)
             return;
-        AnimateOverlayClose(backdrop, panel, () =>
+
+        _animationState = OverlayAnimationState.Closing;
+        var version = ++_animationVersion;
+        var fade = Anim(panel.Opacity, 0, UiMotion.OverlayCloseDuration);
+        fade.Completed += (_, _) =>
         {
+            // Reopening replaces the visuals, but an older clock can still
+            // deliver its completion and must not close the new interaction.
+            if (_animationVersion != version || _animationState != OverlayAnimationState.Closing)
+                return;
+            _animationState = OverlayAnimationState.Hidden;
             Visibility = Visibility.Collapsed;
             ClosePopup(this);
             onHidden?.Invoke();
-        });
+        };
+        backdrop.BeginAnimation(OpacityProperty, Anim(backdrop.Opacity, 0, UiMotion.OverlayCloseDuration));
+        panel.BeginAnimation(OpacityProperty, fade);
     }
 }

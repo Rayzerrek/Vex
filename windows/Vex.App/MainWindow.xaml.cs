@@ -1058,7 +1058,10 @@ public sealed partial class MainWindow : Window
             return;
         SplitPreview.Visibility = Visibility.Visible;
         SplitPreview.BeginAnimation(OpacityProperty,
-            new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(120)));
+            new System.Windows.Media.Animation.DoubleAnimation(0, 1, UiMotion.FeedbackDuration)
+            {
+                EasingFunction = UiMotion.FeedbackEasing,
+            });
     }
 
     private void HideSplitPreview()

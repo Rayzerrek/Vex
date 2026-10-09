@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Threading;
 using Vex.App.Model;
 
 namespace Vex.App;
@@ -70,7 +69,10 @@ public partial class MainWindow
         Canvas.SetTop(TabDragGhostHost, (TabBarGrid.ActualHeight - TabDragGhostHost.Height) / 2.0);
         TabDragGhostHost.Visibility = Visibility.Visible;
         TabDragGhostHost.BeginAnimation(UIElement.OpacityProperty,
-            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(120)));
+            new DoubleAnimation(0, 1, UiMotion.FeedbackDuration)
+            {
+                EasingFunction = UiMotion.FeedbackEasing,
+            });
         // Hide the original slot: it is now represented by the ghost.
         HideTabSlot(_dragTab);
     }
@@ -86,19 +88,19 @@ public partial class MainWindow
         var transform = GetTabOffset(item);
         transform.BeginAnimation(TranslateTransform.XProperty, null);
         transform.X = 0;
-        item.BeginAnimation(UIElement.OpacityProperty,
-            new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(140)));
-        // Collapse only after the fade so the gap opens smoothly.
-        var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-        t.Tick += (_, _) =>
+        var fade = new DoubleAnimation(item.Opacity, 0, UiMotion.FeedbackDuration)
         {
-            t.Stop();
+            EasingFunction = UiMotion.FeedbackEasing,
+        };
+        // Collapse only after the fade so the gap opens smoothly.
+        fade.Completed += (_, _) =>
+        {
             // The drag may have ended and the slot restored meanwhile; only
             // collapse if this tab is still the one being dragged.
             if (ReferenceEquals(_dragTab, tab))
                 item.Visibility = Visibility.Collapsed;
         };
-        t.Start();
+        item.BeginAnimation(UIElement.OpacityProperty, fade);
     }
 
     private TranslateTransform GetTabOffset(FrameworkElement item)
@@ -126,9 +128,9 @@ public partial class MainWindow
             if (Math.Abs(transform.X - target) < 0.5)
                 continue;
             transform.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(transform.X, target, TimeSpan.FromMilliseconds(180))
+                new DoubleAnimation(transform.X, target, UiMotion.RepositionDuration)
                 {
-                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                    EasingFunction = UiMotion.MovementEasing,
                 });
         }
     }
@@ -172,6 +174,7 @@ public partial class MainWindow
         var slot = project.Tabs.Count > 1 && pt.Y >= -8 && pt.Y <= TabBarGrid.ActualHeight + 8
             ? TabInsertIndexAt(pt, project.Tabs, _dragTab)
             : null;
+        var slotChanged = _tabSlotIndex != (slot ?? -1);
 
         // Keep tabs pushed aside so the gap matches the ghost position.
         if (slot is { } s)
@@ -200,18 +203,22 @@ public partial class MainWindow
         {
             var left = VisibleSlotX(project.Tabs, _dragTab, s2) - 1.0;
             Canvas.SetTop(TabDropMarker, (TabBarGrid.ActualHeight - TabDropMarker.Height) / 2.0);
-            TabDropMarker.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(140))
-                {
-                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-                });
+            if (slotChanged)
+                TabDropMarker.BeginAnimation(UIElement.OpacityProperty,
+                    new DoubleAnimation(TabDropMarker.Opacity, 1.0, UiMotion.FeedbackDuration)
+                    {
+                        EasingFunction = UiMotion.FeedbackEasing,
+                    });
             Canvas.SetLeft(TabDropMarker, left);
             TabDropMarker.Width = 2.0;
         }
-        else if (_markerVisible)
+        else if (_markerVisible && slotChanged)
         {
             TabDropMarker.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(90)));
+                new DoubleAnimation(TabDropMarker.Opacity, 0.0, UiMotion.FeedbackDuration)
+                {
+                    EasingFunction = UiMotion.FeedbackEasing,
+                });
         }
     }
 
