@@ -104,22 +104,14 @@
                     <Trigger.EnterActions>
                         <BeginStoryboard>
                             <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="TerminalActionButtons" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12">
-                                    <DoubleAnimation.EasingFunction>
-                                        <QuadraticEase EasingMode="EaseOut"/>
-                                    </DoubleAnimation.EasingFunction>
-                                </DoubleAnimation>
+                                <DoubleAnimation Storyboard.TargetName="TerminalActionButtons" Storyboard.TargetProperty="Opacity" To="1" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
                             </Storyboard>
                         </BeginStoryboard>
                     </Trigger.EnterActions>
                     <Trigger.ExitActions>
                         <BeginStoryboard>
                             <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="TerminalActionButtons" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12">
-                                    <DoubleAnimation.EasingFunction>
-                                        <QuadraticEase EasingMode="EaseOut"/>
-                                    </DoubleAnimation.EasingFunction>
-                                </DoubleAnimation>
+                                <DoubleAnimation Storyboard.TargetName="TerminalActionButtons" Storyboard.TargetProperty="Opacity" To="0" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
                             </Storyboard>
                         </BeginStoryboard>
                     </Trigger.ExitActions>
@@ -262,18 +254,18 @@
                     <EventTrigger RoutedEvent="Grid.MouseEnter">
                         <BeginStoryboard>
                             <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
-                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.12"/>
-                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.12"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="1" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
                             </Storyboard>
                         </BeginStoryboard>
                     </EventTrigger>
                     <EventTrigger RoutedEvent="Grid.MouseLeave">
                         <BeginStoryboard>
                             <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.1"/>
-                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="0.6" Duration="0:0:0.1"/>
-                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="0.6" Duration="0:0:0.1"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseBtn" Storyboard.TargetProperty="Opacity" To="0" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleX" To="0.6" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
+                                <DoubleAnimation Storyboard.TargetName="CloseScale" Storyboard.TargetProperty="ScaleY" To="0.6" Duration="{x:Static local:UiMotion.FeedbackDuration}" EasingFunction="{x:Static local:UiMotion.FeedbackEasing}"/>
                             </Storyboard>
                         </BeginStoryboard>
                     </EventTrigger>
