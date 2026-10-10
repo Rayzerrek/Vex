@@ -36,7 +36,7 @@
     <!-- Single source of truth for the app version. The SDK derives
          FileVersion and AssemblyVersion from this, and AppInfo reads it back
          from the assembly for the UI, so nothing else needs updating. -->
-    <Version>1.6.0</Version>
+    <Version>1.6.1</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <!-- Keep startup assemblies directly accessible without decompression. -->
     <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
