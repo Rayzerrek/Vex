@@ -10,15 +10,11 @@
 
         <!-- Settings-specific surfaces and accents. All colors ride on
              DynamicResource so the whole overlay re-tints with the active
-             appearance (dark or light chrome) without rebuilding. The accent
-             ramp (blue → violet) is reused from App.xaml. -->
+             appearance (dark or light chrome) without rebuilding. -->
         <SolidColorBrush x:Key="CardSurface" Color="{DynamicResource VexCardColor}"/>
         <SolidColorBrush x:Key="CardBorder" Color="{DynamicResource VexCardBorderColor}"/>
         <SolidColorBrush x:Key="TrackSurface" Color="{DynamicResource VexTrackColor}"/>
-        <LinearGradientBrush x:Key="AccentSolid" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="{DynamicResource VexAccentBlueColor}" Offset="0"/>
-            <GradientStop Color="{DynamicResource VexAccentPurpleColor}" Offset="1"/>
-        </LinearGradientBrush>
+        <SolidColorBrush x:Key="AccentSolid" Color="{DynamicResource VexAccentColor}"/>
 
         <local:SliderFillConverter x:Key="SliderFill"/>
 

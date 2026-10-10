@@ -23,8 +23,7 @@ public sealed class ChromePaletteTests
         var frozenBg = new LinearGradientBrush(Colors.Red, Colors.Blue, 90);
         frozenBg.Freeze();
         res["VexBackground"] = frozenBg;
-        res["VexBackgroundTopColor"] = Colors.Red;
-        res["VexBackgroundBottomColor"] = Colors.Blue;
+        res["VexBackgroundColor"] = Colors.Red;
 
         var frozenTrans = new SolidColorBrush(Colors.Green);
         frozenTrans.Freeze();
@@ -39,8 +38,10 @@ public sealed class ChromePaletteTests
         var textBrush = Assert.IsType<SolidColorBrush>(res["VexText"]);
         Assert.NotEqual(Colors.Black, textBrush.Color);
 
-        var bgBrush = Assert.IsType<LinearGradientBrush>(res["VexBackground"]);
-        Assert.NotEqual(Colors.Red, bgBrush.GradientStops[0].Color);
+        var bgBrush = Assert.IsType<SolidColorBrush>(res["VexBackground"]);
+        Assert.NotEqual(Colors.Red, bgBrush.Color);
+        Assert.Equal(res["VexBackgroundColor"], bgBrush.Color);
+        Assert.IsType<LinearGradientBrush>(res["VexTabSelected"]);
     }
 
     [Fact]

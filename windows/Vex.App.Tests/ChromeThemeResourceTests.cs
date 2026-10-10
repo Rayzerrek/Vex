@@ -45,9 +45,11 @@ public sealed class ChromeThemeResourceTests
                     ChromePalette.Apply(theme, grid.Resources);
                     Assert.Equal(grid.Resources["VexTextColor"], ((SolidColorBrush)text.Foreground).Color);
                     Assert.Equal(grid.Resources["VexSurfaceColor"], ((SolidColorBrush)border.Background).Color);
-                    var background = (LinearGradientBrush)grid.Background;
-                    Assert.Equal(grid.Resources["VexBackgroundTopColor"], background.GradientStops[0].Color);
-                    Assert.Equal(grid.Resources["VexBackgroundBottomColor"], background.GradientStops[^1].Color);
+                    var background = Assert.IsType<SolidColorBrush>(grid.Background);
+                    Assert.Equal(grid.Resources["VexBackgroundColor"], background.Color);
+                    var selectedTab = Assert.IsType<LinearGradientBrush>(grid.Resources["VexTabSelected"]);
+                    Assert.Equal(grid.Resources["VexTabSelectedStartColor"], selectedTab.GradientStops[0].Color);
+                    Assert.Equal(grid.Resources["VexTabSelectedEndColor"], selectedTab.GradientStops[^1].Color);
 
                     // Style/template sealing can freeze shared brushes between appearance changes.
                     foreach (var brush in grid.Resources.Values.OfType<Brush>())
@@ -64,6 +66,15 @@ public sealed class ChromeThemeResourceTests
         Assert.True(thread.Join(10000), "Chrome theme resource test did not finish.");
         if (failure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    [Fact]
+    public void ChromeGradients_AreLimitedToTheSelectedTab()
+    {
+        var app = ReadThemeXaml("App.xaml");
+        var gradient = Assert.Single(app.Descendants(), e => e.Name.LocalName == "LinearGradientBrush");
+        Assert.Equal("VexTabSelected", (string?)gradient.Attribute(XName.Get("Key", "http://schemas.microsoft.com/winfx/2006/xaml")));
+        Assert.DoesNotContain(ReadThemeXaml("SettingsOverlay.xaml").Descendants(), e => e.Name.LocalName == "LinearGradientBrush");
     }
 
     [Fact]

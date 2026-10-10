@@ -76,12 +76,8 @@ public static class ChromePalette
         SyncTranslucentBrush(res, "VexAccentTranslucent", "VexAccentColor", opacity: 0.16);
         SyncTranslucentBrush(res, "VexTextDimTranslucent", "VexTextDimColor", opacity: 0.12);
 
-        SyncGradient(res, "VexBackground", "VexBackgroundTopColor", "VexBackgroundBottomColor",
-            new Point(0, 0), new Point(0, 1));
         SyncGradient(res, "VexTabSelected", "VexTabSelectedStartColor", "VexTabSelectedEndColor",
             new Point(0, 0), new Point(0, 1));
-        SyncGradient(res, "VexAccentGradient", "VexAccentGradientStartColor", "VexAccentGradientEndColor",
-            new Point(0, 0), new Point(1, 1));
     }
 
     private static void SyncTranslucentBrush(ResourceDictionary res, string brushKey, string colorKey, double opacity)
@@ -133,6 +129,7 @@ public static class ChromePalette
 
     private static readonly (string Brush, string Color)[] BrushColorPairs =
     {
+        ("VexBackground", "VexBackgroundColor"),
         ("VexSurface", "VexSurfaceColor"),
         ("VexHover", "VexHoverColor"),
         ("VexBorder", "VexBorderColor"),
@@ -165,8 +162,7 @@ public static class ChromePalette
 
     private static void ApplyDark(ResourceDictionary res, Color bg, Color fg, Color blue, Color magenta)
     {
-        Set(res, "VexBackgroundTopColor", Darken(bg, 0.62));
-        Set(res, "VexBackgroundBottomColor", Darken(bg, 0.45));
+        Set(res, "VexBackgroundColor", Darken(bg, 0.62));
         Set(res, "VexSurfaceColor", WithAlpha(bg, 0xE6));
         Set(res, "VexHoverColor", Lighten(bg, 0.12));
         // Borders read clearly against the tinted chrome and shift with the
@@ -189,8 +185,6 @@ public static class ChromePalette
         Set(res, "VexTabHoverColor", WithAlpha(fg, 0x12));
         Set(res, "VexTabSelectedStartColor", WithAlpha(blue, 0x30));
         Set(res, "VexTabSelectedEndColor", WithAlpha(magenta, 0x30));
-        Set(res, "VexAccentGradientStartColor", WithAlpha(blue, 0x66));
-        Set(res, "VexAccentGradientEndColor", WithAlpha(magenta, 0x66));
 
         // Overlay chrome: scrims, pressed states, drag previews, settings
         // surfaces. Derived from the theme so overlays never clash with it.
@@ -238,8 +232,7 @@ public static class ChromePalette
         var dim = Mix(fg, bg, 0.32);
         var accent = Mix(blue, magenta, 0.34);
 
-        Set(res, "VexBackgroundTopColor", canvas);
-        Set(res, "VexBackgroundBottomColor", Mix(bg, fg, 0.025));
+        Set(res, "VexBackgroundColor", canvas);
         Set(res, "VexSurfaceColor", surface);
         Set(res, "VexHoverColor", Mix(bg, fg, 0.055));
         Set(res, "VexBorderColor", Mix(bg, fg, 0.15));
@@ -255,8 +248,6 @@ public static class ChromePalette
         Set(res, "VexTabHoverColor", WithAlpha(fg, 0x0D));
         Set(res, "VexTabSelectedStartColor", WithAlpha(blue, 0x2C));
         Set(res, "VexTabSelectedEndColor", WithAlpha(magenta, 0x24));
-        Set(res, "VexAccentGradientStartColor", WithAlpha(blue, 0x68));
-        Set(res, "VexAccentGradientEndColor", WithAlpha(magenta, 0x68));
 
         // Overlay chrome: scrims, pressed states, drag previews, settings
         // surfaces. All opaque or near-opaque so overlays read crisply.
