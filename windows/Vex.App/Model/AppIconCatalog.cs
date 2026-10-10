@@ -24,6 +24,12 @@ internal static partial class AppIconCatalog
         "conhost", "wslhost", "OpenConsole",
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Editors own language servers and plugin workers; those children must not replace the editor's tab icon.</summary>
+    internal static readonly IReadOnlySet<string> EditorProcessNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "nvim", "neovim", "vim", "gvim", "hx", "helix", "nano", "micro", "emacs", "kak", "kakoune",
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Hosts that run other apps (node claude.js, bun pi, wsl nvim, ...); their own
     /// name never identifies the app, only their command line or the OSC

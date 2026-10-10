@@ -327,7 +327,7 @@ public static class TabCloseConfirmation
             // 4. Universal check: does the shell at ProcessId have any non-helper child process running?
             if (terminal.ProcessId is { } pid && index is not null)
             {
-                var childProcess = ProcessTree.DeepestChildProcess(index, (uint)pid, terminal.ShellHelpers);
+                var childProcess = ProcessTree.DeepestChildProcess(index, (uint)pid, terminal.ShellHelpers, AppIconCatalog.EditorProcessNames);
                 if (childProcess is { } proc)
                 {
                     string toolName;

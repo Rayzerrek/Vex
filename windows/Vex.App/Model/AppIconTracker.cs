@@ -145,7 +145,7 @@ public static class AppIconTracker
                 {
                     if (pane.ProcessId is not { } pid)
                         continue;
-                    var process = ProcessTree.DeepestDescendant(index, (uint)pid, AppIconCatalog.ConsoleHelpers);
+                    var process = ProcessTree.DeepestDescendant(index, (uint)pid, pane.ShellHelpers, AppIconCatalog.EditorProcessNames);
                     if (process is { } child && AppIconCatalog.IsShimHost(child.Name)
                         && !commandLines.ContainsKey(child.Pid))
                         commandLines.Add(child.Pid, ProcessCommandLine.Get(child.Pid));

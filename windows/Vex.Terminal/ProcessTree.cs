@@ -58,12 +58,14 @@ public static class ProcessTree
     /// Returns the process name without extension and its PID, or null when
     /// the root no longer exists. Callers polling many roots take one
     /// <see cref="Index"/> built from a shared snapshot and reuse it for
-    /// every root.
+    /// every root. Processes in <paramref name="applicationHosts"/> own their
+    /// child services, so those branches stop at the host application.
     /// </summary>
     public static (string Name, uint Pid)? DeepestDescendant(
         Index index,
         uint rootPid,
-        IReadOnlySet<string> excludedNames)
+        IReadOnlySet<string> excludedNames,
+        IReadOnlySet<string>? applicationHosts = null)
     {
         var children = index.Children;
         string? rootName = null;
@@ -88,7 +90,7 @@ public static class ProcessTree
                         levelBest = levelBest is { } b ? (node.Pid > b.Pid ? node : b) : node;
                     else if (firstExcluded is null)
                         firstExcluded = node;
-                    if (children.TryGetValue(node.Pid, out var kids))
+                    if (applicationHosts?.Contains(node.Name) != true && children.TryGetValue(node.Pid, out var kids))
                         next.AddRange(kids);
                 }
                 // Depth dominates: a deeper level's candidate always replaces
@@ -134,11 +136,13 @@ public static class ProcessTree
     /// Returns null if only the shell itself (with no child processes running) is present.
     /// Universal for every shell: does not require knowing the shell name because the root
     /// process at <paramref name="rootPid"/> is always the shell.
+    /// Host applications retain their identity instead of exposing their child services.
     /// </summary>
     public static (string Name, uint Pid)? DeepestChildProcess(
         Index index,
         uint rootPid,
-        IReadOnlySet<string>? systemHelpers = null)
+        IReadOnlySet<string>? systemHelpers = null,
+        IReadOnlySet<string>? applicationHosts = null)
     {
         if (!index.Children.TryGetValue(rootPid, out var rootChildren) || rootChildren.Count == 0)
             return null;
@@ -157,7 +161,7 @@ public static class ProcessTree
                 if (!helpers.Contains(node.Name))
                     levelBest = levelBest is { } b ? (node.Pid > b.Pid ? node : b) : node;
 
-                if (index.Children.TryGetValue(node.Pid, out var kids))
+                if (applicationHosts?.Contains(node.Name) != true && index.Children.TryGetValue(node.Pid, out var kids))
                     next.AddRange(kids);
             }
 

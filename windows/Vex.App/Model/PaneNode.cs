@@ -223,7 +223,7 @@ public sealed class TerminalPane : LeafPane
             return;
         if (terminal.ProcessId is not { } pid)
             return;
-        var process = ProcessTree.DeepestDescendant(index, (uint)pid, ShellHelpers);
+        var process = ProcessTree.DeepestDescendant(index, (uint)pid, ShellHelpers, AppIconCatalog.EditorProcessNames);
         if (process is not { } deepest)
         {
             HasActiveProcess = false;

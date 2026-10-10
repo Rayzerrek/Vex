@@ -5,6 +5,26 @@ namespace Vex.App.Tests;
 
 public sealed class ProcessTreeTests
 {
+    [Theory]
+    [InlineData("nvim", "node")]
+    [InlineData("hx", "rust-analyzer")]
+    [InlineData("emacs", "pyright")]
+    public void ApplicationHost_KeepsIdentityInsteadOfChildServices(string editor, string service)
+    {
+        var index = Assert.IsType<ProcessTree.Index>(ProcessTree.Index.Build(new[]
+        {
+            (Pid: 10u, ParentPid: 0u, Name: "shell"),
+            (Pid: 20u, ParentPid: 10u, Name: editor),
+            (Pid: 30u, ParentPid: 20u, Name: service),
+        }));
+        IReadOnlySet<string> helpers = new HashSet<string>();
+        IReadOnlySet<string> hosts = new HashSet<string> { editor };
+
+        Assert.Equal((service, 30u), ProcessTree.DeepestDescendant(index, 10, helpers));
+        Assert.Equal((editor, 20u), ProcessTree.DeepestDescendant(index, 10, helpers, hosts));
+        Assert.Equal((editor, 20u), ProcessTree.DeepestChildProcess(index, 10, helpers, hosts));
+    }
+
     [Fact]
     public void Snapshot_ContainsCurrentProcess()
     {
