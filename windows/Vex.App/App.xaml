@@ -26,10 +26,7 @@
         <Color x:Key="VexTabSelectedColor">#2EFFFFFF</Color>
         <Color x:Key="VexTabHoverColor">#1EFFFFFF</Color>
 
-        <LinearGradientBrush x:Key="VexBackground" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="{DynamicResource VexBackgroundTopColor}" Offset="0"/>
-            <GradientStop Color="{DynamicResource VexBackgroundBottomColor}" Offset="1"/>
-        </LinearGradientBrush>
+        <SolidColorBrush x:Key="VexBackground" Color="{DynamicResource VexBackgroundColor}"/>
         <SolidColorBrush x:Key="VexSurface" Color="{DynamicResource VexSurfaceColor}"/>
         <SolidColorBrush x:Key="VexHover" Color="{DynamicResource VexHoverColor}"/>
         <SolidColorBrush x:Key="VexBorder" Color="{DynamicResource VexBorderColor}"/>
@@ -54,20 +51,12 @@
              ChromePalette from the active terminal theme. -->
         <Color x:Key="VexAccentBlueColor">#FF4C7BB5</Color>
         <Color x:Key="VexAccentPurpleColor">#FF8A6BB5</Color>
-        <Color x:Key="VexBackgroundTopColor">#FF0E1013</Color>
-        <Color x:Key="VexBackgroundBottomColor">#FF15171B</Color>
         <Color x:Key="VexTabSelectedStartColor">#334C7BB5</Color>
         <Color x:Key="VexTabSelectedEndColor">#338A6BB5</Color>
-        <Color x:Key="VexAccentGradientStartColor">#664C7BB5</Color>
-        <Color x:Key="VexAccentGradientEndColor">#668A6BB5</Color>
         <SolidColorBrush x:Key="VexAccentBlue" Color="{DynamicResource VexAccentBlueColor}"/>
         <SolidColorBrush x:Key="VexAccentPurple" Color="{DynamicResource VexAccentPurpleColor}"/>
         <Color x:Key="VexGitBranchColor">#FF79C0FF</Color>
         <SolidColorBrush x:Key="VexGitBranch" Color="{DynamicResource VexGitBranchColor}"/>
-        <LinearGradientBrush x:Key="VexAccentGradient" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="{DynamicResource VexAccentGradientStartColor}" Offset="0"/>
-            <GradientStop Color="{DynamicResource VexAccentGradientEndColor}" Offset="1"/>
-        </LinearGradientBrush>
 
         <!-- Variant chrome: overlays, pressed states, drag previews, settings
              surfaces. Defaults mirror the dark variant; ChromePalette rewrites

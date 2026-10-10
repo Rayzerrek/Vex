@@ -11,6 +11,8 @@ internal static class WindowFrame
     private const int DwmUseImmersiveDarkMode = 20;
     private const int DwmWindowCornerPreference = 33;
     private const int DwmRoundCorners = 2;
+    private const int DwmBorderColor = 34;
+    private const int DwmColorNone = unchecked((int)0xFFFFFFFE);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
@@ -35,6 +37,10 @@ internal static class WindowFrame
 
         var darkMode = isDark ? 1 : 0;
         DwmSetWindowAttribute(handle, DwmUseImmersiveDarkMode, ref darkMode, sizeof(int));
+        // The default DWM outline contrasts with the acrylic surface and makes
+        // the rounded silhouette look jagged. Keep the native shadow, not the stroke.
+        var borderColor = DwmColorNone;
+        DwmSetWindowAttribute(handle, DwmBorderColor, ref borderColor, sizeof(int));
         var preference = DwmRoundCorners;
         return DwmSetWindowAttribute(handle, DwmWindowCornerPreference, ref preference, sizeof(int)) >= 0;
     }
