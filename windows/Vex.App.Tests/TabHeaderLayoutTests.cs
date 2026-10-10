@@ -14,6 +14,7 @@ public sealed class TabHeaderLayoutTests
     [InlineData(60, 2)]
     [InlineData(160, 1)]
     [InlineData(160, 2)]
+    [InlineData(160, 8)]
     public void LongTabTitle_KeepsIconsVisibleAndFitsAvailableWidth(int width, int iconCount)
     {
         Exception? failure = null;

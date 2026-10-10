@@ -23,7 +23,12 @@ public static class TerminalTitleFormatter
     /// <summary>
     /// Parses the raw title into its tab title and application identity.
     /// </summary>
-    public static TitleParseResult Parse(string? rawTitle)
+    public static TitleParseResult Parse(string? rawTitle) => ParseTitle(rawTitle, isCommandLine: false);
+
+    /// <summary>Extracts an executable identity without treating its arguments as a session title.</summary>
+    internal static TitleParseResult ParseCommandLine(string? commandLine) => ParseTitle(commandLine, isCommandLine: true);
+
+    private static TitleParseResult ParseTitle(string? rawTitle, bool isCommandLine)
     {
         if (string.IsNullOrWhiteSpace(rawTitle))
             return new TitleParseResult("", null);
@@ -44,6 +49,9 @@ public static class TerminalTitleFormatter
             if (IsShellNameOrPath(beforeDash))
                 span = span[(dashIdx + 3)..].TrimStart();
         }
+
+        if (!isCommandLine && TryParseDirectoryTitle(span, out var directoryTitle))
+            return new TitleParseResult(directoryTitle, null);
 
         // 3. Status bracket plugin format: "[*] Working | Session Title"
         if (span.StartsWith("[") && span.IndexOf(']') is var rBrk && rBrk > 0)
@@ -101,18 +109,20 @@ public static class TerminalTitleFormatter
             return new TitleParseResult("", null);
 
         // 7. Check if it's a standalone path without arguments (e.g. "C:\Users\...\vex" or "~/code/vex")
-        if (span.IndexOf(' ') < 0 && span.IndexOfAny('\\', '/') >= 0)
+        if (!isCommandLine && span.IndexOf(' ') < 0 && span.IndexOfAny('\\', '/') >= 0)
         {
             var lastSep = span.LastIndexOfAny('\\', '/');
             var folder = span[(lastSep + 1)..].Trim();
             if (!folder.IsEmpty)
             {
                 var folderStr = folder.ToString();
-                return new TitleParseResult(folderStr, folderStr);
+                if (StripExtension(folder).Length == folder.Length)
+                    return new TitleParseResult(folderStr, null);
             }
         }
 
         // 8. Tokenize command line and strip runner prefixes (bun, npx, pnpm, python, ...)
+        var completeTitle = span;
         var firstToken = GetNextToken(ref span);
         if (firstToken.IsEmpty)
             return new TitleParseResult("", null);
@@ -160,6 +170,11 @@ public static class TerminalTitleFormatter
         }
 
         var progName = CleanProgramName(firstToken);
+        if (!isCommandLine && !span.IsEmpty && !AppIconCatalog.IsKnownApp(progName) &&
+            firstToken.IndexOfAny('\\', '/') < 0 && StripExtension(firstToken).Length == firstToken.Length)
+        {
+            return new TitleParseResult(completeTitle.ToString(), null);
+        }
         if (progName.Equals("opencode", StringComparison.OrdinalIgnoreCase) ||
             progName.Equals("open-code", StringComparison.OrdinalIgnoreCase) ||
             progName.Equals("oc", StringComparison.OrdinalIgnoreCase))
@@ -167,6 +182,36 @@ public static class TerminalTitleFormatter
             return new TitleParseResult("OpenCode", "opencode");
         }
         return new TitleParseResult(progName, progName);
+    }
+
+    private static bool TryParseDirectoryTitle(ReadOnlySpan<char> span, out string title)
+    {
+        title = "";
+        var path = span.Trim("\"'".AsSpan());
+        var rooted = path.StartsWith("/") || path.StartsWith("\\\\") ||
+            path.StartsWith("~/") || path.StartsWith("~\\") ||
+            (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/');
+        if (!rooted)
+            return false;
+
+        // Executable paths and editor titles carry application identity;
+        // a directory named after an app must not impersonate that app.
+        foreach (var extension in (ReadOnlySpan<string>)[".exe", ".cmd", ".bat", ".ps1", ".js", ".mjs", ".cjs", ".ts", ".py", ".sh"])
+        {
+            var index = path.IndexOf(extension.AsSpan(), StringComparison.OrdinalIgnoreCase);
+            if (index >= 0 && (index + extension.Length == path.Length || char.IsWhiteSpace(path[index + extension.Length])))
+                return false;
+        }
+        if (TryExtractSeparatedTitle(path, out var separated) &&
+            separated.AppName is { } app && AppIconCatalog.IsKnownApp(app))
+            return false;
+
+        var trimmed = path.TrimEnd("\\/".AsSpan());
+        var lastSeparator = trimmed.LastIndexOfAny('\\', '/');
+        title = trimmed.IsEmpty || (trimmed.Length == 2 && trimmed[1] == ':')
+            ? path.ToString()
+            : trimmed[(lastSeparator + 1)..].ToString();
+        return true;
     }
 
 
@@ -494,20 +539,23 @@ public static class TerminalTitleFormatter
                     segments.Add(piece.ToString());
             }
 
-            // If any segment names a known app, that wins
-            for (var i = segments.Count - 1; i >= 0; i--)
-            {
-                var seg = segments[i];
-                if (AppIconCatalog.IsKnownApp(seg.AsSpan()))
-                    return seg;
-            }
+            // A workspace directory can share a tool's name; only the
+            // executable itself identifies the app outside package launchers.
+            if (segments.Count > 0 && AppIconCatalog.IsKnownApp(segments[^1]))
+                return segments[^1];
 
-            // If the last segment is generic noise (cli, index, main, bin), look at previous segment
-            if (segments.Count >= 2)
+            // Package launchers use generic filenames such as cli.js; workspace
+            // parent directories have no authority over the executable identity.
+            var packageIndex = segments.FindLastIndex(segment => segment.Equals("node_modules", StringComparison.OrdinalIgnoreCase));
+            if (packageIndex >= 0)
             {
-                var last = segments[^1];
-                if (IsGenericNoise(last))
-                    return segments[^2];
+                for (var i = segments.Count - 2; i > packageIndex; i--)
+                {
+                    if (AppIconCatalog.IsKnownApp(segments[i]))
+                        return segments[i];
+                    if (segments[i].StartsWith("pi-", StringComparison.OrdinalIgnoreCase))
+                        return "pi";
+                }
             }
             if (segments.Count > 0)
                 return segments[^1];
@@ -539,10 +587,4 @@ public static class TerminalTitleFormatter
         return token;
     }
 
-    private static bool IsGenericNoise(string segment) =>
-        segment.Equals("cli", StringComparison.OrdinalIgnoreCase) ||
-        segment.Equals("index", StringComparison.OrdinalIgnoreCase) ||
-        segment.Equals("main", StringComparison.OrdinalIgnoreCase) ||
-        segment.Equals("run", StringComparison.OrdinalIgnoreCase) ||
-        segment.Equals("bin", StringComparison.OrdinalIgnoreCase);
 }

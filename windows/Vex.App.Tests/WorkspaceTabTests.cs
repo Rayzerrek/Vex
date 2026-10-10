@@ -6,6 +6,28 @@ namespace Vex.App.Tests;
 
 public sealed class WorkspaceTabTests
 {
+    [Fact]
+    public void TerminalTitle_DirectoryAndSession_UpdatesCompactTitleAndFullTooltip()
+    {
+        using var tab = new WorkspaceTab("Terminal", @"C:\work");
+        var pane = Assert.IsType<TerminalPane>(tab.ActiveLeaf);
+        pane.ApplyTerminalTitle(@"C:\work\git");
+        Assert.Equal("git", tab.Title);
+        Assert.Equal(@"C:\work\git", tab.TitleTooltip);
+        Assert.Null(pane.AppIcon);
+
+        pane.ApplyTerminalTitle("Codex - Fix authentication flow");
+        Assert.Equal("Fix authentication flow", tab.Title);
+        Assert.Equal("Codex - Fix authentication flow", tab.TitleTooltip);
+        Assert.Same(AppIcon.Glyph("codex"), pane.AppIcon);
+
+        tab.HasCustomTitle = true;
+        tab.Title = "My workspace";
+        pane.ApplyTerminalTitle(@"C:\work\My Project");
+        Assert.Equal("My workspace", tab.Title);
+        Assert.Equal("My workspace", tab.TitleTooltip);
+    }
+
     [Theory]
     [InlineData("pwsh")]
     [InlineData("cmd")]

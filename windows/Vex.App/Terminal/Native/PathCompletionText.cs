@@ -1,4 +1,5 @@
 using System.IO;
+using Vex.App.Model;
 
 namespace Vex.App.Terminal.Native;
 
@@ -7,7 +8,9 @@ internal static class PathCompletionText
 {
     internal static string FormatPath(string path, string shellId, bool raw)
     {
-        if (shellId is "gitbash" or "wsl")
+        if (shellId == "wsl")
+            path = WslShellPaths.ToLinuxPath(path);
+        else if (shellId == "gitbash")
         {
             path = path.Replace('\\', '/');
             if (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':')

@@ -81,6 +81,7 @@ public sealed partial class NativeTerminalControl
         {
             if (!TrySetClipboardText(text))
                 return;
+            _lastCopyClipboardSequence = TerminalClipboardListener.SequenceNumber;
             StartCopyAnimation();
         }
         // Copied text is deselected, matching the copy-then-clear convention.
@@ -106,7 +107,7 @@ public sealed partial class NativeTerminalControl
         }
     }
 
-    private void StartCopyAnimation()
+    private void StartCopyAnimation(IReadOnlyList<TerminalCopyRange>? ranges = null)
     {
         StopCopyAnimation();
         if (!SystemParameters.ClientAreaAnimation)
@@ -121,10 +122,13 @@ public sealed partial class NativeTerminalControl
             for (var row = 0; row < Math.Min(_rows, _terminal.FrameRows.Length); row++)
             {
                 var frameRow = _terminal.FrameRows[row];
-                if (!frameRow.HasSelection || row >= _rowVisuals.Count)
+                if (row >= _rowVisuals.Count)
                     continue;
-                var fromCol = Math.Max(0, frameRow.SelectionStart);
-                var toCol = Math.Min(frameRow.SelectionEnd, _cols - 1);
+                var range = ranges?.FirstOrDefault(range => range.Row == row);
+                if (ranges is null ? !frameRow.HasSelection : !ranges.Any(range => range.Row == row))
+                    continue;
+                var fromCol = Math.Max(0, range?.StartColumn ?? frameRow.SelectionStart);
+                var toCol = Math.Min(range?.EndColumn ?? frameRow.SelectionEnd, _cols - 1);
                 if (toCol < fromCol)
                     continue;
                 var rect = new Rect(fromCol * _cellWidth, row * _cellHeight,
@@ -373,6 +377,7 @@ public sealed partial class NativeTerminalControl
         if (!TrySetClipboardText(text))
             return;
 
+        _lastCopyClipboardSequence = TerminalClipboardListener.SequenceNumber;
         StartCopyAnimation();
         if (!TryDeleteKeyboardSelection())
             ClearSelection();

@@ -51,8 +51,15 @@ public abstract class LeafPane : PaneNode, IDisposable
     public string Title
     {
         get => _title;
-        set => Set(ref _title, value);
+        set
+        {
+            if (Set(ref _title, value))
+                OnPropertyChanged(nameof(TitleTooltip));
+        }
     }
+
+    /// <summary>Full terminal title shown when the compact pane title is hovered.</summary>
+    public virtual string TitleTooltip => Title;
 
     public bool IsDirty
     {
@@ -175,6 +182,7 @@ public abstract class LeafPane : PaneNode, IDisposable
 public sealed class TerminalPane : LeafPane
 {
     private readonly string _workingDirectory;
+    private string? _shellId;
     private string _lastTitle = "";
     private Action<string>? _titleRawHandler;
     private bool _iconTrackingRegistered;
@@ -191,11 +199,15 @@ public sealed class TerminalPane : LeafPane
     /// <summary>Launch command is run only when explicitly opening a saved layout, never on session restore.</summary>
     public string? InitialCommand { get; }
     public string WorkingDirectory => (ViewIfCreated as Terminal.Native.NativeTerminalControl)?.WorkingDirectory ?? _workingDirectory;
+    public override string TitleTooltip => string.IsNullOrWhiteSpace(_lastTitle) ? Title : _lastTitle;
+    internal IReadOnlySet<string> ShellHelpers => _shellId == "wsl"
+        ? WslShellPaths.ShellHelpers : AppIconCatalog.ConsoleHelpers;
 
 
     public TerminalPane(string workingDirectory, string? initialCommand = null)
     {
         _workingDirectory = workingDirectory;
+        _shellId = AppSettings.Instance.ShellId;
         InitialCommand = initialCommand;
         Title = "Terminal";
     }
@@ -211,7 +223,7 @@ public sealed class TerminalPane : LeafPane
             return;
         if (terminal.ProcessId is not { } pid)
             return;
-        var process = ProcessTree.DeepestDescendant(index, (uint)pid, AppIconCatalog.ConsoleHelpers);
+        var process = ProcessTree.DeepestDescendant(index, (uint)pid, ShellHelpers);
         if (process is not { } deepest)
         {
             HasActiveProcess = false;
@@ -227,7 +239,7 @@ public sealed class TerminalPane : LeafPane
         // A bare shell is the root process itself. Helper processes used by
         // the console host are not user applications. This keeps detection
         // independent of the shell executable's name.
-        var isShellOrHelper = deepest.Pid == (uint)pid || AppIconCatalog.ConsoleHelpers.Contains(deepest.Name);
+        var isShellOrHelper = deepest.Pid == (uint)pid || ShellHelpers.Contains(deepest.Name);
         if (isShellOrHelper)
         {
             HasActiveProcess = false;
@@ -247,7 +259,9 @@ public sealed class TerminalPane : LeafPane
         // Assign null as well as a resolved icon. Otherwise a shell icon (most
         // often Nushell) survives after a node-hosted app starts but its
         // command line is temporarily unreadable.
-        AppIcon = AppIconCatalog.Resolve(deepest.Name, commandLine, _lastTitle);
+        AppIcon = AppIconCatalog.Resolve(deepest.Name, isShellOrHelper ? null : commandLine, _lastTitle);
+        if (_shellId == "wsl" && isShellOrHelper && (AppIcon is null || AppIcon.IsShellIcon))
+            AppIcon = AppIconCatalog.ResolveIcon("wsl");
         // A shim command line can be temporarily unreadable. Do not cache
         // that miss: the next poll must retry instead of leaving no icon.
         if (!isShim || commandLine is not null)
@@ -331,40 +345,40 @@ public sealed class TerminalPane : LeafPane
         element.Loaded += onLoaded;
     }
 
+    /// <summary>Applies a raw terminal title once, preserving its full text for tooltips and its application identity for icons.</summary>
+    internal void ApplyTerminalTitle(string rawTitle)
+    {
+        if (string.IsNullOrWhiteSpace(rawTitle))
+            return;
+
+        var titleChanged = !string.Equals(_lastTitle, rawTitle, StringComparison.Ordinal);
+        _lastTitle = rawTitle;
+        var parsed = TerminalTitleFormatter.Parse(rawTitle);
+        if (!string.IsNullOrWhiteSpace(parsed.TabTitle))
+            Title = parsed.TabTitle;
+        IsDirty = parsed.IsModified;
+        if (titleChanged)
+            OnPropertyChanged(nameof(TitleTooltip));
+
+        // A cleaned folder name loses the distinction between a directory
+        // called "git" and a command; icon detection must keep the raw title.
+        if (AppIconCatalog.FromTitle(rawTitle) is { } icon)
+            AppIcon = icon;
+    }
+
     protected override object CreateView()
     {
         var view = new Terminal.Native.NativeTerminalControl(_workingDirectory, InitialCommand);
+        _shellId = AppSettings.Instance.ShellId;
+        if (_shellId == "wsl")
+            AppIcon = AppIconCatalog.ResolveIcon("wsl");
         if (!_iconTrackingRegistered)
         {
             _iconTrackingRegistered = true;
             AppIconTracker.Register(this);
         }
-        _titleRawHandler = rawTitle =>
-        {
-            _lastTitle = rawTitle;
-            var parsed = TerminalTitleFormatter.Parse(rawTitle);
-            IsDirty = parsed.IsModified;
-
-            // OSC titles arrive before the next process-tree poll and are the
-            // only reliable signal for some WSL and Node launchers.
-            if (AppIconCatalog.FromTitle(rawTitle) is { } icon)
-                AppIcon = icon;
-        };
+        _titleRawHandler = ApplyTerminalTitle;
         view.TitleRawChanged += _titleRawHandler;
-        view.TitleChanged += title =>
-        {
-            if (!string.IsNullOrWhiteSpace(title))
-            {
-                var parsed = TerminalTitleFormatter.Parse(title);
-                if (!string.IsNullOrWhiteSpace(parsed.TabTitle))
-                    Title = parsed.TabTitle;
-
-                IsDirty = parsed.IsModified;
-
-                if (AppIcon == null && AppIconCatalog.FromTitle(parsed.TabTitle) is { } cleanIcon)
-                    AppIcon = cleanIcon;
-            }
-        };
         view.FocusGained += RequestFocus;
         view.TuiModeChanged += isTui => State = isTui ? PaneState.Busy : PaneState.Idle;
         view.Bell += RequestAttention;

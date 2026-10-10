@@ -180,7 +180,7 @@ public sealed partial class NativeTerminalControl
 
         _ = Task.Run(() =>
         {
-            var launch = ShellLaunchBuilder.BuildShellLaunch(shellId, _initialCommand);
+            var launch = ShellLaunchBuilder.BuildShellLaunch(shellId, _initialCommand, workingDirectory);
             var shellProgram = SelfTestShell ?? launch.Program;
             var shellArguments = SelfTestShell is null ? launch.Arguments : null;
 

@@ -19,6 +19,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     private ImageSource? _preview;
     private bool _needsAttention;
     private bool _isActive;
+    private bool _hasCustomTitle;
     private ProgramStatusSummary _programStatus = ProgramStatusSummary.Empty;
     private int _programStatusPaneNumber;
 
@@ -84,10 +85,25 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     public string Title
     {
         get => _title;
-        set => Set(ref _title, value);
+        set
+        {
+            if (Set(ref _title, value))
+                OnPropertyChanged(nameof(TitleTooltip));
+        }
     }
 
-    public bool HasCustomTitle { get; set; }
+    public bool HasCustomTitle
+    {
+        get => _hasCustomTitle;
+        set
+        {
+            if (Set(ref _hasCustomTitle, value))
+                OnPropertyChanged(nameof(TitleTooltip));
+        }
+    }
+
+    /// <summary>Full title or directory of the focused pane; custom tab names remain authoritative.</summary>
+    public string TitleTooltip => HasCustomTitle ? Title : ActiveLeaf?.TitleTooltip ?? Title;
 
     /// <summary>Last rendered view of this tab, captured as it is left or
     /// immediately before Tab Peek opens. Null until the tab has been shown.</summary>
@@ -202,6 +218,7 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             if (_activeLeaf is not null)
                 _activeLeaf.IsFocused = false;
             _activeLeaf = value;
+            OnPropertyChanged(nameof(TitleTooltip));
             if (IsFocusMode)
                 OnPropertyChanged(nameof(DisplayRoot));
             OnPropertyChanged(nameof(ShowAttentionDot));
@@ -272,6 +289,8 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     private void OnLeafPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(LeafPane.TitleTooltip) && ReferenceEquals(sender, ActiveLeaf) && !HasCustomTitle)
+            OnPropertyChanged(nameof(TitleTooltip));
         if (e.PropertyName == nameof(LeafPane.AppIcon))
             OnPropertyChanged(nameof(TabIcons));
         if (e.PropertyName == nameof(LeafPane.ProgramStatus))

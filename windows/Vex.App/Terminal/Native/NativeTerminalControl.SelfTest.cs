@@ -485,6 +485,9 @@ public sealed partial class NativeTerminalControl
             DrawCopyAnimation(progress);
     }
 
+    /// <summary>Exercises application copy feedback without a Vex selection.</summary>
+    internal void SelfTestApplicationCopy(string text) => ShowApplicationCopyFeedback(text);
+
     /// <summary>Drives link hover without moving the user's desktop pointer.</summary>
     internal void SelfTestLinkHover(int col, int row)
     {

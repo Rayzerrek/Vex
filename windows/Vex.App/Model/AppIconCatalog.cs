@@ -15,6 +15,9 @@ namespace Vex.App.Model;
 /// </summary>
 internal static partial class AppIconCatalog
 {
+    /// <summary>Catalog glyph names for validating every bundled application icon.</summary>
+    internal static IEnumerable<string> GlyphSlugs => GlyphBySlug.Keys;
+
     /// <summary>Console-host helper processes that are not user applications.</summary>
     internal static readonly IReadOnlySet<string> ConsoleHelpers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -53,7 +56,7 @@ internal static partial class AppIconCatalog
             ["ssh"] = () => AppIcon.Badge("S", Color.FromRgb(0x2B, 0x8C, 0xBE)),
             ["aider"] = () => AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6)),
             ["cmd"] = () => AppIcon.Badge(">", Color.FromRgb(0x00, 0x78, 0xD4), isShellIcon: true),
-            ["wsl"] = () => AppIcon.Badge("W", HashColor("wsl"), isShellIcon: true),
+            ["wsl"] = AppIcon.WslShellIcon,
             ["nano"] = () => AppIcon.Badge("na", Color.FromRgb(0x4A, 0x90, 0xE2)),
             ["micro"] = () => AppIcon.Badge("mc", Color.FromRgb(0x50, 0xE3, 0xC2)),
             ["emacs"] = () => AppIcon.Badge("em", Color.FromRgb(0x7F, 0x5A, 0xB6)),
@@ -220,7 +223,7 @@ internal static partial class AppIconCatalog
         if (string.IsNullOrWhiteSpace(commandLine))
             return null;
 
-        var parsed = TerminalTitleFormatter.Parse(commandLine);
+        var parsed = TerminalTitleFormatter.ParseCommandLine(commandLine);
         if (!string.IsNullOrEmpty(parsed.AppName) &&
             !parsed.AppName.Equals(shimName, StringComparison.OrdinalIgnoreCase) &&
             ResolveIcon(parsed.AppName, isDark) is { } parsedIcon)
@@ -228,8 +231,12 @@ internal static partial class AppIconCatalog
             return parsedIcon;
         }
 
+        var packageIndex = commandLine.IndexOf("node_modules", StringComparison.OrdinalIgnoreCase);
+        if (packageIndex < 0)
+            return null;
+
         var shimSpan = shimName.AsSpan();
-        foreach (var segment in EnumerateSegments(commandLine))
+        foreach (var segment in EnumerateSegments(commandLine[(packageIndex + "node_modules".Length)..]))
         {
             if (segment.Equals(shimSpan, StringComparison.OrdinalIgnoreCase) || CommandLineNoiseLookup.Contains(segment))
                 continue;
@@ -252,24 +259,28 @@ internal static partial class AppIconCatalog
         if (string.IsNullOrWhiteSpace(commandLine) || !ShimHosts.Contains(processName))
             return null;
 
-        var parsed = TerminalTitleFormatter.Parse(commandLine);
+        var parsed = TerminalTitleFormatter.ParseCommandLine(commandLine);
         if (!string.IsNullOrEmpty(parsed.AppName) &&
-            !parsed.AppName.Equals(processName, StringComparison.OrdinalIgnoreCase))
+            !parsed.AppName.Equals(processName, StringComparison.OrdinalIgnoreCase) && IsKnownApp(parsed.AppName))
         {
             return parsed.AppName;
         }
 
+        var packageIndex = commandLine.IndexOf("node_modules", StringComparison.OrdinalIgnoreCase);
+        var packagePath = packageIndex < 0 ? null : commandLine[(packageIndex + "node_modules".Length)..];
         var procSpan = processName.AsSpan();
-        foreach (var segment in EnumerateSegments(commandLine))
+        foreach (var segment in EnumerateSegments(packagePath))
         {
             if (segment.Equals(procSpan, StringComparison.OrdinalIgnoreCase) || CommandLineNoiseLookup.Contains(segment))
                 continue;
 
             if (IsKnownApp(segment))
                 return segment.ToString();
+            if (segment.StartsWith("pi-", StringComparison.OrdinalIgnoreCase))
+                return "pi";
         }
 
-        return null;
+        return string.Equals(parsed.AppName, processName, StringComparison.OrdinalIgnoreCase) ? null : parsed.AppName;
     }
 
     /// <summary>
@@ -382,13 +393,12 @@ internal static partial class AppIconCatalog
         if (!string.IsNullOrEmpty(parsed.AppName) && ResolveIcon(parsed.AppName, isDark) is { } icon)
             return icon;
 
-        if (!string.IsNullOrEmpty(parsed.TabTitle) && ResolveIcon(parsed.TabTitle, isDark) is { } tabIcon)
-            return tabIcon;
-
-        foreach (var segment in EnumerateSegments(title))
+        if (parsed.AppName is not null)
         {
-            if (ResolveIcon(segment, isDark) is { } match)
-                return match;
+            var command = title.AsSpan().Trim();
+            var space = command.IndexOfAny(' ', '\t');
+            if (space > 0 && ResolveIcon(command[..space], isDark) is { } runnerIcon)
+                return runnerIcon;
         }
 
         return null;

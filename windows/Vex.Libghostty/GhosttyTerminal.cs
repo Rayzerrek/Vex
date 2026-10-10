@@ -64,7 +64,8 @@ public sealed class GhosttyTerminal : IDisposable
     // (whitelist, never a bare prefix) so ordinary text is never eaten.
     private enum FeedState { Normal, EscapeSeen, InOsc, InOscEscapeSeen, DropOsc, DropOscEscapeSeen, InCsi, InDcs, InDcsEsc, PlusSeen, InPlusQuery, DollarSeen, DollarQSeen }
     private FeedState _feedState;
-    private readonly byte[] _oscBuf = new byte[4096];
+    private byte[] _oscBuf = new byte[4096];
+    private const int MaxClipboardOscBytes = 1024 * 1024;
     private int _oscLen;
     private readonly ProgramStatusTracker _programStatus = new();
     private static readonly byte[] ProgramStatusReply = "\x1b]7501;?\x1b\\"u8.ToArray();
@@ -100,6 +101,9 @@ public sealed class GhosttyTerminal : IDisposable
     /// <summary>Raised when the application rings the terminal bell (BEL).
     /// Fires on the feed thread, like <see cref="TitleChanged"/>.</summary>
     public event Action? Bell;
+
+    /// <summary>Decoded OSC 52 clipboard write on the feed thread; clipboard reads are never exposed.</summary>
+    public event Action<string>? ClipboardWriteRequested;
 
     /// <summary>Program status changes on the feed thread; the boolean latches attention across UI batching.</summary>
     public event Action<ProgramStatusSummary, bool>? ProgramStatusChanged;
@@ -293,6 +297,17 @@ public sealed class GhosttyTerminal : IDisposable
                         }
                         else
                         {
+                            if (_oscBuf.AsSpan(0, _oscLen).StartsWith("52;"u8))
+                            {
+                                if (_oscBuf.Length < MaxClipboardOscBytes)
+                                {
+                                    Array.Resize(ref _oscBuf, Math.Min(_oscBuf.Length * 2, MaxClipboardOscBytes));
+                                    _oscBuf[_oscLen++] = b;
+                                }
+                                else
+                                    _feedState = FeedState.DropOsc;
+                                break;
+                            }
                             // Oversized status reports are discarded through their terminator.
                             if (_oscBuf.AsSpan(0, _oscLen).StartsWith("7501;"u8))
                             {
@@ -466,6 +481,9 @@ public sealed class GhosttyTerminal : IDisposable
         finally
         {
             System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+            // Large clipboard writes must not inflate every later output chunk's pooled buffer.
+            if (_feedState == FeedState.Normal && _oscBuf.Length > 4096)
+                _oscBuf = new byte[4096];
         }
     }
 
@@ -478,7 +496,7 @@ public sealed class GhosttyTerminal : IDisposable
     private void FlushOscBel(byte[] dst, ref int written)
     {
         ReadWorkingDirectoryOsc();
-        if (ReadProgramStatusOsc(1))
+        if (ReadClipboardOsc() || ReadProgramStatusOsc(1))
             return;
         dst[written++] = 0x1B;
         dst[written++] = 0x5D;
@@ -490,7 +508,7 @@ public sealed class GhosttyTerminal : IDisposable
     private void FlushOscSt(byte[] dst, ref int written)
     {
         ReadWorkingDirectoryOsc();
-        if (ReadProgramStatusOsc(2))
+        if (ReadClipboardOsc() || ReadProgramStatusOsc(2))
             return;
         dst[written++] = 0x1B;
         dst[written++] = 0x5D;
@@ -498,6 +516,32 @@ public sealed class GhosttyTerminal : IDisposable
             dst[written++] = _oscBuf[j];
         dst[written++] = 0x1B;
         dst[written++] = 0x5C;
+    }
+
+    private bool ReadClipboardOsc()
+    {
+        var osc = _oscBuf.AsSpan(0, _oscLen);
+        if (!osc.StartsWith("52;"u8))
+            return false;
+        var body = osc[3..];
+        var separator = body.IndexOf((byte)';');
+        if (separator < 0)
+            return true;
+        var targets = body[..separator];
+        if (!targets.IsEmpty && targets.IndexOfAny((byte)'c', (byte)'s') < 0)
+            return true;
+        var payload = body[(separator + 1)..];
+        if (payload.SequenceEqual("?"u8))
+            return true;
+        try
+        {
+            var bytes = Convert.FromBase64String(Encoding.ASCII.GetString(payload));
+            var text = new UTF8Encoding(false, true).GetString(bytes);
+            ClipboardWriteRequested?.Invoke(text);
+        }
+        catch (FormatException) { }
+        catch (DecoderFallbackException) { }
+        return true;
     }
 
     private bool ReadProgramStatusOsc(int terminatorLength)

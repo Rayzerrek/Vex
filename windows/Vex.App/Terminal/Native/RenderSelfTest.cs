@@ -711,6 +711,25 @@ internal static class RenderSelfTest
     private static void CheckCopyFeedback(NativeTerminalControl control, string background)
     {
         control.SelfTestClearSelection();
+        control.SelfTestFeed($"{background}\x1b[2J\x1b[Hprefix copied text suffix\x1b[2;1H");
+        var applicationPlain = Capture(control);
+        control.SelfTestApplicationCopy("copied text");
+        if (SystemParameters.ClientAreaAnimation)
+        {
+            var applicationCopy = Capture(control);
+            Assert(control, CellCornerLum(control, applicationPlain, 9, 0) != CellCornerLum(control, applicationCopy, 9, 0),
+                "application copy: feedback works without a terminal selection");
+            Assert(control, CellCornerLum(control, applicationPlain, 2, 0) == CellCornerLum(control, applicationCopy, 2, 0),
+                "application copy: feedback leaves the surrounding text untouched");
+        }
+        control.SelfTestCopyFeedback(1);
+        Assert(control, PixelsEqual(applicationPlain, Capture(control)),
+            "application copy: completion restores the application's pixels");
+        control.SelfTestApplicationCopy("copied content outside the visible viewport");
+        if (SystemParameters.ClientAreaAnimation)
+            Assert(control, !PixelsEqual(applicationPlain, Capture(control)),
+                "application copy: offscreen source still receives feedback at the caret");
+        control.SelfTestCopyFeedback(1);
         control.SelfTestFeed($"{background}\x1b[2J\x1b[Hprefix first line\r\nsecond line end\x1b[3;1H");
         var plain = Capture(control);
         control.SelfTestSelect(7, 0, 5, 1);
