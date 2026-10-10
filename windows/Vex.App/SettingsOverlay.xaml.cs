@@ -270,7 +270,10 @@ public sealed partial class SettingsOverlay : OverlayControl
         _ = Task.Run(() => Dispatcher.BeginInvoke(DispatcherPriority.Background, PopulateShellList));
     }
 
-    private sealed record ShellChoice(string Id, string DisplayName, string? Detail);
+    private sealed record ShellChoice(string Id, string DisplayName, string? Detail)
+    {
+        public System.Windows.Media.ImageSource? Icon => AppIconCatalog.ResolveIcon(Id)?.Image;
+    }
 
     private void PopulateShellList()
     {

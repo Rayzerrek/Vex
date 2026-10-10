@@ -39,11 +39,24 @@ internal static class ShellLaunchBuilder
         } catch { }
         """;
 
-    internal static (string Program, string Arguments) BuildShellLaunch(string? shellId, string? initialCommand = null)
+    internal static (string Program, string Arguments) BuildShellLaunch(string? shellId, string? initialCommand = null, string? workingDirectory = null)
     {
         var resolved = ShellRegistry.Resolve(shellId);
         var program = resolved?.Program ?? TerminalSession.DefaultShell();
         var arguments = resolved?.Arguments ?? "";
+        if (shellId == "wsl" && resolved is not null && workingDirectory is not null)
+        {
+            var network = WslShellPaths.ParseNetworkPath(workingDirectory);
+            if (network is { } folder)
+            {
+                // WSL preserves unnecessary quotes in the distribution name.
+                var distribution = folder.Distribution;
+                arguments += " --distribution " + (distribution.All(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.')
+                    ? distribution : QuoteWindowsArgument(distribution));
+            }
+            arguments += " --cd " + QuoteWindowsArgument(WslShellPaths.ToLinuxPath(workingDirectory));
+            return (program, arguments.TrimStart());
+        }
         if (resolved is null && shellId is "pwsh" or "powershell")
             shellId = "system";
         if (shellId is not (null or "system" or "cmd" or "pwsh" or "powershell" or "nu"))

@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Collections.Concurrent;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace Vex.App.Model;
 
@@ -11,7 +13,7 @@ namespace Vex.App.Model;
 /// </summary>
 public sealed class AppIcon
 {
-    private static readonly Dictionary<string, AppIcon> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, AppIcon> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Typeface BadgeTypeface =
         new(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
 
@@ -27,6 +29,28 @@ public sealed class AppIcon
     /// <summary>Shell icons appear only in tabs containing a single shell pane.</summary>
     public bool IsShellIcon { get; }
 
+    /// <summary>Uses the supplied Linux artwork for the WSL shell at every UI scale.</summary>
+    internal static AppIcon WslShellIcon()
+    {
+        const string key = "wsl-shell";
+        if (Cache.TryGetValue(key, out var cached))
+            return cached;
+        using var stream = typeof(AppIcon).Assembly.GetManifestResourceStream("Vex.App.Assets.wsl.png")
+            ?? throw new InvalidOperationException("WSL shell icon resource is missing.");
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        bitmap.StreamSource = stream;
+        bitmap.EndInit();
+        bitmap.Freeze();
+        var drawing = new ImageDrawing(bitmap, new Rect(0, 0, 16, 16));
+        drawing.Freeze();
+        var image = new DrawingImage(drawing);
+        image.Freeze();
+        var icon = new AppIcon(image, isShellIcon: true);
+        return Cache.GetOrAdd(key, icon);
+    }
+
     internal static AppIcon Glyph(string slug, bool? isDark = null)
     {
         var dark = isDark ?? AppSettings.Instance.IsDarkAppearance;
@@ -37,8 +61,7 @@ public sealed class AppIcon
         {
             var icon = new AppIcon(BuildGlyphImage(resolved.Geometry, resolved.Color),
                 slug is "powershell" or "gnubash" or "fishshell" or "nushell" or "zsh");
-            Cache[key] = icon;
-            return icon;
+            return Cache.GetOrAdd(key, icon);
         }
         // A glyph that fails to parse must not poison the icon catalog: the
         // callers build it through a Lazy, and an exception thrown by a lazy
@@ -47,8 +70,7 @@ public sealed class AppIcon
         var fallback = Badge(
             slug.Length > 0 ? char.ToUpperInvariant(slug[0]).ToString() : "?",
             AppIconCatalog.HashColor(slug));
-        Cache[key] = fallback;
-        return fallback;
+        return Cache.GetOrAdd(key, fallback);
     }
 
     internal static AppIcon Badge(string text, Color color, bool isShellIcon = false)
@@ -57,8 +79,7 @@ public sealed class AppIcon
         if (Cache.TryGetValue(key, out var cached))
             return cached;
         var icon = new AppIcon(BuildBadgeImage(text, color), isShellIcon);
-        Cache[key] = icon;
-        return icon;
+        return Cache.GetOrAdd(key, icon);
     }
 
     private static DrawingImage BuildGlyphImage(Geometry glyph, Color color)

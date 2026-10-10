@@ -152,6 +152,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         UseLayoutRounding = true;
         _terminal = new GhosttyTerminal(80, 24);
         _terminal.ProgramStatusChanged += QueueProgramStatus;
+        _terminal.ClipboardWriteRequested += OnApplicationClipboardWrite;
         _terminal.TitleChanged += title =>
         {
             // Feed now runs on the PTY reader thread, so titles arrive off
@@ -224,6 +225,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         {
             if (_disposed)
                 return;
+            StartClipboardListener();
             _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
             RebuildFontMetrics();
             if (_needsFullRedraw && IsVisible)
@@ -250,6 +252,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         };
         Unloaded += (_, _) =>
         {
+            StopClipboardListener();
             ClosePathCompletion();
             StopCopyAnimation();
             ClearLinkHover();
@@ -1453,6 +1456,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         StopCopyAnimation();
         ClearLinkHover();
         _pendingSessionInput = null;
+        StopClipboardListener();
         ClosePathCompletion();
         _pathSearchCancellation?.Dispose();
         // WPF can deliver focus loss and Unloaded after the view is disposed.

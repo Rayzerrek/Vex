@@ -6,6 +6,50 @@ namespace Vex.App.Tests;
 public sealed class TerminalTitleFormatterTests
 {
     [Theory]
+    [InlineData(@"C:\work\git", "git")]
+    [InlineData(@"C:\work\My Project\", "My Project")]
+    [InlineData("~/work/codex", "codex")]
+    [InlineData("/home/user/My Project", "My Project")]
+    [InlineData(@"C:\work\Design - Notes", "Design - Notes")]
+    public void Parse_DirectoryTitle_PreservesFolderWithoutApplicationIdentity(string rawTitle, string folder)
+    {
+        var parsed = TerminalTitleFormatter.Parse(rawTitle);
+        Assert.Equal(folder, parsed.TabTitle);
+        Assert.Null(parsed.AppName);
+        Assert.Null(AppIconCatalog.FromTitle(rawTitle));
+    }
+
+    [Theory]
+    [InlineData("Fix authentication flow")]
+    [InlineData("Review codex integration")]
+    public void Parse_SessionWithoutApplicationPrefix_PreservesCompleteTitle(string title)
+    {
+        Assert.Equal(title, TerminalTitleFormatter.Format(title));
+        Assert.Null(AppIconCatalog.FromTitle(title));
+    }
+
+    [Theory]
+    [InlineData("server.js", "server")]
+    [InlineData("index.js", "index")]
+    [InlineData("cli.js", "cli")]
+    public void Resolve_NodeScriptInGitDirectory_DoesNotUseGitIcon(string script, string tool)
+    {
+        var commandLine = @"node C:\work\git\" + script;
+        var resolved = AppIconCatalog.Resolve("node", commandLine, null, isDark: true);
+        Assert.Same(AppIcon.Glyph("nodedotjs", isDark: true), resolved);
+        Assert.Equal(tool, AppIconCatalog.ResolveToolName("node", commandLine));
+    }
+
+    [Theory]
+    [InlineData(@"node C:\npm\node_modules\@anthropic-ai\claude-code\cli.js", "claudecode", "claude-code")]
+    [InlineData(@"node C:\npm\node_modules\@mariozechner\pi-coding-agent\dist\cli.js", "pi", "pi")]
+    public void Resolve_NodePackageLauncher_IdentifiesPackageInsteadOfGenericScript(string commandLine, string slug, string tool)
+    {
+        Assert.Same(AppIcon.Glyph(slug, isDark: true), AppIconCatalog.Resolve("node", commandLine, null, isDark: true));
+        Assert.Equal(tool, AppIconCatalog.ResolveToolName("node", commandLine));
+    }
+
+    [Theory]
     [InlineData("bun pi > vex", "pi")]
     [InlineData("bun pi >> vex.log", "pi")]
     [InlineData("bun pi 2>&1", "pi")]

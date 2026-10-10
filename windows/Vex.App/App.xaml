@@ -99,6 +99,37 @@
         <SolidColorBrush x:Key="VexToggleThumb" Color="{DynamicResource VexToggleThumbColor}"/>
         <SolidColorBrush x:Key="VexOnAccent" Color="{DynamicResource VexOnAccentColor}"/>
 
+        <!-- Keep the splitter's hit area wider than its visible contour. -->
+        <Style x:Key="WorkspaceSplitter" TargetType="GridSplitter">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GridSplitter">
+                        <Grid Background="Transparent">
+                            <Border x:Name="Divider" Background="{DynamicResource VexBorder}"
+                                    Width="1" HorizontalAlignment="Center" Margin="0,5"
+                                    CornerRadius="0.5" Opacity="0.18"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="ResizeDirection" Value="Rows">
+                                <Setter TargetName="Divider" Property="Width" Value="Auto"/>
+                                <Setter TargetName="Divider" Property="Height" Value="1"/>
+                                <Setter TargetName="Divider" Property="HorizontalAlignment" Value="Stretch"/>
+                                <Setter TargetName="Divider" Property="VerticalAlignment" Value="Center"/>
+                                <Setter TargetName="Divider" Property="Margin" Value="5,0"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Divider" Property="Opacity" Value="0.65"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Divider" Property="Opacity" Value="1"/>
+                                <Setter TargetName="Divider" Property="Background" Value="{DynamicResource VexFocusBorder}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- WPF's default caret inverts the control's own background, which on
              the theme's dark surfaces and on the editor's transparent one
              inverts to a near-invisible color. Every input draws the chrome's
@@ -255,7 +286,7 @@
             <Setter Property="Foreground" Value="{DynamicResource VexTextDim}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width" Value="44"/>
-            <Setter Property="Height" Value="40"/>
+            <Setter Property="Height" Value="44"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>

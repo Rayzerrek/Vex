@@ -8,22 +8,59 @@ namespace Vex.App.Tests;
 
 public sealed class AppIconRenderingTests
 {
+    public static IEnumerable<object[]> GlyphCases => AppIconCatalog.GlyphSlugs.Select(slug => new object[] { slug });
+
     [Theory]
-    [InlineData("nushell")]
-    [InlineData("anthropic")]
-    [InlineData("powershell")]
-    [InlineData("linux")]
-    [InlineData("codex")]
-    [InlineData("antigravity")]
+    [MemberData(nameof(GlyphCases))]
     public void GlyphImage_PreservesSquareArtboard(string slug)
     {
         foreach (var isDark in new[] { true, false })
         {
+            Assert.NotNull(AppIconCatalog.GeometryFor(slug, isDark));
             var image = AppIcon.Glyph(slug, isDark).Image;
             Assert.Equal(16, image.Width, 6);
             Assert.Equal(16, image.Height, 6);
             Assert.True(image.IsFrozen);
         }
+    }
+
+    [Fact]
+    public void CatalogIcons_AtUiScales_RenderVisiblePixels()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var names = AppIconCatalog.GlyphSlugs.Concat(new[] { "wsl", "cmd", "lazygit", "btop", "ssh", "aider", "nano", "micro", "emacs" });
+                foreach (var name in names)
+                foreach (var isDark in new[] { true, false })
+                foreach (var scale in new[] { 1.0, 1.25, 1.5, 2.0 })
+                {
+                    var icon = Assert.IsType<AppIcon>(AppIconCatalog.ResolveIcon(name, isDark));
+                    Assert.True(icon.Image.IsFrozen);
+                    var visual = new DrawingVisual();
+                    using (var context = visual.RenderOpen())
+                        context.DrawImage(icon.Image, new Rect(0, 0, 16, 16));
+                    var size = (int)(16 * scale);
+                    var bitmap = new RenderTargetBitmap(size, size, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+                    bitmap.Render(visual);
+                    var pixels = new byte[size * size * 4];
+                    bitmap.CopyPixels(pixels, size * 4, 0);
+                    Assert.True(Enumerable.Range(0, size * size).Any(pixel => pixels[pixel * 4 + 3] > 0),
+                        $"Icon {name} is empty in {(isDark ? "dark" : "light")} appearance at {scale * 100}%.");
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(10000), "Catalog icon rendering did not finish.");
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     [Theory]

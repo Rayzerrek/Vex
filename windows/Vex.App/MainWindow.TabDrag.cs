@@ -63,7 +63,7 @@ public partial class MainWindow
         _ghostWidth = Math.Max(100, width);
         TabDragGhostHost.Width = _ghostWidth;
         TabDragGhost.Content = _dragTab;
-        TabDragGhostHost.Height = Math.Min(30, TabBarGrid.ActualHeight - 6);
+        TabDragGhostHost.Height = slot?.ActualHeight ?? TabBarGrid.ActualHeight - 10;
         _ghostVisible = true;
         Canvas.SetLeft(TabDragGhostHost, _dragTabStart.X - _ghostWidth / 2);
         Canvas.SetTop(TabDragGhostHost, (TabBarGrid.ActualHeight - TabDragGhostHost.Height) / 2.0);

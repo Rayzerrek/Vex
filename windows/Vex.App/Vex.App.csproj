@@ -9,6 +9,7 @@
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
     <Resource Include="Assets\app-5.png" />
+    <EmbeddedResource Include="Assets\wsl.png" LogicalName="Vex.App.Assets.wsl.png" />
     <Content Include="ShellIntegration\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 

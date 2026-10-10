@@ -199,6 +199,8 @@ public sealed partial class MainWindow : Window
 
     private void ApplyBackdrop()
     {
+        WindowFrame.ApplyRoundedFrame(this, AppSettings.Instance.IsDarkAppearance);
+
         // Dark chrome keeps modern DWM acrylic where it is reliable. Windows
         // 10 and any DWM that rejects the request use a fully opaque window;
         // the legacy blur path can leave stale WPF glyph tiles after Alt+Tab.
@@ -662,6 +664,11 @@ public sealed partial class MainWindow : Window
     private void NewProject_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFolderDialog { Title = "Choose a project directory" };
+        if (AppSettings.Instance.ShellId == "wsl")
+        {
+            dialog.Title = "Choose a project directory — WSL";
+            dialog.InitialDirectory = @"\\wsl.localhost\";
+        }
         if (dialog.ShowDialog(this) == true)
             _workspace.NewProject(dialog.FolderName);
     }

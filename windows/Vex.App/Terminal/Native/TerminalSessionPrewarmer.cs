@@ -133,7 +133,7 @@ internal static class TerminalSessionPrewarmer
         }
 
         StartupMark.Note("terminal prewarm spawn begin");
-        var launch = ShellLaunchBuilder.BuildShellLaunch(slot.ShellId);
+        var launch = ShellLaunchBuilder.BuildShellLaunch(slot.ShellId, workingDirectory: slot.WorkingDirectory);
         var shellProgram = launch.Program;
         var shellArguments = launch.Arguments;
 
