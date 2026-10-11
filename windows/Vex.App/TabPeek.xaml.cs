@@ -1,7 +1,9 @@
-using System.Linq;
+using System.Collections.Specialized;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Vex.App.Model;
 
 namespace Vex.App;
@@ -9,11 +11,23 @@ namespace Vex.App;
 public sealed partial class TabPeek : OverlayControl
 {
     private Project? _project;
+    private readonly DispatcherTimer _previewTimer;
+    private List<TabPeekPreview> _previews = new();
+    private int _nextPreview;
+
+    internal bool IsRefreshingPreviews => _previewTimer.IsEnabled;
 
     public TabPeek()
     {
         InitializeComponent();
         HideOnWindowDeactivate();
+        _previewTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(100),
+        };
+        _previewTimer.Tick += (_, _) => RefreshVisiblePreviews();
+        Unloaded += (_, _) => ReleasePreviews();
+        IsVisibleChanged += (_, _) => { if (!IsVisible) _previewTimer.Stop(); };
     }
 
     protected override void HideCore() => Hide();
@@ -24,11 +38,10 @@ public sealed partial class TabPeek : OverlayControl
 
     public void Show(Project project)
     {
+        ReleasePreviews();
         _project = project;
-
-        // Build previews once on open — O(panes), no terminal controls created.
-        var previews = project.Tabs.Select(t => new TabPeekPreview(t)).ToList();
-        TabList.ItemsSource = previews;
+        project.Tabs.CollectionChanged += OnTabsChanged;
+        RebuildPreviews();
 
         // Pre-select the active tab so the user starts nearby.
         var activeIndex = project.SelectedTab is { } selected
@@ -39,11 +52,63 @@ public sealed partial class TabPeek : OverlayControl
         OpenPopup(this);
         AnimateOverlayOpen(Backdrop, Panel, PanelScale, PanelTranslate);
 
-        Dispatcher.BeginInvoke(() => TabList.Focus(),
-            System.Windows.Threading.DispatcherPriority.Input);
+        _previewTimer.Start();
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (Visibility != Visibility.Visible || !_previewTimer.IsEnabled) return;
+            TabList.Focus();
+            RefreshVisiblePreviews();
+        }, DispatcherPriority.Input);
     }
 
-    public void Hide() => HideWithAnimation(Backdrop, Panel, () => Hidden?.Invoke());
+    public void Hide()
+    {
+        _previewTimer.Stop();
+        HideWithAnimation(Backdrop, Panel, () =>
+        {
+            ReleasePreviews();
+            Hidden?.Invoke();
+        });
+    }
+
+    private void OnTabsChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildPreviews();
+
+    private void RebuildPreviews()
+    {
+        var selected = (TabList.SelectedItem as TabPeekPreview)?.Tab ?? _project?.SelectedTab;
+        foreach (var preview in _previews) preview.Dispose();
+        _previews = _project?.Tabs.Select(tab => new TabPeekPreview(tab)).ToList() ?? new();
+        TabList.ItemsSource = _previews;
+        TabList.SelectedItem = _previews.FirstOrDefault(preview => ReferenceEquals(preview.Tab, selected));
+        _nextPreview = 0;
+    }
+
+    private void ReleasePreviews()
+    {
+        _previewTimer.Stop();
+        if (_project is not null) _project.Tabs.CollectionChanged -= OnTabsChanged;
+        _project = null;
+        foreach (var preview in _previews) preview.Dispose();
+        _previews.Clear();
+        TabList.ItemsSource = null;
+    }
+
+    private void RefreshVisiblePreviews()
+    {
+        if (!IsVisible || _previews.Count == 0) return;
+        var started = Stopwatch.GetTimestamp();
+        // Offscreen thumbnails get no rendering work; a round-robin budget
+        // prevents a large project from holding up input while opening Peek.
+        for (var visited = 0; visited < _previews.Count; visited++)
+        {
+            var preview = _previews[_nextPreview];
+            _nextPreview = (_nextPreview + 1) % _previews.Count;
+            if (TabList.ItemContainerGenerator.ContainerFromItem(preview) is ListBoxItem { IsVisible: true } item
+                && item.TransformToAncestor(TabList).TransformBounds(new Rect(item.RenderSize)).IntersectsWith(new Rect(TabList.RenderSize)))
+                preview.RefreshTerminalPreviews();
+            if (Stopwatch.GetElapsedTime(started).TotalMilliseconds >= 6) break;
+        }
+    }
 
     private void Backdrop_MouseDown(object sender, MouseButtonEventArgs e) => Hide();
 
@@ -98,7 +163,8 @@ public sealed partial class TabPeek : OverlayControl
 
     private void TabList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        // Selection only moves the highlight card; Enter activates the tab.
+        // Navigation highlights a preview without activating or resizing its terminal.
+        if (TabList.SelectedItem is { } selected) TabList.ScrollIntoView(selected);
     }
 
     private void ActivateSelected()

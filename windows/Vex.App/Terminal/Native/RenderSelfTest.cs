@@ -1280,6 +1280,12 @@ internal static class RenderSelfTest
             ? "PASS cursor blink modes: steady/hidden stop timer, steady stays painted, reveal restarts"
             : "FAIL cursor blink modes: stale timer or incorrect steady/hidden caret");
         ParityCheck(control, "cursor-blink-modes");
+        Report(control, control.SelfTestTerminalPreview()
+            ? "PASS terminal preview: live hidden frames, immutable cache, atomic output and unchanged geometry"
+            : "FAIL terminal preview: stale frame, resize or torn synchronized output");
+        Report(control, Window.GetWindow(control) is MainWindow window && window.SelfTestTabPeek(control)
+            ? "PASS tab peek: overview opens without resizing or activating a terminal and stops work on close"
+            : "FAIL tab peek: terminal geometry changed or preview work survived dismissal");
         Report(control, "done");
     }
 

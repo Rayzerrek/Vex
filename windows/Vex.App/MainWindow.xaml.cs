@@ -4,7 +4,6 @@ using System.Windows.Data;
 using System.Diagnostics;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Vex.App.Model;
 using Vex.App.Terminal.Native;
@@ -87,16 +86,6 @@ public sealed partial class MainWindow : Window
         };
         Activated += (_, _) => _workspace.SelectedProject?.RefreshGitBranch();
 
-        foreach (var project in workspace.Projects)
-            HookProject(project);
-        workspace.Projects.CollectionChanged += (_, e) =>
-        {
-            if (e.NewItems is null)
-                return;
-            foreach (Project project in e.NewItems)
-                HookProject(project);
-        };
-
         Model.StartupMark.Note("ctor wiring done");
 
         ContentRendered += (_, _) =>
@@ -131,40 +120,6 @@ public sealed partial class MainWindow : Window
         await Task.Delay(600);
         if (IsLoaded)
             _ = SettingsOverlay;
-    }
-
-    private void HookProject(Project project)
-    {
-        project.TabDeactivating += tab =>
-        {
-            if (ReferenceEquals(project, _workspace.SelectedProject))
-                CaptureTabPreview(tab);
-        };
-    }
-
-    private void CaptureTabPreview(WorkspaceTab tab)
-    {
-        if (!ContentArea.IsLoaded || ContentArea.ActualWidth <= 0 || ContentArea.ActualHeight <= 0)
-            return;
-
-        const int previewWidth = 360;
-        const int previewHeight = 220;
-        var drawing = new DrawingVisual();
-        using (var context = drawing.RenderOpen())
-        {
-            var brush = new VisualBrush(ContentArea)
-            {
-                Stretch = Stretch.UniformToFill,
-                AlignmentX = AlignmentX.Center,
-                AlignmentY = AlignmentY.Center,
-            };
-            context.DrawRectangle(brush, null, new Rect(0, 0, previewWidth, previewHeight));
-        }
-
-        var bitmap = new RenderTargetBitmap(previewWidth, previewHeight, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(drawing);
-        bitmap.Freeze();
-        tab.Preview = bitmap;
     }
 
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -655,8 +610,6 @@ public sealed partial class MainWindow : Window
             _tabPeek.Hide();
         else if (_workspace.SelectedProject is { } project)
         {
-            if (project.SelectedTab is { } selected)
-                CaptureTabPreview(selected);
             TabPeek.Show(project);
         }
     }
