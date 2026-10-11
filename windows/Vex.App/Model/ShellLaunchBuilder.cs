@@ -42,9 +42,11 @@ internal static class ShellLaunchBuilder
     internal static (string Program, string Arguments) BuildShellLaunch(string? shellId, string? initialCommand = null, string? workingDirectory = null)
     {
         var resolved = ShellRegistry.Resolve(shellId);
+        if (ShellRegistry.IsWsl(shellId) && resolved is null)
+            throw new FileNotFoundException("WSL launcher is unavailable. Install WSL before opening this project.");
         var program = resolved?.Program ?? TerminalSession.DefaultShell();
         var arguments = resolved?.Arguments ?? "";
-        if (shellId == "wsl" && resolved is not null)
+        if (ShellRegistry.IsWsl(shellId) && resolved is not null)
         {
             var network = workingDirectory is null ? null : WslShellPaths.ParseNetworkPath(workingDirectory);
             if (network is { } folder)
@@ -58,8 +60,11 @@ internal static class ShellLaunchBuilder
                 arguments += " --cd " + QuoteWindowsArgument(WslShellPaths.ToLinuxPath(workingDirectory));
             // The token survives exec and prewarming, so Linux processes can be
             // attributed to this pane even when the application sets no title.
-            arguments += " --exec env " + WslProcessTracker.SessionVariable + Guid.NewGuid().ToString("N") +
-                " sh -c " + QuoteWindowsArgument("exec \"$SHELL\" -l");
+            arguments += " --exec env " + WslProcessTracker.SessionVariable + Guid.NewGuid().ToString("N");
+            if (ShellRegistry.WslExecutable(shellId) is { } executable)
+                arguments += " sh -c " + QuoteWindowsArgument("exec \"$1\" -l") + " vex-shell " + QuoteWindowsArgument(executable);
+            else
+                arguments += " sh -c " + QuoteWindowsArgument("exec \"${SHELL:-/bin/sh}\" -l");
             return (program, arguments.TrimStart());
         }
         if (resolved is null && shellId is "pwsh" or "powershell")

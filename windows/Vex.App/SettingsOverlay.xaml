@@ -443,7 +443,7 @@
                         <ScrollViewer x:Name="PageGeneral" VerticalScrollBarVisibility="Auto" Visibility="Visible">
                             <StackPanel Margin="28,26,28,20">
                                 <TextBlock Text="General" Style="{StaticResource PageTitle}"/>
-                                <TextBlock Text="Startup shell and workspace layout." Style="{StaticResource PageSubtitle}"/>
+                                <TextBlock Text="New project defaults and workspace layout." Style="{StaticResource PageSubtitle}"/>
 
                                 <TextBlock Text="SHELL" Style="{StaticResource SettingsSectionTitle}"/>
                                 <Border Style="{StaticResource SettingsCard}">
@@ -453,8 +453,8 @@
                                             <ColumnDefinition Width="240"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Shell" Style="{StaticResource RowTitle}"/>
-                                            <TextBlock x:Name="ShellDetail" Text="Interpreter used for new panes." Style="{StaticResource RowDesc}"/>
+                                            <TextBlock Text="New project shell" Style="{StaticResource RowTitle}"/>
+                                            <TextBlock x:Name="ShellDetail" Text="Existing projects keep their shell defaults." Style="{StaticResource RowDesc}"/>
                                         </StackPanel>
                                         <ComboBox x:Name="ShellCombo" Grid.Column="1"
                                                   Style="{StaticResource DarkComboBox}"

@@ -43,6 +43,7 @@ public sealed partial class MainWindow
     private void TabMenu_Opened(object sender, RoutedEventArgs e)
     {
         if (sender is not ContextMenu menu) return;
+        if (menu.PlacementTarget is FrameworkElement { DataContext: WorkspaceTab tab }) AddTabShellMenus(menu, tab);
         var layoutsMenu = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, "SavedLayouts"));
         layoutsMenu.Items.Clear();
         var layouts = AppSettings.Instance.SavedLayouts;

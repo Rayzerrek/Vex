@@ -16,6 +16,99 @@
                       UseAeroCaptionButtons="False" />
     </WindowChrome.WindowChrome>
     <Window.Resources>
+        <Style x:Key="ShellChoiceContextMenu" TargetType="ContextMenu" BasedOn="{StaticResource DarkContextMenu}">
+            <Setter Property="Width" Value="300"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="8">
+                            <Border.Effect><DropShadowEffect BlurRadius="22" ShadowDepth="6" Opacity="0.5" Color="#000000"/></Border.Effect>
+                            <ScrollViewer MaxHeight="400" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter Margin="4"/></ScrollViewer>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ShellChoiceSeparator" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Background="{DynamicResource VexBorder}" Margin="6,4"/></ControlTemplate></Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ShellChoiceHeading" TargetType="MenuItem" BasedOn="{StaticResource DarkMenuItem}">
+            <Setter Property="Margin" Value="-4,0,-4,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border Padding="14,9,10,9" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,0,0,1">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Right" Background="{DynamicResource VexHover}" CornerRadius="7" Padding="5,1">
+                                    <TextBlock Text="{TemplateBinding InputGestureText}" FontSize="10" Foreground="{DynamicResource VexTextDim}"/>
+                                </Border>
+                                <ContentPresenter ContentSource="Header" TextElement.FontSize="10.5" TextElement.FontWeight="Bold"
+                                                  TextElement.Foreground="{DynamicResource VexTextDim}"/>
+                            </DockPanel>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ShellChoiceMenuItem" TargetType="MenuItem" BasedOn="{StaticResource DarkMenuItem}">
+            <Setter Property="Padding" Value="8,7"/>
+            <Setter Property="Margin" Value="2,1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="chrome" Padding="{TemplateBinding Padding}" CornerRadius="6" Background="Transparent">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Border x:Name="activeBar" Width="3" Height="16" CornerRadius="1.5" Background="{DynamicResource VexAccentBlue}"
+                                        VerticalAlignment="Center" Margin="-4,0,4,0" Visibility="Collapsed"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding Header.IsDefault, RelativeSource={RelativeSource Self}}" Value="True">
+                                <Setter TargetName="chrome" Property="Background" Value="{DynamicResource VexHover}"/>
+                                <Setter TargetName="activeBar" Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="chrome" Property="Background" Value="{DynamicResource VexHover}"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="chrome" Property="Opacity" Value="0.45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="HeaderTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <Grid Width="244">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="24"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Image Source="{Binding Icon}" Width="16" Height="16" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding Environment}" FontSize="10.5" Foreground="{DynamicResource VexTextDim}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <Border Grid.Column="2" Background="{DynamicResource VexAccentTranslucent}" CornerRadius="4"
+                                    Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsDefault}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock Text="Default" FontSize="9" Foreground="{DynamicResource VexAccent}"/>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Thickness x:Key="WorkspaceTabPadding">12,4</Thickness>
         <CornerRadius x:Key="WorkspaceTabCornerRadius">5</CornerRadius>
 
@@ -31,6 +124,11 @@
                         </Grid.RowDefinitions>
                         <Border Grid.Row="0" Background="{DynamicResource VexPaneTitleBar}"
                                 MouseLeftButtonDown="PaneTitleBar_MouseLeftButtonDown">
+                            <Border.ContextMenu>
+                                <ContextMenu Style="{StaticResource DarkContextMenu}" Opened="PaneShellMenu_Opened">
+                                    <MenuItem Header="Choose split shell…" Style="{StaticResource DarkMenuItem}"/>
+                                </ContextMenu>
+                            </Border.ContextMenu>
                             <DockPanel LastChildFill="True">
                                 <StackPanel x:Name="TerminalActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
                                             Opacity="0">
@@ -51,7 +149,7 @@
                                 </StackPanel>
                                 <DockPanel LastChildFill="True" VerticalAlignment="Center" Margin="9,0,0,0">
                                     <local:ProgramStatusBadge Status="{Binding ProgramStatus}" Margin="0,0,5,0"/>
-                                    <Image Width="13" Height="13" Margin="0,0,6,0" Source="{Binding AppIcon.Image}" VerticalAlignment="Center" Stretch="Uniform">
+                                    <Image Width="13" Height="13" Margin="0,0,6,0" Source="{Binding AppIcon.Image}" VerticalAlignment="Center" Stretch="Uniform" ToolTip="{Binding ShellName}">
                                         <Image.Style>
                                             <Style TargetType="Image">
                                                 <Setter Property="Visibility" Value="Visible"/>
@@ -441,6 +539,7 @@
                                                        Foreground="{DynamicResource VexTextDim}"
                                                        TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
                                                        ToolTip="{Binding WorkingDirectory}"/>
+                                            <TextBlock Text="{Binding DefaultShellName}" FontSize="10" Foreground="{DynamicResource VexTextDim}" Margin="0,2,0,0"/>
                                         </StackPanel>
 
                                         <!-- Remove project button (visible on hover) -->
@@ -468,20 +567,38 @@
 
                         <!-- Footer: Open Project Folder action -->
                         <Border Grid.Row="2" Padding="6,5" BorderBrush="{DynamicResource VexBorder}" BorderThickness="0,1,0,0">
-                            <Button Style="{StaticResource GhostButton}"
-                                    HorizontalContentAlignment="Left"
-                                    Padding="8,5"
-                                    Height="28"
-                                    Click="ProjectPickerAddFolder_Click">
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                               Foreground="{DynamicResource VexAccentBlue}"
-                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <TextBlock Text="Open Project Folder..." FontSize="11.5"
-                                               Foreground="{DynamicResource VexText}"
-                                               VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
+                            <StackPanel>
+                                <Button x:Name="ProjectDefaultShellButton" HorizontalContentAlignment="Left" Padding="8,5" Height="28"
+                                        ToolTip="Change this project's default shell. Existing terminals stay unchanged." Click="ProjectShell_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedProject}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    <TextBlock Text="{Binding SelectedProject.DefaultShellName, StringFormat='Default shell · {0}'}" FontSize="11.5"
+                                               Foreground="{DynamicResource VexTextDim}" TextTrimming="CharacterEllipsis"/>
+                                </Button>
+                                <Button Style="{StaticResource GhostButton}"
+                                        HorizontalContentAlignment="Left"
+                                        Padding="8,5"
+                                        Height="28"
+                                        Click="ProjectPickerAddFolder_Click">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                                   Foreground="{DynamicResource VexAccentBlue}"
+                                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <TextBlock Text="Add Windows project…" FontSize="11.5"
+                                                   Foreground="{DynamicResource VexText}"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                                        Padding="8,5" Height="28" Click="ProjectPickerAddWsl_Click">
+                                    <TextBlock Text="Add WSL project…" FontSize="11.5" Foreground="{DynamicResource VexText}"/>
+                                </Button>
+                            </StackPanel>
                         </Border>
                     </Grid>
                 </Border>
@@ -762,10 +879,14 @@
 
             <!-- New Tab button -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True">
-                <Button Style="{StaticResource GhostButton}" ToolTip="New Tab (Ctrl+Shift+T)" Width="30" Height="30" Padding="0"
+                <Button Style="{StaticResource GhostButton}" ToolTip="{Binding SelectedProject.DefaultShellName, StringFormat='New tab · {0} (Ctrl+Shift+T)'}" Width="30" Height="30" Padding="0"
                         Click="NewTab_Click">
                     <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"
                                VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                </Button>
+                <Button x:Name="NewTabShellButton" Style="{StaticResource GhostButton}" ToolTip="New terminal with another shell"
+                        AutomationProperties.Name="Choose terminal shell" Width="20" Height="30" Padding="0" Click="NewTabShell_Click">
+                    <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="9" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Button>
             </StackPanel>
 
@@ -798,6 +919,17 @@
 
         <!-- Main content: active WorkspaceTab content with drag-to-split preview overlay -->
         <Grid x:Name="ContentArea" Grid.Row="1" Background="{DynamicResource VexTabStrip}">
+            <TextBlock x:Name="WorkspaceStatus" Text="Choose a project to get started." Foreground="{DynamicResource VexTextDim}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedProject}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
             <ContentControl Content="{Binding SelectedProject.SelectedTab.DisplayRoot}"/>
             <Canvas x:Name="DropOverlay" Visibility="Collapsed" Background="Transparent" Panel.ZIndex="50">
                 <Border x:Name="SplitPreview" Background="{DynamicResource VexSplitPreview}" BorderBrush="{DynamicResource VexSplitPreviewBorder}"

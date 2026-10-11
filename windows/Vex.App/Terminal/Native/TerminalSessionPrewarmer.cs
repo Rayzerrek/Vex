@@ -147,6 +147,7 @@ internal static class TerminalSessionPrewarmer
         catch (Win32Exception)
         {
             session.Dispose();
+            if (ShellRegistry.IsWsl(slot.ShellId)) throw;
             session = new TerminalSession();
             session.OutputReceived += data => OnOutput(slot, data);
             try

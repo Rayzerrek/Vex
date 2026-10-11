@@ -32,7 +32,12 @@ from the application.
 | Real-window rendering and corrupt-profile startup (Debug) | `TerminalRendererRegressionTests` |
 | Recovery of null session entries and selected indices | `SessionRecoveryTests` |
 | Shell-profile normalization without save timers | `AppSettingsRecoveryTests` |
-| Bounded prewarm buffers, ownership, and live ConPTY output flood | `TerminalPrewarmBufferTests` |
+| Bounded prewarm buffers, ownership, live ConPTY output flood, and cold retry after failed prewarm | `TerminalPrewarmBufferTests`, `TerminalPrewarmFailureTests` |
+| Output pacing, parser contention, coalesced title floods and queued callbacks after disposal | `TerminalOutputPerformanceTests` |
+| Project defaults, immutable pane overrides, mixed Windows/WSL sessions, saved shell layouts and Home reuse | `ProjectShellSelectionTests` |
+| Installed shell choices, login alias deduplication, actual system default, and three-choice primary lists | `ShellChoiceListTests` |
+| WSL path conversion, project discovery/home resolution and Linux foreground applications | `WslShellPathsTests`, `WslProjectTests`, `WslProcessTrackerTests` |
+| Real Ubuntu home projects under WSL/Windows global shells, OSC 7 directories and app icons (opt-in) | `WslUbuntuIntegrationTests` |
 | OSC 7501 detection before DA1, direct/prewarmed startup, shell command execution and prompt status | `ProgramStatusTransportTests` |
 | Saved layout validation, pane limits, focus, relative directories, and status origins | `SavedTerminalLayoutTests` |
 | Controlled DA1 startup without personal shell profiles, buffered input, and disposal | `TerminalStartupRegressionTests` |
@@ -47,6 +52,10 @@ Renderer subprocesses clear inherited `VEX_*` flags and assert the selected
 scenario's report header, so clipboard/fatal/replay diagnostics cannot silently
 replace the intended test.
 
+WSL integration fixtures opt in with `VEX_TEST_UBUNTU=1` and require an installed
+`Ubuntu` distribution. They resolve the default user's home rather than assuming
+a username. Use an isolated `VEX_PROFILE_DIR` when running these fixtures locally.
+
 ### Vex.Libghostty.Tests
 
 Exercises the real `ghostty-vt.dll` through the wrapper. The DLL is checked in
@@ -56,7 +65,7 @@ under `Vendor/libghostty/` and copied to the test output by
 | Area | File |
 |---|---|
 | DCS stripping by ConPTY | `FeedFilterTests` |
-| Local working directories reported by chunked OSC 7 sequences | `WorkingDirectoryTests` |
+| Local and WSL working directories reported by chunked OSC 7 sequences | `WorkingDirectoryTests` |
 | OSC 7501 parsing, atomic limits, reset/lifetime rules, inheritance, Unicode sanitization, and legacy progress | `ProgramStatusTests` |
 | Legacy/xterm/Kitty keyboard encoding | `KeyboardTests` |
 | Mouse tracking modes and wire encoding | `MouseTests` |
@@ -90,6 +99,12 @@ Copy checks reject blank/offscreen sources and deleted text even when the editor
 output repaint is pending. Preview checks cover hidden live frames, atomic
 synchronized output, immutable cached images and unchanged terminal geometry.
 Overview opening/closing exercises the actual window and refresh-timer lifecycle.
+Startup checks also invoke the actual new-tab shell dropdown and split submenu,
+verify menu rebuilding does not duplicate actions, and check that changing a
+project default leaves existing pane shells intact. They also check the project-style
+active row, separate project shell settings, and WSL selectors hidden for one
+choice but shown for two. Temporary tabs/splits cannot
+schedule a second self-test while the main scenario pumps the dispatcher.
 Failures produce a nonzero exit code.
 
 The core scenario also checks that retained glyph spacing stays immutable across

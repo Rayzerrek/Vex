@@ -32,14 +32,28 @@ public sealed class Workspace : ObservableObject
         }
     }
 
-    public Project NewProject(string workingDirectory)
+    public Project NewProject(string workingDirectory, string? defaultShellId = null)
     {
         _projectCounter++;
         var name = DirectoryName(workingDirectory) ?? $"Project {_projectCounter}";
-        var project = new Project(name, workingDirectory);
+        var project = new Project(name, workingDirectory, defaultShellId);
         Projects.Add(project);
         SelectedProject = project;
         return project;
+    }
+
+    /// <summary>Opens WSL Home once, keeping its tabs alive when returning from a Windows project.</summary>
+    internal Project OpenWslHome(string workingDirectory)
+    {
+        if (WslShellPaths.ParseNetworkPath(workingDirectory) is null)
+            throw new ArgumentException("WSL Home requires a distribution directory.", nameof(workingDirectory));
+        var home = Projects.FirstOrDefault(project => project.Name == "Home" && project.WorkingDirectory == workingDirectory)
+            ?? NewProject(workingDirectory, "wsl");
+        home.Name = "Home";
+        var index = Projects.IndexOf(home);
+        if (index > 0) Projects.Move(index, 0);
+        SelectedProject = home;
+        return home;
     }
 
     public void CloseProject(Project project)

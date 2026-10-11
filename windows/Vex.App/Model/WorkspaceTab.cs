@@ -39,19 +39,21 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         return true;
     }
 
-    public WorkspaceTab(string title, string workingDirectory)
+    public WorkspaceTab(string title, string workingDirectory, string? defaultShellId = null, string? shellId = null)
     {
         _title = title;
         WorkingDirectory = workingDirectory;
-        _root = NewLeaf();
+        DefaultShellId = WslShellPaths.ShellIdForDirectory(defaultShellId ?? AppSettings.Instance.ShellId, workingDirectory);
+        _root = NewLeaf(workingDirectory, shellId ?? DefaultShellId);
         _activeLeaf = (LeafPane)_root;
         _activeLeaf.IsFocused = true;
     }
 
-    internal WorkspaceTab(string title, string workingDirectory, PaneNode root, bool hasCustomTitle)
+    internal WorkspaceTab(string title, string workingDirectory, PaneNode root, bool hasCustomTitle, string? defaultShellId = null)
     {
         _title = title;
         WorkingDirectory = workingDirectory;
+        DefaultShellId = WslShellPaths.ShellIdForDirectory(defaultShellId ?? AppSettings.Instance.ShellId, workingDirectory);
         HasCustomTitle = hasCustomTitle;
         _root = root;
         
@@ -91,6 +93,9 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     /// <summary>Directory new panes in this tab start in.</summary>
     public string WorkingDirectory { get; }
+
+    /// <summary>The owning project updates this default without changing the shells of existing panes.</summary>
+    public string DefaultShellId { get; internal set; }
 
     public string Title
     {
@@ -240,12 +245,12 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     /// <summary>Raised when the last pane in this tab closes.</summary>
     public event Action<WorkspaceTab>? TabClosedRequested;
 
-    public void Split(Orientation orientation)
+    public void Split(Orientation orientation, string? shellId = null)
     {
         var target = ActiveLeaf ?? FirstLeaf();
         if (target is null)
             return;
-        var fresh = NewLeaf();
+        var fresh = NewLeaf(target is TerminalPane terminal ? terminal.WorkingDirectory : WorkingDirectory, shellId ?? DefaultShellId);
         // A split cannot be seen while focus mode renders only ActiveLeaf.
         // Return to the full tree before selecting the newly created pane.
         IsFocusMode = false;
@@ -253,9 +258,10 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         ActiveLeaf = fresh;
     }
 
-    private LeafPane NewLeaf()
+    private LeafPane NewLeaf(string currentDirectory, string shellId)
     {
-        var leaf = new TerminalPane(WorkingDirectory);
+        var directory = ShellRegistry.TerminalDirectory(WorkingDirectory, currentDirectory, shellId);
+        var leaf = new TerminalPane(directory, shellId: shellId);
         AttachLeafEvents(leaf);
         return leaf;
     }

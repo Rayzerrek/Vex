@@ -122,7 +122,7 @@ public sealed partial class NativeTerminalControl
         _terminal.ScrollToBottom();
     }
 
-    private void StartSession()
+    private void StartSession(bool allowPrewarm = true)
     {
         if (_disposed || _session is not null || _sessionStarting)
             return;
@@ -133,10 +133,9 @@ public sealed partial class NativeTerminalControl
         var cols = _cols >= 20 ? (short)_cols : (short)80;
         var rows = _rows >= 5 ? (short)_rows : (short)24;
         var workingDirectory = _workingDirectory;
-        var shellId = AppSettings.Instance.ShellId;
-        _sessionShellId = shellId;
+        var shellId = _sessionShellId;
 
-        var prewarmLease = string.IsNullOrWhiteSpace(_initialCommand) ? TerminalSessionPrewarmer.Take(workingDirectory, shellId) : null;
+        var prewarmLease = allowPrewarm && string.IsNullOrWhiteSpace(_initialCommand) ? TerminalSessionPrewarmer.Take(workingDirectory, shellId) : null;
         _prewarmLease = prewarmLease;
         if (prewarmLease != null)
         {
@@ -171,7 +170,7 @@ public sealed partial class NativeTerminalControl
                     _ = Dispatcher.BeginInvoke(() =>
                     {
                         _sessionStarting = false;
-                        StartSession();
+                        StartSession(allowPrewarm: false);
                     });
                 }
             });
@@ -180,19 +179,29 @@ public sealed partial class NativeTerminalControl
 
         _ = Task.Run(() =>
         {
-            var launch = ShellLaunchBuilder.BuildShellLaunch(shellId, _initialCommand, workingDirectory);
-            var shellProgram = SelfTestShell ?? launch.Program;
-            var shellArguments = SelfTestShell is null ? launch.Arguments : null;
-
             TerminalSession session;
             try
             {
+                var launch = ShellLaunchBuilder.BuildShellLaunch(shellId, _initialCommand, workingDirectory);
+                var shellProgram = SelfTestShell ?? launch.Program;
+                var shellArguments = SelfTestShell is null ? launch.Arguments : null;
                 session = CreateAndStartSession(workingDirectory, cols, rows, shellProgram, shellArguments);
             }
-            catch
+            catch (Exception error)
             {
                 if (_disposed)
                     return;
+                if (ShellRegistry.IsWsl(shellId))
+                {
+                    _terminal.Feed("WSL startup failed: " + error.Message + "\r\n");
+                    ScheduleRedraw();
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        _sessionStarting = false;
+                        _pendingSessionInput = null;
+                    });
+                    return;
+                }
                 try
                 {
                     _sessionShellId = "system";

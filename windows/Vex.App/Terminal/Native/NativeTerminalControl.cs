@@ -93,6 +93,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private readonly object _outputLock = new();
     private bool _redrawScheduled;
+    private string? _pendingTitle;
+    private bool _titleUpdateQueued;
     private DispatcherTimer? _outputRedrawTimer;
     private long _lastOutputRedraw;
 
@@ -137,10 +139,11 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     /// <summary>Last directory reported by the shell, falling back to this pane's launch directory.</summary>
     public string WorkingDirectory => _terminal.WorkingDirectory ?? _workingDirectory;
 
-    public NativeTerminalControl(string workingDirectory, string? initialCommand = null)
+    public NativeTerminalControl(string workingDirectory, string? initialCommand = null, string? shellId = null)
     {
         _workingDirectory = workingDirectory;
         _initialCommand = initialCommand;
+        _sessionShellId = ShellRegistry.ValidShellId(shellId) ?? WslShellPaths.ShellIdForDirectory(AppSettings.Instance.ShellId, workingDirectory);
         Focusable = true;
         FocusVisualStyle = null;
         Cursor = Cursors.IBeam;
@@ -152,28 +155,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
         SnapsToDevicePixels = true;
         UseLayoutRounding = true;
-        _terminal = new GhosttyTerminal(80, 24);
+        _terminal = new GhosttyTerminal(80, 24, ShellRegistry.IsWsl(_sessionShellId) ? WslShellPaths.ParseNetworkPath(workingDirectory)?.Distribution : null);
         _terminal.ProgramStatusChanged += QueueProgramStatus;
         _terminal.ClipboardWriteRequested += OnApplicationClipboardWrite;
-        _terminal.TitleChanged += title =>
-        {
-            // Feed now runs on the PTY reader thread, so titles arrive off
-            // the UI thread; titles feed data-bound properties and must hop.
-            if (Dispatcher.CheckAccess())
-            {
-                TitleRawChanged?.Invoke(title);
-                TitleChanged?.Invoke(title);
-            }
-            else
-            {
-                var snapshot = title;
-                _ = Dispatcher.BeginInvoke(() =>
-                {
-                    TitleRawChanged?.Invoke(snapshot);
-                    TitleChanged?.Invoke(snapshot);
-                });
-            }
-        };
+        _terminal.TitleChanged += QueueTerminalTitle;
         _terminal.Bell += () =>
         {
             // Bell fires on the feed thread. Coalesce bursts (a shell loop or
@@ -681,6 +666,45 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
 
     // ---- Rendering --------------------------------------------------------
+
+    private void QueueTerminalTitle(string title)
+    {
+        if (Dispatcher.CheckAccess())
+        {
+            lock (_outputLock)
+                _pendingTitle = null;
+            if (!_disposed)
+            {
+                TitleRawChanged?.Invoke(title);
+                TitleChanged?.Invoke(title);
+            }
+            return;
+        }
+        // Build tools can update their title on every output chunk. Only the
+        // newest title matters; intermediate UI work would delay input.
+        lock (_outputLock)
+        {
+            if (_disposed) return;
+            _pendingTitle = title;
+            if (_titleUpdateQueued) return;
+            _titleUpdateQueued = true;
+        }
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            string? latest;
+            lock (_outputLock)
+            {
+                latest = _pendingTitle;
+                _pendingTitle = null;
+                _titleUpdateQueued = false;
+            }
+            if (!_disposed && latest is not null)
+            {
+                TitleRawChanged?.Invoke(latest);
+                TitleChanged?.Invoke(latest);
+            }
+        });
+    }
 
     private void ScheduleRedraw()
     {

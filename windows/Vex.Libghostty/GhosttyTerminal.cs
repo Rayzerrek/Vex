@@ -39,6 +39,7 @@ public sealed class GhosttyTerminal : IDisposable
     private uint[] _codepoints = new uint[MaxGraphemes];
     private bool _disposed;
     private string? _workingDirectory;
+    private readonly string? _wslDistribution;
 
     // Serializes every native terminal call. Feed runs on the PTY reader
     // thread while snapshots (UpdateFrame, modes, mouse, selection) run on
@@ -130,8 +131,12 @@ public sealed class GhosttyTerminal : IDisposable
     private int _cellWidthPx = 8;
     private int _cellHeightPx = 16;
 
-    public GhosttyTerminal(int cols, int rows)
+    /// <summary>Creates a terminal; WSL sessions map Linux OSC 7 directories into their distribution's network filesystem.</summary>
+    public GhosttyTerminal(int cols, int rows, string? wslDistribution = null)
     {
+        if (wslDistribution is not null && (wslDistribution.Length == 0 || wslDistribution.Any(char.IsControl) || wslDistribution.IndexOfAny(['/', '\\', ':']) >= 0))
+            throw new ArgumentException("Invalid WSL distribution name.", nameof(wslDistribution));
+        _wslDistribution = wslDistribution;
         _programStatus.Changed += attention => ProgramStatusChanged?.Invoke(_programStatus.Summary, attention);
         _cols = cols;
         _rows = rows;
@@ -578,8 +583,19 @@ public sealed class GhosttyTerminal : IDisposable
         if (_oscLen < 3 || _oscBuf[0] != (byte)'7' || _oscBuf[1] != (byte)';')
             return;
         var text = Encoding.UTF8.GetString(_oscBuf, 2, _oscLen - 2);
-        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || !uri.IsFile ||
-            !(uri.Host.Length == 0 || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || !uri.IsFile)
+            return;
+        if (_wslDistribution is not null)
+        {
+            // The Linux hostname may differ from Windows. Never treat it as
+            // a network server: the launch distribution owns this path.
+            var linuxPath = Uri.UnescapeDataString(uri.AbsolutePath);
+            if (!text.Contains('\\') && !text.Contains("%5c", StringComparison.OrdinalIgnoreCase) &&
+                linuxPath.StartsWith('/') && linuxPath.IndexOfAny(['\\', ':']) < 0 && !linuxPath.Any(char.IsControl))
+                Volatile.Write(ref _workingDirectory, @"\\wsl.localhost\" + _wslDistribution + linuxPath.Replace('/', '\\'));
+            return;
+        }
+        if (!(uri.Host.Length == 0 || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
               uri.Host.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase)))
             return;
         var path = uri.Host.Length == 0 ? uri.LocalPath : Uri.UnescapeDataString(uri.AbsolutePath);
