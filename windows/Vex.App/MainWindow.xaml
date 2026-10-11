@@ -22,25 +22,15 @@
         <!-- Recursive pane tree: a leaf hosts a terminal, a split hosts two
              children with a draggable splitter. -->
         <DataTemplate DataType="{x:Type m:TerminalPane}">
-            <Grid>
+            <Grid ClipToBounds="True">
                 <Border Background="Transparent">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="24"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <Border Grid.Row="0"
+                        <Border Grid.Row="0" Background="{DynamicResource VexPaneTitleBar}"
                                 MouseLeftButtonDown="PaneTitleBar_MouseLeftButtonDown">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Background" Value="{DynamicResource VexPaneTitleBar}"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsFocused}" Value="True">
-                                            <Setter Property="Background" Value="{DynamicResource VexPaneTitleBarFocused}"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
                             <DockPanel LastChildFill="True">
                                 <StackPanel x:Name="TerminalActionButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
                                             Opacity="0">
@@ -93,16 +83,32 @@
                         <ContentPresenter Grid.Row="1" Content="{Binding View}"/>
                     </Grid>
                 </Border>
-                <!-- A header rule identifies focus without shrinking the terminal grid. -->
-                <Border x:Name="PaneOutline" BorderThickness="0,1,0,0" IsHitTestVisible="False">
+                <!-- Blur only the empty outline, never the terminal's glyph surface. -->
+                <Border x:Name="PaneFocusGlow" BorderThickness="1" Margin="1"
+                        BorderBrush="{DynamicResource VexFocusBorder}" Opacity="0.45" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <BlurEffect Radius="4" RenderingBias="Performance"/>
+                    </Border.Effect>
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsFocused}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                </Border>
+                <Border x:Name="PaneOutline" BorderThickness="1" IsHitTestVisible="False">
                     <Border.Style>
                         <Style TargetType="Border">
                             <Setter Property="BorderBrush" Value="{DynamicResource VexBorder}"/>
-                            <Setter Property="Opacity" Value="0.45"/>
+                            <Setter Property="Opacity" Value="0"/>
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsFocused}" Value="True">
                                     <Setter Property="BorderBrush" Value="{DynamicResource VexFocusBorder}"/>
-                                    <Setter Property="Opacity" Value="0.85"/>
+                                    <Setter Property="Opacity" Value="0.65"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>

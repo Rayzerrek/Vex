@@ -23,6 +23,13 @@ public sealed class CompactLayoutTests
         Assert.DoesNotContain(template.Descendants().Where(e => e.Name.LocalName == "Border"),
             e => e.Attribute("CornerRadius") is not null);
         Assert.Contains(template.Descendants(), e => e.Name.LocalName == "RowDefinition" && (string?)e.Attribute("Height") == "24");
+        Assert.DoesNotContain(template.Descendants().Attributes(), a => a.Value.Contains("VexPaneTitleBarFocused"));
+        var glow = Assert.Single(template.Descendants(), e => e.Name.LocalName == "BlurEffect");
+        var outline = Assert.IsType<XElement>(glow.Parent?.Parent);
+        Assert.Equal("Border", outline.Name.LocalName);
+        Assert.Equal("PaneFocusGlow", outline.Attributes().Single(a => a.Name.LocalName == "Name").Value);
+        Assert.Equal("False", (string?)outline.Attribute("IsHitTestVisible"));
+        Assert.DoesNotContain(outline.Descendants(), e => e.Name.LocalName == "ContentPresenter");
     }
 
     [Theory]
