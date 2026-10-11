@@ -46,7 +46,7 @@ function Mark() {
       <rect width="48" height="48" rx="12" fill="currentColor" />
       <path
         d="M9 11h8l10 26h-8L9 11Zm23 0h8l-5 13h-8l5-13Zm-6 16h8l-4 10h-8l4-10Z"
-        fill="white"
+        fill="var(--paper)"
       />
     </svg>
   );
@@ -64,7 +64,7 @@ function useTheme() {
     document.documentElement.classList.toggle("dark", next);
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute("content", next ? "#101a2c" : "#f6f8fc");
+      ?.setAttribute("content", next ? "#111214" : "#f6f6f5");
     try {
       localStorage.setItem("vex-theme", next ? "dark" : "light");
     } catch {
@@ -149,188 +149,152 @@ const workspaceFeatures = [
   }
 ];
 
-function WorkspaceDemo({ selected }: { selected: number }) {
-  const [tab, setTab] = useState(0);
+function WorkspaceDemo({
+  selected,
+  appearance
+}: {
+  selected: number;
+  appearance: "light" | "dark";
+}) {
+  if (selected === 0 || selected === 1) {
+    return (
+      <img
+        className="feature-screenshot"
+        src={
+          selected === 0
+            ? `/shots/vex-${appearance}.png`
+            : "/shots/vex-path-picker.png"
+        }
+        alt={
+          selected === 0
+            ? "Vex Development workspace with PowerShell on the left and a dev server and checks in two panes on the right"
+            : "Vex path picker at the terminal cursor, listing files and directories with keyboard navigation hints"
+        }
+        width="1440"
+        height="900"
+        loading="lazy"
+      />
+    );
+  }
   return (
     <div
       className="workspace-demo"
-      aria-label="Illustration of a split workspace, not a live terminal"
+      aria-label="Program status illustration, not a live terminal"
     >
       <div className="demo-tabs">
         <span className="demo-project">
           vex <span>main</span>
         </span>
-        {selected === 0 ? (
-          ["Workspace", "Checks"].map((title, index) => (
-            <button
-              type="button"
-              key={title}
-              onClick={() => setTab(index)}
-              aria-pressed={tab === index}
-            >
-              {title}
-            </button>
-          ))
-        ) : (
-          <span>{selected === 1 ? "Path picker" : "Program status"}</span>
-        )}
+        <span>Program status</span>
       </div>
-      {selected === 0 ? (
-        <div className={`demo-panes ${tab === 1 ? "checks-panes" : ""}`}>
-          <div className="demo-pane">
-            <span className="pane-label">
-              {tab === 0 ? "PowerShell" : "Build"}
-            </span>
-            <pre>
-              <span className="terminal-directory">~/code/vex</span>
-              {"\n"}
-              <span className="terminal-prompt">❯ </span>
-              {tab === 0
-                ? "git status\nOn branch main\n\nWorking tree clean"
-                : "dotnet build\n\nBuild succeeded.\n    0 errors"}
-              <span className="terminal-cursor" />
-            </pre>
-          </div>
-          <div className="demo-pane">
-            <span className="pane-label">
-              {tab === 0 ? "Nushell" : "Tests"}
-            </span>
-            <pre>
-              <span className="terminal-directory">~/code/vex/web</span>
-              {"\n"}
-              <span className="terminal-prompt">❯ </span>
-              {tab === 0
-                ? "pnpm dev\n\nLocal: localhost:5173"
-                : "pnpm run check\n\nAll checks passed."}
-            </pre>
-          </div>
-          <div className="demo-pane pane-wide">
-            <span className="pane-label">{tab === 0 ? "Git" : "Shell"}</span>
-            <pre>
-              <span className="terminal-prompt">❯ </span>
-              {tab === 0
-                ? "git log --oneline -2\n\nfix: polish terminal rendering\nfeat: compact terminal refinements"
-                : "Ready for the next command."}
-            </pre>
-          </div>
+      <div className="status-demo">
+        <div>
+          <span className="status-symbol working">◌</span>
+          <span>
+            Build<small>Compiling the project</small>
+          </span>
+          <span>Working</span>
         </div>
-      ) : selected === 1 ? (
-        <div className="path-demo">
-          <pre>
-            <span className="terminal-directory">~/code/vex</span>
-            {"\n"}
-            <span className="terminal-prompt">❯ </span>git diff{" "}
-            <span className="terminal-cursor" />
-          </pre>
-          <div className="path-picker">
-            <div className="picker-query">
-              <Icon name="search" />
-              <span>config</span>
-              <kbd>Esc</kbd>
-            </div>
-            <div className="picker-match">
-              docs/<strong>config</strong>uration.md<span>file</span>
-            </div>
-            <div>
-              web/vite.<strong>config</strong>.ts<span>file</span>
-            </div>
-            <div>
-              web/ts<strong>config</strong>.json<span>file</span>
-            </div>
-            <footer>
-              <span>~/code/vex</span>
-              <span>Enter to insert</span>
-            </footer>
-          </div>
+        <div>
+          <span className="status-symbol waiting">?</span>
+          <span>
+            Assistant<small>Approval requested</small>
+          </span>
+          <span>Needs input</span>
         </div>
-      ) : (
-        <div className="status-demo">
-          <div>
-            <span className="status-symbol working">◌</span>
-            <span>
-              Build<small>Compiling the project</small>
-            </span>
-            <span>Working</span>
-          </div>
-          <div>
-            <span className="status-symbol waiting">?</span>
-            <span>
-              Assistant<small>Approval requested</small>
-            </span>
-            <span>Needs input</span>
-          </div>
-          <div>
-            <span className="status-symbol finished">✓</span>
-            <span>
-              Tests<small>Checks completed</small>
-            </span>
-            <span>Finished</span>
-          </div>
-          <p>Program-reported status, in one workspace.</p>
+        <div>
+          <span className="status-symbol finished">✓</span>
+          <span>
+            Tests<small>Checks completed</small>
+          </span>
+          <span>Finished</span>
         </div>
-      )}
+        <p>Program-reported status, in one workspace.</p>
+      </div>
       <div className="demo-bottom">
         <span>Workspace illustration</span>
-        <span>
-          {selected === 0
-            ? "3 panes"
-            : selected === 1
-              ? "Path picker"
-              : "Program status"}
-        </span>
+        <span>Program status</span>
       </div>
     </div>
   );
 }
 
-function Home({ dark }: { dark: boolean }) {
+function Home() {
   const [selected, setSelected] = useState(0);
+  const [appearance, setAppearance] = useState<"light" | "dark">("dark");
   const feature = workspaceFeatures[selected];
   return (
-    <main id="main-content">
+    <main className="home-layout" id="main-content">
       <section className="hero page-width">
         <div className="hero-heading">
           <h1>
             Your terminals.
             <br />
-            One workspace.
+            <span>One workspace.</span>
           </h1>
           <div className="hero-copy">
             <p>
-              A native home for terminal work on Windows. Keep your projects,
-              shells, and split panes together. Pick up where you left off.
+              Your shells, projects, and split panes. Together in a quiet,
+              native Windows app that leaves room for the work.
             </p>
             <div className="hero-actions">
               <a className="button button-primary" href="#download">
                 <Icon name="download" />
                 Get Vex for Windows
               </a>
-              <a className="text-link" href="/docs/getting-started">
-                Read the docs
+              <a
+                className="button button-secondary"
+                href="/docs/getting-started"
+              >
+                Read the docs <Icon name="external" />
               </a>
             </div>
             <p className="hero-note">
-              Windows 10 & 11. Open source. Yours to make your own.
+              Windows 10 & 11 <span>·</span> Free & open source <span>·</span>{" "}
+              No web wrapper
             </p>
           </div>
         </div>
         <figure className="product-figure">
+          <div className="product-toolbar">
+            <span>
+              <span className="availability-dot" /> Vex / Development
+            </span>
+            <div
+              className="appearance-switch"
+              role="group"
+              aria-label="Screenshot appearance"
+            >
+              {(["dark", "light"] as const).map((value) => (
+                <button
+                  type="button"
+                  key={value}
+                  aria-pressed={appearance === value}
+                  onClick={() => setAppearance(value)}
+                >
+                  <Icon name={value === "dark" ? "moon" : "sun"} />
+                  {value === "dark" ? "Dark" : "Light"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="product-stage">
             <img
-              src={dark ? "/shots/vex-dark.png" : "/shots/vex-light.png"}
-              alt="Vex on Windows with a project sidebar, file tree, and a Nushell terminal"
-              width="1120"
-              height="700"
+              src={`/shots/vex-${appearance}.png`}
+              alt="Vex on Windows with three split terminal panes: PowerShell, a web dev server, and checks"
+              width="1440"
+              height="900"
               fetchPriority="high"
             />
           </div>
           <figcaption>
-            <span>A workspace for the way you work.</span>
-            <span>Native Windows app · ConPTY + Ghostty VT</span>
+            <span>Three panes. One place to keep your train of thought.</span>
+            <span>WPF / ConPTY / Ghostty VT</span>
           </figcaption>
         </figure>
       </section>
       <section className="features-section page-width" id="features">
+        <p className="eyebrow section-label">The workspace</p>
         <div className="section-heading">
           <h2>
             Less window juggling.
@@ -387,8 +351,18 @@ function Home({ dark }: { dark: boolean }) {
           role="tabpanel"
           aria-labelledby={`feature-tab-${selected}`}
         >
-          <WorkspaceDemo selected={selected} />
+          <div className="feature-visual">
+            <WorkspaceDemo selected={selected} appearance={appearance} />
+          </div>
           <div className="feature-copy">
+            <span className="feature-index">
+              0{selected + 1} /{" "}
+              {selected === 0
+                ? "Arrange"
+                : selected === 1
+                  ? "Navigate"
+                  : "Stay in the loop"}
+            </span>
             <h3>{feature.title}</h3>
             <p>{feature.description}</p>
             <a className="text-link" href={feature.link}>
@@ -420,34 +394,87 @@ function Home({ dark }: { dark: boolean }) {
           </div>
         </div>
       </section>
-      <section className="docs-invitation page-width">
-        <div className="docs-miniature" aria-hidden="true">
-          <Mark />
-          <div>
-            <span>Vex documentation</span>
-            <span className="miniature-active">Installation</span>
-            <span>Workspaces & panes</span>
-            <span>Keyboard shortcuts</span>
-            <span>Appearance & themes</span>
+      <section className="keyboard-section page-width">
+        <div className="keyboard-copy">
+          <p className="eyebrow section-label">At your fingertips</p>
+          <h2>
+            A workspace at
+            <br />
+            your fingertips.
+          </h2>
+          <p>
+            Split a pane, switch a project, or find a command. The palette keeps
+            workspace actions close, while your shell keeps its own keys.
+          </p>
+          <div className="shortcut-hint">
+            <kbd>Ctrl</kbd>
+            <kbd>Shift</kbd>
+            <kbd>P</kbd>
+            <span>One shortcut. All your actions.</span>
           </div>
+          <a className="text-link" href="/docs/shortcuts">
+            Find your next shortcut <Icon name="external" />
+          </a>
         </div>
+        <figure className="palette-figure">
+          <img
+            src="/shots/vex-palette.png"
+            alt="Vex command palette showing new tab, saved layout, tab overview, and split pane actions"
+            width="1440"
+            height="900"
+            loading="lazy"
+          />
+          <figcaption>The command palette, inside the native app.</figcaption>
+        </figure>
+      </section>
+      <section className="docs-invitation page-width">
         <div>
+          <p className="eyebrow section-label">Documentation</p>
           <h2>
             A short path from
             <br />
             installing to working.
           </h2>
           <p>
-            Get set up, learn the shortcuts, and make the workspace yours.
-            Straightforward guides, without the guesswork.
+            Small, straightforward guides. Get set up, learn the workspace, and
+            make yourself at home.
           </p>
           <a className="text-link" href="/docs/getting-started">
-            Open the documentation
+            Open the documentation <Icon name="external" />
           </a>
         </div>
+        <nav className="guide-links" aria-label="Explore the guides">
+          {[
+            {
+              slug: "getting-started",
+              title: "Installation",
+              detail: "From download to your first prompt"
+            },
+            {
+              slug: "workspace",
+              title: "Your workspace",
+              detail: "Projects, panes, and saved layouts"
+            },
+            {
+              slug: "appearance",
+              title: "Make it feel like you",
+              detail: "Themes, fonts, and the little details"
+            }
+          ].map((guide, index) => (
+            <a key={guide.slug} href={`/docs/${guide.slug}`}>
+              <span className="guide-number">0{index + 1}</span>
+              <span>
+                <strong>{guide.title}</strong>
+                <small>{guide.detail}</small>
+              </span>
+              <Icon name="external" />
+            </a>
+          ))}
+        </nav>
       </section>
       <section className="download-section page-width" id="download">
         <div>
+          <p className="eyebrow section-label">Ready when you are</p>
           <h2>
             Make yourself
             <br />
@@ -683,7 +710,8 @@ export function App({ initialPath }: { initialPath?: string }) {
         event.altKey
       )
         return;
-      const anchor = (event.target as Element).closest("a");
+      if (!(event.target instanceof Element)) return;
+      const anchor = event.target.closest("a");
       if (!anchor || anchor.target || anchor.hasAttribute("download")) return;
       const url = new URL(anchor.href);
       if (
@@ -730,7 +758,9 @@ export function App({ initialPath }: { initialPath?: string }) {
       );
   }, [normalized, isDocs, slug]);
   return (
-    <>
+    <div
+      className={normalized === "/" ? "site-shell home-shell" : "site-shell"}
+    >
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
@@ -738,7 +768,7 @@ export function App({ initialPath }: { initialPath?: string }) {
       {isDocs ? (
         <Docs slug={slug} />
       ) : normalized === "/" ? (
-        <Home dark={dark} />
+        <Home />
       ) : (
         <NotFound />
       )}
@@ -754,6 +784,6 @@ export function App({ initialPath }: { initialPath?: string }) {
           <span>© 2026 Vex</span>
         </nav>
       </footer>
-    </>
+    </div>
   );
 }

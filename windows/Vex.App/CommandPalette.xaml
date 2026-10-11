@@ -6,10 +6,9 @@
              Visibility="Collapsed">
     <Grid>
         <Border x:Name="Backdrop" Background="{DynamicResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
-        <Border x:Name="Panel" Background="{DynamicResource VexSurface}"
+        <vex:RoundedSurface x:Name="Panel" Background="{DynamicResource VexSurface}"
                 BorderBrush="{DynamicResource VexBorder}"
                 BorderThickness="1"
-                CornerRadius="8"
                 Width="500"
                 MaxHeight="400"
                 HorizontalAlignment="Center"
@@ -102,6 +101,6 @@
                 </ListBox>
                 </Grid>
             </Grid>
-        </Border>
+        </vex:RoundedSurface>
     </Grid>
 </vex:OverlayControl>

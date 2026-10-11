@@ -26,6 +26,7 @@ from the application.
 | Theme resolution and color parsing | `TerminalThemeTests` |
 | Perceptual ANSI/RGB contrast, dimming, faithful-color mode and settings persistence | `TerminalPaletteTests` |
 | Compact pane structure, header colors, outline-only blur and splitter hit targets | `CompactLayoutTests`, `ChromePaletteTests` |
+| Rounded overlays/popups, clipped content, preserved shadows and antialiased corners at 100–200% DPI | `RoundedSurfaceTests`, `WindowFrameTests` |
 | Live preview lifecycle without realizing new panes | `TabPeekPreviewTests` |
 | Distinct task states, attention routing and visible-only working animation | `ProgramStatusPresentationTests` |
 | Displayed version derivation | `AppInfoTests` |

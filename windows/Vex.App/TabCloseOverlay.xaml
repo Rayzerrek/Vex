@@ -8,10 +8,9 @@
         <Border x:Name="Backdrop" Background="{DynamicResource VexBackdropScrim}" MouseDown="Backdrop_MouseDown" Opacity="0"/>
 
         <!-- Main Card Panel -->
-        <Border x:Name="Panel" Background="{DynamicResource VexSurface}"
+        <vex:RoundedSurface x:Name="Panel" Background="{DynamicResource VexSurface}"
                 BorderBrush="{DynamicResource VexBorder}"
                 BorderThickness="1"
-                CornerRadius="10"
                 Width="450"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
@@ -147,6 +146,6 @@
                     </Button>
                 </StackPanel>
             </StackPanel>
-        </Border>
+        </vex:RoundedSurface>
     </Grid>
 </vex:OverlayControl>

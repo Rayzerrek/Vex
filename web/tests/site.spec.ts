@@ -25,6 +25,10 @@ test("home, feature controls, theme persistence, and docs navigation", async ({
   await expect(page.getByRole("tabpanel")).toContainText(
     "Bring the right path to the prompt."
   );
+  await expect(page.getByRole("tabpanel").getByRole("img")).toHaveAttribute(
+    "src",
+    "/shots/vex-path-picker.png"
+  );
   await page.getByRole("tab", { name: "Program status" }).click();
   await expect(page.getByRole("tabpanel")).toContainText("Approval requested");
   await page.getByRole("tab", { name: "Program status" }).press("ArrowRight");
@@ -120,6 +124,55 @@ test("each guide loads directly with a title, working anchors, and no page overf
         () => document.documentElement.scrollWidth <= window.innerWidth
       )
     ).toBe(true);
+  }
+});
+
+test("screenshot appearances load independently of the website theme", async ({
+  page
+}) => {
+  await page.goto("/");
+  const preview = page.locator(".product-stage img");
+  const appearances = page.getByRole("group", {
+    name: "Screenshot appearance"
+  });
+  for (const appearance of ["Light", "Dark"]) {
+    await appearances
+      .getByRole("button", { name: appearance, exact: true })
+      .click();
+    await expect(preview).toHaveAttribute(
+      "src",
+      `/shots/vex-${appearance.toLowerCase()}.png`
+    );
+    await expect(
+      appearances.getByRole("button", { name: appearance, exact: true })
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect
+      .poll(() =>
+        preview.evaluate(
+          (image) =>
+            image instanceof HTMLImageElement &&
+            image.complete &&
+            image.naturalWidth === 1440
+        )
+      )
+      .toBe(true);
+  }
+  await page.getByRole("button", { name: "Switch to dark theme" }).click();
+  await expect(preview).toHaveAttribute("src", "/shots/vex-dark.png");
+  for (const width of [320, 760, 768, 1024, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true);
+    await expect(page.locator(".atmosphere-panel")).toHaveCount(0);
+    const content = await page.locator(".hero").boundingBox();
+    expect(content).not.toBeNull();
+    if (content)
+      expect(Math.abs(content.x + content.width / 2 - width / 2)).toBeLessThan(
+        1
+      );
   }
 });
 
