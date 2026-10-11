@@ -47,5 +47,8 @@ export default defineConfig({
       }
     ]
   },
+  test: {
+    include: ["src/**/*.test.tsx"]
+  },
   plugins: lazyPlugins(() => [react(), tailwindcss()])
 });

@@ -1,312 +1,759 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { DocContent, docsPages } from "./docs";
 
-const frame = "mx-auto w-[min(100%_-_48px,640px)]";
+const repository = "https://github.com/Rayzerrek/Vex";
+const releases = `${repository}/releases`;
 
-const sectionTitle =
-  "mt-20 border-b border-line pb-3 font-mono text-[11px] tracking-[0.08em] text-faint";
-
-const downloadOptions = [
-  {
-    href: "https://github.com/Rayzerrek/Vex/releases",
-    title: "Windows installer",
-    detail: "Latest release from GitHub",
-    meta: "exe"
-  },
-  {
-    href: "https://github.com/Rayzerrek/Vex",
-    title: "Build from source",
-    detail: "GPL-3.0 licensed and open to inspection",
-    meta: "git"
-  }
-];
-
-const principles = [
-  {
-    title: "Native first",
-    copy: "WPF and Windows ConPTY give Vex the feel of a desktop tool, not a browser inside a window.",
-    meta: "wpf"
-  },
-  {
-    title: "Projects stay open",
-    copy: "Switch between repositories without losing the shell, files, or layout that belongs to each one.",
-    meta: "workspace"
-  },
-  {
-    title: "Shortcuts are the interface",
-    copy: "Split panes, open files, and move through the workspace without breaking your focus.",
-    meta: "keyboard"
-  }
-];
-
-function useTheme() {
-  const [dark, setDark] = useState(false);
-
-  useEffect(() => {
-    setDark(document.documentElement.classList.contains("dark"));
-  }, []);
-
-  const toggle = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    try {
-      localStorage.setItem("vex-theme", next ? "dark" : "light");
-    } catch {
-      // xd
-    }
+function Icon({
+  name
+}: {
+  name: "sun" | "moon" | "download" | "search" | "close" | "menu" | "external";
+}) {
+  const paths = {
+    sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5",
+    moon: "M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z",
+    download: "M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5",
+    search: "M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM16 16l5 5",
+    close: "m6 6 12 12M6 18 18 6",
+    menu: "M4 6h16M4 12h16M4 18h16",
+    external: "M8 5h11v11M19 5 5 19"
   };
-
-  return { dark, toggle };
-}
-
-export function HomePage() {
-  const { dark, toggle } = useTheme();
-
   return (
-    <div className="min-h-dvh bg-background text-text">
-      <SiteHeader dark={dark} toggle={toggle} />
-      <main className={`${frame} pb-24`}>
-        <section className="rise pt-16 max-narrow:pt-12" id="top">
-          <h1 className="max-w-[560px] text-[32px] font-medium leading-[1.25] tracking-[-0.02em] max-narrow:text-[28px]">
-            Vex is a native terminal workspace for Windows.
-          </h1>
-          <p className="mt-5 max-w-[520px] text-[15px] leading-[1.7] text-muted">
-            It brings terminals, files, and a quiet editor into one window —
-            built around ConPTY, split panes, and projects that stay open.
-          </p>
-          <p className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-[14px]">
-            <a
-              className="underline decoration-line underline-offset-4 transition-colors hover:decoration-text"
-              href="/#download"
-            >
-              Download
-            </a>
-            <a
-              className="underline decoration-line underline-offset-4 transition-colors hover:decoration-text"
-              href="https://github.com/Rayzerrek/Vex"
-            >
-              GitHub
-            </a>
-            <a
-              className="underline decoration-line underline-offset-4 transition-colors hover:decoration-text"
-              href="/#features"
-            >
-              Features
-            </a>
-          </p>
-        </section>
-
-        <figure className="mt-10">
-          <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgba(25,25,24,0.06),0_24px_48px_-24px_rgba(25,25,24,0.25)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_24px_48px_-24px_rgba(0,0,0,0.7)]">
-            <img
-              className="block aspect-[16/9] w-full object-cover object-top"
-              src={dark ? "/shots/vex-dark.png" : "/shots/vex-light.png"}
-              alt="Vex on Windows with the sidebar open, a file tree, and a terminal listing the project"
-              loading="eager"
-              fetchPriority="high"
-              decoding="async"
-            />
-          </div>
-          <figcaption className="mt-3 font-mono text-[11px] tracking-[0.04em] text-faint">
-            vex on windows — sidebar, file tree, terminal.
-          </figcaption>
-        </figure>
-
-        <section id="features">
-          <h2 className="mt-20 max-w-[500px] text-[22px] font-medium leading-[1.35] tracking-[-0.02em]">
-            Everything stays in reach.
-          </h2>
-          <p className="mt-3 max-w-[500px] text-[14px] leading-[1.7] text-muted">
-            Vex keeps the parts of terminal work that usually get scattered
-            across windows in one quiet, keyboard-first surface.
-          </p>
-          <div>
-            {principles.map(({ title, copy, meta }, index) => (
-              <article
-                key={title}
-                className="grid grid-cols-[32px_1fr_auto] gap-4 border-b border-line py-6 max-narrow:grid-cols-[24px_1fr] max-narrow:gap-3"
-              >
-                <span className="font-mono text-[11px] text-faint">
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <div>
-                  <h3 className="text-[15px] font-medium tracking-[-0.01em]">
-                    {title}
-                  </h3>
-                  <p className="mt-2 max-w-[520px] text-[14px] leading-[1.7] text-muted">
-                    {copy}
-                  </p>
-                </div>
-                <span className="pt-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-faint max-narrow:col-start-2 max-narrow:row-start-1 max-narrow:justify-self-end">
-                  {meta}
-                </span>
-              </article>
-            ))}
-          </div>
-          <figure className="mt-12">
-            <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgba(25,25,24,0.06),0_24px_48px_-24px_rgba(25,25,24,0.25)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.4),0_24px_48px_-24px_rgba(0,0,0,0.7)]">
-              <img
-                className="block w-full"
-                src="/shots/vex-palette.png"
-                alt="Vex command palette listing New Tab, Split Right, Split Down, and project switching"
-                loading="lazy"
-              />
-            </div>
-            <figcaption className="mt-3 font-mono text-[11px] tracking-[0.04em] text-faint">
-              command palette — ctrl+shift+p. every action, one keystroke away.
-            </figcaption>
-          </figure>
-        </section>
-
-        <section>
-          <h2 className={sectionTitle}>Details</h2>
-          <pre
-            className="m-0 overflow-auto border-b border-line py-4 font-mono text-[12px] leading-[1.9] text-muted"
-            aria-label="Vex architecture"
-          >
-            <code>{`windows/Vex.App
-  shell       WPF window and workspace state
-  terminal    ConPTY sessions and input
-  editor      syntax-aware file editing
-  explorer    project files and folders`}</code>
-          </pre>
-          <dl className="grid grid-cols-3 gap-4 max-narrow:grid-cols-1 max-narrow:gap-0">
-            {[
-              { term: "Platform", detail: "Windows 10 1809+" },
-              { term: "Runtime", detail: ".NET 10" },
-              { term: "License", detail: "GPL-3.0" }
-            ].map(({ term, detail }) => (
-              <div
-                className="border-b border-line py-4 max-narrow:py-3"
-                key={term}
-              >
-                <dt className="font-mono text-[11px] tracking-[0.06em] text-faint">
-                  {term}
-                </dt>
-                <dd className="mt-1.5 font-mono text-[12px] text-text">
-                  {detail}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-
-        <section id="download">
-          <h2 className={sectionTitle}>Download</h2>
-          <DownloadChoices compact />
-        </section>
-      </main>
-      <SiteFooter />
-    </div>
-  );
-}
-
-function DownloadChoices({ compact = false }: { compact?: boolean }) {
-  return (
-    <div
-      className={`${compact ? "mt-2" : "mt-8"} grid grid-cols-2 gap-3 max-narrow:grid-cols-1`}
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
     >
-      {downloadOptions.map(({ href, title, detail, meta }) => (
-        <a
-          className="group flex min-h-[164px] flex-col border border-line bg-surface p-5 no-underline transition-colors duration-150 hover:border-faint max-narrow:min-h-0 max-narrow:p-4"
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          key={href}
-        >
-          <div className="flex items-start justify-between gap-4">
-            <h3 className="text-[17px] font-medium tracking-[-0.02em]">
-              {title}
-            </h3>
-            <span className="font-mono text-[16px] text-faint transition-transform duration-150 group-hover:translate-x-1 group-hover:text-text">
-              ↗
-            </span>
-          </div>
-          <p className="mt-2 flex-1 text-[14px] leading-[1.6] text-muted">
-            {detail}
-          </p>
-          <span className="mt-5 border-t border-line pt-3 font-mono text-[11px] text-faint">
-            {meta}
-          </span>
-        </a>
-      ))}
-    </div>
-  );
-}
-
-function SiteHeader({ dark, toggle }: { dark: boolean; toggle: () => void }) {
-  return (
-    <header className={`${frame} flex h-14 items-center justify-between`}>
-      <a
-        className="flex items-center gap-2 text-[15px] font-semibold tracking-[-0.02em] no-underline"
-        href="/"
-        aria-label="Vex home"
-      >
-        <Mark />
-        <span>vex</span>
-      </a>
-      <nav
-        className="flex items-center gap-5 text-[14px] text-muted"
-        aria-label="Main navigation"
-      >
-        <a
-          className="no-underline transition-colors duration-150 hover:text-text max-narrow:hidden"
-          href="/#features"
-        >
-          features
-        </a>
-        <a
-          className="no-underline transition-colors duration-150 hover:text-text"
-          href="/#download"
-        >
-          download
-        </a>
-        <a
-          className="no-underline transition-colors duration-150 hover:text-text"
-          href="https://github.com/Rayzerrek/Vex"
-        >
-          github
-        </a>
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
-          aria-pressed={dark}
-          className="flex size-7 cursor-pointer items-center justify-center rounded-full border border-line bg-transparent text-muted transition-colors duration-150 hover:border-faint hover:text-text"
-        >
-          <span
-            className="block size-3.5 rounded-full border border-current"
-            aria-hidden="true"
-            style={{
-              background: dark
-                ? "linear-gradient(90deg, transparent 50%, currentColor 50%)"
-                : "linear-gradient(90deg, currentColor 50%, transparent 50%)"
-            }}
-          />
-        </button>
-      </nav>
-    </header>
-  );
-}
-
-function SiteFooter() {
-  return (
-    <footer
-      className={`${frame} flex items-center justify-between border-t border-line py-5 text-[13px] text-faint max-narrow:flex-col max-narrow:items-start max-narrow:gap-1`}
-    >
-      <span>© 2026 Vex.</span>
-    </footer>
+      <path d={paths[name]} />
+    </svg>
   );
 }
 
 function Mark() {
   return (
-    <span
-      className="relative inline-block size-[16px] skew-x-[-14deg]"
+    <svg
+      className="brand-mark"
+      viewBox="0 0 48 48"
+      fill="none"
       aria-hidden="true"
     >
-      <span className="absolute bottom-0 left-[3px] block h-[11px] w-[4px] bg-text" />
-      <span className="absolute bottom-0 right-[3px] block h-[16px] w-[4px] bg-text" />
-    </span>
+      <rect width="48" height="48" rx="12" fill="currentColor" />
+      <path
+        d="M9 11h8l10 26h-8L9 11Zm23 0h8l-5 13h-8l5-13Zm-6 16h8l-4 10h-8l4-10Z"
+        fill="white"
+      />
+    </svg>
+  );
+}
+
+function useTheme() {
+  const [dark, setDark] = useState(false);
+  useEffect(
+    () => setDark(document.documentElement.classList.contains("dark")),
+    []
+  );
+  function toggle() {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", next ? "#101a2c" : "#f6f8fc");
+    try {
+      localStorage.setItem("vex-theme", next ? "dark" : "light");
+    } catch {
+      /* The theme still works when browser storage is unavailable. */
+    }
+  }
+  return { dark, toggle };
+}
+
+function SiteHeader({
+  dark,
+  toggle,
+  isDocs
+}: {
+  dark: boolean;
+  toggle: () => void;
+  isDocs: boolean;
+}) {
+  return (
+    <header className="site-header">
+      <div className="header-inner">
+        <a className="brand" href="/" aria-label="Vex home">
+          <Mark />
+          <span>vex</span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a href="/#features" className="nav-features">
+            Features
+          </a>
+          <a
+            href="/docs/getting-started"
+            aria-current={isDocs ? "true" : undefined}
+          >
+            Docs
+          </a>
+          <a className="nav-github" href={repository}>
+            GitHub <Icon name="external" />
+          </a>
+          <span className="nav-divider" />
+          <button
+            className="icon-button"
+            type="button"
+            onClick={toggle}
+            aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+            aria-pressed={dark}
+          >
+            <Icon name={dark ? "sun" : "moon"} />
+          </button>
+          <a className="header-download" href="/#download">
+            Download <Icon name="download" />
+          </a>
+        </nav>
+      </div>
+    </header>
+  );
+}
+
+const workspaceFeatures = [
+  {
+    title: "Make room for your workflow.",
+    description:
+      "Split a tab into panes, rearrange them, and save the layout. Open it in another project with the directories and startup commands you chose.",
+    link: "/docs/workspace#saved-layouts",
+    linkText: "Explore workspaces",
+    type: "panes"
+  },
+  {
+    title: "Bring the right path to the prompt.",
+    description:
+      "Press Ctrl+Shift+F to find a file or folder at your cursor. Navigate directories and insert a path without leaving your shell or terminal application.",
+    link: "/docs/shortcuts#path-picker",
+    linkText: "Learn the path picker",
+    type: "paths"
+  },
+  {
+    title: "Know what needs your attention.",
+    description:
+      "See when a program is working, finished, failed, or waiting for input. Status stays visible across panes, tabs, and projects when programs report it.",
+    link: "/docs/program-status",
+    linkText: "Read about program status",
+    type: "status"
+  }
+];
+
+function WorkspaceDemo({ selected }: { selected: number }) {
+  const [tab, setTab] = useState(0);
+  return (
+    <div
+      className="workspace-demo"
+      aria-label="Illustration of a split workspace, not a live terminal"
+    >
+      <div className="demo-tabs">
+        <span className="demo-project">
+          vex <span>main</span>
+        </span>
+        {selected === 0 ? (
+          ["Workspace", "Checks"].map((title, index) => (
+            <button
+              type="button"
+              key={title}
+              onClick={() => setTab(index)}
+              aria-pressed={tab === index}
+            >
+              {title}
+            </button>
+          ))
+        ) : (
+          <span>{selected === 1 ? "Path picker" : "Program status"}</span>
+        )}
+      </div>
+      {selected === 0 ? (
+        <div className={`demo-panes ${tab === 1 ? "checks-panes" : ""}`}>
+          <div className="demo-pane">
+            <span className="pane-label">
+              {tab === 0 ? "PowerShell" : "Build"}
+            </span>
+            <pre>
+              <span className="terminal-directory">~/code/vex</span>
+              {"\n"}
+              <span className="terminal-prompt">❯ </span>
+              {tab === 0
+                ? "git status\nOn branch main\n\nWorking tree clean"
+                : "dotnet build\n\nBuild succeeded.\n    0 errors"}
+              <span className="terminal-cursor" />
+            </pre>
+          </div>
+          <div className="demo-pane">
+            <span className="pane-label">
+              {tab === 0 ? "Nushell" : "Tests"}
+            </span>
+            <pre>
+              <span className="terminal-directory">~/code/vex/web</span>
+              {"\n"}
+              <span className="terminal-prompt">❯ </span>
+              {tab === 0
+                ? "pnpm dev\n\nLocal: localhost:5173"
+                : "pnpm run check\n\nAll checks passed."}
+            </pre>
+          </div>
+          <div className="demo-pane pane-wide">
+            <span className="pane-label">{tab === 0 ? "Git" : "Shell"}</span>
+            <pre>
+              <span className="terminal-prompt">❯ </span>
+              {tab === 0
+                ? "git log --oneline -2\n\nfix: polish terminal rendering\nfeat: compact terminal refinements"
+                : "Ready for the next command."}
+            </pre>
+          </div>
+        </div>
+      ) : selected === 1 ? (
+        <div className="path-demo">
+          <pre>
+            <span className="terminal-directory">~/code/vex</span>
+            {"\n"}
+            <span className="terminal-prompt">❯ </span>git diff{" "}
+            <span className="terminal-cursor" />
+          </pre>
+          <div className="path-picker">
+            <div className="picker-query">
+              <Icon name="search" />
+              <span>config</span>
+              <kbd>Esc</kbd>
+            </div>
+            <div className="picker-match">
+              docs/<strong>config</strong>uration.md<span>file</span>
+            </div>
+            <div>
+              web/vite.<strong>config</strong>.ts<span>file</span>
+            </div>
+            <div>
+              web/ts<strong>config</strong>.json<span>file</span>
+            </div>
+            <footer>
+              <span>~/code/vex</span>
+              <span>Enter to insert</span>
+            </footer>
+          </div>
+        </div>
+      ) : (
+        <div className="status-demo">
+          <div>
+            <span className="status-symbol working">◌</span>
+            <span>
+              Build<small>Compiling the project</small>
+            </span>
+            <span>Working</span>
+          </div>
+          <div>
+            <span className="status-symbol waiting">?</span>
+            <span>
+              Assistant<small>Approval requested</small>
+            </span>
+            <span>Needs input</span>
+          </div>
+          <div>
+            <span className="status-symbol finished">✓</span>
+            <span>
+              Tests<small>Checks completed</small>
+            </span>
+            <span>Finished</span>
+          </div>
+          <p>Program-reported status, in one workspace.</p>
+        </div>
+      )}
+      <div className="demo-bottom">
+        <span>Workspace illustration</span>
+        <span>
+          {selected === 0
+            ? "3 panes"
+            : selected === 1
+              ? "Path picker"
+              : "Program status"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function Home({ dark }: { dark: boolean }) {
+  const [selected, setSelected] = useState(0);
+  const feature = workspaceFeatures[selected];
+  return (
+    <main id="main-content">
+      <section className="hero page-width">
+        <div className="hero-heading">
+          <h1>
+            Your terminals.
+            <br />
+            One workspace.
+          </h1>
+          <div className="hero-copy">
+            <p>
+              A native home for terminal work on Windows. Keep your projects,
+              shells, and split panes together. Pick up where you left off.
+            </p>
+            <div className="hero-actions">
+              <a className="button button-primary" href="#download">
+                <Icon name="download" />
+                Get Vex for Windows
+              </a>
+              <a className="text-link" href="/docs/getting-started">
+                Read the docs
+              </a>
+            </div>
+            <p className="hero-note">
+              Windows 10 & 11. Open source. Yours to make your own.
+            </p>
+          </div>
+        </div>
+        <figure className="product-figure">
+          <div className="product-stage">
+            <img
+              src={dark ? "/shots/vex-dark.png" : "/shots/vex-light.png"}
+              alt="Vex on Windows with a project sidebar, file tree, and a Nushell terminal"
+              width="1120"
+              height="700"
+              fetchPriority="high"
+            />
+          </div>
+          <figcaption>
+            <span>A workspace for the way you work.</span>
+            <span>Native Windows app · ConPTY + Ghostty VT</span>
+          </figcaption>
+        </figure>
+      </section>
+      <section className="features-section page-width" id="features">
+        <div className="section-heading">
+          <h2>
+            Less window juggling.
+            <br />
+            More room to work.
+          </h2>
+          <p>
+            Your shell is still your shell. Vex brings the workspace around it:
+            projects, layouts, and the small things that keep you moving.
+          </p>
+        </div>
+        <div
+          className="feature-tabs"
+          role="tablist"
+          aria-label="Workspace features"
+        >
+          {["Projects & panes", "Path picker", "Program status"].map(
+            (title, index) => (
+              <button
+                key={title}
+                type="button"
+                id={`feature-tab-${index}`}
+                role="tab"
+                aria-selected={selected === index}
+                aria-controls="feature-panel"
+                tabIndex={selected === index ? 0 : -1}
+                onClick={() => setSelected(index)}
+                onKeyDown={(event) => {
+                  const next =
+                    event.key === "ArrowRight"
+                      ? (index + 1) % 3
+                      : event.key === "ArrowLeft"
+                        ? (index + 2) % 3
+                        : event.key === "Home"
+                          ? 0
+                          : event.key === "End"
+                            ? 2
+                            : null;
+                  if (next !== null) {
+                    event.preventDefault();
+                    setSelected(next);
+                    document.getElementById(`feature-tab-${next}`)?.focus();
+                  }
+                }}
+              >
+                {title}
+              </button>
+            )
+          )}
+        </div>
+        <div
+          className="feature-panel"
+          id="feature-panel"
+          role="tabpanel"
+          aria-labelledby={`feature-tab-${selected}`}
+        >
+          <WorkspaceDemo selected={selected} />
+          <div className="feature-copy">
+            <h3>{feature.title}</h3>
+            <p>{feature.description}</p>
+            <a className="text-link" href={feature.link}>
+              {feature.linkText}
+            </a>
+          </div>
+        </div>
+        <div className="native-details">
+          <div>
+            <h3>Windows, not a web wrapper.</h3>
+            <p>
+              Built with WPF and .NET 10. ConPTY runs your processes; Ghostty VT
+              handles terminal emulation.
+            </p>
+          </div>
+          <div>
+            <h3>Use the shell you know.</h3>
+            <p>
+              PowerShell, Nushell, cmd, Git Bash, or WSL. Add your own shell
+              profiles in Settings.
+            </p>
+          </div>
+          <div>
+            <h3>Keep your keys.</h3>
+            <p>
+              Vex uses Ctrl+Shift shortcuts. Your terminal applications keep
+              their own Ctrl bindings.
+            </p>
+          </div>
+        </div>
+      </section>
+      <section className="docs-invitation page-width">
+        <div className="docs-miniature" aria-hidden="true">
+          <Mark />
+          <div>
+            <span>Vex documentation</span>
+            <span className="miniature-active">Installation</span>
+            <span>Workspaces & panes</span>
+            <span>Keyboard shortcuts</span>
+            <span>Appearance & themes</span>
+          </div>
+        </div>
+        <div>
+          <h2>
+            A short path from
+            <br />
+            installing to working.
+          </h2>
+          <p>
+            Get set up, learn the shortcuts, and make the workspace yours.
+            Straightforward guides, without the guesswork.
+          </p>
+          <a className="text-link" href="/docs/getting-started">
+            Open the documentation
+          </a>
+        </div>
+      </section>
+      <section className="download-section page-width" id="download">
+        <div>
+          <h2>
+            Make yourself
+            <br />
+            at home.
+          </h2>
+          <p>
+            Vex is free and open source.
+            <br />
+            Available for Windows 10 (1809+) and Windows 11.
+          </p>
+          <a className="text-link" href={`${repository}/blob/main/LICENSE`}>
+            GPL-3.0 license
+          </a>
+        </div>
+        <div className="download-options">
+          <a className="download-option" href={releases}>
+            <span className="download-icon">
+              <Icon name="download" />
+            </span>
+            <span>
+              <strong>Windows installer</strong>
+              <small>Install Vex with the latest .msi release.</small>
+            </span>
+            <Icon name="external" />
+          </a>
+          <a className="download-option" href={releases}>
+            <span className="download-icon">
+              <Icon name="download" />
+            </span>
+            <span>
+              <strong>Portable version</strong>
+              <small>Unpack the .zip and run. No .NET install needed.</small>
+            </span>
+            <Icon name="external" />
+          </a>
+          <a className="source-link" href={repository}>
+            Prefer to build it yourself? Browse the source on GitHub.
+          </a>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Docs({ slug }: { slug: string }) {
+  const pageIndex = docsPages.findIndex((page) => page.slug === slug);
+  const page = docsPages[pageIndex];
+  const [query, setQuery] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    setMenuOpen(false);
+    setQuery("");
+  }, [slug]);
+  useEffect(() => {
+    function handleKey(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setMenuOpen(true);
+        requestAnimationFrame(() => searchRef.current?.focus());
+      }
+      if (event.key === "Escape") {
+        setQuery("");
+        setMenuOpen(false);
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+  if (!page) return <NotFound />;
+  const filtered = docsPages.filter((item) =>
+    `${item.title} ${item.description}`
+      .toLowerCase()
+      .includes(query.toLowerCase().trim())
+  );
+  return (
+    <main className="docs-layout page-width" id="main-content">
+      <div className="docs-mobile-bar">
+        <span>Documentation</span>
+        <button
+          className="icon-button"
+          type="button"
+          aria-expanded={menuOpen}
+          aria-controls="docs-sidebar"
+          aria-label={
+            menuOpen
+              ? "Close documentation navigation"
+              : "Open documentation navigation"
+          }
+          onClick={() => setMenuOpen(!menuOpen)}
+        >
+          <Icon name={menuOpen ? "close" : "menu"} />
+        </button>
+      </div>
+      <aside
+        className={`docs-sidebar ${menuOpen ? "is-open" : ""}`}
+        id="docs-sidebar"
+      >
+        <label className="docs-search">
+          <Icon name="search" />
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Find a guide…"
+            aria-label="Search documentation guides"
+          />
+          <kbd>Ctrl K</kbd>
+        </label>
+        <nav aria-label="Documentation">
+          {Array.from(new Set(docsPages.map((item) => item.group))).map(
+            (group) => {
+              const items = filtered.filter((item) => item.group === group);
+              return items.length > 0 ? (
+                <div className="docs-nav-group" key={group}>
+                  <h2>{group}</h2>
+                  {items.map((item) => (
+                    <a
+                      key={item.slug}
+                      href={`/docs/${item.slug}`}
+                      aria-current={item.slug === slug ? "page" : undefined}
+                    >
+                      {item.title}
+                    </a>
+                  ))}
+                </div>
+              ) : null;
+            }
+          )}
+          {filtered.length === 0 && (
+            <p className="search-empty" role="status">
+              No matching guides. Try “shell”, “theme”, or “panes”.
+            </p>
+          )}
+        </nav>
+        <a className="docs-source" href={`${repository}/tree/main/docs`}>
+          Documentation source <Icon name="external" />
+        </a>
+      </aside>
+      <article className="doc-article">
+        <div className="doc-breadcrumb">
+          <a href="/docs/getting-started">Docs</a>
+          <span>/</span>
+          <span>{page.group}</span>
+        </div>
+        <h1>{page.title}</h1>
+        <p className="doc-description">{page.description}</p>
+        <div className="mobile-toc">
+          <details>
+            <summary>On this page</summary>
+            {page.sections.map((section) => (
+              <a key={section.id} href={`#${section.id}`}>
+                {section.title}
+              </a>
+            ))}
+          </details>
+        </div>
+        <DocContent slug={slug} />
+        <nav className="doc-pagination" aria-label="Documentation pages">
+          {docsPages[pageIndex - 1] ? (
+            <a href={`/docs/${docsPages[pageIndex - 1].slug}`}>
+              <small>Previous</small>
+              {docsPages[pageIndex - 1].title}
+            </a>
+          ) : (
+            <span />
+          )}
+          {docsPages[pageIndex + 1] && (
+            <a href={`/docs/${docsPages[pageIndex + 1].slug}`}>
+              <small>Next</small>
+              {docsPages[pageIndex + 1].title}
+            </a>
+          )}
+        </nav>
+      </article>
+      <aside className="docs-toc">
+        <h2>On this page</h2>
+        <nav aria-label="On this page">
+          {page.sections.map((section) => (
+            <a key={section.id} href={`#${section.id}`}>
+              {section.title}
+            </a>
+          ))}
+        </nav>
+        <a className="toc-help" href={`${repository}/issues`}>
+          Something missing?
+          <br />
+          <span>Let us know on GitHub.</span>
+        </a>
+      </aside>
+    </main>
+  );
+}
+
+function NotFound() {
+  return (
+    <main className="not-found page-width" id="main-content">
+      <h1>That page isn’t here.</h1>
+      <p>
+        Head back to the workspace, or find what you need in the documentation.
+      </p>
+      <a className="button button-primary" href="/docs/getting-started">
+        Open the docs
+      </a>
+      <a className="text-link" href="/">
+        Back to home
+      </a>
+    </main>
+  );
+}
+
+export function App({ initialPath }: { initialPath?: string }) {
+  const [path, setPath] = useState(
+    initialPath ??
+      (typeof window === "undefined" ? "/" : window.location.pathname)
+  );
+  const { dark, toggle } = useTheme();
+  const normalized = path.replace(/\/+$/, "") || "/";
+  const isDocs = normalized === "/docs" || normalized.startsWith("/docs/");
+  const slug =
+    normalized === "/docs" ? "getting-started" : normalized.split("/")[2];
+  useEffect(() => {
+    const sync = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", sync);
+    function navigate(event: MouseEvent) {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return;
+      const anchor = (event.target as Element).closest("a");
+      if (!anchor || anchor.target || anchor.hasAttribute("download")) return;
+      const url = new URL(anchor.href);
+      if (
+        url.origin !== window.location.origin ||
+        url.pathname === window.location.pathname
+      )
+        return;
+      event.preventDefault();
+      window.history.pushState(null, "", url);
+      setPath(url.pathname);
+      if (url.hash)
+        requestAnimationFrame(() =>
+          document
+            .getElementById(decodeURIComponent(url.hash.slice(1)))
+            ?.scrollIntoView()
+        );
+      else window.scrollTo(0, 0);
+      requestAnimationFrame(() => {
+        const main = document.getElementById("main-content");
+        main?.setAttribute("tabindex", "-1");
+        main?.focus({ preventScroll: true });
+      });
+    }
+    document.addEventListener("click", navigate);
+    return () => {
+      window.removeEventListener("popstate", sync);
+      document.removeEventListener("click", navigate);
+    };
+  }, []);
+  useEffect(() => {
+    const current = docsPages.find((item) => item.slug === slug);
+    document.title = isDocs
+      ? `${current?.title ?? "Page not found"} — Vex Docs`
+      : normalized === "/"
+        ? "Vex — Your terminals. One workspace."
+        : "Page not found — Vex";
+    document
+      .querySelector('meta[name="description"]')
+      ?.setAttribute(
+        "content",
+        isDocs && current
+          ? current.description
+          : "A native terminal workspace for Windows. Keep your projects, shells, and split panes together."
+      );
+  }, [normalized, isDocs, slug]);
+  return (
+    <>
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <SiteHeader dark={dark} toggle={toggle} isDocs={isDocs} />
+      {isDocs ? (
+        <Docs slug={slug} />
+      ) : normalized === "/" ? (
+        <Home dark={dark} />
+      ) : (
+        <NotFound />
+      )}
+      <footer className="site-footer page-width">
+        <a className="brand footer-brand" href="/">
+          <Mark />
+          <span>vex</span>
+        </a>
+        <span>A little more space to work.</span>
+        <nav aria-label="Footer">
+          <a href="/docs/getting-started">Documentation</a>
+          <a href={repository}>GitHub</a>
+          <span>© 2026 Vex</span>
+        </nav>
+      </footer>
+    </>
   );
 }
