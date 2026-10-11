@@ -140,10 +140,11 @@ public sealed class TerminalPalette
     /// Resolves a cell's tagged fg/bg colors into render-ready brushes. A
     /// null background means "default": the row already paints the theme
     /// background, so nothing needs drawing. INVERSE swaps (with xterm's
-    /// default-swap semantics); INVISIBLE drops the foreground.
+    /// default-swap semantics); INVISIBLE drops the foreground. Block-element
+    /// graphics opt out of contrast correction to preserve their pixel colors.
     /// </summary>
     public void Resolve(ColorTag fgTag, int fgValue, ColorTag bgTag, int bgValue,
-        CellFlags flags, out Brush? foreground, out Brush? background)
+        CellFlags flags, out Brush? foreground, out Brush? background, bool correctContrast = true)
     {
         var bold = (flags & CellFlags.Bold) != 0;
 
@@ -172,7 +173,7 @@ public sealed class TerminalPalette
         foreground = fgTag == ColorTag.None ? Foreground : ResolveColor(fgTag, fgValue, bold);
 
         var faint = (flags & CellFlags.Faint) != 0;
-        if (_automaticContrast && foreground is SolidColorBrush text
+        if (_automaticContrast && correctContrast && foreground is SolidColorBrush text
             && (background ?? Background) is SolidColorBrush surface)
         {
             var key = (text.Color, surface.Color, faint);

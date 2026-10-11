@@ -815,6 +815,56 @@ internal static class RenderSelfTest
         }
     }
 
+    private static void CheckBlockElementContrast(NativeTerminalControl control)
+    {
+        const string content = "A▀A▄A█A▌A▐A░A▒A▓A▖A▟";
+        var originalContrast = AppSettings.Instance.AutomaticContrast;
+        try
+        {
+            // Identical SGR on adjacent text and blocks exercises mixed-run rendering.
+            var fixture = new StringBuilder("\x1b[0m\x1b[2J\x1b[H");
+            var styles = new[] { "", "1;", "2;", "7;" };
+            for (var row = 0; row < styles.Length; row++)
+                fixture.Append($"\x1b[{row + 1};1H\x1b[0;{styles[row]}38;2;80;90;100;48;2;90;100;110m{content}");
+            fixture.Append("\x1b[0m\x1b[5;1H");
+            control.SelfTestFeed(fixture.ToString());
+            AppSettings.Instance.AutomaticContrast = false;
+            control.SelfTestFullRedraw();
+            var original = Capture(control);
+            AppSettings.Instance.AutomaticContrast = true;
+            control.SelfTestFullRedraw();
+            var corrected = Capture(control);
+
+            var dpi = VisualTreeHelper.GetDpi(control).PixelsPerDip;
+            var width = Math.Max(1, (int)Math.Round(control.ActualWidth * dpi));
+            for (var row = 0; row < styles.Length; row++)
+            {
+                for (var col = 0; col < content.Length; col++)
+                {
+                    var x0 = (int)Math.Round(col * control.SelfTestCellWidth * dpi);
+                    var x1 = (int)Math.Round((col + 1) * control.SelfTestCellWidth * dpi);
+                    var y0 = (int)Math.Round(row * control.SelfTestCellHeight * dpi);
+                    var y1 = (int)Math.Round((row + 1) * control.SelfTestCellHeight * dpi);
+                    var equal = true;
+                    for (var y = y0; y < y1; y++)
+                    {
+                        var offset = (y * width + x0) * 4;
+                        var length = (x1 - x0) * 4;
+                        equal &= original.AsSpan(offset, length).SequenceEqual(corrected.AsSpan(offset, length));
+                    }
+                    Assert(control, equal == (col % 2 == 1),
+                        $"block contrast: row={row} col={col} preserves graphics but repairs adjacent text");
+                }
+            }
+            Report(control, "PASS block contrast: original graphic colors, readable adjacent text, bold, faint and inverse");
+        }
+        finally
+        {
+            AppSettings.Instance.AutomaticContrast = originalContrast;
+            control.SelfTestFeed("\x1b[0m\x1b[2J\x1b[H");
+        }
+    }
+
     private static void RunCore(NativeTerminalControl control)
     {
         Report(control, $"start cols={control.SelfTestCols} rows={control.SelfTestRows} cell={control.SelfTestCellWidth:0.0}x{control.SelfTestCellHeight:0.0}");
@@ -830,6 +880,14 @@ internal static class RenderSelfTest
         control.SelfTestStabilizeCaret();
 
         CheckIndexedThemeContrast(control);
+        CheckBlockElementContrast(control);
+        foreach (var dpi in new[] { 1.0, 1.25, 1.5, 1.75, 2.0 })
+        {
+            foreach (var blocks in new[] { false, true })
+                Report(control, control.SelfTestCellFillSeams(dpi, blocks)
+                    ? $"PASS cell-fill seams: dpi={dpi} blocks={blocks} solid pixels across row and run boundaries"
+                    : $"FAIL cell-fill seams: dpi={dpi} blocks={blocks} gaps in solid color");
+        }
 
         control.SelfTestPathCompletion(() => DumpPng(control, Capture(control), Path.ChangeExtension(ReportPath!, ".path-completion.png")));
         Report(control, "PASS path completion: fuzzy filtering, keyboard navigation, paste, alternate screen and cleanup");

@@ -51,6 +51,24 @@ public sealed class TerminalPaletteTests
         Assert.Equal(originalPalette, palette.PaletteRgb());
     }
 
+    [Theory]
+    [InlineData(CellFlags.None)]
+    [InlineData(CellFlags.Bold)]
+    [InlineData(CellFlags.Faint)]
+    [InlineData(CellFlags.Inverse)]
+    [InlineData(CellFlags.Invisible)]
+    public void AutomaticContrast_GraphicsOptOutPreservesColorsAndSgr(CellFlags flags)
+    {
+        var palette = new TerminalPalette(BuiltInThemes.VexDark);
+        var uncorrected = new TerminalPalette(BuiltInThemes.VexDark, automaticContrast: false);
+        palette.Resolve(ColorTag.Rgb, 0x505a64, ColorTag.Rgb, 0x5a646e, flags,
+            out var foreground, out var background, correctContrast: false);
+        uncorrected.Resolve(ColorTag.Rgb, 0x505a64, ColorTag.Rgb, 0x5a646e, flags,
+            out var originalForeground, out var originalBackground);
+        Assert.Equal(Assert.IsType<SolidColorBrush>(originalForeground).Color, Assert.IsType<SolidColorBrush>(foreground).Color);
+        Assert.Equal(Assert.IsType<SolidColorBrush>(originalBackground).Color, Assert.IsType<SolidColorBrush>(background).Color);
+    }
+
     [Fact]
     public void AutomaticContrast_CanBeDisabledAndPersistsInSettings()
     {

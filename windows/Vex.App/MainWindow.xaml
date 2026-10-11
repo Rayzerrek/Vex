@@ -189,9 +189,9 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <DockPanel Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <local:ProgramStatusBadge Status="{Binding ProgramStatus}" Origin="{Binding ProgramStatusOrigin}" Margin="0,0,4,0"/>
                     <!-- Attention marker: lit for a background tab whose app
                          rang the bell, or whose process exited while the user
                          was elsewhere. It is the strip's answer to "which of
@@ -248,7 +248,9 @@
                                ToolTip="{Binding TitleTooltip}"
                                VerticalAlignment="Center"/>
                 </DockPanel>
-                <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="2" Text="{Binding Title}"
+                <local:ProgramStatusBadge Grid.Column="1" Status="{Binding ProgramStatus}"
+                                          Origin="{Binding ProgramStatusOrigin}" Margin="8,0,0,0"/>
+                <TextBox x:Name="TitleEditBox" Grid.ColumnSpan="3" Text="{Binding Title}"
                          Visibility="Collapsed" FontSize="14"
                          VerticalAlignment="Center" HorizontalAlignment="Stretch"
                          Foreground="{DynamicResource VexText}"
@@ -256,7 +258,7 @@
                          BorderBrush="{DynamicResource VexBorder}"
                          KeyDown="TitleEditBox_KeyDown"
                          LostFocus="TitleEditBox_LostFocus"/>
-                <Button x:Name="CloseBtn" Grid.Column="1" Style="{StaticResource CloseButton}"
+                <Button x:Name="CloseBtn" Grid.Column="2" Style="{StaticResource CloseButton}"
                         Margin="4,0,0,0" ToolTip="Close Tab"
                         Click="CloseTab_Click"
                         Opacity="0"
