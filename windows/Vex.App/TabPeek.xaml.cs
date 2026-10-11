@@ -104,6 +104,7 @@ public sealed partial class TabPeek : OverlayControl
             var preview = _previews[_nextPreview];
             _nextPreview = (_nextPreview + 1) % _previews.Count;
             if (TabList.ItemContainerGenerator.ContainerFromItem(preview) is ListBoxItem { IsVisible: true } item
+                && TabList.IsAncestorOf(item)
                 && item.TransformToAncestor(TabList).TransformBounds(new Rect(item.RenderSize)).IntersectsWith(new Rect(TabList.RenderSize)))
                 preview.RefreshTerminalPreviews();
             if (Stopwatch.GetElapsedTime(started).TotalMilliseconds >= 6) break;

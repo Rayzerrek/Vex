@@ -269,7 +269,7 @@ public sealed partial class NativeTerminalControl
         var indexing = _pathCompletionIndex?.IsScanning == true ? " · indexing" : _pathCompletionIndex?.IsTruncated == true ? " · 100k limit" : "";
         DrawPathCompletionText(dc, _pathCompletionDirectory + indexing, x + 12, y + 28, width - 24, _palette.Link);
         dc.DrawLine(new Pen(_palette.Selection, 1), new Point(x + 8, y + 50), new Point(x + width - 8, y + 50));
-        _pathCompletionFirstVisible = Math.Clamp(_pathCompletionSelected - count + 1, 0, Math.Max(0, _pathCompletionMatches.Length - count));
+        _pathCompletionFirstVisible = Math.Clamp(_pathCompletionSelected - count + 1, 0, Math.Max(0, matches.Length - count));
         for (var row = 0; row < count; row++)
         {
             var index = _pathCompletionFirstVisible + row;

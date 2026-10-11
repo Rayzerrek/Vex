@@ -55,6 +55,7 @@ public sealed class TabIconStackTests
                             Icons = Enumerable.Repeat(Assert.IsType<AppIcon>(first.AppIcon), count).ToArray(),
                             Background = stack.Background, BorderBrush = stack.BorderBrush, Foreground = stack.Foreground,
                         };
+                        crowded.SetValue(System.Windows.Controls.Control.ForegroundProperty, null);
                         crowded.Measure(new Size(200, 40));
                         Assert.Equal(56, crowded.DesiredSize.Width);
                         crowded.Arrange(new Rect(crowded.DesiredSize));
@@ -63,6 +64,27 @@ public sealed class TabIconStackTests
                         var overflow = new byte[20 * 22 * 4];
                         overflowBitmap.CopyPixels(new Int32Rect(36, 0, 20, 22), overflow, 20 * 4, 0);
                         Assert.Contains(overflow, value => value != 0);
+                        var fallback = new TabIconStack
+                        {
+                            Icons = crowded.Icons, Background = stack.Background,
+                            BorderBrush = stack.BorderBrush, Foreground = Brushes.Gray,
+                        };
+                        fallback.Measure(new Size(200, 40));
+                        fallback.Arrange(new Rect(fallback.DesiredSize));
+                        var expectedBitmap = new RenderTargetBitmap(56, 22, 96, 96, PixelFormats.Pbgra32);
+                        expectedBitmap.Render(fallback);
+                        var expected = new byte[overflow.Length];
+                        expectedBitmap.CopyPixels(new Int32Rect(36, 0, 20, 22), expected, 20 * 4, 0);
+                        Assert.Equal(expected, overflow);
+                        Assert.False(stack.BorderBrush.IsFrozen, "Rendering must not freeze a live theme resource.");
+                        var frozenBorder = stack.BorderBrush.CloneCurrentValue();
+                        frozenBorder.Freeze();
+                        crowded.BorderBrush = frozenBorder;
+                        crowded.InvalidateVisual();
+                        var frozenBitmap = new RenderTargetBitmap(56, 22, 96, 96, PixelFormats.Pbgra32);
+                        frozenBitmap.Render(crowded);
+                        frozenBitmap.CopyPixels(new Int32Rect(36, 0, 20, 22), overflow, 20 * 4, 0);
+                        Assert.Equal(expected, overflow);
                     }
                 }
             }
