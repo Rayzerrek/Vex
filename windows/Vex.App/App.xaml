@@ -453,6 +453,24 @@
             </Style.Triggers>
         </Style>
 
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="{DynamicResource VexSurface}"/>
+            <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource VexBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <local:RoundedSurface Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                              BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </local:RoundedSurface>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="ContextMenu" x:Key="DarkContextMenu">
             <Setter Property="Background" Value="{DynamicResource VexSurface}"/>
             <Setter Property="Foreground" Value="{DynamicResource VexText}"/>
@@ -462,11 +480,11 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ContextMenu">
-                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                        <local:RoundedSurface Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
                             <ScrollViewer>
                                 <ItemsPresenter Margin="{TemplateBinding Padding}"/>
                             </ScrollViewer>
-                        </Border>
+                        </local:RoundedSurface>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -494,9 +512,9 @@
                             </Border>
                             <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsSubmenuOpen}" Placement="Right"
                                    PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}" AllowsTransparency="True" Focusable="False">
-                                <Border Background="{DynamicResource VexSurface}" BorderBrush="{DynamicResource VexBorder}" BorderThickness="1" CornerRadius="6" Padding="4">
+                                <local:RoundedSurface Background="{DynamicResource VexSurface}" BorderBrush="{DynamicResource VexBorder}" BorderThickness="1" Padding="4">
                                     <ScrollViewer MaxHeight="480"><ItemsPresenter/></ScrollViewer>
-                                </Border>
+                                </local:RoundedSurface>
                             </Popup>
                         </Grid>
                         <ControlTemplate.Triggers>

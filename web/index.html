@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vex-mark.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f8fc" />
+    <meta name="theme-color" content="#f6f6f5" />
     <meta
       name="description"
       content="A native terminal workspace for Windows. Keep your projects, shells, and split panes together."
@@ -18,6 +18,9 @@
           (!t && window.matchMedia("(prefers-color-scheme: dark)").matches)
         ) {
           document.documentElement.classList.add("dark");
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute("content", "#111214");
         }
       } catch (e) {}
     </script>
