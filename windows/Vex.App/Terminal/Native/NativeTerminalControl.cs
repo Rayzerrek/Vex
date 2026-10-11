@@ -88,6 +88,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private ushort[]? _italicAscii;
     private ushort[]? _boldItalicAscii;
     private double _baselineY;
+    private readonly record struct FontMetricsKey(Typeface Typeface, double FontSize, double PixelsPerDip);
+    private FontMetricsKey? _fontMetricsKey;
 
     private readonly object _outputLock = new();
     private bool _redrawScheduled;
@@ -468,6 +470,15 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void RebuildFontMetrics()
     {
+        var key = new FontMetricsKey(_normalTypeface, _fontSize, _pixelsPerDip);
+        // Tab switches unload/reload the surface without changing its font.
+        // Keep shaped glyphs and geometry warm, but still check the new layout.
+        if (_fontMetricsKey == key)
+        {
+            RecalculateGridSize();
+            return;
+        }
+        _fontMetricsKey = key;
         _fallbackCellPlacements.Clear();
         _fallbackCellDrawings.Clear();
         _glyphAdvanceCache.Clear();
