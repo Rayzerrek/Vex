@@ -56,6 +56,8 @@ public sealed partial class SplitPaneView : UserControl
         var second = new ContentPresenter();
         second.SetBinding(ContentProperty, new Binding(nameof(SplitPane.Second)) { Source = pane });
         var splitter = new GridSplitter();
+        // Its hit target extends over both neighbors in the compact layout.
+        Panel.SetZIndex(splitter, 1);
         splitter.SetResourceReference(StyleProperty, "WorkspaceSplitter");
 
         var ratio = pane.Ratio;

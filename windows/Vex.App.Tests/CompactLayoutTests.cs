@@ -45,12 +45,24 @@ public sealed class CompactLayoutTests
                 var view = new SplitPaneView { Pane = new SplitPane(orientation, new EmptyPane(), new EmptyPane()) };
                 var grid = Assert.IsType<Grid>(view.Content);
                 var splitter = Assert.Single(grid.Children.OfType<GridSplitter>());
+                splitter.Background = System.Windows.Media.Brushes.Transparent;
+                splitter.HorizontalAlignment = HorizontalAlignment.Stretch;
+                splitter.VerticalAlignment = VerticalAlignment.Stretch;
+                foreach (var presenter in grid.Children.OfType<ContentPresenter>())
+                    presenter.Content = new Border { Background = System.Windows.Media.Brushes.Transparent };
                 view.Measure(new Size(800, 500));
                 view.Arrange(new Rect(0, 0, 800, 500));
                 var size = orientation == Orientation.Horizontal ? grid.ColumnDefinitions[1].ActualWidth : grid.RowDefinitions[1].ActualHeight;
                 Assert.Equal(1, size);
                 Assert.Equal(5, orientation == Orientation.Horizontal ? splitter.ActualWidth : splitter.ActualHeight);
                 Assert.Equal(0.5, Assert.IsType<SplitPane>(view.Pane).Ratio);
+                var edge = orientation == Orientation.Horizontal ? new Point(4.5, splitter.ActualHeight / 2)
+                    : new Point(splitter.ActualWidth / 2, 4.5);
+                var point = splitter.TransformToAncestor(grid).Transform(edge);
+                var hit = System.Windows.Media.VisualTreeHelper.HitTest(grid, point)?.VisualHit;
+                while (hit is not null && hit is not GridSplitter)
+                    hit = System.Windows.Media.VisualTreeHelper.GetParent(hit);
+                Assert.Same(splitter, hit);
             }
             catch (Exception ex) { failure = ex; }
         });
