@@ -8,10 +8,65 @@ namespace Vex.App.Tests;
 
 public sealed class TerminalPaletteTests
 {
+    [Theory]
+    [InlineData(0xffffaa, 0xffffff)]
+    [InlineData(0x222222, 0x181818)]
+    [InlineData(0x88bbff, 0xffffff)]
+    [InlineData(0x888888, 0x888888)]
+    public void AutomaticContrast_RepairsTruecolorAgainstTheActualBackground(int fg, int bg)
+    {
+        var palette = new TerminalPalette(BuiltInThemes.VexLight);
+        palette.Resolve(ColorTag.Rgb, fg, ColorTag.Rgb, bg, CellFlags.None, out var foreground, out var background);
+        var text = Assert.IsType<SolidColorBrush>(foreground);
+        var surface = Assert.IsType<SolidColorBrush>(background);
+        Assert.True(TerminalContrastCorrection.ContrastRatio(text.Color, surface.Color) >= 4.5);
+        Assert.True(text.IsFrozen);
+        palette.Resolve(ColorTag.Rgb, fg, ColorTag.Rgb, bg, CellFlags.None, out var cached, out _);
+        Assert.Same(text, cached);
+    }
+
+    [Fact]
+    public void AutomaticContrast_PreservesReadableColorsAndColorIdentity()
+    {
+        var readable = Color.FromRgb(160, 0, 0);
+        Assert.Equal(readable, TerminalContrastCorrection.CorrectForeground(readable, Colors.White, 4.5));
+        var yellow = TerminalContrastCorrection.CorrectForeground(Color.FromRgb(255, 255, 160), Colors.White, 4.5);
+        Assert.True(yellow.R > yellow.B && yellow.G > yellow.B, "Yellow must not collapse to the default gray foreground.");
+        var blue = TerminalContrastCorrection.CorrectForeground(Color.FromRgb(160, 190, 255), Colors.White, 4.5);
+        Assert.True(blue.B > blue.R && blue.B > blue.G);
+    }
+
+    [Fact]
+    public void AutomaticContrast_HandlesInverseFaintAndInvisibleWithoutChangingPaletteQueries()
+    {
+        var palette = new TerminalPalette(BuiltInThemes.VexLight);
+        var originalPalette = palette.PaletteRgb().ToArray();
+        palette.Resolve(ColorTag.Rgb, 0xffffff, ColorTag.Rgb, 0xffffee, CellFlags.Inverse, out var inverse, out var background);
+        Assert.True(TerminalContrastCorrection.ContrastRatio(Assert.IsType<SolidColorBrush>(inverse).Color,
+            Assert.IsType<SolidColorBrush>(background).Color) >= 4.5);
+        palette.Resolve(ColorTag.Rgb, 0xffffaa, ColorTag.Rgb, 0xffffff, CellFlags.Faint, out var faint, out _);
+        Assert.True(TerminalContrastCorrection.ContrastRatio(Assert.IsType<SolidColorBrush>(faint).Color, Colors.White) >= 3);
+        palette.Resolve(ColorTag.Rgb, 0, ColorTag.Rgb, 0xffffff, CellFlags.Invisible, out var invisible, out var surface);
+        Assert.Same(surface, invisible);
+        Assert.Equal(originalPalette, palette.PaletteRgb());
+    }
+
+    [Fact]
+    public void AutomaticContrast_CanBeDisabledAndPersistsInSettings()
+    {
+        var palette = new TerminalPalette(BuiltInThemes.VexLight, automaticContrast: false);
+        palette.Resolve(ColorTag.Rgb, 0xffffaa, ColorTag.Rgb, 0xffffff, CellFlags.None, out var foreground, out _);
+        Assert.Equal(Color.FromRgb(255, 255, 170), Assert.IsType<SolidColorBrush>(foreground).Color);
+        var settings = new AppSettings { AutomaticContrast = false };
+        var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(settings, VexJsonContext.Default.AppSettings);
+        Assert.False(AppSettings.DeserializeSettings(json).AutomaticContrast);
+        Assert.True(AppSettings.DeserializeSettings("{}"u8.ToArray()).AutomaticContrast);
+    }
+
     [Fact]
     public void FaintForeground_DoesNotReuseDefaultColorForRgbBlack()
     {
-        var palette = new TerminalPalette(BuiltInThemes.VexDark);
+        var palette = new TerminalPalette(BuiltInThemes.VexDark, automaticContrast: false);
         palette.Resolve(ColorTag.None, 0, ColorTag.None, 0, CellFlags.Faint, out _, out _);
         palette.Resolve(ColorTag.Rgb, 0, ColorTag.None, 0, CellFlags.Faint, out var foreground, out _);
         var color = Assert.IsType<SolidColorBrush>(foreground).Color;
