@@ -207,12 +207,14 @@ public sealed class TerminalPalette
 
     private readonly Dictionary<Brush, Pen> _penCache = new();
 
+    /// <summary>Frozen decoration pens use a bounded cache; eviction never changes retained terminal drawings.</summary>
     public Pen GetPen(Brush brush)
     {
         if (!_penCache.TryGetValue(brush, out var pen))
         {
             pen = new Pen(brush, 1);
             pen.Freeze();
+            if (_penCache.Count >= MaximumCachedColors) _penCache.Clear();
             _penCache[brush] = pen;
         }
         return pen;
