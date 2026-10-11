@@ -1279,8 +1279,8 @@ internal static class RenderSelfTest
             ParityCheck(control, $"visibility-{visibility}");
         }
         Report(control, control.SelfTestDetachedOutputCatchUp()
-            ? "PASS visibility detached: latest output appears after unchanged-size reload"
-            : "FAIL visibility detached: latest output missing after reload");
+            ? "PASS visibility detached: latest output appears after unchanged-size reload without invalidating font caches"
+            : "FAIL visibility detached: latest output missing or font caches invalidated after unchanged-size reload");
         ParityCheck(control, "visibility-detached");
         Report(control, control.SelfTestInputPrecedesOutputRedraw()
             ? "PASS scheduling: input precedes output redraw and final output is applied"
