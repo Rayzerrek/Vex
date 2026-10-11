@@ -23,7 +23,7 @@
              children with a draggable splitter. -->
         <DataTemplate DataType="{x:Type m:TerminalPane}">
             <Grid ClipToBounds="True">
-                <Border Background="Transparent">
+                <Border Background="{DynamicResource VexPaneTitleBar}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="24"/>
@@ -80,7 +80,7 @@
                                 </DockPanel>
                             </DockPanel>
                         </Border>
-                        <ContentPresenter Grid.Row="1" Content="{Binding View}"/>
+                        <ContentPresenter Grid.Row="1" Content="{Binding View}" Margin="8,0,8,0"/>
                     </Grid>
                 </Border>
                 <!-- Blur only the empty outline, never the terminal's glyph surface. -->
