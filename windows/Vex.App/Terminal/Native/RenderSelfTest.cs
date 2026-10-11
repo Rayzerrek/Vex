@@ -725,11 +725,21 @@ internal static class RenderSelfTest
         control.SelfTestCopyFeedback(1);
         Assert(control, PixelsEqual(applicationPlain, Capture(control)),
             "application copy: completion restores the application's pixels");
-        control.SelfTestApplicationCopy("copied content outside the visible viewport");
-        if (SystemParameters.ClientAreaAnimation)
-            Assert(control, !PixelsEqual(applicationPlain, Capture(control)),
-                "application copy: offscreen source still receives feedback at the caret");
+        foreach (var text in new[] { "copied content outside the visible viewport", "", " \r\n" })
+        {
+            control.SelfTestApplicationCopy(text);
+            Assert(control, PixelsEqual(applicationPlain, Capture(control)),
+                "application copy: absent or blank source does not flash an empty caret rectangle");
+            control.SelfTestCopyFeedback(1);
+        }
+        // Delete/cut sends the removed text to the clipboard while terminal
+        // painting can still lag behind the editor's updated screen.
+        control.SelfTestApplicationCopyAfterOutput($"{background}\x1b[Hprefix suffix\x1b[K", "copied text");
+        control.SelfTestFeed("");
+        var deleted = Capture(control);
         control.SelfTestCopyFeedback(1);
+        Assert(control, PixelsEqual(deleted, Capture(control)),
+            "application copy: deleted text does not animate from a stale frame");
         control.SelfTestFeed($"{background}\x1b[2J\x1b[Hprefix first line\r\nsecond line end\x1b[3;1H");
         var plain = Capture(control);
         control.SelfTestSelect(7, 0, 5, 1);

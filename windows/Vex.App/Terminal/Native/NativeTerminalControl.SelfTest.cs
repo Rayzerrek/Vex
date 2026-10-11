@@ -488,6 +488,13 @@ public sealed partial class NativeTerminalControl
     /// <summary>Exercises application copy feedback without a Vex selection.</summary>
     internal void SelfTestApplicationCopy(string text) => ShowApplicationCopyFeedback(text);
 
+    /// <summary>Delivers editor output before clipboard feedback while its scheduled repaint is still pending.</summary>
+    internal void SelfTestApplicationCopyAfterOutput(string output, string copiedText)
+    {
+        _terminal.Feed(output);
+        ShowApplicationCopyFeedback(copiedText);
+    }
+
     /// <summary>Drives link hover without moving the user's desktop pointer.</summary>
     internal void SelfTestLinkHover(int col, int row)
     {

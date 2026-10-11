@@ -89,17 +89,22 @@ public sealed partial class NativeTerminalControl
 
     private void ShowApplicationCopyFeedback(string text)
     {
-        if (string.IsNullOrEmpty(text))
+        if (string.IsNullOrWhiteSpace(text) || _disposed || !Monitor.TryEnter(_terminal.SyncRoot))
             return;
-        var ranges = TerminalCopyTextMatcher.FindCopyRanges(_terminal.FrameRows, _cols, text, _terminal.Cursor.Y);
-        // Some apps copy an entire response/file while displaying only a fragment.
-        // Confirm the copy at the caret when the source cannot be located on screen.
-        if (ranges.Count == 0 && _cols > 0 && _rows > 0)
+        try
         {
-            var cursor = _terminal.Cursor;
-            var col = Math.Clamp(cursor.X, 0, _cols - 1);
-            ranges = [new TerminalCopyRange(Math.Clamp(cursor.Y, 0, _rows - 1), col, Math.Min(col + 2, _cols - 1))];
+            if (_terminal.SynchronizedOutput)
+                return;
+            // Clipboard notifications may beat the queued output repaint.
+            // Match the current painted frame, not text the editor just removed.
+            FlushRedraw();
+            var ranges = TerminalCopyTextMatcher.FindCopyRanges(_terminal.FrameRows, _cols, text, _terminal.Cursor.Y);
+            // Clipboard writes also represent editor deletes/cuts. Without a
+            // visible source, a caret flash would falsely imply a copy operation.
+            if (ranges.Count == 0)
+                return;
+            StartCopyAnimation(ranges);
         }
-        StartCopyAnimation(ranges);
+        finally { Monitor.Exit(_terminal.SyncRoot); }
     }
 }
