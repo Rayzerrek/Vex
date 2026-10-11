@@ -16,14 +16,17 @@ namespace Vex.App.Tests;
 [Collection("CustomTheme")]
 public sealed class WslUbuntuIntegrationTests
 {
-    [Fact]
-    public void UbuntuFolder_RendersCommandAndClosesAsShell()
+    [Theory]
+    [InlineData("wsl", null)]
+    [InlineData("cmd", null)]
+    [InlineData("cmd", "wsl:/bin/bash")]
+    public async Task UbuntuFolder_RendersCommandAndClosesAsShell(string defaultShell, string? paneShell)
     {
         // Opt in because normal test machines need not have Ubuntu installed.
         if (Environment.GetEnvironmentVariable("VEX_TEST_UBUNTU") != "1")
             return;
 
-        const string directory = @"\\wsl.localhost\Ubuntu\home\kacper";
+        var directory = await WslProjectLauncher.ResolveDirectoryAsync("Ubuntu", "~", CancellationToken.None);
         Assert.True(Directory.Exists(directory));
         var originalShell = AppSettings.Instance.ShellId;
         Exception? failure = null;
@@ -33,23 +36,26 @@ public sealed class WslUbuntuIntegrationTests
             Window? window = null;
             try
             {
-                AppSettings.Instance.ShellId = "wsl";
+                AppSettings.Instance.ShellId = defaultShell;
                 TerminalSessionPrewarmer.Dispose();
                 pane = new TerminalPane(directory,
-                    "printf '__VEX_%s__\\n' UBUNTU_LIVE; pwd; . /etc/os-release; printf '__DISTRO_%s__\\n' \"$ID\"");
+                    "printf '__VEX_%s__\\n' UBUNTU_LIVE; pwd; . /etc/os-release; printf '__DISTRO_%s__\\n' \"$ID\"; printf '\\033]7;file://vex-linux/\\007'", paneShell);
                 var control = Assert.IsType<NativeTerminalControl>(pane.View);
-                var terminal = Assert.IsType<GhosttyTerminal>(typeof(NativeTerminalControl)
-                    .GetField("_terminal", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(control));
+                var field = Assert.IsAssignableFrom<FieldInfo>(typeof(NativeTerminalControl)
+                    .GetField("_terminal", BindingFlags.NonPublic | BindingFlags.Instance));
+                var terminal = Assert.IsType<GhosttyTerminal>(field.GetValue(control));
                 window = new Window { Content = control, Width = 900, Height = 550, ShowActivated = false };
                 window.Show();
                 try { WaitForDispatcher(() => ReadScreen(terminal).Contains("__DISTRO_ubuntu__", StringComparison.Ordinal)); }
                 catch (Exception exception) { throw new InvalidOperationException("Ubuntu terminal screen: " + ReadScreen(terminal), exception); }
                 var screen = ReadScreen(terminal);
                 Assert.Contains("__VEX_UBUNTU_LIVE__", screen);
-                Assert.Contains("/home/kacper", screen);
+                Assert.Contains(WslShellPaths.ToLinuxPath(directory), screen);
                 Assert.NotNull(control.ProcessId);
+                WaitForDispatcher(() => control.WorkingDirectory == @"\\wsl.localhost\Ubuntu\");
+                Assert.Equal(@"\\wsl.localhost\Ubuntu\", pane.WorkingDirectory);
 
-                var index = ProcessTree.Index.Build(ProcessTree.Snapshot()!);
+                var index = ProcessTree.Index.Build(Assert.IsAssignableFrom<IReadOnlyList<(uint, uint, string)>>(ProcessTree.Snapshot()));
                 Assert.NotNull(index);
                 pane.RefreshAppIcon(index, new Dictionary<uint, string?>());
                 Assert.False(pane.HasActiveProcess);

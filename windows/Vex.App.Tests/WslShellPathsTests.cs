@@ -45,12 +45,38 @@ public sealed class WslShellPathsTests
     }
 
     [Theory]
+    [InlineData("\\\\wsl.localhost\\Ubuntu:\\home\\user")]
+    [InlineData("\\\\wsl.localhost\\Ubuntu\n\\home\\user")]
+    public void CorruptNetworkDistribution_CannotReachTheTerminalConstructor(string path) =>
+        Assert.Null(WslShellPaths.ParseNetworkPath(path));
+
+    [Theory]
     [InlineData(@"\\wsl.localhost\Ubuntu\home\user\My project", "'/home/user/My project'")]
     [InlineData(@"D:\My project", "'/mnt/d/My project'")]
     public void CompletionInsertsLinuxPaths(string path, string expected)
     {
         Assert.Equal(expected, PathCompletionText.FormatPath(path, "wsl", false));
     }
+
+    [Theory]
+    [InlineData("wsl:/bin/bash")]
+    [InlineData("wsl:/usr/bin/nu")]
+    public void ExplicitLinuxShell_IsAnArgumentNotInterpolatedIntoTheBootstrap(string shellId)
+    {
+        if (!ShellRegistry.HasDetected("wsl")) return;
+        var launch = ShellLaunchBuilder.BuildShellLaunch(shellId, workingDirectory: @"\\wsl.localhost\Ubuntu\home\user");
+        Assert.Contains("--distribution Ubuntu", launch.Arguments);
+        Assert.Contains("sh -c \"exec \\\"$1\\\" -l\" vex-shell", launch.Arguments);
+        Assert.EndsWith("\"" + shellId[4..] + "\"", launch.Arguments);
+        Assert.NotNull(WslProcessTracker.SessionToken(launch.Arguments));
+    }
+
+    [Theory]
+    [InlineData("wsl:/bin/bash", "'/home/user/O'\"'\"'Brien'")]
+    [InlineData("wsl:/usr/bin/nu", "\"/home/user/O'Brien\"")]
+    [InlineData("wsl:/usr/bin/pwsh", "'/home/user/O''Brien'")]
+    public void LinuxCompletion_UsesTheChosenShellQuoting(string shellId, string expected) =>
+        Assert.Equal(expected, PathCompletionText.FormatPath(@"\\wsl.localhost\Ubuntu\home\user\O'Brien", shellId, false));
 
     [Fact]
     public void LaunchSelectsDistributionAndQuotesProjectDirectory()
@@ -60,6 +86,6 @@ public sealed class WslShellPathsTests
         var launch = ShellLaunchBuilder.BuildShellLaunch("wsl", workingDirectory: @"\\wsl.localhost\Ubuntu\home\user\My project");
         Assert.StartsWith("--distribution Ubuntu --cd \"/home/user/My project\" --exec env VEX_WSL_SESSION=", launch.Arguments);
         Assert.NotNull(WslProcessTracker.SessionToken(launch.Arguments));
-        Assert.EndsWith("sh -c \"exec \\\"$SHELL\\\" -l\"", launch.Arguments);
+        Assert.EndsWith("sh -c \"exec \\\"${SHELL:-/bin/sh}\\\" -l\"", launch.Arguments);
     }
 }

@@ -343,7 +343,7 @@ public sealed partial class SettingsOverlay : OverlayControl
         if (ShellDetail is null || !_shellsWarmed)
             return;
         var detail = ShellCombo.SelectedItem as ShellChoice;
-        ShellDetail.Text = detail?.Detail ?? "Interpreter used for new panes.";
+        ShellDetail.Text = detail?.Detail ?? "Existing projects keep their shell defaults.";
     }
 
     private void UpdateCustomShellVisibility()

@@ -17,6 +17,7 @@ public sealed class ProjectSnapshot
 {
     public string Name { get; set; } = "";
     public string WorkingDirectory { get; set; } = "";
+    public string? DefaultShellId { get; set; }
     public List<TabSnapshot> Tabs { get; set; } = new();
     public int? SelectedTabIndex { get; set; }
 }
@@ -38,6 +39,8 @@ public class PaneSnapshot
 
 public sealed class TerminalPaneSnapshot : PaneSnapshot
 {
+    public string? ShellId { get; set; }
+    public string? WorkingDirectory { get; set; }
     public bool IsFocused { get; set; }
 }
 

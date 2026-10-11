@@ -52,6 +52,7 @@ internal static class RenderSelfTest
     public static bool IncrementalMode { get; } = Environment.GetEnvironmentVariable("VEX_SELFTEST_INCR") == "1";
     private static bool RendererBenchMode { get; } = Environment.GetEnvironmentVariable("VEX_SELFTEST_BENCH") == "1";
     private static bool _failed;
+    private static bool _runScheduled;
 
     /// <summary>With VEX_LIVE=1, run the nvim mouse round-trip instead: mouse
     /// tracking must engage from nvim's own output, a press-drag-release must
@@ -60,8 +61,11 @@ internal static class RenderSelfTest
 
     public static void Run(NativeTerminalControl control)
     {
-        if (string.IsNullOrEmpty(ReportPath))
+        if (string.IsNullOrEmpty(ReportPath) || _runScheduled)
             return;
+        // UI scenarios realize temporary tabs and splits. They must not
+        // schedule another scenario while the first is pumping the dispatcher.
+        _runScheduled = true;
 
         var t = new DispatcherTimer(DispatcherPriority.ApplicationIdle, control.Dispatcher)
         {
@@ -1289,6 +1293,10 @@ internal static class RenderSelfTest
         Report(control, linkUri == "https://github.com/anomalyco/opencode" && linkOffUri is null
             ? "PASS link: url detected at its cells only"
             : "FAIL link: url detection wrong");
+        // Exercise an already-hovered URL, as when the desktop pointer is
+        // on it. Normalize the baseline before comparing hover feedback.
+        control.SelfTestLinkHover(6, 0);
+        control.SelfTestLinkHover(0, 0);
         var linkShot = Capture(control);
         var linkLineInk = BottomLineInk(control, linkShot, col: 5, row: 0);
         var plainLineInk = BottomLineInk(control, linkShot, col: 1, row: 0);
@@ -1376,6 +1384,7 @@ internal static class RenderSelfTest
         Assert(control, window.SelfTestDeferredPopups(), "deferred popups: bindings, placement and confirmation");
         Assert(control, window.SelfTestStartupOverlays(), "startup overlays: settings, command palette and theme switcher");
         Assert(control, window.SelfTestSavedLayouts(), "saved layouts: deferred editor and pane bindings");
+        Assert(control, window.SelfTestShellSelection(), "shell selection: dropdown, split submenu and independent project defaults");
         Assert(control, control.SelfTestProgramStatusBatch(), "program status: bounded UI updates and latched attention");
         Report(control, "PASS startup overlays: popups, settings, command palette and theme switcher");
     }

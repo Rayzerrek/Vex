@@ -185,7 +185,10 @@ public abstract class LeafPane : PaneNode, IDisposable
 public sealed class TerminalPane : LeafPane
 {
     private readonly string _workingDirectory;
-    private string? _shellId;
+    /// <summary>The launch shell belongs to this pane and never follows later global or project-default changes.</summary>
+    public string ShellId { get; }
+    /// <summary>Identifies this pane's chosen shell separately from its application's changing title.</summary>
+    public string ShellName => ShellRegistry.ShellName(ShellId);
     private string _lastTitle = "";
     private Action<string>? _titleRawHandler;
     private bool _iconTrackingRegistered;
@@ -204,16 +207,16 @@ public sealed class TerminalPane : LeafPane
     public string? InitialCommand { get; }
     public string WorkingDirectory => (ViewIfCreated as Terminal.Native.NativeTerminalControl)?.WorkingDirectory ?? _workingDirectory;
     public override string TitleTooltip => string.IsNullOrWhiteSpace(_lastTitle) ? Title : _lastTitle;
-    internal bool IsWsl => _shellId == "wsl";
+    internal bool IsWsl => ShellRegistry.IsWsl(ShellId);
     internal string LaunchWorkingDirectory => _workingDirectory;
-    internal IReadOnlySet<string> ShellHelpers => _shellId == "wsl"
+    internal IReadOnlySet<string> ShellHelpers => IsWsl
         ? WslShellPaths.ShellHelpers : AppIconCatalog.ConsoleHelpers;
 
 
-    public TerminalPane(string workingDirectory, string? initialCommand = null)
+    public TerminalPane(string workingDirectory, string? initialCommand = null, string? shellId = null)
     {
         _workingDirectory = workingDirectory;
-        _shellId = AppSettings.Instance.ShellId;
+        ShellId = ShellRegistry.ValidShellId(shellId) ?? WslShellPaths.ShellIdForDirectory(AppSettings.Instance.ShellId, workingDirectory);
         InitialCommand = initialCommand;
         Title = "Terminal";
     }
@@ -276,7 +279,7 @@ public sealed class TerminalPane : LeafPane
         // often Nushell) survives after a node-hosted app starts but its
         // command line is temporarily unreadable.
         AppIcon = AppIconCatalog.Resolve(deepest.Name, isShellOrHelper ? null : commandLine, _lastTitle);
-        if (_shellId == "wsl" && isShellOrHelper && (AppIcon is null || AppIcon.IsShellIcon))
+        if (IsWsl && isShellOrHelper && (AppIcon is null || AppIcon.IsShellIcon))
             AppIcon = AppIconCatalog.ResolveIcon("wsl");
         // A shim command line can be temporarily unreadable. Do not cache
         // that miss: the next poll must retry instead of leaving no icon.
@@ -386,9 +389,8 @@ public sealed class TerminalPane : LeafPane
 
     protected override object CreateView()
     {
-        var view = new Terminal.Native.NativeTerminalControl(_workingDirectory, InitialCommand);
-        _shellId = AppSettings.Instance.ShellId;
-        if (_shellId == "wsl")
+        var view = new Terminal.Native.NativeTerminalControl(_workingDirectory, InitialCommand, ShellId);
+        if (IsWsl)
             AppIcon = AppIconCatalog.ResolveIcon("wsl");
         if (!_iconTrackingRegistered)
         {

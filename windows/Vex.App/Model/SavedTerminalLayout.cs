@@ -19,6 +19,7 @@ public sealed class SavedLayoutPane
     public SavedLayoutPane? Second { get; set; }
     public string Directory { get; set; } = ".";
     public string Command { get; set; } = "";
+    public string? ShellId { get; set; }
     public bool IsFocused { get; set; }
 }
 
@@ -48,6 +49,7 @@ public static class SavedTerminalLayouts
         {
             Directory = Path.GetRelativePath(projectDirectory, terminal.WorkingDirectory),
             Command = terminal.InitialCommand ?? "",
+            ShellId = terminal.ShellId,
             IsFocused = terminal.IsFocused,
         },
         _ => new(),
@@ -80,18 +82,23 @@ public static class SavedTerminalLayouts
                 && ValidateLayoutPane(pane.First, depth + 1, ref count) && ValidateLayoutPane(pane.Second, depth + 1, ref count);
         return ++count <= MaxLayoutPanes && pane.First is null && pane.Second is null
             && pane.Directory is { Length: > 0 and <= 1024 } && !pane.Directory.Any(char.IsControl)
-            && pane.Command is { Length: <= 4096 } && !pane.Command.Contains('\0');
+            && pane.Command is { Length: <= 4096 } && !pane.Command.Contains('\0')
+            && (pane.ShellId is null || ShellRegistry.ValidShellId(pane.ShellId) is not null);
     }
 
     /// <summary>Returns the pane tree only after every directory has been verified; commands are not executed here.</summary>
-    internal static PaneNode CreateLayoutPaneTree(SavedLayoutPane pane, string projectDirectory)
+    internal static PaneNode CreateLayoutPaneTree(SavedLayoutPane pane, string projectDirectory, string? defaultShellId = null)
     {
-        if (pane.Orientation is not null)
-            return new SplitPane(pane.Orientation == "Horizontal" ? Orientation.Horizontal : Orientation.Vertical,
-                CreateLayoutPaneTree(pane.First!, projectDirectory), CreateLayoutPaneTree(pane.Second!, projectDirectory)) { Ratio = pane.Ratio };
+        if (pane is { Orientation: { } orientation, First: { } first, Second: { } second })
+            return new SplitPane(orientation == "Horizontal" ? Orientation.Horizontal : Orientation.Vertical,
+                CreateLayoutPaneTree(first, projectDirectory, defaultShellId), CreateLayoutPaneTree(second, projectDirectory, defaultShellId)) { Ratio = pane.Ratio };
         var directory = Path.GetFullPath(pane.Directory, projectDirectory);
+        var shellId = pane.ShellId ?? defaultShellId ?? WslShellPaths.ShellIdForDirectory(AppSettings.Instance.ShellId, directory);
+        if (!ShellRegistry.IsWsl(shellId) && WslShellPaths.ParseNetworkPath(directory) is not null)
+            throw new IOException("Saved layout Windows shell requires a Windows directory: " + directory);
         if (!System.IO.Directory.Exists(directory))
             throw new DirectoryNotFoundException("Saved layout directory does not exist: " + directory);
-        return new TerminalPane(directory, string.IsNullOrWhiteSpace(pane.Command) ? null : pane.Command) { IsFocused = pane.IsFocused };
+        return new TerminalPane(directory, string.IsNullOrWhiteSpace(pane.Command) ? null : pane.Command,
+            shellId) { IsFocused = pane.IsFocused };
     }
 }

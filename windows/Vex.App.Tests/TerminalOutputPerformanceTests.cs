@@ -158,6 +158,44 @@ public sealed class TerminalOutputPerformanceTests(ITestOutputHelper output)
         Assert.Null(failure);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TitleFlood_CoalescesUiCallbacksAndKeepsFinalTitle(bool disposeBeforeDispatch)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var control = new NativeTerminalControl(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                var terminal = GetTerminal(control);
+                var notifications = 0;
+                var lastTitle = "";
+                control.TitleRawChanged += title => { notifications++; lastTitle = title; };
+                var producer = new Thread(() =>
+                {
+                    for (var i = 0; i < 1000; i++)
+                        terminal.Feed($"\x1b]2;build step {i}\x07");
+                });
+                producer.Start();
+                Assert.True(producer.Join(5000));
+                if (disposeBeforeDispatch) control.Dispose();
+                var frame = new DispatcherFrame();
+                Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => frame.Continue = false);
+                Dispatcher.PushFrame(frame);
+                output.WriteLine($"Title flood: {notifications} UI notifications");
+                Assert.Equal(disposeBeforeDispatch ? "" : "build step 999", lastTitle);
+                Assert.Equal(disposeBeforeDispatch ? 0 : 1, notifications);
+            }
+            catch (Exception ex) { failure = ex; }
+        }) { IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(15)));
+        Assert.Null(failure);
+    }
+
     private static GhosttyTerminal GetTerminal(NativeTerminalControl control) =>
         typeof(NativeTerminalControl).GetField("_terminal", BindingFlags.Instance | BindingFlags.NonPublic)
             ?.GetValue(control) is GhosttyTerminal terminal

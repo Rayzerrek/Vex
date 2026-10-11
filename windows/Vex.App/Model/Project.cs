@@ -55,10 +55,11 @@ public sealed class Project : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(HasGitBranch));
         }
     }
-    public Project(string name, string workingDirectory)
+    public Project(string name, string workingDirectory, string? defaultShellId = null)
     {
         _name = name;
         WorkingDirectory = workingDirectory;
+        _defaultShellId = WslShellPaths.ShellIdForDirectory(defaultShellId ?? AppSettings.Instance.ShellId, workingDirectory);
         Tabs.CollectionChanged += (_, _) => OnTabsChanged();
         var tab = CreateTab("Terminal 1");
         _selectedTab = tab;
@@ -69,13 +70,15 @@ public sealed class Project : ObservableObject, IDisposable
 
     /// <summary>Restores a project from a saved session; tabs are wired up
     /// like freshly created ones.</summary>
-    internal Project(string name, string workingDirectory, IEnumerable<WorkspaceTab> tabs)
+    internal Project(string name, string workingDirectory, IEnumerable<WorkspaceTab> tabs, string? defaultShellId = null)
     {
         _name = name;
         WorkingDirectory = workingDirectory;
+        _defaultShellId = WslShellPaths.ShellIdForDirectory(defaultShellId ?? AppSettings.Instance.ShellId, workingDirectory);
         Tabs.CollectionChanged += (_, _) => OnTabsChanged();
         foreach (var tab in tabs)
         {
+            tab.DefaultShellId = DefaultShellId;
             WireTabEvents(tab);
             Tabs.Add(tab);
         }
@@ -213,6 +216,23 @@ public sealed class Project : ObservableObject, IDisposable
 
     public string WorkingDirectory { get; }
 
+    private string _defaultShellId;
+    /// <summary>Changing a project's default affects future terminals, not existing processes.</summary>
+    public string DefaultShellId
+    {
+        get => _defaultShellId;
+        set
+        {
+            var shellId = WslShellPaths.ShellIdForDirectory(value, WorkingDirectory);
+            if (!Set(ref _defaultShellId, shellId)) return;
+            foreach (var tab in Tabs) tab.DefaultShellId = shellId;
+            OnPropertyChanged(nameof(DefaultShellName));
+            OnPropertyChanged(nameof(IsWsl));
+        }
+    }
+    public string DefaultShellName => ShellRegistry.ShellName(DefaultShellId);
+    public bool IsWsl => ShellRegistry.IsWsl(DefaultShellId);
+
     public ObservableCollection<WorkspaceTab> Tabs { get; } = new();
 
     public WorkspaceTab? SelectedTab
@@ -241,23 +261,23 @@ public sealed class Project : ObservableObject, IDisposable
         }
     }
 
-    public WorkspaceTab? NewTab()
+    public WorkspaceTab? NewTab(string? shellId = null)
     {
         if (!CanCreateTab)
             return null;
 
-        var tab = CreateTab($"Terminal {Tabs.Count + 1}");
+        var tab = CreateTab($"Terminal {Tabs.Count + 1}", shellId);
         if (tab != null)
             SelectedTab = tab;
         return tab;
     }
 
-    private WorkspaceTab? CreateTab(string title)
+    private WorkspaceTab? CreateTab(string title, string? shellId = null)
     {
         if (!CanCreateTab)
             return null;
 
-        var tab = new WorkspaceTab(title, WorkingDirectory);
+        var tab = new WorkspaceTab(title, WorkingDirectory, DefaultShellId, shellId);
         WireTabEvents(tab);
         Tabs.Add(tab);
         return tab;
@@ -267,8 +287,8 @@ public sealed class Project : ObservableObject, IDisposable
     public WorkspaceTab? OpenSavedLayout(SavedTerminalLayout layout)
     {
         if (!CanCreateTab || !SavedTerminalLayouts.ValidateLayout(layout)) return null;
-        var root = SavedTerminalLayouts.CreateLayoutPaneTree(layout.Root, WorkingDirectory);
-        var tab = new WorkspaceTab(layout.Name, WorkingDirectory, root, hasCustomTitle: true);
+        var root = SavedTerminalLayouts.CreateLayoutPaneTree(layout.Root, WorkingDirectory, DefaultShellId);
+        var tab = new WorkspaceTab(layout.Name, WorkingDirectory, root, hasCustomTitle: true, defaultShellId: DefaultShellId);
         WireTabEvents(tab);
         Tabs.Add(tab);
         SelectedTab = tab;

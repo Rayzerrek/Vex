@@ -37,6 +37,42 @@ public static class ShellRegistry
 
     public static bool HasDetected(string id) => _detected.Value.Any(p => p.Id == id);
 
+    /// <summary>WSL shell ids select either the user's login shell or an absolute Linux executable.</summary>
+    public static bool IsWsl(string? shellId) => shellId == "wsl" || WslExecutable(shellId) is not null;
+
+    internal static string? WslExecutable(string? shellId) => shellId is not null && shellId.StartsWith("wsl:/", StringComparison.Ordinal)
+        && shellId.Length > 5 && !shellId.Any(char.IsControl) && !shellId.Contains('\\') && !shellId.EndsWith('/')
+        ? shellId[4..] : null;
+
+    /// <summary>Rejects corrupt persisted ids while leaving missing custom profiles available for system fallback.</summary>
+    internal static string? ValidShellId(string? shellId) => !string.IsNullOrWhiteSpace(shellId) && shellId.Length <= 4096 && !shellId.Any(char.IsControl)
+        && (!shellId.StartsWith("wsl:", StringComparison.Ordinal) || IsWsl(shellId)) ? shellId : null;
+
+    /// <summary>Readable shell labels never require a filesystem detection sweep.</summary>
+    public static string ShellName(string shellId) => shellId switch
+    {
+        "system" => "System default",
+        "nu" => "Nushell",
+        "pwsh" => "PowerShell 7",
+        "powershell" => "Windows PowerShell",
+        "cmd" => "Command Prompt",
+        "gitbash" => "Git Bash",
+        "wsl" => "WSL · default shell",
+        _ when WslExecutable(shellId) is { } executable => "WSL · " + Path.GetFileName(executable),
+        _ => AppSettings.Instance.CustomShells.FirstOrDefault(profile => profile.Id == shellId)?.Name ?? shellId,
+    };
+
+    /// <summary>Windows overrides in a Linux project start in Windows Home, never silently in the Linux filesystem.</summary>
+    internal static string TerminalDirectory(string projectDirectory, string currentDirectory, string shellId)
+    {
+        var project = WslShellPaths.ParseNetworkPath(projectDirectory);
+        var current = WslShellPaths.ParseNetworkPath(currentDirectory);
+        if (IsWsl(shellId))
+            return project is { } linux && (current is null || current.Value.Distribution != linux.Distribution)
+                ? projectDirectory : currentDirectory;
+        return current is not null ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) : currentDirectory;
+    }
+
     /// <summary>
     /// Maps a shell id to the program and arguments a pane should spawn.
     /// Null means fall back to the OS default: either the id is the system
@@ -60,6 +96,10 @@ public static class ShellRegistry
         (string Program, string Arguments)? result = null;
         switch (shellId)
         {
+            case string id when IsWsl(id):
+                var wslPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe");
+                result = File.Exists(wslPath) ? (wslPath, "") : null;
+                break;
             case "nu":
                 var nuPath = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -78,10 +118,6 @@ public static class ShellRegistry
                 var bashPath = GitBashPath();
                 result = bashPath is null ? null : (bashPath, "--login -i");
                 break;
-            case "wsl":
-                var wslPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe");
-                result = File.Exists(wslPath) ? (wslPath, "") : null;
-                break;
             default:
                 var custom = AppSettings.Instance.CustomShells.FirstOrDefault(p => p.Id == shellId);
                 if (custom is not null && !string.IsNullOrWhiteSpace(custom.Program))
@@ -99,7 +135,7 @@ public static class ShellRegistry
                 break;
         }
 
-        if (result.HasValue && shellId is "nu" or "pwsh" or "powershell" or "cmd" or "gitbash" or "wsl")
+        if (result.HasValue && (IsWsl(shellId) || shellId is "nu" or "pwsh" or "powershell" or "cmd" or "gitbash"))
         {
             lock (_resolvedCache)
             {

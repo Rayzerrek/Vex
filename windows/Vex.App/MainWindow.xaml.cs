@@ -57,7 +57,14 @@ public sealed partial class MainWindow : Window
         return null;
     }
 
-    public MainWindow() : this(SessionStore.Load()) { }
+    public MainWindow() : this(SessionStore.Load())
+    {
+        ContentRendered += async (_, _) =>
+        {
+            if (_workspace.Projects.Count == 0 && ShellRegistry.IsWsl(AppSettings.Instance.ShellId))
+                await OpenWslHomeAsync();
+        };
+    }
 
     /// <summary>Creates the window with a pre-loaded workspace (from async
     /// startup). Skips the synchronous SessionStore.Load() call that the
@@ -81,8 +88,11 @@ public sealed partial class MainWindow : Window
         // Refresh git branch when project changes.
         _workspace.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(Workspace.SelectedProject))
-                _workspace.SelectedProject?.RefreshGitBranch();
+            if (e.PropertyName == nameof(Workspace.SelectedProject) && _workspace.SelectedProject is { } project)
+            {
+                project.RefreshGitBranch();
+                Terminal.Native.TerminalSessionPrewarmer.StartPrewarm(project.WorkingDirectory, project.DefaultShellId);
+            }
         };
         Activated += (_, _) => _workspace.SelectedProject?.RefreshGitBranch();
 
@@ -126,9 +136,10 @@ public sealed partial class MainWindow : Window
     {
         if (e.PropertyName == nameof(AppSettings.ShellId))
         {
-            var workingDir = _workspace.SelectedProject?.WorkingDirectory
-                ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            Terminal.Native.TerminalSessionPrewarmer.StartPrewarm(workingDir, AppSettings.Instance.ShellId);
+            _wslHomeQuery?.Cancel();
+            if (ShellRegistry.IsWsl(AppSettings.Instance.ShellId)) _ = OpenWslHomeAsync();
+            else if (_workspace.Projects.Count == 0)
+                _workspace.NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), AppSettings.Instance.ShellId);
             return;
         }
 
@@ -241,6 +252,12 @@ public sealed partial class MainWindow : Window
             if (_settingsOverlay is { Visibility: Visibility.Visible })
             {
                 _settingsOverlay.Hide();
+                e.Handled = true;
+                return;
+            }
+            if (_wslProjectOverlay is { Visibility: Visibility.Visible })
+            {
+                _wslProjectOverlay.Hide();
                 e.Handled = true;
                 return;
             }
@@ -573,7 +590,11 @@ public sealed partial class MainWindow : Window
                 (_settingsOverlay?.Visibility == Visibility.Visible) ||
                 (_themeSwitcher?.Visibility == Visibility.Visible) ||
                 (_tabPeek?.Visibility == Visibility.Visible) ||
-                (_tabCloseOverlay?.Visibility == Visibility.Visible))
+                (_tabCloseOverlay?.Visibility == Visibility.Visible) ||
+                (_wslProjectOverlay?.Visibility == Visibility.Visible) ||
+                (_projectPickerPopup?.IsOpen == true) ||
+                (NewTabShellButton.ContextMenu?.IsOpen == true) ||
+                (ProjectPillButton.ContextMenu?.IsOpen == true))
                 return;
             _workspace.SelectedProject?.SelectedTab?.ActiveLeaf?.Focus();
         }, DispatcherPriority.ContextIdle);
@@ -614,18 +635,47 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private WslProjectOverlay? _wslProjectOverlay;
+
     private void NewProject_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog { Title = "Choose a project directory" };
-        if (AppSettings.Instance.ShellId == "wsl")
-        {
-            dialog.Title = "Choose a project directory — WSL";
-            dialog.InitialDirectory = @"\\wsl.localhost\";
-        }
-        if (dialog.ShowDialog(this) == true)
-            _workspace.NewProject(dialog.FolderName);
+        var menu = new ContextMenu();
+        menu.SetResourceReference(StyleProperty, "DarkContextMenu");
+        menu.Items.Add(ShellMenuItem("Add WSL project…", () => ShowWslProjectPicker()));
+        menu.Items.Add(ShellMenuItem("Add Windows project…", AddWindowsProject));
+        menu.PlacementTarget = ProjectPillButton;
+        menu.IsOpen = true;
     }
 
+
+    private void AddWindowsProject()
+    {
+        var dialog = new OpenFolderDialog { Title = "Choose a Windows project directory" };
+        if (dialog.ShowDialog(this) != true) return;
+        var shellId = AppSettings.Instance.ShellId;
+        if (ShellRegistry.IsWsl(shellId)) shellId = ShellRegistry.HasDetected("pwsh") ? "pwsh" : ShellRegistry.SystemDefaultId;
+        _workspace.NewProject(dialog.FolderName, shellId);
+    }
+
+    private void ShowWslProjectPicker(string? error = null)
+    {
+        if (_wslProjectOverlay is null)
+        {
+            _wslProjectOverlay = new WslProjectOverlay();
+            Grid.SetRowSpan(_wslProjectOverlay, 2);
+            Panel.SetZIndex(_wslProjectOverlay, 1002);
+            _wslProjectOverlay.Hidden += FocusActivePane;
+            _wslProjectOverlay.ProjectOpened += (directory, shellId) => _workspace.NewProject(directory, shellId);
+            MainGrid.Children.Add(_wslProjectOverlay);
+        }
+        _wslProjectOverlay.Show(error);
+    }
+
+    private void ProjectPickerAddWsl_Click(object sender, RoutedEventArgs e)
+    {
+        ProjectPickerPopup.IsOpen = false;
+        ShowWslProjectPicker();
+    }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
@@ -675,7 +725,7 @@ public sealed partial class MainWindow : Window
             FocusActivePane();
             e.Handled = true;
         }
-        else if (e.Key == System.Windows.Input.Key.Enter && ProjectPickerList.SelectedItem is Project project)
+        else if (e.Key == System.Windows.Input.Key.Enter && System.Windows.Input.Keyboard.FocusedElement is not Button && ProjectPickerList.SelectedItem is Project project)
         {
             _workspace.SelectedProject = project;
             ProjectPickerPopup.IsOpen = false;
@@ -687,7 +737,7 @@ public sealed partial class MainWindow : Window
     private void ProjectPickerAddFolder_Click(object sender, RoutedEventArgs e)
     {
         ProjectPickerPopup.IsOpen = false;
-        NewProject_Click(sender, e);
+        AddWindowsProject();
     }
 
 
@@ -1234,6 +1284,10 @@ public sealed partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _wslHomeQuery?.Cancel();
+        _wslHomeQuery?.Dispose();
+        _wslHomeQuery = null;
+        AppSettings.Instance.PropertyChanged -= OnSettingsPropertyChanged;
         AppSettings.Instance.Flush(); // persist the debounced settings write
         SessionStore.Save(_workspace); // persist projects, tabs and divider positions
         base.OnClosed(e);

@@ -50,16 +50,8 @@ public sealed partial class App : Application
 
         _ = Task.WhenAll(settingsTask, sessionTask).ContinueWith(_ =>
         {
-            var snapshot = sessionTask.Result;
-            var projects = snapshot?.Projects;
-            var selectedProjectIndex = snapshot?.SelectedProjectIndex ?? 0;
-            var workingDirectory = projects is { Count: > 0 }
-                && selectedProjectIndex >= 0
-                && selectedProjectIndex < projects.Count
-                ? projects[selectedProjectIndex].WorkingDirectory
-                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var shellId = Model.AppSettings.Instance.ShellId;
-            Terminal.Native.TerminalSessionPrewarmer.StartPrewarm(workingDirectory, shellId);
+            if (Model.SessionStore.StartupTerminalLaunch(sessionTask.Result, Model.AppSettings.Instance.ShellId) is { } launch)
+                Terminal.Native.TerminalSessionPrewarmer.StartPrewarm(launch.Directory, launch.ShellId);
         }, TaskScheduler.Default);
 
         _ = settingsTask.ContinueWith(_ =>
@@ -211,6 +203,8 @@ public sealed partial class App : Application
             Model.SessionStore.Populate(workspace, snapshot);
             Model.StartupMark.Note("session populated after window");
         }
+        if (workspace.Projects.Count == 0 && Model.ShellRegistry.IsWsl(Model.AppSettings.Instance.ShellId))
+            await window.OpenWslHomeAsync();
     }
 
     protected override void OnExit(ExitEventArgs e)

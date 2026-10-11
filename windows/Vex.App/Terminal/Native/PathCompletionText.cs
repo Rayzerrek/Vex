@@ -8,13 +8,14 @@ internal static class PathCompletionText
 {
     internal static string FormatPath(string path, string shellId, bool raw)
     {
-        if (shellId == "wsl")
+        var isWsl = ShellRegistry.IsWsl(shellId);
+        if (isWsl)
             path = WslShellPaths.ToLinuxPath(path);
         else if (shellId == "gitbash")
         {
             path = path.Replace('\\', '/');
             if (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':')
-                path = (shellId == "wsl" ? "/mnt/" : "/") + char.ToLowerInvariant(path[0]) + path[2..];
+                path = "/" + char.ToLowerInvariant(path[0]) + path[2..];
         }
         // Filesystem names may contain newlines or ESC on remote mounts. Never send terminal control input.
         if (path.Any(char.IsControl))
@@ -23,11 +24,12 @@ internal static class PathCompletionText
             return path;
         if (path.All(c => char.IsLetterOrDigit(c) || c is '/' or '\\' or ':' or '.' or '_' or '-'))
             return path;
-        return shellId switch
+        var quotingShell = ShellRegistry.WslExecutable(shellId) is { } executable ? Path.GetFileName(executable) : shellId;
+        return quotingShell switch
         {
             "pwsh" or "powershell" => "'" + path.Replace("'", "''") + "'",
             "nu" => "\"" + path.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"",
-            "gitbash" or "wsl" => "'" + path.Replace("'", "'\"'\"'") + "'",
+            _ when shellId == "gitbash" || isWsl => "'" + path.Replace("'", "'\"'\"'") + "'",
             _ => "\"" + path + "\"",
         };
     }

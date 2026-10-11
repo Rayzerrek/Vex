@@ -69,7 +69,9 @@ public static class SessionStore
             }
         }
         
-        if (workspace.Projects.Count == 0)
+        // Linux Home is resolved after the window is shown, without briefly
+        // starting a WSL terminal in the Windows user directory.
+        if (workspace.Projects.Count == 0 && !ShellRegistry.IsWsl(AppSettings.Instance.ShellId))
             workspace.NewProject(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
             
         Current = workspace;
@@ -106,6 +108,7 @@ public static class SessionStore
             {
                 Name = project.Name,
                 WorkingDirectory = project.WorkingDirectory,
+                DefaultShellId = project.DefaultShellId,
                 SelectedTabIndex = SafeIndex(project.Tabs, project.SelectedTab),
             };
 
@@ -125,6 +128,32 @@ public static class SessionStore
         return session;
     }
 
+    /// <summary>Prewarm must use the restored focused pane's own shell and directory, not the global preference.</summary>
+    internal static (string Directory, string ShellId)? StartupTerminalLaunch(SessionSnapshot? snapshot, string globalShellId)
+    {
+        if (snapshot?.Projects is not { Count: > 0 } projects)
+            return ShellRegistry.IsWsl(globalShellId) ? null : (Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), globalShellId);
+        var projectIndex = snapshot.SelectedProjectIndex is { } selected && selected >= 0 && selected < projects.Count ? selected : 0;
+        var project = projects[projectIndex];
+        var defaultShell = WslShellPaths.ShellIdForDirectory(ShellRegistry.ValidShellId(project.DefaultShellId) ?? globalShellId, project.WorkingDirectory);
+        if (project.Tabs.Count == 0) return (project.WorkingDirectory, defaultShell);
+        var tabIndex = project.SelectedTabIndex is { } tab && tab >= 0 && tab < project.Tabs.Count ? tab : 0;
+        var panes = EnumerateSnapshotTerminals(project.Tabs[tabIndex].Root).ToArray();
+        var pane = panes.FirstOrDefault(pane => pane.IsFocused) ?? panes.FirstOrDefault();
+        var directory = pane?.WorkingDirectory is { } path && Path.IsPathFullyQualified(path) && !path.Any(char.IsControl) ? path : project.WorkingDirectory;
+        return (directory, ShellRegistry.ValidShellId(pane?.ShellId) ?? defaultShell);
+    }
+
+    private static IEnumerable<TerminalPaneSnapshot> EnumerateSnapshotTerminals(PaneSnapshot? pane)
+    {
+        if (pane is TerminalPaneSnapshot terminal) yield return terminal;
+        else if (pane is SplitPaneSnapshot split)
+        {
+            foreach (var first in EnumerateSnapshotTerminals(split.First)) yield return first;
+            foreach (var second in EnumerateSnapshotTerminals(split.Second)) yield return second;
+        }
+    }
+
     private static int? SafeIndex<T>(ObservableCollection<T> items, T? item)
     {
         if (item is null)
@@ -135,7 +164,7 @@ public static class SessionStore
 
     private static PaneSnapshot CapturePane(PaneNode node) => node switch
     {
-        TerminalPane leaf => new TerminalPaneSnapshot { IsFocused = leaf.IsFocused },
+        TerminalPane leaf => new TerminalPaneSnapshot { IsFocused = leaf.IsFocused, ShellId = leaf.ShellId, WorkingDirectory = leaf.WorkingDirectory },
         SplitPane split => new SplitPaneSnapshot
         {
             Orientation = split.Orientation == Orientation.Horizontal ? "Horizontal" : "Vertical",
@@ -148,36 +177,40 @@ public static class SessionStore
 
     private static Project RestoreProject(ProjectSnapshot snapshot)
     {
+        var defaultShellId = WslShellPaths.ShellIdForDirectory(
+            ShellRegistry.ValidShellId(snapshot.DefaultShellId) ?? AppSettings.Instance.ShellId, snapshot.WorkingDirectory);
         var tabs = new List<WorkspaceTab>();
         foreach (var tabSnapshot in snapshot.Tabs)
         {
             tabs.Add(new WorkspaceTab(
                 tabSnapshot.Title,
                 snapshot.WorkingDirectory,
-                RestorePane(tabSnapshot.Root, snapshot.WorkingDirectory),
-                tabSnapshot.HasCustomTitle));
+                RestorePane(tabSnapshot.Root, snapshot.WorkingDirectory, defaultShellId),
+                tabSnapshot.HasCustomTitle, defaultShellId));
         }
 
         if (tabs.Count == 0)
-            tabs.Add(new WorkspaceTab("Terminal 1", snapshot.WorkingDirectory));
+            tabs.Add(new WorkspaceTab("Terminal 1", snapshot.WorkingDirectory, defaultShellId));
 
-        var project = new Project(snapshot.Name, snapshot.WorkingDirectory, tabs);
+        var project = new Project(snapshot.Name, snapshot.WorkingDirectory, tabs, defaultShellId);
         if (snapshot.SelectedTabIndex is { } tabIndex && tabIndex >= 0 && tabIndex < project.Tabs.Count)
             project.SelectedTab = project.Tabs[tabIndex];
         return project;
     }
 
-    private static PaneNode RestorePane(PaneSnapshot? snapshot, string workingDirectory) => snapshot switch
+    private static PaneNode RestorePane(PaneSnapshot? snapshot, string workingDirectory, string defaultShellId) => snapshot switch
     {
         SplitPaneSnapshot split => new SplitPane(
             split.Orientation == "Vertical" ? Orientation.Vertical : Orientation.Horizontal,
-            RestorePane(split.First, workingDirectory),
-            RestorePane(split.Second, workingDirectory))
+            RestorePane(split.First, workingDirectory, defaultShellId),
+            RestorePane(split.Second, workingDirectory, defaultShellId))
         {
             Ratio = double.IsFinite(split.Ratio) ? split.Ratio : 0.5,
         },
-        LegacyEditorPaneSnapshot editor => new TerminalPane(workingDirectory) { IsFocused = editor.IsFocused },
-        TerminalPaneSnapshot terminal => new TerminalPane(workingDirectory) { IsFocused = terminal.IsFocused },
-        _ => new TerminalPane(workingDirectory),
+        LegacyEditorPaneSnapshot editor => new TerminalPane(workingDirectory, shellId: defaultShellId) { IsFocused = editor.IsFocused },
+        TerminalPaneSnapshot terminal => new TerminalPane(
+            terminal.WorkingDirectory is { } directory && Path.IsPathFullyQualified(directory) && !directory.Any(char.IsControl) ? directory : workingDirectory,
+            shellId: ShellRegistry.ValidShellId(terminal.ShellId) ?? defaultShellId) { IsFocused = terminal.IsFocused },
+        _ => new TerminalPane(workingDirectory, shellId: defaultShellId),
     };
 }

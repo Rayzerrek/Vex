@@ -19,12 +19,23 @@ internal static class WslShellPaths
             var rest = normalized[host.Length..];
             var separator = rest.IndexOf('\\');
             var distribution = separator < 0 ? rest : rest[..separator];
-            if (distribution.Length == 0)
+            if (distribution.Length == 0 || distribution.Any(char.IsControl) || distribution.Contains(':'))
                 return null;
             return (distribution, separator < 0 ? "/" : rest[separator..].Replace('\\', '/'));
         }
         return null;
     }
+
+    /// <summary>A WSL project must stay in Linux even if the global shell preference changes.</summary>
+    internal static string ShellIdForDirectory(string? shellId, string workingDirectory)
+    {
+        var preferred = ShellRegistry.ValidShellId(shellId) ?? ShellRegistry.SystemDefaultId;
+        return ParseNetworkPath(workingDirectory) is not null && !ShellRegistry.IsWsl(preferred) ? "wsl" : preferred;
+    }
+
+    /// <summary>Maps an absolute Linux directory to the selected distribution's Windows filesystem view.</summary>
+    internal static string ToNetworkPath(string distribution, string linuxPath) =>
+        @"\\wsl.localhost\" + distribution + linuxPath.Replace('/', '\\');
 
     internal static string ToLinuxPath(string path)
     {

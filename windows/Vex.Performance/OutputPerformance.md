@@ -52,7 +52,27 @@ finish instead of assuming dispatcher idle means a frame has been drawn.
 Input precedence and the final cell content remain asserted.
 Synthetic link-hover fixtures also drain pending frames before positioning
 their fake pointer: a delayed real redraw otherwise refreshes hover from the
-desktop pointer and invalidates the fixture.
+desktop pointer and invalidates the fixture. The baseline also clears an
+existing hover; otherwise a pointer already on the URL makes the before/after
+screenshots identical even though highlighting works.
+
+## WSL and title update follow-up
+
+A separate regression fixture feeds 1,000 OSC title changes on the parser thread
+before draining the UI queue. Previously this delivered 1,000 UI notifications;
+the coalesced path delivers one containing the final title. Title dispatches now
+use background priority, leaving input ahead of metadata updates. Queued title
+callbacks ignore disposed panes. This removes a reproducible source of queue
+pressure, not proof that it caused every reported lag.
+
+The WSL foreground-process probe previously spawned a separate `grep` for each
+readable `/proc/<pid>/environ`, for each pane every polling cycle. It now scans
+those files with one `grep`, retaining exact NUL-delimited session-token matching
+and the existing foreground-process selection. A small local Ubuntu sample of
+five scans took 36 ms with the original loop and 13 ms with the batched scan;
+this is a probe-only sample, not a terminal FPS or end-to-end latency benchmark.
+Real Ubuntu direct/prewarmed application-icon regressions pass with the batched
+probe.
 
 ## Startup findings
 
