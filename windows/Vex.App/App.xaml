@@ -95,8 +95,7 @@
                     <ControlTemplate TargetType="GridSplitter">
                         <Grid Background="Transparent">
                             <Border x:Name="Divider" Background="{DynamicResource VexBorder}"
-                                    Width="1" HorizontalAlignment="Center" Margin="0,5"
-                                    CornerRadius="0.5" Opacity="0.18"/>
+                                    Width="1" HorizontalAlignment="Center" Opacity="0.45"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="ResizeDirection" Value="Rows">
@@ -104,7 +103,6 @@
                                 <Setter TargetName="Divider" Property="Height" Value="1"/>
                                 <Setter TargetName="Divider" Property="HorizontalAlignment" Value="Stretch"/>
                                 <Setter TargetName="Divider" Property="VerticalAlignment" Value="Center"/>
-                                <Setter TargetName="Divider" Property="Margin" Value="5,0"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Divider" Property="Opacity" Value="0.65"/>
