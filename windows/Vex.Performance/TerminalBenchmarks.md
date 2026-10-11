@@ -79,3 +79,47 @@ queue delays exceed the cost of individual snapshots and flushes. These results
 provide reproducible targets for further optimization. They do not establish
 parity with Ghostty's native frontend; that would require matched workloads,
 fonts, dimensions, hardware, and actual presentation/input tracing.
+
+## Compact terminal measurements
+
+Release self-contained desktop builds, Cascadia Mono 14, 136 × 37 viewport,
+125% DPI. Baseline: `28290d2`; placement-cache change: `ff936fa`. Two runs per
+variant, in before/after/before/after order, using the commands above. The six
+forced-redraw samples per variant are not independent machine-level trials.
+
+| Forced complex-glyph redraw | Before | After |
+| --- | ---: | ---: |
+| Median of six samples | 2.697 ms/frame | 1.248 ms/frame |
+| Managed allocation | 390,720 bytes/frame | 234,432 bytes/frame |
+
+Frozen cell clips and translations now share a bounded 4,096-entry cache.
+Repeated redraws allocate 40% less in this fixture. Font and DPI changes clear
+the placements; renderer tests check full/incremental pixel parity, wide cells,
+combining characters and monitor-scale changes. ASCII and ANSI allocations
+remain unchanged at 31,160 and 127,872 bytes/frame. Their timing varied between
+runs, so no general rendering or input-latency speedup is claimed.
+
+Raw reports under `bin/` (local, not committed):
+
+- `compact-render-before/run-0848f43dd09d4f368fa502012b6eaa73`
+- `compact-render-after/run-41639a3a899e47d59369e0587b5e7635`
+- `compact-render-before-repeat/run-2253379c37f84c73a2632f3c1592d336`
+- `compact-render-after-repeat/run-3896bae806194210b2f082db012942f6`
+
+All four runs also passed output-flood, scrollback and real Neovim scrolling.
+Input-dispatch and WPF callback distributions remain in the raw reports;
+callback intervals are not GPU FPS or physical keyboard-to-pixel latency.
+
+Seven fresh-profile baseline launches measured median first frame **979.7 ms**
+and first PTY output **273.5 ms**. This is a startup baseline, not an improvement
+claim, and profiles do not clear OS file caches. In the last launch, XAML parsing
+took 237.9 ms; the prewarmed shell produced output well before window creation
+finished. Startup follow-up should target UI initialization/realization rather
+than changing the settings serialization format. Raw logs:
+`bin/compact-startup-before/run-6ad24ee21aa64af3a029ba4858fe22cd`.
+
+Tab overview catch-up now repaints only changed rows: its renderer regression
+checks zero row draws for a hidden mode-only update and one row draw for a
+single-line text change. Closing the overview stops its refresh timer.
+An unchanged-font/DPI tab reload also keeps font and shaped-glyph caches warm,
+while still refreshing the grid and applying output received while detached.
