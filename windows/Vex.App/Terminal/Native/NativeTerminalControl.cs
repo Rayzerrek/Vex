@@ -811,7 +811,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
             if (_needsFullRedraw || dirty == FrameDirty.Full || viewportMoved)
             {
-                RedrawAll(force: true);
+                // Preview catch-up scans every row, but only repaints rows
+                // whose content or render settings changed while hidden.
+                RedrawAll(force: !_renderingPreview);
             }
             else if (dirty == FrameDirty.Partial)
             {
@@ -825,8 +827,6 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 InvalidateCaretCache();
             }
 
-            if (_needsFullRedraw || dirty != FrameDirty.Clean || viewportMoved)
-                _previewRevision++;
             _needsFullRedraw = false;
 
             DrawSelection();
@@ -876,6 +876,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var frameRows = _terminal.FrameRows;
         if (row >= frameRows.Length || frameRows[row].Cells.Length == 0)
         {
+            _previewRevision++;
             _rowVersions[row] = 0;
             _rowLinks[row] = Array.Empty<LinkSpan>();
             _rowLinkTexts[row] = null;
@@ -890,6 +891,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var hash = RowHash(frameRow, _cols);
         if (!force && _rowVersions[row] == _renderVersion && _rowHashes[row] == hash)
             return;
+        _previewRevision++;
 #if DEBUG || VEX_SELFTEST
         if (_performanceSample is { } sample) sample.RowsDrawn++;
 #endif
