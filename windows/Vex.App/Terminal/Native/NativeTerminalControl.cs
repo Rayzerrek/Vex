@@ -468,6 +468,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void RebuildFontMetrics()
     {
+        _fallbackCellPlacements.Clear();
         _fallbackCellDrawings.Clear();
         _glyphAdvanceCache.Clear();
         StopCopyAnimation();
@@ -650,6 +651,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         StopCopyAnimation();
         ClearLinkHover();
+        _fallbackCellPlacements.Clear();
         _fallbackCellDrawings.Clear();
         _glyphAdvanceCache.Clear();
         _pixelsPerDip = newDpi.PixelsPerDip;
