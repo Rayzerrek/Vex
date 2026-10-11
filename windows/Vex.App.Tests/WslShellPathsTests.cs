@@ -58,6 +58,8 @@ public sealed class WslShellPathsTests
         if (!ShellRegistry.HasDetected("wsl"))
             return;
         var launch = ShellLaunchBuilder.BuildShellLaunch("wsl", workingDirectory: @"\\wsl.localhost\Ubuntu\home\user\My project");
-        Assert.Equal("--distribution Ubuntu --cd \"/home/user/My project\"", launch.Arguments);
+        Assert.StartsWith("--distribution Ubuntu --cd \"/home/user/My project\" --exec env VEX_WSL_SESSION=", launch.Arguments);
+        Assert.NotNull(WslProcessTracker.SessionToken(launch.Arguments));
+        Assert.EndsWith("sh -c \"exec \\\"$SHELL\\\" -l\"", launch.Arguments);
     }
 }

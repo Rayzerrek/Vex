@@ -44,9 +44,9 @@ internal static class ShellLaunchBuilder
         var resolved = ShellRegistry.Resolve(shellId);
         var program = resolved?.Program ?? TerminalSession.DefaultShell();
         var arguments = resolved?.Arguments ?? "";
-        if (shellId == "wsl" && resolved is not null && workingDirectory is not null)
+        if (shellId == "wsl" && resolved is not null)
         {
-            var network = WslShellPaths.ParseNetworkPath(workingDirectory);
+            var network = workingDirectory is null ? null : WslShellPaths.ParseNetworkPath(workingDirectory);
             if (network is { } folder)
             {
                 // WSL preserves unnecessary quotes in the distribution name.
@@ -54,7 +54,12 @@ internal static class ShellLaunchBuilder
                 arguments += " --distribution " + (distribution.All(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.')
                     ? distribution : QuoteWindowsArgument(distribution));
             }
-            arguments += " --cd " + QuoteWindowsArgument(WslShellPaths.ToLinuxPath(workingDirectory));
+            if (workingDirectory is not null)
+                arguments += " --cd " + QuoteWindowsArgument(WslShellPaths.ToLinuxPath(workingDirectory));
+            // The token survives exec and prewarming, so Linux processes can be
+            // attributed to this pane even when the application sets no title.
+            arguments += " --exec env " + WslProcessTracker.SessionVariable + Guid.NewGuid().ToString("N") +
+                " sh -c " + QuoteWindowsArgument("exec \"$SHELL\" -l");
             return (program, arguments.TrimStart());
         }
         if (resolved is null && shellId is "pwsh" or "powershell")

@@ -19,6 +19,7 @@ public static class AppIconTracker
     private sealed record IconSnapshot(
         ProcessTree.Index Index,
         IReadOnlyDictionary<uint, string?> CommandLines,
+        IReadOnlyDictionary<uint, (string Name, string CommandLine)> WslProcesses,
         long Timestamp);
 
     private static IconSnapshot? _latestSnapshot;
@@ -88,13 +89,13 @@ public static class AppIconTracker
                 _ = dispatcher.BeginInvoke(() =>
                 {
                     foreach (var pane in panesSnapshot)
-                        pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines);
+                        pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines, snapshot.WslProcesses);
                 }, DispatcherPriority.Background);
             }
             else
             {
                 foreach (var pane in panesSnapshot)
-                    pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines);
+                    pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines, snapshot.WslProcesses);
             }
         }
         else
@@ -141,16 +142,23 @@ public static class AppIconTracker
                 // their memory. Keep that I/O off the UI dispatcher, including
                 // theme changes that reuse the last completed snapshot.
                 var commandLines = new Dictionary<uint, string?>();
+                var wslProcesses = new Dictionary<uint, (string Name, string CommandLine)>();
                 foreach (var pane in panesSnapshot)
                 {
                     if (pane.ProcessId is not { } pid)
                         continue;
+                    if (pane.IsWsl && WslProcessTracker.SessionToken(ProcessCommandLine.Get((uint)pid)) is { } token)
+                    {
+                        var distribution = WslShellPaths.ParseNetworkPath(pane.LaunchWorkingDirectory)?.Distribution;
+                        if (WslProcessTracker.ReadForegroundProcess(token, distribution) is { } linuxProcess)
+                            wslProcesses[(uint)pid] = linuxProcess;
+                    }
                     var process = ProcessTree.DeepestDescendant(index, (uint)pid, pane.ShellHelpers, AppIconCatalog.EditorProcessNames);
                     if (process is { } child && AppIconCatalog.IsShimHost(child.Name)
                         && !commandLines.ContainsKey(child.Pid))
                         commandLines.Add(child.Pid, ProcessCommandLine.Get(child.Pid));
                 }
-                return new IconSnapshot(index, commandLines, Environment.TickCount64);
+                return new IconSnapshot(index, commandLines, wslProcesses, Environment.TickCount64);
             });
 
             Volatile.Write(ref _latestSnapshot, snapshot);
@@ -162,13 +170,13 @@ public static class AppIconTracker
                     _ = dispatcher.BeginInvoke(() =>
                     {
                         foreach (var pane in panesSnapshot)
-                            pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines);
+                            pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines, snapshot.WslProcesses);
                     }, DispatcherPriority.Background);
                 }
                 else
                 {
                     foreach (var pane in panesSnapshot)
-                        pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines);
+                        pane.RefreshAppIcon(snapshot.Index, snapshot.CommandLines, snapshot.WslProcesses);
                 }
             }
         }
