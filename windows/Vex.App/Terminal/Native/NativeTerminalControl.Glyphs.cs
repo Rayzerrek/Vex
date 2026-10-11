@@ -8,8 +8,10 @@ public sealed partial class NativeTerminalControl
 {
     private const int MaxFallbackCellDrawings = 512;
     private const int MaxCachedGlyphAdvances = 256;
+    private const int MaxFallbackCellPlacements = 4096;
     private readonly Dictionary<(int StartCol, int GlyphCount), double[]> _glyphAdvanceCache = new();
     private readonly Dictionary<FallbackCellKey, DrawingGroup> _fallbackCellDrawings = new();
+    private readonly Dictionary<(int Column, int Columns, double RowY), (RectangleGeometry Clip, TranslateTransform Offset)> _fallbackCellPlacements = new();
     private readonly record struct FallbackCellKey(string Text, Typeface Typeface, Brush Foreground, bool SyntheticBold, int Columns);
 
     private double[] GetGlyphAdvances(ReadOnlySpan<double> advances, int startCol)
@@ -55,10 +57,24 @@ public sealed partial class NativeTerminalControl
                 _fallbackCellDrawings.Clear();
             _fallbackCellDrawings[key] = drawing;
         }
-        var left = Math.Round(col * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
-        var right = Math.Round((col + columns) * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
-        context.PushClip(new RectangleGeometry(new Rect(left, rowY, right - left, _cellHeight)));
-        context.PushTransform(new TranslateTransform(left, rowY));
+        var position = (col, columns, rowY);
+        if (!_fallbackCellPlacements.TryGetValue(position, out var placement))
+        {
+            var left = Math.Round(col * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+            var right = Math.Round((col + columns) * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
+            var clip = new RectangleGeometry(new Rect(left, rowY, right - left, _cellHeight));
+            var offset = new TranslateTransform(left, rowY);
+            clip.Freeze();
+            offset.Freeze();
+            placement = (clip, offset);
+            // Retained WPF drawings can safely share these immutable placements
+            // across output frames; fonts and DPI invalidate the whole cache.
+            if (_fallbackCellPlacements.Count >= MaxFallbackCellPlacements)
+                _fallbackCellPlacements.Clear();
+            _fallbackCellPlacements[position] = placement;
+        }
+        context.PushClip(placement.Clip);
+        context.PushTransform(placement.Offset);
         context.DrawDrawing(drawing);
         context.Pop();
         context.Pop();
