@@ -274,6 +274,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         switch (e.PropertyName)
         {
             case nameof(AppSettings.ThemeName):
+            case nameof(AppSettings.AutomaticContrast):
                 var theme = BuiltInThemes.Resolve(settings.ThemeName);
                 _palette = PaletteFor(theme);
                 ApplyTerminalColors();
@@ -312,7 +313,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         GlyphTypeface? NormalGlyph, GlyphTypeface? BoldGlyph, GlyphTypeface? ItalicGlyph, GlyphTypeface? BoldItalicGlyph,
         ushort[]? NormalAscii, ushort[]? BoldAscii, ushort[]? ItalicAscii, ushort[]? BoldItalicAscii);
 
-    private static readonly Dictionary<string, TerminalPalette> PaletteCache = new();
+    private static readonly Dictionary<(string ThemeName, bool AutomaticContrast), TerminalPalette> PaletteCache = new();
     private static readonly Dictionary<string, TypefaceSet> TypefaceCache = new();
 
     /// <summary>
@@ -344,8 +345,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // multiplied every slider tick by the pane count.
         lock (PaletteCache)
         {
-            if (!PaletteCache.TryGetValue(theme.Name, out var palette))
-                PaletteCache[theme.Name] = palette = new TerminalPalette(theme);
+            var key = (theme.Name, AppSettings.Instance.AutomaticContrast);
+            if (!PaletteCache.TryGetValue(key, out var palette))
+                PaletteCache[key] = palette = new TerminalPalette(theme, key.AutomaticContrast);
             return palette;
         }
     }
@@ -356,7 +358,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     public static void InvalidatePaletteCache(string themeName)
     {
         lock (PaletteCache)
-            PaletteCache.Remove(themeName);
+        {
+            PaletteCache.Remove((themeName, true));
+            PaletteCache.Remove((themeName, false));
+        }
     }
 
     private static TypefaceSet TypefacesFor(string familySource)

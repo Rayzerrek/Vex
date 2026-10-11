@@ -1528,13 +1528,14 @@ internal static class RenderSelfTest
             palette.Resolve(ColorTag.Palette, 1, ColorTag.None, 0, CellFlags.None,
                 out var red, out _);
 
-            var blackColor = ((SolidColorBrush)black!).Color;
-            var redColor = ((SolidColorBrush)red!).Color;
-            var defaultColor = ((SolidColorBrush)palette.Foreground).Color;
-            var expectedRed = FastColor.ParseHex(theme.Red);
-            Report(control, blackColor == defaultColor && redColor == expectedRed
-                ? $"PASS theme-contrast({theme.Name}): unreadable indexed color repaired"
-                : $"FAIL theme-contrast({theme.Name}): black={blackColor} red={redColor}");
+            var background = FastColor.ParseHex(theme.Background);
+            var readable = black is SolidColorBrush blackBrush && red is SolidColorBrush redBrush
+                && TerminalContrastCorrection.ContrastRatio(blackBrush.Color, background) >= 4.5
+                && TerminalContrastCorrection.ContrastRatio(redBrush.Color, background) >= 4.5
+                && redBrush.Color.R > redBrush.Color.G && redBrush.Color.R > redBrush.Color.B;
+            Report(control, readable
+                ? $"PASS theme-contrast({theme.Name}): indexed colors remain readable and distinct"
+                : $"FAIL theme-contrast({theme.Name}): black={black} red={red}");
         }
     }
 

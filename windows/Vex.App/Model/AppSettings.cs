@@ -144,6 +144,14 @@ public sealed class AppSettings : ObservableObject
         set { if (Set(ref _fontSize, value)) Save(); }
     }
 
+    private bool _automaticContrast = true;
+    /// <summary>Repairs low-contrast terminal text at render time; disable for exact application colors.</summary>
+    public bool AutomaticContrast
+    {
+        get => _automaticContrast;
+        set { if (Set(ref _automaticContrast, value)) Save(); }
+    }
+
     private bool _cursorBlink = true;
     public bool CursorBlink
     {
