@@ -215,10 +215,6 @@ public sealed class Project : ObservableObject, IDisposable
 
     public ObservableCollection<WorkspaceTab> Tabs { get; } = new();
 
-    /// <summary>Raised before the selected tab leaves the visual tree, giving
-    /// the window a chance to retain its current rendered preview.</summary>
-    public event Action<WorkspaceTab>? TabDeactivating;
-
     public WorkspaceTab? SelectedTab
     {
         get => _selectedTab;
@@ -231,7 +227,6 @@ public sealed class Project : ObservableObject, IDisposable
                 // Drop the attention flag only once the tab is genuinely left;
                 // IsActive also gates whether a ring raises it at all.
                 previous.IsActive = false;
-                TabDeactivating?.Invoke(previous);
             }
             if (Set(ref _selectedTab, value))
             {

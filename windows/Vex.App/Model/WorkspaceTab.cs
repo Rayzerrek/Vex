@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Windows.Controls;
-using System.Windows.Media;
 using Vex.Libghostty;
 
 namespace Vex.App.Model;
@@ -16,7 +15,6 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     private PaneNode _root;
     private LeafPane? _activeLeaf;
     private bool _isFocusMode;
-    private ImageSource? _preview;
     private bool _needsAttention;
     private bool _isActive;
     private bool _hasCustomTitle;
@@ -104,14 +102,6 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     /// <summary>Full title or directory of the focused pane; custom tab names remain authoritative.</summary>
     public string TitleTooltip => HasCustomTitle ? Title : ActiveLeaf?.TitleTooltip ?? Title;
-
-    /// <summary>Last rendered view of this tab, captured as it is left or
-    /// immediately before Tab Peek opens. Null until the tab has been shown.</summary>
-    public ImageSource? Preview
-    {
-        get => _preview;
-        internal set => Set(ref _preview, value);
-    }
 
     /// <summary>True when a pane in this tab asked for attention since the tab
     /// was last visible. Cleared automatically when the tab becomes active, so

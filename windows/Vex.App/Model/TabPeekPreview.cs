@@ -1,122 +1,102 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
-using System.Windows.Shapes;
+using System.Windows.Data;
+using Vex.App.Terminal.Native;
 
 namespace Vex.App.Model;
 
-/// <summary>
-/// Lightweight preview of a single <see cref="WorkspaceTab"/>, built once when
-/// the overview opens. A visited tab contributes its last rendered image;
-/// otherwise the split tree is rendered as nested boxes without creating any
-/// terminal controls.
-/// </summary>
-public sealed class TabPeekPreview : ObservableObject
+/// <summary>Live split-tree preview of existing terminal surfaces; never realizes a pane or changes its geometry.</summary>
+public sealed class TabPeekPreview : ObservableObject, IDisposable
 {
-    public WorkspaceTab Tab { get; }
-    public string Title { get; }
-    public int PaneCount { get; }
-    public ImageSource? Preview => Tab.Preview;
+    private readonly List<(LeafPane Pane, Image Image)> _images = new();
+    private FrameworkElement _layout;
+    private int _nextPane;
 
-    /// <summary>A UI element representing the split layout, used as the
-    /// fallback until the tab has a rendered preview.
-    /// </summary>
-    public FrameworkElement Layout { get; }
+    public WorkspaceTab Tab { get; }
+    public FrameworkElement Layout => _layout;
 
     public TabPeekPreview(WorkspaceTab tab)
     {
         Tab = tab;
-        Title = tab.Title;
-        PaneCount = tab.PaneCount;
-        Layout = BuildLayout(tab.Root, tab.ActiveLeaf);
+        _layout = BuildLayout(tab.Root);
+        tab.LayoutChanged += RebuildLayout;
     }
 
-    /// <summary>Recursively builds a lightweight visual tree mirroring the
-    /// split structure. Leaf panes become labelled boxes with a state dot;
-    /// split panes become a Grid with a proportional divider.</summary>
-    private static FrameworkElement BuildLayout(PaneNode node, LeafPane? active)
+    /// <summary>Refreshes only frames whose terminal drawings changed; called while the overview is visible.</summary>
+    internal void RefreshTerminalPreviews()
     {
-        return node switch
+        var started = Stopwatch.GetTimestamp();
+        for (var visited = 0; visited < _images.Count; visited++)
         {
-            LeafPane leaf => BuildLeaf(leaf, ReferenceEquals(leaf, active)),
-            SplitPane split => BuildSplit(split, active),
-            _ => new Border { Height = 1 },
-        };
+            var (pane, image) = _images[_nextPane];
+            _nextPane = (_nextPane + 1) % _images.Count;
+            if (pane.ExistingView is NativeTerminalControl terminal)
+                image.Source = terminal.CaptureTerminalPreview();
+            if (Stopwatch.GetElapsedTime(started).TotalMilliseconds >= 3) break;
+        }
     }
 
-    private static FrameworkElement BuildLeaf(LeafPane leaf, bool isActive)
+    private void RebuildLayout()
     {
-        var dotBrush = leaf.State switch
-        {
-            PaneState.Busy => ResourceBrush("VexAccentBlue"),
-            PaneState.Exited => ResourceBrush("VexPaneExited"),
-            _ => ResourceBrush("VexTextDim"),
-        };
+        _images.Clear();
+        _nextPane = 0;
+        _layout = BuildLayout(Tab.Root);
+        OnPropertyChanged(nameof(Layout));
+    }
 
-        var dot = new Ellipse
-        {
-            Width = 5, Height = 5, Fill = dotBrush,
-            Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center,
-        };
+    private FrameworkElement BuildLayout(PaneNode node) => node switch
+    {
+        LeafPane leaf => BuildLeaf(leaf),
+        SplitPane split => BuildSplit(split),
+        _ => new Border(),
+    };
 
-        var label = new TextBlock
-        {
-            Text = leaf.Title,
-            ToolTip = leaf.Title,
-            FontSize = 9,
-            Foreground = isActive
-                ? ResourceBrush("VexText")
-                : ResourceBrush("VexTextDim"),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-
-        var panel = new DockPanel { LastChildFill = true };
-        panel.Children.Add(dot);
-        panel.Children.Add(label);
-
-        var border = new Border
-        {
-            Background = isActive
-                ? ResourceBrush("VexPaneTitleBarFocused")
-                : ResourceBrush("VexSurface"),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 4, 6, 4),
-            BorderBrush = isActive
-                ? ResourceBrush("VexFocusBorder")
-                : ResourceBrush("VexBorder"),
-            BorderThickness = new Thickness(1),
-            Child = panel,
-        };
+    private FrameworkElement BuildLeaf(LeafPane leaf)
+    {
+        var badge = new ProgramStatusBadge { FontSize = 9, Width = 10, Margin = new Thickness(0, 0, 3, 0) };
+        badge.SetBinding(ProgramStatusBadge.StatusProperty, new Binding(nameof(LeafPane.ProgramStatus)) { Source = leaf });
+        var title = new TextBlock { FontSize = 9, TextTrimming = TextTrimming.CharacterEllipsis };
+        title.SetBinding(TextBlock.TextProperty, new Binding(nameof(LeafPane.Title)) { Source = leaf });
+        title.SetResourceReference(TextBlock.ForegroundProperty, "VexTextDim");
+        var header = new DockPanel { Margin = new Thickness(3, 2, 3, 2) };
+        header.Children.Add(badge);
+        header.Children.Add(title);
+        var image = new Image { Stretch = System.Windows.Media.Stretch.Uniform, VerticalAlignment = VerticalAlignment.Top };
+        _images.Add((leaf, image));
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition());
+        grid.Children.Add(header);
+        Grid.SetRow(image, 1);
+        grid.Children.Add(image);
+        var border = new Border { BorderThickness = new Thickness(0.5), Child = grid, ClipToBounds = true };
+        border.SetResourceReference(Border.BackgroundProperty, "VexBackground");
+        border.SetResourceReference(Border.BorderBrushProperty, "VexBorder");
         return border;
     }
 
-    private static Brush ResourceBrush(string key)
-        => (Brush)Application.Current.FindResource(key);
-
-    private static FrameworkElement BuildSplit(SplitPane split, LeafPane? active)
+    private FrameworkElement BuildSplit(SplitPane split)
     {
         var grid = new Grid();
-        var first = BuildLayout(split.First, active);
-        var second = BuildLayout(split.Second, active);
-
+        var first = BuildLayout(split.First);
+        var second = BuildLayout(split.Second);
         if (split.Orientation == Orientation.Horizontal)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(split.Ratio, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - split.Ratio, GridUnitType.Star) });
-            Grid.SetColumn(first, 0);
             Grid.SetColumn(second, 1);
         }
         else
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(split.Ratio, GridUnitType.Star) });
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1 - split.Ratio, GridUnitType.Star) });
-            Grid.SetRow(first, 0);
             Grid.SetRow(second, 1);
         }
-
         grid.Children.Add(first);
         grid.Children.Add(second);
         return grid;
     }
+
+    public void Dispose() => Tab.LayoutChanged -= RebuildLayout;
 }

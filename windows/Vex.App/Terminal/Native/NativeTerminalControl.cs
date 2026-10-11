@@ -757,7 +757,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
             // Hidden tabs keep parsing output and publishing their TUI state,
             // but defer snapshots and drawing until the view is shown again.
-            if (!IsVisible)
+            if (!IsVisible && !_renderingPreview)
             {
                 _needsFullRedraw = true;
                 return;
@@ -825,6 +825,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 InvalidateCaretCache();
             }
 
+            if (_needsFullRedraw || dirty != FrameDirty.Clean || viewportMoved)
+                _previewRevision++;
             _needsFullRedraw = false;
 
             DrawSelection();
