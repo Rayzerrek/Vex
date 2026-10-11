@@ -150,20 +150,23 @@ internal static class CustomGlyphRenderer
                 context.DrawRectangle(brush, null, new Rect(x, y, width / 2.0, height / 2.0));
                 return true;
             case 0x2599: // Quadrant upper left, lower left, lower right
-                context.DrawRectangle(brush, null, new Rect(x, y, width / 2.0, height));
-                context.DrawRectangle(brush, null, new Rect(x + width / 2.0, y + height / 2.0, width - width / 2.0, height - height / 2.0));
+                DrawJoinedBlockRectangles(context, brush,
+                    new Rect(x, y, width / 2.0, height),
+                    new Rect(x + width / 2.0, y + height / 2.0, width - width / 2.0, height - height / 2.0));
                 return true;
             case 0x259A: // Quadrant upper left, lower right
                 context.DrawRectangle(brush, null, new Rect(x, y, width / 2.0, height / 2.0));
                 context.DrawRectangle(brush, null, new Rect(x + width / 2.0, y + height / 2.0, width - width / 2.0, height - height / 2.0));
                 return true;
             case 0x259B: // Quadrant upper left, upper right, lower left
-                context.DrawRectangle(brush, null, new Rect(x, y, width, height / 2.0));
-                context.DrawRectangle(brush, null, new Rect(x, y + height / 2.0, width / 2.0, height - height / 2.0));
+                DrawJoinedBlockRectangles(context, brush,
+                    new Rect(x, y, width, height / 2.0),
+                    new Rect(x, y + height / 2.0, width / 2.0, height - height / 2.0));
                 return true;
             case 0x259C: // Quadrant upper left, upper right, lower right
-                context.DrawRectangle(brush, null, new Rect(x, y, width, height / 2.0));
-                context.DrawRectangle(brush, null, new Rect(x + width / 2.0, y + height / 2.0, width - width / 2.0, height - height / 2.0));
+                DrawJoinedBlockRectangles(context, brush,
+                    new Rect(x, y, width, height / 2.0),
+                    new Rect(x + width / 2.0, y + height / 2.0, width - width / 2.0, height - height / 2.0));
                 return true;
             case 0x259D: // Quadrant upper right
                 context.DrawRectangle(brush, null, new Rect(x + width / 2.0, y, width - width / 2.0, height / 2.0));
@@ -173,13 +176,24 @@ internal static class CustomGlyphRenderer
                 context.DrawRectangle(brush, null, new Rect(x, y + height / 2.0, width / 2.0, height - height / 2.0));
                 return true;
             case 0x259F: // Quadrant upper right, lower left, lower right
-                context.DrawRectangle(brush, null, new Rect(x + width / 2.0, y, width - width / 2.0, height));
-                context.DrawRectangle(brush, null, new Rect(x, y + height / 2.0, width / 2.0, height - height / 2.0));
+                DrawJoinedBlockRectangles(context, brush,
+                    new Rect(x + width / 2.0, y, width - width / 2.0, height),
+                    new Rect(x, y + height / 2.0, width / 2.0, height - height / 2.0));
                 return true;
 
             default:
                 return false;
         }
+    }
+
+    private static void DrawJoinedBlockRectangles(DrawingContext context, Brush brush, Rect first, Rect second)
+    {
+        // One fill avoids separately compositing two antialiased edges at their shared boundary.
+        var geometry = new GeometryGroup { FillRule = FillRule.Nonzero };
+        geometry.Children.Add(new RectangleGeometry(first));
+        geometry.Children.Add(new RectangleGeometry(second));
+        geometry.Freeze();
+        context.DrawGeometry(brush, null, geometry);
     }
 
     private static bool DrawPowerline(DrawingContext context, int codepoint, double x, double y,

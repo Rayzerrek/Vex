@@ -99,6 +99,57 @@ public sealed partial class NativeTerminalControl
         }
     }
 
+    /// <summary>Checks real row drawings have no seams between solid fills at fractional DPI.</summary>
+    internal bool SelfTestCellFillSeams(double pixelsPerDip, bool blockElements)
+    {
+        const int columns = 16;
+        const int rows = 8;
+        var originalDpi = _pixelsPerDip;
+        try
+        {
+            OnDpiChanged(new DpiScale(originalDpi, originalDpi), new DpiScale(pixelsPerDip, pixelsPerDip));
+            var fixture = new StringBuilder("\x1b[0m\x1b[2J\x1b[H");
+            for (var row = 0; row < rows; row++)
+            {
+                fixture.Append($"\x1b[{row + 1};1H");
+                for (var col = 0; col < columns; col++)
+                {
+                    var style = col % 2 == 0 ? "0" : "1";
+                    fixture.Append(blockElements
+                        ? $"\x1b[{style};38;2;91;40;42m█"
+                        : $"\x1b[{style};48;2;91;40;42m ");
+                }
+            }
+            fixture.Append("\x1b[0m\x1b[9;1H");
+            SelfTestFeed(fixture.ToString());
+
+            // Render retained production drawings at the simulated monitor DPI,
+            // rather than using the test window's actual monitor scaling.
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
+            {
+                dc.DrawRectangle(_palette.Background, null, new Rect(0, 0, columns * _cellWidth, rows * _cellHeight));
+                for (var row = 0; row < rows; row++)
+                    dc.DrawDrawing(_rowVisuals[row].Drawing);
+            }
+            var width = (int)Math.Round(columns * _cellWidth * pixelsPerDip);
+            var height = (int)Math.Round(rows * _cellHeight * pixelsPerDip);
+            var bitmap = new RenderTargetBitmap(width, height, 96 * pixelsPerDip, 96 * pixelsPerDip, PixelFormats.Pbgra32);
+            bitmap.Render(visual);
+            var pixels = new byte[width * height * 4];
+            bitmap.CopyPixels(pixels, width * 4, 0);
+            for (var i = 0; i < pixels.Length; i += 4)
+                if (pixels[i] != 42 || pixels[i + 1] != 40 || pixels[i + 2] != 91 || pixels[i + 3] != 255)
+                    return false;
+            return true;
+        }
+        finally
+        {
+            OnDpiChanged(new DpiScale(_pixelsPerDip, _pixelsPerDip), new DpiScale(originalDpi, originalDpi));
+            SelfTestFeed("\x1b[0m\x1b[2J\x1b[H");
+        }
+    }
+
     /// <summary>Measures forced row rendering on the UI thread, including retained WPF allocations.</summary>
     internal string SelfTestBenchRendering(int iterations)
     {

@@ -916,6 +916,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         using var dc = _rowVisuals[row].RenderOpen();
 
         var y = Math.Round(row * _cellHeight * _pixelsPerDip) / _pixelsPerDip;
+        // A rounded top plus an unrounded height leaves gaps at fractional DPI.
+        // Share the next row's snapped boundary for both backgrounds and block glyphs.
+        var rowHeight = Math.Round((row + 1) * _cellHeight * _pixelsPerDip) / _pixelsPerDip - y;
         var cells = frameRow.Cells;
         ref readonly var first = ref cells[0];
         var runFgTag = first.FgTag;
@@ -923,6 +926,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var runBgTag = first.BgTag;
         var runBg = first.BgValue;
         var runFlags = first.Flags;
+        var runIsBlockElement = IsBlockElement(first.Text);
         var runStart = 0;
         _runBuilder.Clear();
         EnsureTextRunCapacity(Math.Max(1, _cols));
@@ -935,23 +939,29 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var textRuns = 0;
         var runWidthCount = 0;
 
+        static bool IsBlockElement(ReadOnlySpan<char> text) =>
+            text.Length == 1 && text[0] is >= '\u2580' and <= '\u259F';
+
         var colCount = Math.Min(_cols, cells.Length);
         for (var col = 0; col < colCount; col++)
         {
             ref readonly var cell = ref cells[col];
+            var isBlockElement = cell.Tail ? runIsBlockElement : IsBlockElement(cell.Text);
 
+            // Text and block graphics need different contrast policies even with identical SGR.
             var cellChanged = cell.FgTag != runFgTag || cell.FgValue != runFg ||
                               cell.BgTag != runBgTag || cell.BgValue != runBg ||
-                              cell.Flags != runFlags;
+                              cell.Flags != runFlags || isBlockElement != runIsBlockElement;
             if (cellChanged && _runBuilder.Length > 0)
             {
-                textRuns = FlushRun(dc, _runBuilder, _runWidths, runWidthCount, runStart, y, runFgTag, runFg, runBgTag, runBg, runFlags, textRuns);
+                textRuns = FlushRun(dc, _runBuilder, _runWidths, runWidthCount, runStart, y, runFgTag, runFg, runBgTag, runBg, runFlags, runIsBlockElement, textRuns);
                 runStart = col;
                 runFgTag = cell.FgTag;
                 runFg = cell.FgValue;
                 runBgTag = cell.BgTag;
                 runBg = cell.BgValue;
                 runFlags = cell.Flags;
+                runIsBlockElement = isBlockElement;
                 _runBuilder.Clear();
                 runWidthCount = 0;
             }
@@ -963,6 +973,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                 runBgTag = cell.BgTag;
                 runBg = cell.BgValue;
                 runFlags = cell.Flags;
+                runIsBlockElement = isBlockElement;
             }
 
             if (cell.Tail)
@@ -985,7 +996,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         }
 
         if (_runBuilder.Length > 0)
-            textRuns = FlushRun(dc, _runBuilder, _runWidths, runWidthCount, runStart, y, runFgTag, runFg, runBgTag, runBg, runFlags, textRuns);
+            textRuns = FlushRun(dc, _runBuilder, _runWidths, runWidthCount, runStart, y, runFgTag, runFg, runBgTag, runBg, runFlags, runIsBlockElement, textRuns);
 
         // Draw underlines for runs that have text; the pooled glyph arrays
         // index into the textRuns we recorded.
@@ -1024,9 +1035,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         _rowLinkHashes[row] = hash;
 
         int FlushRun(DrawingContext context, StringBuilder runText, int[] widths, int cellCount, int startCol, double rowY,
-            ColorTag fgTag, int fgValue, ColorTag bgTag, int bgValue, CellFlags flags, int textRunIndex)
+            ColorTag fgTag, int fgValue, ColorTag bgTag, int bgValue, CellFlags flags, bool isBlockElement, int textRunIndex)
         {
-            _palette.Resolve(fgTag, fgValue, bgTag, bgValue, flags, out var fg, out var bg);
+            _palette.Resolve(fgTag, fgValue, bgTag, bgValue, flags, out var fg, out var bg, correctContrast: !isBlockElement);
             var x = Math.Round(startCol * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
 
             // One width entry per advance-consuming char (wide glyph stubs
@@ -1041,7 +1052,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             // opaque base layer already covers default cells; filling every
             // run again adds work and can expose seams at fractional widths.
             if (bg is not null)
-                context.DrawRectangle(bg, null, new Rect(x, rowY, x2 - x, _cellHeight));
+                context.DrawRectangle(bg, null, new Rect(x, rowY, x2 - x, rowHeight));
 
             // Trailing whitespace carries no ink; skip the text pass for it.
             var contentEnd = runText.Length;
@@ -1170,7 +1181,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
                         FlushSegment();
                         var cx1 = Math.Round(colCursor * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
                         var cx2 = Math.Round((colCursor + widths[unitStart]) * _cellWidth * _pixelsPerDip) / _pixelsPerDip;
-                        if (CustomGlyphRenderer.Draw(context, singleCp, cx1, rowY, cx2 - cx1, _cellHeight, fg, _pixelsPerDip))
+                        if (CustomGlyphRenderer.Draw(context, singleCp, cx1, rowY, cx2 - cx1, rowHeight, fg, _pixelsPerDip))
                         {
                             colCursor += widths[unitStart];
                             continue;

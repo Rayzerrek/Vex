@@ -9,6 +9,29 @@ namespace Vex.App.Tests;
 
 public sealed class TabHeaderLayoutTests
 {
+    [Fact]
+    public void TabHeader_ProgramStatusBadgeIsBetweenTitleAndCloseButton()
+    {
+        var assembly = typeof(TabHeaderLayoutTests).Assembly;
+        var name = assembly.GetManifestResourceNames().Single(n => n.EndsWith(".ThemeXaml.MainWindow.xaml"));
+        using var stream = assembly.GetManifestResourceStream(name)
+            ?? throw new InvalidOperationException("MainWindow XAML resource is missing.");
+        var document = XDocument.Load(stream);
+        XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var header = document.Descendants().Single(e => (string?)e.Attribute(xaml + "Key") == "TabHeaderTemplate");
+        var badge = header.Descendants().Single(e => e.Name.LocalName == "ProgramStatusBadge");
+        var title = header.Descendants().Single(e => (string?)e.Attribute(xaml + "Name") == "TitleBlock");
+        var close = header.Descendants().Single(e => (string?)e.Attribute(xaml + "Name") == "CloseBtn");
+        var editor = header.Descendants().Single(e => (string?)e.Attribute(xaml + "Name") == "TitleEditBox");
+        Assert.Same(close.Parent, badge.Parent);
+        Assert.Equal("0", (string?)title.Parent?.Attribute("Grid.Column"));
+        Assert.Equal("1", (string?)badge.Attribute("Grid.Column"));
+        Assert.Equal("2", (string?)close.Attribute("Grid.Column"));
+        Assert.Equal("3", (string?)editor.Attribute("Grid.ColumnSpan"));
+        Assert.Equal("{Binding ProgramStatus}", (string?)badge.Attribute("Status"));
+        Assert.Equal("{Binding ProgramStatusOrigin}", (string?)badge.Attribute("Origin"));
+    }
+
     [Theory]
     [InlineData(60, 1)]
     [InlineData(60, 2)]

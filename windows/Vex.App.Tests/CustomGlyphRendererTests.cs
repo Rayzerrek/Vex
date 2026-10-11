@@ -1,4 +1,5 @@
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Vex.App.Terminal.Native;
 using Xunit;
 
@@ -20,6 +21,54 @@ public sealed class CustomGlyphRendererTests
 
         Assert.All(supported, cp => Assert.True(CustomGlyphRenderer.CanDraw(cp), $"Expected custom rendering for U+{cp:X4}."));
         Assert.All(fontFallbacks, cp => Assert.False(CustomGlyphRenderer.CanDraw(cp), $"Expected font fallback for U+{cp:X4}."));
+    }
+
+    [Theory]
+    [InlineData(0x2599, false)]
+    [InlineData(0x259B, true)]
+    [InlineData(0x259C, true)]
+    [InlineData(0x259F, false)]
+    public void BlockQuadrants_SolidHalvesHaveNoInternalSeams(int codepoint, bool upperHalf)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                foreach (var dpi in new[] { 1.0, 1.25, 1.5, 1.75, 2.0 })
+                {
+                    const int width = 11;
+                    const int height = 23;
+                    var visual = new DrawingVisual();
+                    using (var dc = visual.RenderOpen())
+                        Assert.True(CustomGlyphRenderer.Draw(dc, codepoint, 0, 0, width / dpi, height / dpi, Brushes.Red, dpi));
+                    var bitmap = new RenderTargetBitmap(width, height, 96 * dpi, 96 * dpi, PixelFormats.Pbgra32);
+                    bitmap.Render(visual);
+                    var pixels = new byte[width * height * 4];
+                    bitmap.CopyPixels(pixels, width * 4, 0);
+                    for (var y = 0; y < height; y++)
+                    for (var x = 0; x < width; x++)
+                    {
+                        var inSolidRow = upperHalf ? y < height / 2 - 1 : y >= height / 2 + 2;
+                        var inSolidColumn = codepoint is 0x2599 or 0x259B ? x < width / 2 - 1 : x >= width / 2 + 2;
+                        if (!inSolidRow && !inSolidColumn)
+                            continue;
+                        var offset = (y * width + x) * 4;
+                        Assert.True(pixels[offset + 2] == 255 && pixels[offset + 3] == 255,
+                            $"Block U+{codepoint:X4} has a seam at ({x},{y}), DPI={dpi}.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(10000), "Block quadrant rendering did not finish.");
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     [Fact]
