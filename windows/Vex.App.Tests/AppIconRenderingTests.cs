@@ -8,24 +8,8 @@ namespace Vex.App.Tests;
 
 public sealed class AppIconRenderingTests
 {
-    public static IEnumerable<object[]> GlyphCases => AppIconCatalog.GlyphSlugs.Select(slug => new object[] { slug });
-
-    [Theory]
-    [MemberData(nameof(GlyphCases))]
-    public void GlyphImage_PreservesSquareArtboard(string slug)
-    {
-        foreach (var isDark in new[] { true, false })
-        {
-            Assert.NotNull(AppIconCatalog.GeometryFor(slug, isDark));
-            var image = AppIcon.Glyph(slug, isDark).Image;
-            Assert.Equal(16, image.Width, 6);
-            Assert.Equal(16, image.Height, 6);
-            Assert.True(image.IsFrozen);
-        }
-    }
-
     [Fact]
-    public void CatalogIcons_AtUiScales_RenderVisiblePixels()
+    public void CatalogIcons_PreserveArtboardAndRenderVisiblePixelsAtUiScales()
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -35,20 +19,29 @@ public sealed class AppIconRenderingTests
                 var names = AppIconCatalog.GlyphSlugs.Concat(new[] { "wsl", "cmd", "lazygit", "btop", "ssh", "aider", "nano", "micro", "emacs" });
                 foreach (var name in names)
                 foreach (var isDark in new[] { true, false })
-                foreach (var scale in new[] { 1.0, 1.25, 1.5, 2.0 })
                 {
+                    var contextLabel = $"Icon {name} in {(isDark ? "dark" : "light")} appearance";
                     var icon = Assert.IsType<AppIcon>(AppIconCatalog.ResolveIcon(name, isDark));
-                    Assert.True(icon.Image.IsFrozen);
+                    if (AppIconCatalog.GlyphSlugs.Contains(name))
+                    {
+                        Assert.True(AppIconCatalog.GeometryFor(name, isDark) is not null, $"{contextLabel} has no geometry.");
+                        Assert.True(Math.Abs(icon.Image.Width - 16) < 0.000001 && Math.Abs(icon.Image.Height - 16) < 0.000001,
+                            $"{contextLabel} must preserve a 16×16 artboard, got {icon.Image.Width}×{icon.Image.Height}.");
+                    }
+                    Assert.True(icon.Image.IsFrozen, $"{contextLabel} is not frozen.");
                     var visual = new DrawingVisual();
                     using (var context = visual.RenderOpen())
                         context.DrawImage(icon.Image, new Rect(0, 0, 16, 16));
-                    var size = (int)(16 * scale);
-                    var bitmap = new RenderTargetBitmap(size, size, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
-                    bitmap.Render(visual);
-                    var pixels = new byte[size * size * 4];
-                    bitmap.CopyPixels(pixels, size * 4, 0);
-                    Assert.True(Enumerable.Range(0, size * size).Any(pixel => pixels[pixel * 4 + 3] > 0),
-                        $"Icon {name} is empty in {(isDark ? "dark" : "light")} appearance at {scale * 100}%.");
+                    foreach (var scale in new[] { 1.0, 1.25, 1.5, 2.0 })
+                    {
+                        var size = (int)(16 * scale);
+                        var bitmap = new RenderTargetBitmap(size, size, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+                        bitmap.Render(visual);
+                        var pixels = new byte[size * size * 4];
+                        bitmap.CopyPixels(pixels, size * 4, 0);
+                        Assert.True(Enumerable.Range(0, size * size).Any(pixel => pixels[pixel * 4 + 3] > 0),
+                            $"{contextLabel} is empty at {scale * 100}%.");
+                    }
                 }
             }
             catch (Exception ex)

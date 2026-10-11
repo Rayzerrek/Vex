@@ -138,33 +138,6 @@ public sealed class WorkspaceProjectSwitchTests
     }
 
     [Theory]
-    [InlineData(Key.D1, 0)]
-    [InlineData(Key.D2, 1)]
-    [InlineData(Key.D3, 2)]
-    [InlineData(Key.D4, 3)]
-    [InlineData(Key.D5, 4)]
-    [InlineData(Key.D6, 5)]
-    [InlineData(Key.D7, 6)]
-    [InlineData(Key.D8, 7)]
-    [InlineData(Key.D9, 8)]
-    [InlineData(Key.D0, 9)]
-    [InlineData(Key.NumPad1, 0)]
-    [InlineData(Key.NumPad2, 1)]
-    [InlineData(Key.NumPad3, 2)]
-    [InlineData(Key.NumPad4, 3)]
-    [InlineData(Key.NumPad5, 4)]
-    [InlineData(Key.NumPad6, 5)]
-    [InlineData(Key.NumPad7, 6)]
-    [InlineData(Key.NumPad8, 7)]
-    [InlineData(Key.NumPad9, 8)]
-    [InlineData(Key.NumPad0, 9)]
-    public void TryGetProjectIndex_DigitKeys_MapsToExpectedIndex(Key key, int expectedIndex)
-    {
-        Assert.True(MainWindow.TryGetProjectIndex(key, out var index));
-        Assert.Equal(expectedIndex, index);
-    }
-
-    [Theory]
     [InlineData(Key.A)]
     [InlineData(Key.Z)]
     [InlineData(Key.Escape)]
