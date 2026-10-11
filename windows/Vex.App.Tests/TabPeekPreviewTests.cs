@@ -26,7 +26,9 @@ public sealed class TabPeekPreviewTests
                 Assert.All(tab.Leaves, pane => Assert.Null(pane.ExistingView));
                 var peek = new TabPeek();
                 ChromePalette.Apply(BuiltInThemes.VexDark, peek.Resources);
-                window = new Window { Content = peek, Width = 950, Height = 650, Left = -10000, ShowActivated = false, ShowInTaskbar = false };
+                var host = new System.Windows.Controls.Grid();
+                host.Children.Add(peek);
+                window = new Window { Content = host, Width = 950, Height = 650, Left = -10000, ShowActivated = false, ShowInTaskbar = false };
                 window.Show();
                 peek.Show(project);
                 PumpDispatcher(200);
@@ -40,6 +42,22 @@ public sealed class TabPeekPreviewTests
                 Assert.Equal(Visibility.Collapsed, peek.Visibility);
                 peek.Show(project);
                 PumpDispatcher(100);
+                var list = Assert.IsType<System.Windows.Controls.ListBox>(peek.FindName("TabList"));
+                var item = Assert.IsType<System.Windows.Controls.ListBoxItem>(list.ItemContainerGenerator.ContainerFromIndex(0));
+                DependencyObject? ancestor = item;
+                while (ancestor is not null && ancestor is not System.Windows.Controls.ScrollViewer)
+                    ancestor = System.Windows.Media.VisualTreeHelper.GetParent(ancestor);
+                var scroll = Assert.IsType<System.Windows.Controls.ScrollViewer>(ancestor);
+                var presenter = Assert.IsType<System.Windows.Controls.ItemsPresenter>(scroll.Content);
+                scroll.Content = null;
+                host.Children.Add(presenter);
+                window.UpdateLayout();
+                Assert.Same(item, list.ItemContainerGenerator.ContainerFromIndex(0));
+                Assert.True(item.IsVisible);
+                Assert.False(list.IsAncestorOf(item));
+                var refresh = (typeof(TabPeek).GetMethod("RefreshVisiblePreviews", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    ?? throw new InvalidOperationException("Tab Peek refresh callback was not found.")).CreateDelegate<Action>(peek);
+                refresh();
                 window.Close();
                 Assert.False(peek.IsRefreshingPreviews);
             }

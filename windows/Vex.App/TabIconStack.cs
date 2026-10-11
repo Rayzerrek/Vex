@@ -43,6 +43,8 @@ public sealed class TabIconStack : Control
         }
 
         var outline = new Pen(BorderBrush, 1);
+        if (BorderBrush is { IsFrozen: true })
+            outline.Freeze();
         var visible = Math.Min(Icons.Count, MaximumVisibleIcons);
         if (Icons.Count > visible)
         {
@@ -51,7 +53,7 @@ public sealed class TabIconStack : Control
             var left = 22 + (visible - 1) * 7.0;
             drawingContext.DrawRoundedRectangle(Background, outline, new Rect(left + 0.5, 0.5, 19, 21), 4, 4);
             var count = new FormattedText("+" + (Icons.Count - visible), CultureInfo.InvariantCulture,
-                FlowDirection.LeftToRight, OverflowTypeface, 9, Foreground, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+                FlowDirection.LeftToRight, OverflowTypeface, 9, Foreground ?? Brushes.Gray, VisualTreeHelper.GetDpi(this).PixelsPerDip);
             drawingContext.DrawText(count, new Point(left + (20 - count.Width) / 2, (22 - count.Height) / 2));
         }
         for (var index = visible - 1; index >= 0; index--)

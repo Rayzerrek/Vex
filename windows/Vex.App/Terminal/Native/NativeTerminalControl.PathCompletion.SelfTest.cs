@@ -28,7 +28,11 @@ public sealed partial class NativeTerminalControl
                 throw new InvalidOperationException("Path completion did not open at the shell working directory.");
             // A refreshed directory snapshot invalidates old choices even
             // when the query is unchanged and its UI callback is still queued.
+            HandlePathCompletionKey(Key.Down, ModifierKeys.None);
             _pathCompletionIndex?.ScanDirectory(root);
+            DrawPathCompletion();
+            if (_pathCompletionFirstVisible != 0)
+                throw new InvalidOperationException("Path completion retained a scrolled result index while its matches were stale.");
             _sessionStarting = true;
             _pendingSessionInput = null;
             InsertPathCompletion(raw: false);
