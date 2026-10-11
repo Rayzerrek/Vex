@@ -64,6 +64,20 @@ public sealed class TerminalPaletteTests
     }
 
     [Fact]
+    public void DecorationPens_EvictOldColorsButKeepRetainedDrawingsImmutable()
+    {
+        var palette = new TerminalPalette(BuiltInThemes.VexDark);
+        var original = palette.GetPen(Brushes.Red);
+        for (var index = 0; index < 8192; index++)
+            palette.GetPen(new SolidColorBrush(Color.FromRgb((byte)(index >> 8), (byte)index, 128)));
+        var replacement = palette.GetPen(Brushes.Red);
+        Assert.NotSame(original, replacement);
+        Assert.Same(replacement, palette.GetPen(Brushes.Red));
+        Assert.True(original.IsFrozen && replacement.IsFrozen);
+        Assert.Same(Brushes.Red, original.Brush);
+    }
+
+    [Fact]
     public void FaintForeground_DoesNotReuseDefaultColorForRgbBlack()
     {
         var palette = new TerminalPalette(BuiltInThemes.VexDark, automaticContrast: false);
