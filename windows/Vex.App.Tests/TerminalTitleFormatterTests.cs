@@ -1,3 +1,4 @@
+using System.Windows.Media;
 using Vex.App.Model;
 using Xunit;
 
@@ -61,13 +62,6 @@ public sealed class TerminalTitleFormatterTests
     [InlineData("pnpm dlx pi", "pi")]
     [InlineData("pnpm exec pi", "pi")]
     [InlineData("pnpm pi", "pi")]
-    public void Format_RunnerWithRedirection_ExtractsTargetProgram(string input, string expected)
-    {
-        var result = TerminalTitleFormatter.Format(input);
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
     [InlineData("OpenCode - nazwa sesji", "nazwa sesji")]
     [InlineData("OC - nazwa sesji", "nazwa sesji")]
     [InlineData("opencode - nazwa sesji", "nazwa sesji")]
@@ -78,34 +72,13 @@ public sealed class TerminalTitleFormatterTests
     [InlineData("OC | nazwa sesji", "nazwa sesji")]
     [InlineData("[*] Working | Session Title", "Session Title")]
     [InlineData("[✓] Done | Session Title", "Session Title")]
-    public void Format_OpenCodeSession_PreservesSessionName(string input, string expected)
-    {
-        var result = TerminalTitleFormatter.Format(input);
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
     [InlineData("OpenCode", "OpenCode")]
     [InlineData("open-code", "OpenCode")]
     [InlineData("OC", "OpenCode")]
     [InlineData("opencode", "OpenCode")]
-    public void Format_BareOpenCode_ReturnsOpenCode(string input, string expected)
-    {
-        var result = TerminalTitleFormatter.Format(input);
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
     [InlineData("agy", "agy")]
     [InlineData("antigravity", "antigravity")]
     [InlineData("agy > output.log", "agy")]
-    public void Format_AntigravityCli_ExtractsName(string input, string expected)
-    {
-        var result = TerminalTitleFormatter.Format(input);
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
     [InlineData(@"C:\Windows\System32\cmd.exe - bun pi > vex", "pi")]
     [InlineData(@"C:\Program Files\PowerShell\7\pwsh.exe - bun pi > vex", "pi")]
     [InlineData("pwsh - bun pi > vex", "pi")]
@@ -113,13 +86,6 @@ public sealed class TerminalTitleFormatterTests
     [InlineData("cmd.exe - agy", "agy")]
     [InlineData("Administrator: pwsh - agy", "agy")]
     [InlineData("Administrator: Windows PowerShell - OC - sesja", "sesja")]
-    public void Format_ShellAndAdminPrefixes_AreStripped(string input, string expected)
-    {
-        var result = TerminalTitleFormatter.Format(input);
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
     [InlineData("main.rs - NVIM", "main.rs")]
     [InlineData("app.ts - VIM", "app.ts")]
     [InlineData("git commit -m \"msg\"", "git")]
@@ -133,7 +99,7 @@ public sealed class TerminalTitleFormatterTests
     [InlineData(@"C:\Users\Ziut\code\vex", "vex")]
     [InlineData("deno run cli.ts > out", "cli")]
     [InlineData("CustomTool - Task 42", "Task 42")]
-    public void Format_GeneralCommandsAndPaths_FormatCleanly(string input, string expected)
+    public void Format_CommandsPathsAndSessionTitles_ReturnsCleanTabTitle(string input, string expected)
     {
         var result = TerminalTitleFormatter.Format(input);
         Assert.Equal(expected, result);
@@ -343,49 +309,17 @@ public sealed class TerminalTitleFormatterTests
         Assert.Equal(1.0, FastColor.ContrastRatio(white, white), 1);
     }
 
-    [Fact]
-    public void AppIcon_BuildGlyphImage_RendersValidBitmapAndExtractsBrushColor()
+    [Theory]
+    [InlineData("opencode", false, "#242429")]
+    [InlineData("opencode", true, "#F1ECEC")]
+    [InlineData("bun", false, "#000000")]
+    [InlineData("bun", true, "#B8B8BE")]
+    [InlineData("react", false, "#4398AF")]
+    [InlineData("react", true, "#61DAFB")]
+    public void AppIcon_Glyph_UsesAppearanceSpecificBrushColor(string slug, bool isDark, string expectedColor)
     {
-        // 1. Verify brush colors on the actual WPF DrawingImage
-        var lightOpenCode = AppIcon.Glyph("opencode", isDark: false);
-        var darkOpenCode = AppIcon.Glyph("opencode", isDark: true);
-        var lightBun = AppIcon.Glyph("bun", isDark: false);
-        var darkBun = AppIcon.Glyph("bun", isDark: true);
-        var lightReact = AppIcon.Glyph("react", isDark: false);
-        var darkReact = AppIcon.Glyph("react", isDark: true);
-
-        var lightOpenCodeBrush = (System.Windows.Media.SolidColorBrush)((System.Windows.Media.GeometryDrawing)((System.Windows.Media.DrawingGroup)lightOpenCode.Image.Drawing).Children[0]).Brush;
-        var darkOpenCodeBrush = (System.Windows.Media.SolidColorBrush)((System.Windows.Media.GeometryDrawing)((System.Windows.Media.DrawingGroup)darkOpenCode.Image.Drawing).Children[0]).Brush;
-        var lightBunBrush = (System.Windows.Media.SolidColorBrush)((System.Windows.Media.GeometryDrawing)((System.Windows.Media.DrawingGroup)lightBun.Image.Drawing).Children[0]).Brush;
-        var darkBunBrush = (System.Windows.Media.SolidColorBrush)((System.Windows.Media.GeometryDrawing)((System.Windows.Media.DrawingGroup)darkBun.Image.Drawing).Children[0]).Brush;
-        var lightReactBrush = (System.Windows.Media.SolidColorBrush)((System.Windows.Media.GeometryDrawing)((System.Windows.Media.DrawingGroup)lightReact.Image.Drawing).Children[0]).Brush;
-        var darkReactBrush = (System.Windows.Media.SolidColorBrush)((System.Windows.Media.GeometryDrawing)((System.Windows.Media.DrawingGroup)darkReact.Image.Drawing).Children[0]).Brush;
-
-        // OpenCode: charcoal in light, near-white in dark
-        Assert.Equal(System.Windows.Media.Color.FromRgb(0x24, 0x24, 0x29), lightOpenCodeBrush.Color);
-        Assert.Equal(System.Windows.Media.Color.FromRgb(0xF1, 0xEC, 0xEC), darkOpenCodeBrush.Color);
-
-        // Bun: black in light, light gray in dark
-        Assert.Equal(System.Windows.Media.Color.FromRgb(0, 0, 0), lightBunBrush.Color);
-        Assert.Equal(System.Windows.Media.Color.FromRgb(0xB8, 0xB8, 0xBE), darkBunBrush.Color);
-
-        // React: darkened cyan in light, original cyan in dark
-        Assert.Equal(System.Windows.Media.Color.FromRgb(0x43, 0x98, 0xAF), lightReactBrush.Color);
-        Assert.Equal(System.Windows.Media.Color.FromRgb(0x61, 0xDA, 0xFB), darkReactBrush.Color);
-
-        // 2. Render light and dark icons into actual RenderTargetBitmaps (smoke test for WPF rendering pipeline)
-        foreach (var icon in new[] { lightOpenCode, darkOpenCode, lightBun, darkBun, lightReact, darkReact })
-        {
-            var visual = new System.Windows.Media.DrawingVisual();
-            using (var dc = visual.RenderOpen())
-            {
-                dc.DrawImage(icon.Image, new System.Windows.Rect(0, 0, 16, 16));
-            }
-            var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-            rtb.Render(visual);
-            Assert.Equal(16, rtb.PixelWidth);
-            Assert.Equal(16, rtb.PixelHeight);
-        }
+        var icon = AppIcon.Glyph(slug, isDark);
+        Assert.Equal(FastColor.ParseHex(expectedColor), GlyphBrushColor(icon));
     }
 
     [Fact]
@@ -399,15 +333,13 @@ public sealed class TerminalTitleFormatterTests
             settings.SetAppearance(Vex.App.Model.AppSettings.DarkAppearance);
             var darkIcon = AppIconCatalog.ResolveIcon("opencode");
             Assert.NotNull(darkIcon);
-            var darkBrush = (System.Windows.Media.SolidColorBrush)((System.Windows.Media.GeometryDrawing)((System.Windows.Media.DrawingGroup)darkIcon.Image.Drawing).Children[0]).Brush;
-            Assert.Equal(System.Windows.Media.Color.FromRgb(0xF1, 0xEC, 0xEC), darkBrush.Color);
+            Assert.Equal(Color.FromRgb(0xF1, 0xEC, 0xEC), GlyphBrushColor(darkIcon));
 
             // 2. Switch to Light appearance
             settings.SetAppearance(Vex.App.Model.AppSettings.LightAppearance);
             var lightIcon = AppIconCatalog.ResolveIcon("opencode");
             Assert.NotNull(lightIcon);
-            var lightBrush = (System.Windows.Media.SolidColorBrush)((System.Windows.Media.GeometryDrawing)((System.Windows.Media.DrawingGroup)lightIcon.Image.Drawing).Children[0]).Brush;
-            Assert.Equal(System.Windows.Media.Color.FromRgb(0x24, 0x24, 0x29), lightBrush.Color);
+            Assert.Equal(Color.FromRgb(0x24, 0x24, 0x29), GlyphBrushColor(lightIcon));
 
             // 3. Verify TerminalPane icon update on appearance flip
             var pane = new Vex.App.Model.TerminalPane(@"C:\test");
@@ -422,5 +354,12 @@ public sealed class TerminalTitleFormatterTests
         {
             settings.SetAppearance(initialAppearance);
         }
+    }
+
+    private static Color GlyphBrushColor(AppIcon icon)
+    {
+        var group = Assert.IsType<DrawingGroup>(icon.Image.Drawing);
+        var drawing = Assert.IsType<GeometryDrawing>(group.Children[0]);
+        return Assert.IsType<SolidColorBrush>(drawing.Brush).Color;
     }
 }

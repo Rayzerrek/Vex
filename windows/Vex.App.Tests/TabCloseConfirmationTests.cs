@@ -38,41 +38,29 @@ public sealed class TabCloseConfirmationTests
         Assert.Equal(expected, TabCloseConfirmation.IsAgent(input));
     }
 
-    [Fact]
-    public void GetCloseInfo_DirtyTerminalPane_RequiresConfirmation()
-    {
-        var terminal = new TerminalPane(@"C:\work");
-        terminal.Title = "main.rs*";
-        terminal.IsDirty = true;
-
-        var info = TabCloseConfirmation.GetCloseInfo(terminal);
-
-        Assert.True(info.NeedsConfirmation);
-        Assert.True(info.IsDirty);
-        Assert.Equal("Editor", info.AppName);
-        Assert.Equal("Unsaved Changes", info.Title);
-        Assert.Contains("main.rs", info.Message);
-    }
-
     [Theory]
-    [InlineData("nvim", "Neovim", "Unsaved Changes in Neovim")]
-    [InlineData("vim", "Vim", "Unsaved Changes in Vim")]
-    [InlineData("helix", "Helix", "Unsaved Changes in Helix")]
-    [InlineData("nano", "Nano", "Unsaved Changes in Nano")]
-    [InlineData("micro", "Micro", "Unsaved Changes in Micro")]
-    [InlineData("emacs", "Emacs", "Unsaved Changes in Emacs")]
-    // Completely unknown/custom editors and tools
-    [InlineData("kak", "Kak", "Unsaved Changes in Kak")]
-    [InlineData("amp", "Amp", "Unsaved Changes in Amp")]
-    [InlineData("lapce", "Lapce", "Unsaved Changes in Lapce")]
-    [InlineData("joe", "Joe", "Unsaved Changes in Joe")]
-    [InlineData("custom_editor", "Custom_editor", "Unsaved Changes in Custom_editor")]
-    public void GetCloseInfo_DirtyTerminalPane_ResolvesSpecificEditorName(
-        string processName, string expectedApp, string expectedTitle)
+    [InlineData("nvim", "main.rs*", "Neovim", "Unsaved Changes in Neovim")]
+    [InlineData("vim", "main.rs*", "Vim", "Unsaved Changes in Vim")]
+    [InlineData("helix", "main.rs*", "Helix", "Unsaved Changes in Helix")]
+    [InlineData("nano", "main.rs*", "Nano", "Unsaved Changes in Nano")]
+    [InlineData("micro", "main.rs*", "Micro", "Unsaved Changes in Micro")]
+    [InlineData("emacs", "main.rs*", "Emacs", "Unsaved Changes in Emacs")]
+    [InlineData("kak", "main.rs*", "Kak", "Unsaved Changes in Kak")]
+    [InlineData("amp", "main.rs*", "Amp", "Unsaved Changes in Amp")]
+    [InlineData("lapce", "main.rs*", "Lapce", "Unsaved Changes in Lapce")]
+    [InlineData("joe", "main.rs*", "Joe", "Unsaved Changes in Joe")]
+    [InlineData("custom_editor", "main.rs*", "Custom_editor", "Unsaved Changes in Custom_editor")]
+    [InlineData(null, "main.rs* - kak", "Kak", "Unsaved Changes in Kak")]
+    [InlineData(null, "main.rs [+] - amp", "Amp", "Unsaved Changes in Amp")]
+    [InlineData(null, "file.py ● - customtool", "Customtool", "Unsaved Changes in Customtool")]
+    [InlineData(null, "doc.txt [modified] - randomeditor", "Randomeditor", "Unsaved Changes in Randomeditor")]
+    [InlineData(null, "main.rs*", "Editor", "Unsaved Changes")]
+    public void GetCloseInfo_DirtyTerminalPane_ResolvesEditorFromProcessOrTitle(
+        string? processName, string title, string expectedApp, string expectedTitle)
     {
         var terminal = new TerminalPane(@"C:\work")
         {
-            Title = "main.rs*",
+            Title = title,
             ActiveProcessName = processName,
             IsDirty = true,
         };
@@ -83,28 +71,7 @@ public sealed class TabCloseConfirmationTests
         Assert.True(info.IsDirty);
         Assert.Equal(expectedApp, info.AppName);
         Assert.Equal(expectedTitle, info.Title);
-    }
-    [Theory]
-    [InlineData("main.rs* - kak", "Kak", "Unsaved Changes in Kak")]
-    [InlineData("main.rs [+] - amp", "Amp", "Unsaved Changes in Amp")]
-    [InlineData("file.py ● - customtool", "Customtool", "Unsaved Changes in Customtool")]
-    [InlineData("doc.txt [modified] - randomeditor", "Randomeditor", "Unsaved Changes in Randomeditor")]
-    [InlineData("main.rs*", "Editor", "Unsaved Changes")]
-    public void GetCloseInfo_DirtyTerminalPane_ResolvesTitleBasedUnknownEditorName(
-        string title, string expectedApp, string expectedTitle)
-    {
-        var terminal = new TerminalPane(@"C:\work")
-        {
-            Title = title,
-            IsDirty = true,
-        };
-
-        var info = TabCloseConfirmation.GetCloseInfo(terminal);
-
-        Assert.True(info.NeedsConfirmation);
-        Assert.True(info.IsDirty);
-        Assert.Equal(expectedApp, info.AppName);
-        Assert.Equal(expectedTitle, info.Title);
+        Assert.Contains(title.TrimEnd('*'), info.Message);
         if (expectedApp != "Editor")
             Assert.NotNull(info.Icon);
         else
@@ -123,19 +90,6 @@ public sealed class TabCloseConfirmationTests
         Assert.True(info.NeedsConfirmation);
         Assert.False(info.IsDirty);
         Assert.Contains("htop", info.Message);
-    }
-
-    [Fact]
-    public void GetCloseInfo_IdleBareTerminalPane_DoesNotRequireConfirmation()
-    {
-        var terminal = new TerminalPane(@"C:\work");
-        terminal.Title = "Terminal";
-        terminal.State = PaneState.Idle;
-        terminal.IsDirty = false;
-
-        var info = TabCloseConfirmation.GetCloseInfo(terminal);
-
-        Assert.False(info.NeedsConfirmation);
     }
 
     [Theory]

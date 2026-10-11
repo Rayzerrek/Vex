@@ -30,25 +30,24 @@ public sealed class WorkspaceShortcutTests
         Assert.Equal(expected, shortcut);
     }
 
-    [Theory]
-    [InlineData(Key.D1, 0)]
-    [InlineData(Key.D2, 1)]
-    [InlineData(Key.D9, 8)]
-    [InlineData(Key.D0, 9)]
-    [InlineData(Key.NumPad1, 0)]
-    [InlineData(Key.NumPad5, 4)]
-    [InlineData(Key.NumPad0, 9)]
-    public void TryGetWorkspaceShortcut_CtrlShiftDigits_MapsToSwitchProject(Key key, int expectedProjectIndex)
+    [Fact]
+    public void TryGetWorkspaceShortcut_AllDigitKeys_MatchProjectIndexMapping()
     {
-        var matched = MainWindow.TryGetWorkspaceShortcut(
-            ModifierKeys.Control | ModifierKeys.Shift,
-            key,
-            out var shortcut,
-            out var projectIndex);
+        var digitKeys = new[] { Key.D1, Key.D2, Key.D3, Key.D4, Key.D5, Key.D6, Key.D7, Key.D8, Key.D9, Key.D0 };
+        var numPadKeys = new[] { Key.NumPad1, Key.NumPad2, Key.NumPad3, Key.NumPad4, Key.NumPad5, Key.NumPad6, Key.NumPad7, Key.NumPad8, Key.NumPad9, Key.NumPad0 };
 
-        Assert.True(matched);
-        Assert.Equal(WorkspaceShortcut.SwitchProject, shortcut);
-        Assert.Equal(expectedProjectIndex, projectIndex);
+        for (var expectedIndex = 0; expectedIndex < digitKeys.Length; expectedIndex++)
+        foreach (var key in new[] { digitKeys[expectedIndex], numPadKeys[expectedIndex] })
+        {
+            Assert.True(MainWindow.TryGetProjectIndex(key, out var index), $"Project key {key} was not recognized.");
+            Assert.True(index == expectedIndex, $"Project key {key} mapped to {index}, expected {expectedIndex}.");
+            var matched = MainWindow.TryGetWorkspaceShortcut(
+                ModifierKeys.Control | ModifierKeys.Shift, key, out var shortcut, out var projectIndex);
+
+            Assert.True(matched, $"Ctrl+Shift+{key} was not recognized.");
+            Assert.True(shortcut == WorkspaceShortcut.SwitchProject, $"Ctrl+Shift+{key} mapped to {shortcut}.");
+            Assert.True(projectIndex == expectedIndex, $"Ctrl+Shift+{key} mapped to project {projectIndex}, expected {expectedIndex}.");
+        }
     }
 
     [Fact]
