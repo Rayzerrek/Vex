@@ -88,6 +88,8 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     private ushort[]? _italicAscii;
     private ushort[]? _boldItalicAscii;
     private double _baselineY;
+    private readonly record struct FontMetricsKey(Typeface Typeface, double FontSize, double PixelsPerDip);
+    private FontMetricsKey? _fontMetricsKey;
 
     private readonly object _outputLock = new();
     private bool _redrawScheduled;
@@ -274,6 +276,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         switch (e.PropertyName)
         {
             case nameof(AppSettings.ThemeName):
+            case nameof(AppSettings.AutomaticContrast):
                 var theme = BuiltInThemes.Resolve(settings.ThemeName);
                 _palette = PaletteFor(theme);
                 ApplyTerminalColors();
@@ -312,7 +315,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         GlyphTypeface? NormalGlyph, GlyphTypeface? BoldGlyph, GlyphTypeface? ItalicGlyph, GlyphTypeface? BoldItalicGlyph,
         ushort[]? NormalAscii, ushort[]? BoldAscii, ushort[]? ItalicAscii, ushort[]? BoldItalicAscii);
 
-    private static readonly Dictionary<string, TerminalPalette> PaletteCache = new();
+    private static readonly Dictionary<(string ThemeName, bool AutomaticContrast), TerminalPalette> PaletteCache = new();
     private static readonly Dictionary<string, TypefaceSet> TypefaceCache = new();
 
     /// <summary>
@@ -344,8 +347,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         // multiplied every slider tick by the pane count.
         lock (PaletteCache)
         {
-            if (!PaletteCache.TryGetValue(theme.Name, out var palette))
-                PaletteCache[theme.Name] = palette = new TerminalPalette(theme);
+            var key = (theme.Name, AppSettings.Instance.AutomaticContrast);
+            if (!PaletteCache.TryGetValue(key, out var palette))
+                PaletteCache[key] = palette = new TerminalPalette(theme, key.AutomaticContrast);
             return palette;
         }
     }
@@ -356,7 +360,10 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
     public static void InvalidatePaletteCache(string themeName)
     {
         lock (PaletteCache)
-            PaletteCache.Remove(themeName);
+        {
+            PaletteCache.Remove((themeName, true));
+            PaletteCache.Remove((themeName, false));
+        }
     }
 
     private static TypefaceSet TypefacesFor(string familySource)
@@ -463,6 +470,16 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
     private void RebuildFontMetrics()
     {
+        var key = new FontMetricsKey(_normalTypeface, _fontSize, _pixelsPerDip);
+        // Tab switches unload/reload the surface without changing its font.
+        // Keep shaped glyphs and geometry warm, but still check the new layout.
+        if (_fontMetricsKey == key)
+        {
+            RecalculateGridSize();
+            return;
+        }
+        _fontMetricsKey = key;
+        _fallbackCellPlacements.Clear();
         _fallbackCellDrawings.Clear();
         _glyphAdvanceCache.Clear();
         StopCopyAnimation();
@@ -645,6 +662,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
             return;
         StopCopyAnimation();
         ClearLinkHover();
+        _fallbackCellPlacements.Clear();
         _fallbackCellDrawings.Clear();
         _glyphAdvanceCache.Clear();
         _pixelsPerDip = newDpi.PixelsPerDip;
@@ -752,7 +770,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
             // Hidden tabs keep parsing output and publishing their TUI state,
             // but defer snapshots and drawing until the view is shown again.
-            if (!IsVisible)
+            if (!IsVisible && !_renderingPreview)
             {
                 _needsFullRedraw = true;
                 return;
@@ -806,7 +824,9 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
 
             if (_needsFullRedraw || dirty == FrameDirty.Full || viewportMoved)
             {
-                RedrawAll(force: true);
+                // Preview catch-up scans every row, but only repaints rows
+                // whose content or render settings changed while hidden.
+                RedrawAll(force: !_renderingPreview);
             }
             else if (dirty == FrameDirty.Partial)
             {
@@ -869,6 +889,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var frameRows = _terminal.FrameRows;
         if (row >= frameRows.Length || frameRows[row].Cells.Length == 0)
         {
+            _previewRevision++;
             _rowVersions[row] = 0;
             _rowLinks[row] = Array.Empty<LinkSpan>();
             _rowLinkTexts[row] = null;
@@ -883,6 +904,7 @@ public sealed partial class NativeTerminalControl : FrameworkElement, ITerminalV
         var hash = RowHash(frameRow, _cols);
         if (!force && _rowVersions[row] == _renderVersion && _rowHashes[row] == hash)
             return;
+        _previewRevision++;
 #if DEBUG || VEX_SELFTEST
         if (_performanceSample is { } sample) sample.RowsDrawn++;
 #endif

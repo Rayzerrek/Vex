@@ -69,10 +69,7 @@
                                     <Border x:Name="ring" CornerRadius="10" BorderThickness="2" BorderBrush="Transparent" Padding="2">
                                         <Border CornerRadius="8" Background="{DynamicResource VexBackground}" ClipToBounds="True">
                                             <Grid>
-                                                <!-- Tabs that have not been displayed yet use their split layout;
-                                                     visited tabs paint their last real rendered frame over it. -->
-                                                <ContentControl Content="{Binding Layout}" Margin="7"/>
-                                                <Image Source="{Binding Preview}" Stretch="UniformToFill"/>
+                                                <ContentControl Content="{Binding Layout}" IsHitTestVisible="False"/>
                                             </Grid>
                                         </Border>
                                     </Border>
@@ -84,14 +81,17 @@
                                     </Grid.ColumnDefinitions>
                                     <DockPanel Grid.Column="0">
                                         <vex:ProgramStatusBadge Status="{Binding Tab.ProgramStatus}" Origin="{Binding Tab.ProgramStatusOrigin}" Margin="0,0,5,0"/>
-                                        <TextBlock x:Name="name" Text="{Binding Title}" FontSize="12"
+                                        <TextBlock x:Name="name" Text="{Binding Tab.Title}" FontSize="12"
                                                    Foreground="{DynamicResource VexTextDim}"
                                                    TextTrimming="CharacterEllipsis"/>
                                     </DockPanel>
-                                    <TextBlock x:Name="count" Grid.Column="1" Text="{Binding PaneCount, StringFormat={}{0} panes}"
+                                    <TextBlock x:Name="count" Grid.Column="1" Text="{Binding Tab.PaneCount, StringFormat={}{0} panes}"
                                                FontSize="10" Foreground="{DynamicResource VexTextDim}" Opacity="0.7"
                                                Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </Grid>
+                                <TextBlock Text="{Binding Tab.ProgramStatusLabel}" ToolTip="{Binding Tab.ProgramStatusLabel}"
+                                           FontSize="10" Foreground="{DynamicResource VexTextDim}"
+                                           TextTrimming="CharacterEllipsis" Margin="3,3,3,0"/>
                             </StackPanel>
                             <DataTemplate.Triggers>
                                 <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">

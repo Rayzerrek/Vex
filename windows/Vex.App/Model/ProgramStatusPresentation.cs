@@ -7,7 +7,8 @@ public static class ProgramStatusPresentation
 {
     public static string StatusSymbol(ProgramStatusSummary status) => status.State switch
     {
-        ProgramStatusState.Blocked => "?",
+        ProgramStatusState.Working => "◌",
+        ProgramStatusState.Blocked => status.Kind switch { "permission" => "◇", "auth" => "↪", _ => "?" },
         ProgramStatusState.Done => "✓",
         ProgramStatusState.Error => "!",
         _ => "",
@@ -16,7 +17,8 @@ public static class ProgramStatusPresentation
     public static string StatusLabel(ProgramStatusSummary status) => status.State switch
     {
         ProgramStatusState.Working => status.Progress is { } progress ? $"Working · {progress}%" : "Working",
-        ProgramStatusState.Blocked => status.Kind switch { "permission" => "Needs approval", "auth" => "Needs sign-in", _ => "Needs input" },
+        ProgramStatusState.Blocked => (status.Kind switch { "permission" => "Needs approval", "auth" => "Needs sign-in", _ => "Needs input" })
+            + (status.Progress is { } blockedProgress ? $" · {blockedProgress}%" : ""),
         ProgramStatusState.Done => "Finished",
         ProgramStatusState.Error => "Failed",
         _ => "",

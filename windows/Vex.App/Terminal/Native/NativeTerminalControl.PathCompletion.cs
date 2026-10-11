@@ -24,6 +24,9 @@ public sealed partial class NativeTerminalControl
     private int _pathCompletionUpdateQueued;
     private int _pathSearchVersion;
     private string _pathMatchedQuery = "";
+    private PathCompletionIndex.PathEntry[]? _pathMatchedEntries;
+    private bool HasCurrentPathMatches => _pathMatchedQuery == _pathCompletionQuery
+        && _pathMatchedEntries is not null && ReferenceEquals(_pathMatchedEntries, _pathCompletionIndex?.Entries);
     private bool _pathCompletionMouseDown;
     private Rect _pathCompletionBounds;
     private double _pathCompletionRowHeight;
@@ -74,6 +77,7 @@ public sealed partial class NativeTerminalControl
         _pathSearchVersion++;
         _pathSearchCancellation?.Cancel();
         _pathSearchEntries = null;
+        _pathMatchedEntries = null;
         _pathCompletionIndex?.CacheDirectory(_pathCompletionDirectory);
         using var dc = _pathCompletionVisual.RenderOpen();
     }
@@ -84,6 +88,7 @@ public sealed partial class NativeTerminalControl
             return;
         index.CacheDirectory(_pathCompletionDirectory);
         _pathSearchEntries = null;
+        _pathMatchedEntries = null;
         _pathCompletionDirectory = directory;
         _pathCompletionQuery = query;
         _pathCompletionSelected = 0;
@@ -132,6 +137,7 @@ public sealed partial class NativeTerminalControl
             var selectedPath = preserveSelection ? _pathCompletionMatches.ElementAtOrDefault(_pathCompletionSelected)?.FullPath : null;
             _pathCompletionMatches = matches;
             _pathMatchedQuery = query;
+            _pathMatchedEntries = entries;
             _pathCompletionSelected = Math.Max(0, Array.FindIndex(matches, entry => entry.FullPath == selectedPath));
             DrawPathCompletion();
         }
@@ -159,7 +165,7 @@ public sealed partial class NativeTerminalControl
         }
         else if (key == Key.Tab && modifiers == ModifierKeys.None || key == Key.Right && modifiers == ModifierKeys.None)
         {
-            if (_pathMatchedQuery == _pathCompletionQuery && _pathCompletionMatches.ElementAtOrDefault(_pathCompletionSelected) is { IsDirectory: true } directory)
+            if (HasCurrentPathMatches && _pathCompletionMatches.ElementAtOrDefault(_pathCompletionSelected) is { IsDirectory: true } directory)
                 ChangePathCompletionDirectory(directory.FullPath);
             else if (key == Key.Tab)
                 InsertPathCompletion(raw: false);
@@ -223,7 +229,7 @@ public sealed partial class NativeTerminalControl
 
     private void InsertPathCompletion(bool raw)
     {
-        if (_pathMatchedQuery != _pathCompletionQuery || _pathCompletionMatches.ElementAtOrDefault(_pathCompletionSelected) is not { } entry)
+        if (!HasCurrentPathMatches || _pathCompletionMatches.ElementAtOrDefault(_pathCompletionSelected) is not { } entry)
             return;
         string text;
         try
@@ -246,11 +252,12 @@ public sealed partial class NativeTerminalControl
             return;
         _pathCompletionPaintState = paintState;
         using var dc = _pathCompletionVisual.RenderOpen();
-        if (!_pathCompletionOpen || ActualWidth < 120 || ActualHeight < 96)
-            return;
         _pathCompletionRowHeight = Math.Max(22, _cellHeight + 5);
-        var count = Math.Min(Math.Max(1, _pathCompletionMatches.Length), Math.Min(10, Math.Max(1, (int)((ActualHeight - 68) / _pathCompletionRowHeight))));
-        var height = count * _pathCompletionRowHeight + 62;
+        if (!_pathCompletionOpen || ActualWidth < 120 || ActualHeight < _pathCompletionRowHeight + 92)
+            return;
+        var matches = HasCurrentPathMatches ? _pathCompletionMatches : [];
+        var count = Math.Min(Math.Max(1, matches.Length), Math.Min(10, Math.Max(1, (int)((ActualHeight - 92) / _pathCompletionRowHeight))));
+        var height = count * _pathCompletionRowHeight + 84;
         var width = Math.Min(520, ActualWidth - 12);
         var x = Math.Clamp(cursor.X * _cellWidth, 6, Math.Max(6, ActualWidth - width - 6));
         var below = (cursor.Y + 1) * _cellHeight + 4;
@@ -259,26 +266,27 @@ public sealed partial class NativeTerminalControl
         dc.DrawRoundedRectangle(_palette.Background, new Pen(_palette.Link, 1), _pathCompletionBounds, 7, 7);
         dc.PushClip(new RectangleGeometry(_pathCompletionBounds));
         DrawPathCompletionText(dc, _pathCompletionQuery.Length == 0 ? "Search this directory…" : "› " + _pathCompletionQuery, x + 12, y + 7, width - 24, _palette.Foreground);
-        dc.DrawLine(new Pen(_palette.Selection, 1), new Point(x + 8, y + 31), new Point(x + width - 8, y + 31));
-        _pathCompletionFirstVisible = Math.Clamp(_pathCompletionSelected - count + 1, 0, Math.Max(0, _pathCompletionMatches.Length - count));
+        var indexing = _pathCompletionIndex?.IsScanning == true ? " · indexing" : _pathCompletionIndex?.IsTruncated == true ? " · 100k limit" : "";
+        DrawPathCompletionText(dc, _pathCompletionDirectory + indexing, x + 12, y + 28, width - 24, _palette.Link);
+        dc.DrawLine(new Pen(_palette.Selection, 1), new Point(x + 8, y + 50), new Point(x + width - 8, y + 50));
+        _pathCompletionFirstVisible = Math.Clamp(_pathCompletionSelected - count + 1, 0, Math.Max(0, matches.Length - count));
         for (var row = 0; row < count; row++)
         {
             var index = _pathCompletionFirstVisible + row;
-            var rowY = y + 34 + row * _pathCompletionRowHeight;
-            if (index >= _pathCompletionMatches.Length)
+            var rowY = y + 53 + row * _pathCompletionRowHeight;
+            if (index >= matches.Length)
             {
-                var message = _pathCompletionIndex?.Error is not null ? "Cannot read this directory" : _pathCompletionIndex?.IsScanning == true ? "Indexing paths…" : "No matching paths";
+                var message = _pathCompletionIndex?.Error is not null ? "Cannot read this directory" : _pathCompletionIndex?.IsScanning == true ? "Indexing paths…" : !HasCurrentPathMatches ? "Searching paths…" : "No matching paths";
                 DrawPathCompletionText(dc, message, x + 12, rowY, width - 24, _palette.Foreground);
                 break;
             }
             if (index == _pathCompletionSelected)
                 dc.DrawRoundedRectangle(_palette.Selection, null, new Rect(x + 5, rowY, width - 10, _pathCompletionRowHeight), 4, 4);
-            var entry = _pathCompletionMatches[index];
+            var entry = matches[index];
             DrawPathCompletionText(dc, entry.IsDirectory ? "▸" : "·", x + 12, rowY + 2, 16, _palette.Link);
             DrawPathCompletionText(dc, entry.RelativePath + (entry.IsDirectory ? "\\" : ""), x + 30, rowY + 2, width - 42, _palette.Foreground, _pathCompletionQuery);
         }
-        var status = _pathCompletionIndex?.IsScanning == true ? "  • indexing" : _pathCompletionIndex?.IsTruncated == true ? "  • 100k limit" : "";
-        DrawPathCompletionText(dc, "Shift+Tab ↑  •  " + _pathCompletionDirectory + status, x + 12, y + height - 23, width - 24, _palette.Link);
+        DrawPathCompletionText(dc, "Tab browse · Enter paste · Ctrl+Enter raw · Shift+Tab parent", x + 12, y + height - 23, width - 24, _palette.Link);
         dc.Pop();
     }
 
@@ -313,9 +321,9 @@ public sealed partial class NativeTerminalControl
             return false;
         }
         _pathCompletionMouseDown = true;
-        var row = (int)((point.Y - _pathCompletionBounds.Y - 34) / _pathCompletionRowHeight);
+        var row = (int)((point.Y - _pathCompletionBounds.Y - 53) / _pathCompletionRowHeight);
         var index = _pathCompletionFirstVisible + row;
-        if (_pathMatchedQuery == _pathCompletionQuery && point.Y >= _pathCompletionBounds.Y + 34 &&
+        if (HasCurrentPathMatches && point.Y >= _pathCompletionBounds.Y + 53 &&
             point.Y < _pathCompletionBounds.Bottom - 28 && index < _pathCompletionMatches.Length)
         {
             _pathCompletionSelected = index;

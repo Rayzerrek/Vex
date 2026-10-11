@@ -15,7 +15,10 @@ public sealed class TerminalPalette
 {
     private readonly Brush[] _ansi = new Brush[256];
     private readonly Dictionary<int, Brush> _rgbCache = new();
+    private const int MaximumCachedColors = 4096;
     private readonly Dictionary<Brush, Brush> _dimCache = new();
+    private readonly Dictionary<(Color Foreground, Color Background, bool Faint), Brush> _contrastCache = new();
+    private readonly bool _automaticContrast;
 
     private readonly GhosttyColorRgb[] _paletteRgb = new GhosttyColorRgb[256];
 
@@ -25,8 +28,9 @@ public sealed class TerminalPalette
     public Brush Selection { get; }
     public Brush Link { get; }
 
-    public TerminalPalette(TerminalTheme theme)
+    public TerminalPalette(TerminalTheme theme, bool automaticContrast = true)
     {
+        _automaticContrast = automaticContrast;
         Foreground = Freeze(Parse(theme.Foreground));
         // Keep the terminal surface opaque even when the window chrome uses
         // acrylic. DWM can retain stale WPF glyph tiles when translucent row
@@ -122,7 +126,10 @@ public sealed class TerminalPalette
                 return _ansi[Math.Clamp(index, 0, 255)];
             case ColorTag.Rgb:
                 if (!_rgbCache.TryGetValue(value, out var rgb))
+                {
+                    if (_rgbCache.Count >= MaximumCachedColors) _rgbCache.Clear();
                     _rgbCache[value] = rgb = Freeze(Color.FromRgb((byte)(value >> 16), (byte)(value >> 8), (byte)value));
+                }
                 return rgb;
             default:
                 return Background;
@@ -164,23 +171,26 @@ public sealed class TerminalPalette
 
         foreground = fgTag == ColorTag.None ? Foreground : ResolveColor(fgTag, fgValue, bold);
 
-        // ConsoleColor-based Windows/.NET applications emit the 16 indexed
-        // ANSI colors rather than RGB. Some use Black/White as if those names
-        // always implied contrast; that becomes black-on-black in dark themes
-        // or white-on-white in light themes. Preserve explicit RGB and every
-        // readable indexed color, but replace a nearly invisible indexed
-        // foreground with the theme's default foreground when it is clearer.
-        if (fgTag == ColorTag.Palette && foreground is SolidColorBrush indexed
-            && (background ?? Background) is SolidColorBrush effectiveBackground
-            && Foreground is SolidColorBrush defaultForeground
-            && ContrastRatio(indexed.Color, effectiveBackground.Color) < 1.8
-            && ContrastRatio(defaultForeground.Color, effectiveBackground.Color)
-                > ContrastRatio(indexed.Color, effectiveBackground.Color))
+        var faint = (flags & CellFlags.Faint) != 0;
+        if (_automaticContrast && foreground is SolidColorBrush text
+            && (background ?? Background) is SolidColorBrush surface)
         {
-            foreground = Foreground;
+            var key = (text.Color, surface.Color, faint);
+            if (!_contrastCache.TryGetValue(key, out var corrected))
+            {
+                // DIM is composited before checking contrast; fading a repaired
+                // color afterwards would make it unreadable again.
+                var color = faint ? BlendFaintForeground(text.Color, surface.Color) : text.Color;
+                color = TerminalContrastCorrection.CorrectForeground(color, surface.Color, faint ? 3 : 4.5);
+                corrected = !faint && color == text.Color ? foreground : Freeze(color);
+                if (_contrastCache.Count >= MaximumCachedColors) _contrastCache.Clear();
+                _contrastCache[key] = corrected;
+            }
+            foreground = corrected;
+            return;
         }
 
-        if ((flags & CellFlags.Faint) != 0 && foreground is SolidColorBrush solid)
+        if (faint && foreground is SolidColorBrush solid)
         {
             // The numeric value alone aliases default, RGB and palette
             // colors, as well as regular/bold and contrast-repaired colors.
@@ -188,6 +198,7 @@ public sealed class TerminalPalette
             {
                 var c = solid.Color;
                 dim = Freeze(Color.FromArgb((byte)(c.A * 0.6), c.R, c.G, c.B));
+                if (_dimCache.Count >= MaximumCachedColors) _dimCache.Clear();
                 _dimCache[foreground] = dim;
             }
             foreground = dim;
@@ -196,12 +207,14 @@ public sealed class TerminalPalette
 
     private readonly Dictionary<Brush, Pen> _penCache = new();
 
+    /// <summary>Frozen decoration pens use a bounded cache; eviction never changes retained terminal drawings.</summary>
     public Pen GetPen(Brush brush)
     {
         if (!_penCache.TryGetValue(brush, out var pen))
         {
             pen = new Pen(brush, 1);
             pen.Freeze();
+            if (_penCache.Count >= MaximumCachedColors) _penCache.Clear();
             _penCache[brush] = pen;
         }
         return pen;
@@ -213,21 +226,8 @@ public sealed class TerminalPalette
         return (c.R << 16) | (c.G << 8) | c.B;
     }
 
-    private static double ContrastRatio(Color a, Color b)
-    {
-        static double Luminance(Color c)
-        {
-            static double Linear(byte channel)
-            {
-                var value = channel / 255.0;
-                return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
-            }
-
-            return 0.2126 * Linear(c.R) + 0.7152 * Linear(c.G) + 0.0722 * Linear(c.B);
-        }
-
-        var first = Luminance(a);
-        var second = Luminance(b);
-        return (Math.Max(first, second) + 0.05) / (Math.Min(first, second) + 0.05);
-    }
+    private static Color BlendFaintForeground(Color foreground, Color background) => Color.FromRgb(
+        (byte)Math.Round(foreground.R * 0.6 + background.R * 0.4),
+        (byte)Math.Round(foreground.G * 0.6 + background.G * 0.4),
+        (byte)Math.Round(foreground.B * 0.6 + background.B * 0.4));
 }

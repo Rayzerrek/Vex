@@ -789,6 +789,23 @@
                                     </StackPanel>
                                 </Border>
 
+                                <TextBlock Text="READABILITY" Style="{StaticResource SettingsSectionTitle}"/>
+                                <Border Style="{StaticResource SettingsCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Automatic contrast" Style="{StaticResource RowTitle}"/>
+                                            <TextBlock Text="Keep text readable while preserving its hue. Disable for exact colors."
+                                                       Style="{StaticResource RowDesc}"/>
+                                        </StackPanel>
+                                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggle}" VerticalAlignment="Center"
+                                                  IsChecked="{Binding AutomaticContrast}"/>
+                                    </Grid>
+                                </Border>
+
                                 <TextBlock Text="CURSOR" Style="{StaticResource SettingsSectionTitle}"/>
                                 <Border Style="{StaticResource SettingsCard}">
                                     <Grid>

@@ -139,7 +139,6 @@ public static class ChromePalette
         ("VexAccent", "VexAccentColor"),
         ("VexFocusBorder", "VexFocusBorderColor"),
         ("VexPaneTitleBar", "VexPaneTitleBarColor"),
-        ("VexPaneTitleBarFocused", "VexPaneTitleBarFocusedColor"),
         ("VexTabStrip", "VexTabStripColor"),
         ("VexTabHover", "VexTabHoverColor"),
         ("VexBackdropScrim", "VexBackdropScrimColor"),
@@ -177,11 +176,8 @@ public static class ChromePalette
         Set(res, "VexAccentColor", Mix(Mix(blue, magenta, 0.5), bg, 0.35));
         Set(res, "VexFocusBorderColor", Mix(bg, blue, 0.50));
         Set(res, "VexTabStripColor", WithAlpha(bg, 0x40));
-        // The pane title bar carries the terminal's own background, so each
-        // pane reads as one tinted block; focus lifts it slightly and the
-        // accent border marks the active pane.
-        Set(res, "VexPaneTitleBarColor", bg);
-        Set(res, "VexPaneTitleBarFocusedColor", Lighten(bg, 0.10));
+        // Compact panes share one opaque surface; only the outline marks focus.
+        Set(res, "VexPaneTitleBarColor", Color.FromRgb(bg.R, bg.G, bg.B));
         Set(res, "VexTabHoverColor", WithAlpha(fg, 0x12));
         Set(res, "VexTabSelectedStartColor", WithAlpha(blue, 0x30));
         Set(res, "VexTabSelectedEndColor", WithAlpha(magenta, 0x30));
@@ -243,8 +239,7 @@ public static class ChromePalette
         Set(res, "VexFocusBorderColor", Mix(blue, fg, 0.10));
         // Tab strip chrome is opaque.
         Set(res, "VexTabStripColor", canvas);
-        Set(res, "VexPaneTitleBarColor", Mix(bg, Colors.White, 0.18));
-        Set(res, "VexPaneTitleBarFocusedColor", Mix(bg, fg, 0.035));
+        Set(res, "VexPaneTitleBarColor", Color.FromRgb(bg.R, bg.G, bg.B));
         Set(res, "VexTabHoverColor", WithAlpha(fg, 0x0D));
         Set(res, "VexTabSelectedStartColor", WithAlpha(blue, 0x2C));
         Set(res, "VexTabSelectedEndColor", WithAlpha(magenta, 0x24));

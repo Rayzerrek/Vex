@@ -63,6 +63,21 @@ public sealed class ChromePaletteTests
         Assert.NotEqual(darkColor, unfrozenBrush.Color);
     }
 
+    [Theory]
+    [InlineData("Vex Dark")]
+    [InlineData("Vex Light")]
+    [InlineData("One Light")]
+    [InlineData("GitHub Dark")]
+    public void PaneHeader_MatchesOpaqueTerminalBackground(string themeName)
+    {
+        var theme = BuiltInThemes.Resolve(themeName);
+        var resources = new ResourceDictionary();
+        ChromePalette.Apply(theme, resources);
+        var palette = new Vex.App.Terminal.Native.TerminalPalette(theme);
+        Assert.Equal(Assert.IsType<SolidColorBrush>(palette.Background).Color,
+            Assert.IsType<SolidColorBrush>(resources["VexPaneTitleBar"]).Color);
+    }
+
     [Fact]
     public void Apply_TogglesAcrossMultipleThemesWithoutCrash()
     {
