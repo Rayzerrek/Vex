@@ -89,6 +89,9 @@
                                                FontSize="10" Foreground="{DynamicResource VexTextDim}" Opacity="0.7"
                                                Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </Grid>
+                                <TextBlock Text="{Binding Tab.ProgramStatusLabel}" ToolTip="{Binding Tab.ProgramStatusLabel}"
+                                           FontSize="10" Foreground="{DynamicResource VexTextDim}"
+                                           TextTrimming="CharacterEllipsis" Margin="3,3,3,0"/>
                             </StackPanel>
                             <DataTemplate.Triggers>
                                 <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">

@@ -1,14 +1,19 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using Vex.App.Model;
 using Vex.Libghostty;
 
 namespace Vex.App;
 
-/// <summary>A static program status glyph; hidden work never creates animation clocks or polling timers.</summary>
+/// <summary>Task state independent of application icons; only visible indeterminate work animates.</summary>
 public sealed class ProgramStatusBadge : TextBlock
 {
+    private readonly RotateTransform _spin = new();
+    internal bool IsSpinning => _spin.HasAnimatedProperties;
+
     public static readonly DependencyProperty StatusProperty = DependencyProperty.Register(nameof(Status),
         typeof(ProgramStatusSummary), typeof(ProgramStatusBadge), new PropertyMetadata(ProgramStatusSummary.Empty, OnStatusChanged));
     public static readonly DependencyProperty OriginProperty = DependencyProperty.Register(nameof(Origin),
@@ -23,6 +28,11 @@ public sealed class ProgramStatusBadge : TextBlock
         TextAlignment = TextAlignment.Center;
         VerticalAlignment = VerticalAlignment.Center;
         SetResourceReference(ForegroundProperty, "VexTextDim");
+        RenderTransformOrigin = new Point(0.5, 0.5);
+        RenderTransform = _spin;
+        Loaded += (_, _) => UpdateWorkingAnimation();
+        Unloaded += (_, _) => StopWorkingAnimation();
+        IsVisibleChanged += (_, _) => UpdateWorkingAnimation();
     }
 
     public ProgramStatusSummary Status
@@ -51,7 +61,27 @@ public sealed class ProgramStatusBadge : TextBlock
         {
             ProgramStatusState.Error => "VexPaneExited",
             ProgramStatusState.Blocked => "VexAccentPurple",
+            ProgramStatusState.Working => "VexAccentBlue",
             _ => "VexTextDim",
         });
+        badge.UpdateWorkingAnimation();
+    }
+
+    private void UpdateWorkingAnimation()
+    {
+        var animate = IsLoaded && IsVisible && SystemParameters.ClientAreaAnimation
+            && Status.State == ProgramStatusState.Working && Status.Progress is null;
+        if (!animate) { StopWorkingAnimation(); return; }
+        if (IsSpinning) return;
+        _spin.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1))
+        {
+            RepeatBehavior = RepeatBehavior.Forever,
+        });
+    }
+
+    private void StopWorkingAnimation()
+    {
+        _spin.BeginAnimation(RotateTransform.AngleProperty, null);
+        _spin.Angle = 0;
     }
 }
