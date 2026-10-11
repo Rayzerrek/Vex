@@ -172,5 +172,6 @@ public sealed partial class TabPeek : OverlayControl
         if (_project is null || TabList.SelectedItem is not TabPeekPreview preview)
             return;
         _project.SelectedTab = preview.Tab;
+        preview.Tab.FocusAttentionPane();
     }
 }

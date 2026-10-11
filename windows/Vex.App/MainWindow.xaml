@@ -209,6 +209,7 @@
                         </Ellipse.Style>
                     </Ellipse>
                     <local:TabIconStack Icons="{Binding TabIcons}" Margin="0,0,8,0"
+                                        Foreground="{DynamicResource VexTextDim}"
                                         Background="{DynamicResource VexSurface}"
                                         BorderBrush="{DynamicResource VexBorder}"
                                         VerticalAlignment="Center" IsHitTestVisible="False">
