@@ -24,7 +24,10 @@ from the application.
 | Path picker ranking, shell quoting, directory indexing, cancellation, and search latency | `PathCompletionTests` |
 | Debounce timing and coalescing | `HalfDebouncerTests` |
 | Theme resolution and color parsing | `TerminalThemeTests` |
-| Dimmed foreground and contrast caching | `TerminalPaletteTests` |
+| Perceptual ANSI/RGB contrast, dimming, faithful-color mode and settings persistence | `TerminalPaletteTests` |
+| Compact pane structure, header colors, outline-only blur and splitter hit targets | `CompactLayoutTests`, `ChromePaletteTests` |
+| Live preview lifecycle without realizing new panes | `TabPeekPreviewTests` |
+| Distinct task states, attention routing and visible-only working animation | `ProgramStatusPresentationTests` |
 | Displayed version derivation | `AppInfoTests` |
 | Real-window rendering and corrupt-profile startup (Debug) | `TerminalRendererRegressionTests` |
 | Recovery of null session entries and selected indices | `SessionRecoveryTests` |
@@ -83,6 +86,10 @@ a bitmap and checks the pixels: a full screen of text, a clean screen after
 ED2 (no ghost rows), wide-character rendering, and pixel-identical snap-back
 after scrolling. It also checks glyph alignment, combining marks, font and
 DPI changes, copy feedback, link previews, and renderer lifecycle cleanup.
+Copy checks reject blank/offscreen sources and deleted text even when the editor's
+output repaint is pending. Preview checks cover hidden live frames, atomic
+synchronized output, immutable cached images and unchanged terminal geometry.
+Overview opening/closing exercises the actual window and refresh-timer lifecycle.
 Failures produce a nonzero exit code.
 
 The core scenario also checks that retained glyph spacing stays immutable across

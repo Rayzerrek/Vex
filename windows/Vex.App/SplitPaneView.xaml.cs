@@ -56,6 +56,8 @@ public sealed partial class SplitPaneView : UserControl
         var second = new ContentPresenter();
         second.SetBinding(ContentProperty, new Binding(nameof(SplitPane.Second)) { Source = pane });
         var splitter = new GridSplitter();
+        // Its hit target extends over both neighbors in the compact layout.
+        Panel.SetZIndex(splitter, 1);
         splitter.SetResourceReference(StyleProperty, "WorkspaceSplitter");
 
         var ratio = pane.Ratio;
@@ -65,7 +67,9 @@ public sealed partial class SplitPaneView : UserControl
             Root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ratio, GridUnitType.Star), MinWidth = MinPaneSize });
             Root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - ratio, GridUnitType.Star), MinWidth = MinPaneSize });
-            splitter.Width = 4;
+            // Negative margins keep a five-DIP drag target in a one-DIP separator.
+            splitter.Width = 5;
+            splitter.Margin = new Thickness(-2, 0, -2, 0);
             splitter.ResizeDirection = GridResizeDirection.Columns;
             splitter.ResizeBehavior = GridResizeBehavior.PreviousAndNext;
             Grid.SetColumn(splitter, 1);
@@ -76,7 +80,8 @@ public sealed partial class SplitPaneView : UserControl
             Root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(ratio, GridUnitType.Star), MinHeight = MinPaneSize });
             Root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1 - ratio, GridUnitType.Star), MinHeight = MinPaneSize });
-            splitter.Height = 4;
+            splitter.Height = 5;
+            splitter.Margin = new Thickness(0, -2, 0, -2);
             splitter.ResizeDirection = GridResizeDirection.Rows;
             splitter.ResizeBehavior = GridResizeBehavior.PreviousAndNext;
             Grid.SetRow(splitter, 1);

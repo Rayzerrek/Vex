@@ -26,6 +26,26 @@ public sealed partial class NativeTerminalControl
             WaitForPathCompletion(() => _pathCompletionMatches.Length == 2);
             if (!_pathCompletionOpen || _pathCompletionDirectory != root)
                 throw new InvalidOperationException("Path completion did not open at the shell working directory.");
+            // A refreshed directory snapshot invalidates old choices even
+            // when the query is unchanged and its UI callback is still queued.
+            HandlePathCompletionKey(Key.Down, ModifierKeys.None);
+            _pathCompletionIndex?.ScanDirectory(root);
+            DrawPathCompletion();
+            if (_pathCompletionFirstVisible != 0)
+                throw new InvalidOperationException("Path completion retained a scrolled result index while its matches were stale.");
+            _sessionStarting = true;
+            _pendingSessionInput = null;
+            InsertPathCompletion(raw: false);
+            if (!_pathCompletionOpen || _pendingSessionInput is not null)
+                throw new InvalidOperationException("Path completion inserted a stale directory snapshot.");
+            _sessionStarting = false;
+            RefreshPathCompletion();
+            WaitForPathCompletion(() => _pathCompletionMatches.Length == 2);
+            var directoryBeforeHeaderClick = _pathCompletionDirectory;
+            HandlePathCompletionClick(new Point(_pathCompletionBounds.X + 20, _pathCompletionBounds.Y + 35), 2);
+            if (_pathCompletionDirectory != directoryBeforeHeaderClick)
+                throw new InvalidOperationException("Path completion treated its directory label as a result row.");
+            _pathCompletionMouseDown = false;
             TypePathCompletionQuery("ntc");
             TypePathCompletionQuery("nomatch");
             HandlePathCompletionKey(Key.Back, ModifierKeys.Control);
@@ -107,13 +127,13 @@ public sealed partial class NativeTerminalControl
         var timer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromMilliseconds(5) };
         timer.Tick += (_, _) =>
         {
-            if (ready() || Environment.TickCount64 >= deadline)
+            if (HasCurrentPathMatches && ready() || Environment.TickCount64 >= deadline)
                 frame.Continue = false;
         };
         timer.Start();
         Dispatcher.PushFrame(frame);
         timer.Stop();
-        if (!ready())
+        if (!HasCurrentPathMatches || !ready())
             throw new TimeoutException("Path completion renderer self-test timed out.");
     }
 }

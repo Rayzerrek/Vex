@@ -141,6 +141,9 @@ public abstract class LeafPane : PaneNode, IDisposable
     /// never forces creation of a pane that was never shown.</summary>
     protected object? ViewIfCreated => _view;
 
+    /// <summary>Existing terminal surface for previews; never starts a pane just to inspect it.</summary>
+    internal object? ExistingView => _view;
+
     private AppIcon? _appIcon;
 
     /// <summary>Icon for the app running in this pane (null until resolved).</summary>

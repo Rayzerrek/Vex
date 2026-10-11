@@ -264,6 +264,7 @@ public sealed partial class NativeTerminalControl
             || !ReferenceEquals(presenter.Content, this))
             return false;
         SelfTestFeed("\x1b[?1049l\x1b[2J\x1b[Hbefore-detach");
+        var renderVersion = _renderVersion;
         // Live tabs take the unchanged-grid shortcut; exercise it without
         // launching a shell in this deterministic renderer scenario.
         var sessionStarting = _sessionStarting;
@@ -282,7 +283,7 @@ public sealed partial class NativeTerminalControl
             var attached = new DispatcherFrame();
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => attached.Continue = false);
             Dispatcher.PushFrame(attached);
-            return deferred && IsLoaded && IsVisible
+            return deferred && IsLoaded && IsVisible && _renderVersion == renderVersion
                 && string.Concat(_terminal.FrameRows[0].Cells.Select(cell => cell.Text)).StartsWith("detached-latest");
         }
         finally
@@ -487,6 +488,13 @@ public sealed partial class NativeTerminalControl
 
     /// <summary>Exercises application copy feedback without a Vex selection.</summary>
     internal void SelfTestApplicationCopy(string text) => ShowApplicationCopyFeedback(text);
+
+    /// <summary>Delivers editor output before clipboard feedback while its scheduled repaint is still pending.</summary>
+    internal void SelfTestApplicationCopyAfterOutput(string output, string copiedText)
+    {
+        _terminal.Feed(output);
+        ShowApplicationCopyFeedback(copiedText);
+    }
 
     /// <summary>Drives link hover without moving the user's desktop pointer.</summary>
     internal void SelfTestLinkHover(int col, int row)

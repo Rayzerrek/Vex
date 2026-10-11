@@ -22,7 +22,6 @@
         <!-- Translucent chrome overlays so the acrylic backdrop shows through. -->
         <Color x:Key="VexTabStripColor">#40111317</Color>
         <Color x:Key="VexPaneTitleBarColor">#FF1E2026</Color>
-        <Color x:Key="VexPaneTitleBarFocusedColor">#FF262932</Color>
         <Color x:Key="VexTabSelectedColor">#2EFFFFFF</Color>
         <Color x:Key="VexTabHoverColor">#1EFFFFFF</Color>
 
@@ -38,7 +37,6 @@
         <SolidColorBrush x:Key="VexTextDimTranslucent" Color="{DynamicResource VexTextDimColor}" Opacity="0.12"/>
         <SolidColorBrush x:Key="VexFocusBorder" Color="{DynamicResource VexFocusBorderColor}"/>
         <SolidColorBrush x:Key="VexPaneTitleBar" Color="{DynamicResource VexPaneTitleBarColor}"/>
-        <SolidColorBrush x:Key="VexPaneTitleBarFocused" Color="{DynamicResource VexPaneTitleBarFocusedColor}"/>
         <SolidColorBrush x:Key="VexTabStrip" Color="{DynamicResource VexTabStripColor}"/>
         <LinearGradientBrush x:Key="VexTabSelected" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="{DynamicResource VexTabSelectedStartColor}" Offset="0"/>
@@ -95,8 +93,7 @@
                     <ControlTemplate TargetType="GridSplitter">
                         <Grid Background="Transparent">
                             <Border x:Name="Divider" Background="{DynamicResource VexBorder}"
-                                    Width="1" HorizontalAlignment="Center" Margin="0,5"
-                                    CornerRadius="0.5" Opacity="0.18"/>
+                                    Width="1" HorizontalAlignment="Center" Opacity="0.45"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="ResizeDirection" Value="Rows">
@@ -104,7 +101,6 @@
                                 <Setter TargetName="Divider" Property="Height" Value="1"/>
                                 <Setter TargetName="Divider" Property="HorizontalAlignment" Value="Stretch"/>
                                 <Setter TargetName="Divider" Property="VerticalAlignment" Value="Center"/>
-                                <Setter TargetName="Divider" Property="Margin" Value="5,0"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Divider" Property="Opacity" Value="0.65"/>

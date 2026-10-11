@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Windows.Controls;
-using System.Windows.Media;
 using Vex.Libghostty;
 
 namespace Vex.App.Model;
@@ -16,18 +15,29 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
     private PaneNode _root;
     private LeafPane? _activeLeaf;
     private bool _isFocusMode;
-    private ImageSource? _preview;
     private bool _needsAttention;
     private bool _isActive;
     private bool _hasCustomTitle;
     private ProgramStatusSummary _programStatus = ProgramStatusSummary.Empty;
     private int _programStatusPaneNumber;
+    private LeafPane? _programStatusPane;
 
     /// <summary>Highest-priority task across every pane, including panes hidden by focus mode.</summary>
     public ProgramStatusSummary ProgramStatus => _programStatus;
 
     /// <summary>Trusted pane position identifies the source of status outside its own header.</summary>
     public string ProgramStatusOrigin => _programStatusPaneNumber > 0 ? $"Pane {_programStatusPaneNumber}" : "";
+    public string ProgramStatusLabel => _programStatus.State == ProgramStatusState.None || _programStatus.State == ProgramStatusState.Idle
+        ? "" : $"{ProgramStatusPresentation.StatusLabel(_programStatus)} · {ProgramStatusOrigin} · {_programStatusPane?.Title}";
+
+    /// <summary>Routes attention to the pane that reported it, including when focus mode hides other splits.</summary>
+    internal bool FocusAttentionPane()
+    {
+        if (!_programStatus.NeedsAttention || _programStatusPane is not { } pane) return false;
+        ActiveLeaf = pane;
+        pane.Focus();
+        return true;
+    }
 
     public WorkspaceTab(string title, string workingDirectory)
     {
@@ -104,14 +114,6 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
 
     /// <summary>Full title or directory of the focused pane; custom tab names remain authoritative.</summary>
     public string TitleTooltip => HasCustomTitle ? Title : ActiveLeaf?.TitleTooltip ?? Title;
-
-    /// <summary>Last rendered view of this tab, captured as it is left or
-    /// immediately before Tab Peek opens. Null until the tab has been shown.</summary>
-    public ImageSource? Preview
-    {
-        get => _preview;
-        internal set => Set(ref _preview, value);
-    }
 
     /// <summary>True when a pane in this tab asked for attention since the tab
     /// was last visible. Cleared automatically when the tab becomes active, so
@@ -295,6 +297,8 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
             OnPropertyChanged(nameof(TabIcons));
         if (e.PropertyName == nameof(LeafPane.ProgramStatus))
             RefreshProgramStatus();
+        if (e.PropertyName == nameof(LeafPane.Title) && ReferenceEquals(sender, _programStatusPane))
+            OnPropertyChanged(nameof(ProgramStatusLabel));
         if (e.PropertyName == nameof(LeafPane.State) && ReferenceEquals(sender, ActiveLeaf))
             OnPropertyChanged(nameof(ShowAttentionDot));
 
@@ -308,18 +312,22 @@ public sealed class WorkspaceTab : ObservableObject, IDisposable
         var status = ProgramStatusSummary.Empty;
         var number = 0;
         var statusPaneNumber = 0;
+        LeafPane? statusPane = null;
         foreach (var leaf in Leaves)
         {
             number++;
             if (leaf.ProgramStatus.DisplayPriority <= status.DisplayPriority) continue;
             status = leaf.ProgramStatus;
             statusPaneNumber = number;
+            statusPane = leaf;
         }
-        var originChanged = _programStatusPaneNumber != statusPaneNumber;
+        var originChanged = _programStatusPaneNumber != statusPaneNumber || !ReferenceEquals(_programStatusPane, statusPane);
         _programStatusPaneNumber = statusPaneNumber;
-        if (Set(ref _programStatus, status, nameof(ProgramStatus)))
-            OnPropertyChanged(nameof(ShowAttentionDot));
+        _programStatusPane = statusPane;
+        var statusChanged = Set(ref _programStatus, status, nameof(ProgramStatus));
+        if (statusChanged) OnPropertyChanged(nameof(ShowAttentionDot));
         if (originChanged) OnPropertyChanged(nameof(ProgramStatusOrigin));
+        if (statusChanged || originChanged) OnPropertyChanged(nameof(ProgramStatusLabel));
     }
 
     private LeafPane? FirstLeaf() => Root switch

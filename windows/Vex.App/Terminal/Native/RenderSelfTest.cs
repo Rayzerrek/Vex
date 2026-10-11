@@ -725,11 +725,21 @@ internal static class RenderSelfTest
         control.SelfTestCopyFeedback(1);
         Assert(control, PixelsEqual(applicationPlain, Capture(control)),
             "application copy: completion restores the application's pixels");
-        control.SelfTestApplicationCopy("copied content outside the visible viewport");
-        if (SystemParameters.ClientAreaAnimation)
-            Assert(control, !PixelsEqual(applicationPlain, Capture(control)),
-                "application copy: offscreen source still receives feedback at the caret");
+        foreach (var text in new[] { "copied content outside the visible viewport", "", " \r\n" })
+        {
+            control.SelfTestApplicationCopy(text);
+            Assert(control, PixelsEqual(applicationPlain, Capture(control)),
+                "application copy: absent or blank source does not flash an empty caret rectangle");
+            control.SelfTestCopyFeedback(1);
+        }
+        // Delete/cut sends the removed text to the clipboard while terminal
+        // painting can still lag behind the editor's updated screen.
+        control.SelfTestApplicationCopyAfterOutput($"{background}\x1b[Hprefix suffix\x1b[K", "copied text");
+        control.SelfTestFeed("");
+        var deleted = Capture(control);
         control.SelfTestCopyFeedback(1);
+        Assert(control, PixelsEqual(deleted, Capture(control)),
+            "application copy: deleted text does not animate from a stale frame");
         control.SelfTestFeed($"{background}\x1b[2J\x1b[Hprefix first line\r\nsecond line end\x1b[3;1H");
         var plain = Capture(control);
         control.SelfTestSelect(7, 0, 5, 1);
@@ -1269,8 +1279,8 @@ internal static class RenderSelfTest
             ParityCheck(control, $"visibility-{visibility}");
         }
         Report(control, control.SelfTestDetachedOutputCatchUp()
-            ? "PASS visibility detached: latest output appears after unchanged-size reload"
-            : "FAIL visibility detached: latest output missing after reload");
+            ? "PASS visibility detached: latest output appears after unchanged-size reload without invalidating font caches"
+            : "FAIL visibility detached: latest output missing or font caches invalidated after unchanged-size reload");
         ParityCheck(control, "visibility-detached");
         Report(control, control.SelfTestInputPrecedesOutputRedraw()
             ? "PASS scheduling: input precedes output redraw and final output is applied"
@@ -1280,6 +1290,12 @@ internal static class RenderSelfTest
             ? "PASS cursor blink modes: steady/hidden stop timer, steady stays painted, reveal restarts"
             : "FAIL cursor blink modes: stale timer or incorrect steady/hidden caret");
         ParityCheck(control, "cursor-blink-modes");
+        Report(control, control.SelfTestTerminalPreview()
+            ? "PASS terminal preview: live hidden frames, immutable cache, atomic output and unchanged geometry"
+            : "FAIL terminal preview: stale frame, resize or torn synchronized output");
+        Report(control, Window.GetWindow(control) is MainWindow window && window.SelfTestTabPeek(control)
+            ? "PASS tab peek: overview opens without resizing or activating a terminal and stops work on close"
+            : "FAIL tab peek: terminal geometry changed or preview work survived dismissal");
         Report(control, "done");
     }
 
@@ -1528,13 +1544,14 @@ internal static class RenderSelfTest
             palette.Resolve(ColorTag.Palette, 1, ColorTag.None, 0, CellFlags.None,
                 out var red, out _);
 
-            var blackColor = ((SolidColorBrush)black!).Color;
-            var redColor = ((SolidColorBrush)red!).Color;
-            var defaultColor = ((SolidColorBrush)palette.Foreground).Color;
-            var expectedRed = FastColor.ParseHex(theme.Red);
-            Report(control, blackColor == defaultColor && redColor == expectedRed
-                ? $"PASS theme-contrast({theme.Name}): unreadable indexed color repaired"
-                : $"FAIL theme-contrast({theme.Name}): black={blackColor} red={redColor}");
+            var background = FastColor.ParseHex(theme.Background);
+            var readable = black is SolidColorBrush blackBrush && red is SolidColorBrush redBrush
+                && TerminalContrastCorrection.ContrastRatio(blackBrush.Color, background) >= 4.5
+                && TerminalContrastCorrection.ContrastRatio(redBrush.Color, background) >= 4.5
+                && redBrush.Color.R > redBrush.Color.G && redBrush.Color.R > redBrush.Color.B;
+            Report(control, readable
+                ? $"PASS theme-contrast({theme.Name}): indexed colors remain readable and distinct"
+                : $"FAIL theme-contrast({theme.Name}): black={black} red={red}");
         }
     }
 
