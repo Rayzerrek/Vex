@@ -9,7 +9,7 @@ namespace Vex.App.Tests;
 public sealed class CompactLayoutTests
 {
     [Fact]
-    public void TerminalTemplate_HasNoIslandMarginsOrRoundedClip()
+    public void TerminalTemplate_HasSymmetricContentMarginsWithoutIslandChrome()
     {
         var assembly = typeof(CompactLayoutTests).Assembly;
         var name = assembly.GetManifestResourceNames().Single(n => n.EndsWith(".ThemeXaml.MainWindow.xaml"));
@@ -19,6 +19,12 @@ public sealed class CompactLayoutTests
         var template = document.Descendants().Single(e => e.Name.LocalName == "DataTemplate"
             && (string?)e.Attribute("DataType") == "{x:Type m:TerminalPane}");
         Assert.Null(template.Elements().Single(e => e.Name.LocalName == "Grid").Attribute("Margin"));
+        var terminalPresenter = Assert.Single(template.Descendants(), e => e.Name.LocalName == "ContentPresenter");
+        Assert.Equal("{Binding View}", (string?)terminalPresenter.Attribute("Content"));
+        Assert.Equal("8,0,8,0", (string?)terminalPresenter.Attribute("Margin"));
+        var paneBackground = template.Elements().Single(e => e.Name.LocalName == "Grid")
+            .Elements().First(e => e.Name.LocalName == "Border");
+        Assert.Equal("{DynamicResource VexPaneTitleBar}", (string?)paneBackground.Attribute("Background"));
         Assert.DoesNotContain(template.Descendants().Attributes(), a => a.Name.LocalName.Contains("RoundedClip"));
         Assert.DoesNotContain(template.Descendants().Where(e => e.Name.LocalName == "Border"),
             e => e.Attribute("CornerRadius") is not null);

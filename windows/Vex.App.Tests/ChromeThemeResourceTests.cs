@@ -4,6 +4,7 @@ using System.Windows.Markup;
 using System.Windows.Media;
 using System.Xml.Linq;
 using Vex.App.Model;
+using Vex.App.Terminal.Native;
 using Xunit;
 
 namespace Vex.App.Tests;
@@ -43,6 +44,8 @@ public sealed class ChromeThemeResourceTests
                 foreach (var theme in new[] { BuiltInThemes.VexLight, BuiltInThemes.VexDark, BuiltInThemes.OneLight, BuiltInThemes.OneDark })
                 {
                     ChromePalette.Apply(theme, grid.Resources);
+                    var terminalBackground = Assert.IsType<SolidColorBrush>(new TerminalPalette(theme).Background);
+                    Assert.Equal(terminalBackground.Color, Assert.IsType<SolidColorBrush>(grid.Resources["VexPaneTitleBar"]).Color);
                     Assert.Equal(grid.Resources["VexTextColor"], ((SolidColorBrush)text.Foreground).Color);
                     Assert.Equal(grid.Resources["VexSurfaceColor"], ((SolidColorBrush)border.Background).Color);
                     var background = Assert.IsType<SolidColorBrush>(grid.Background);
