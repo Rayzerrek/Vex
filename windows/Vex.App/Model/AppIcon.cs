@@ -29,7 +29,7 @@ public sealed class AppIcon
     /// <summary>Shell icons appear only in tabs containing a single shell pane.</summary>
     public bool IsShellIcon { get; }
 
-    /// <summary>Uses the supplied Linux artwork for the WSL shell at every UI scale.</summary>
+    /// <summary>Uses Microsoft's official WSL artwork for the shell at every UI scale.</summary>
     internal static AppIcon WslShellIcon()
     {
         const string key = "wsl-shell";

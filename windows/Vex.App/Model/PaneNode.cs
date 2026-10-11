@@ -189,6 +189,7 @@ public sealed class TerminalPane : LeafPane
     private uint _lastIconPid;
     private string? _lastIconProcessName;
     private string? _lastIconTitle;
+    private string? _lastIconCommandLine;
     /// <summary>True when a non-shell process is currently running under this pane's shell.</summary>
     public bool HasActiveProcess { get; private set; }
     /// <summary>Name of the active tool/app running in this pane (null if bare shell).</summary>
@@ -200,6 +201,8 @@ public sealed class TerminalPane : LeafPane
     public string? InitialCommand { get; }
     public string WorkingDirectory => (ViewIfCreated as Terminal.Native.NativeTerminalControl)?.WorkingDirectory ?? _workingDirectory;
     public override string TitleTooltip => string.IsNullOrWhiteSpace(_lastTitle) ? Title : _lastTitle;
+    internal bool IsWsl => _shellId == "wsl";
+    internal string LaunchWorkingDirectory => _workingDirectory;
     internal IReadOnlySet<string> ShellHelpers => _shellId == "wsl"
         ? WslShellPaths.ShellHelpers : AppIconCatalog.ConsoleHelpers;
 
@@ -217,7 +220,8 @@ public sealed class TerminalPane : LeafPane
     /// cached command line and the last raw OSC title; called by the tracker timer
     /// on the UI thread.
     /// </summary>
-    public void RefreshAppIcon(ProcessTree.Index index, IReadOnlyDictionary<uint, string?> commandLines)
+    public void RefreshAppIcon(ProcessTree.Index index, IReadOnlyDictionary<uint, string?> commandLines,
+        IReadOnlyDictionary<uint, (string Name, string CommandLine)>? wslProcesses = null)
     {
         if (ViewIfCreated is not ITerminalView terminal)
             return;
@@ -230,16 +234,24 @@ public sealed class TerminalPane : LeafPane
             ActiveProcessName = null;
             return;
         }
+        var isWslApp = false;
+        string? linuxCommandLine = null;
+        if (IsWsl && wslProcesses is not null && wslProcesses.TryGetValue((uint)pid, out var linuxProcess))
+        {
+            deepest = (linuxProcess.Name, deepest.Pid);
+            linuxCommandLine = linuxProcess.CommandLine;
+            isWslApp = true;
+        }
         var isShim = AppIconCatalog.IsShimHost(deepest.Name);
-        var commandLine = isShim
+        var commandLine = linuxCommandLine ?? (isShim
             && commandLines.TryGetValue(deepest.Pid, out var cachedCommandLine)
             ? cachedCommandLine
-            : null;
+            : null);
 
         // A bare shell is the root process itself. Helper processes used by
         // the console host are not user applications. This keeps detection
         // independent of the shell executable's name.
-        var isShellOrHelper = deepest.Pid == (uint)pid || ShellHelpers.Contains(deepest.Name);
+        var isShellOrHelper = !isWslApp && (deepest.Pid == (uint)pid || ShellHelpers.Contains(deepest.Name));
         if (isShellOrHelper)
         {
             HasActiveProcess = false;
@@ -253,7 +265,8 @@ public sealed class TerminalPane : LeafPane
 
         if (_lastIconPid == deepest.Pid &&
             string.Equals(_lastIconProcessName, deepest.Name, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(_lastIconTitle, _lastTitle, StringComparison.Ordinal))
+            string.Equals(_lastIconTitle, _lastTitle, StringComparison.Ordinal) &&
+            string.Equals(_lastIconCommandLine, commandLine, StringComparison.Ordinal))
             return;
 
         // Assign null as well as a resolved icon. Otherwise a shell icon (most
@@ -269,6 +282,7 @@ public sealed class TerminalPane : LeafPane
             _lastIconPid = deepest.Pid;
             _lastIconProcessName = deepest.Name;
             _lastIconTitle = _lastTitle;
+            _lastIconCommandLine = commandLine;
         }
 
         if (string.Equals(Title, "Terminal", StringComparison.OrdinalIgnoreCase) ||
@@ -290,6 +304,7 @@ public sealed class TerminalPane : LeafPane
         _lastIconPid = 0;
         _lastIconProcessName = null;
         _lastIconTitle = null;
+        _lastIconCommandLine = null;
     }
 
     private bool _focusPendingLoaded;
