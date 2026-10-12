@@ -49,6 +49,15 @@ internal static partial class AppIconCatalog
         "npm", "npx", "node_modules", "bin", "lib", "cli", "scripts", "cmd",
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
+    private static readonly FrozenSet<string> ShellIconNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "cmd", "wsl", "nu", "nushell", "pwsh", "powershell", "bash", "sh", "gnubash",
+        "fish", "fishshell", "zsh", "dash", "ksh", "ash", "gitbash", "system",
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>> ShellIconNamesLookup =
+        ShellIconNames.GetAlternateLookup<ReadOnlySpan<char>>();
+
     private static readonly FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>> CommandLineNoiseLookup =
         CommandLineNoise.GetAlternateLookup<ReadOnlySpan<char>>();
     /// <summary>
@@ -61,8 +70,6 @@ internal static partial class AppIconCatalog
             ["btop"] = () => AppIcon.Badge("bt", Color.FromRgb(0x00, 0xA8, 0x96)),
             ["ssh"] = () => AppIcon.Badge("S", Color.FromRgb(0x2B, 0x8C, 0xBE)),
             ["aider"] = () => AppIcon.Badge("ai", Color.FromRgb(0x8B, 0x5C, 0xF6)),
-            ["cmd"] = () => AppIcon.Badge(">", Color.FromRgb(0x00, 0x78, 0xD4), isShellIcon: true),
-            ["wsl"] = AppIcon.WslShellIcon,
             ["nano"] = () => AppIcon.Badge("na", Color.FromRgb(0x4A, 0x90, 0xE2)),
             ["micro"] = () => AppIcon.Badge("mc", Color.FromRgb(0x50, 0xE3, 0xC2)),
             ["emacs"] = () => AppIcon.Badge("em", Color.FromRgb(0x7F, 0x5A, 0xB6)),
@@ -125,7 +132,7 @@ internal static partial class AppIconCatalog
 
     private static FrozenSet<string> BuildKnownApps()
     {
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var set = new HashSet<string>(ShellIconNames, StringComparer.OrdinalIgnoreCase);
         foreach (var key in SpecialBadges.Keys)
             set.Add(key);
         foreach (var (k, v) in Aliases)
@@ -166,6 +173,9 @@ internal static partial class AppIconCatalog
     {
         if (name.IsEmpty)
             return null;
+
+        if (ShellIconNamesLookup.Contains(name))
+            return AppIcon.TerminalShellIcon(isDark);
 
         if (SpecialBadgesLookup.TryGetValue(name, out var badgeFactory))
             return badgeFactory();

@@ -14,7 +14,7 @@ public sealed class WorkspaceTabTests
         pane.ApplyTerminalTitle(@"C:\work\git");
         Assert.Equal("git", tab.Title);
         Assert.Equal(@"C:\work\git", tab.TitleTooltip);
-        Assert.Null(pane.AppIcon);
+        Assert.Same(AppIcon.TerminalShellIcon(), pane.AppIcon);
 
         pane.ApplyTerminalTitle("Codex - Fix authentication flow");
         Assert.Equal("Fix authentication flow", tab.Title);

@@ -29,7 +29,39 @@ public sealed class AppIcon
     /// <summary>Shell icons appear only in tabs containing a single shell pane.</summary>
     public bool IsShellIcon { get; }
 
-    /// <summary>Uses Microsoft's official WSL artwork for the shell at every UI scale.</summary>
+    /// <summary>Shared terminal shell icon; frozen vector artwork stays crisp at every UI scale.</summary>
+    internal static AppIcon TerminalShellIcon(bool? isDark = null)
+    {
+        var dark = isDark ?? AppSettings.Instance.IsDarkAppearance;
+        var key = dark ? "terminal-shell:dark" : "terminal-shell:light";
+        if (Cache.TryGetValue(key, out var cached))
+            return cached;
+
+        var brush = new SolidColorBrush(dark ? Color.FromRgb(0xD4, 0xD4, 0xD8) : Color.FromRgb(0x3F, 0x3F, 0x46));
+        brush.Freeze();
+        var pen = new Pen(brush, 1.25)
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round,
+        };
+        pen.Freeze();
+        var group = new DrawingGroup();
+        using (var context = group.Open())
+        {
+            context.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, 16, 16));
+            var glyph = Geometry.Parse("M 2,2 L 6,5 L 2,8 M 6,8 L 10,8").Clone();
+            glyph.Transform = new MatrixTransform(1.4, 0, 0, 1.4, -0.4, 1);
+            glyph.Freeze();
+            context.DrawGeometry(null, pen, glyph);
+        }
+        group.Freeze();
+        var image = new DrawingImage(group);
+        image.Freeze();
+        return Cache.GetOrAdd(key, new AppIcon(image, isShellIcon: true));
+    }
+
+    /// <summary>Uses Microsoft's official WSL artwork for the distribution picker at every UI scale.</summary>
     internal static AppIcon WslShellIcon()
     {
         const string key = "wsl-shell";

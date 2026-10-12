@@ -219,6 +219,7 @@ public sealed class TerminalPane : LeafPane
         ShellId = ShellRegistry.ValidShellId(shellId) ?? WslShellPaths.ShellIdForDirectory(AppSettings.Instance.ShellId, workingDirectory);
         InitialCommand = initialCommand;
         Title = "Terminal";
+        AppIcon = Model.AppIcon.TerminalShellIcon();
     }
 
     /// <summary>
@@ -278,9 +279,9 @@ public sealed class TerminalPane : LeafPane
         // Assign null as well as a resolved icon. Otherwise a shell icon (most
         // often Nushell) survives after a node-hosted app starts but its
         // command line is temporarily unreadable.
-        AppIcon = AppIconCatalog.Resolve(deepest.Name, isShellOrHelper ? null : commandLine, _lastTitle);
-        if (IsWsl && isShellOrHelper && (AppIcon is null || AppIcon.IsShellIcon))
-            AppIcon = AppIconCatalog.ResolveIcon("wsl");
+        AppIcon = isShellOrHelper
+            ? AppIconCatalog.FromTitle(_lastTitle) ?? Model.AppIcon.TerminalShellIcon()
+            : AppIconCatalog.Resolve(deepest.Name, commandLine, _lastTitle);
         // A shim command line can be temporarily unreadable. Do not cache
         // that miss: the next poll must retry instead of leaving no icon.
         if (!isShim || commandLine is not null)
@@ -390,8 +391,6 @@ public sealed class TerminalPane : LeafPane
     protected override object CreateView()
     {
         var view = new Terminal.Native.NativeTerminalControl(_workingDirectory, InitialCommand, ShellId);
-        if (IsWsl)
-            AppIcon = AppIconCatalog.ResolveIcon("wsl");
         if (!_iconTrackingRegistered)
         {
             _iconTrackingRegistered = true;
