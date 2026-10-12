@@ -5,7 +5,8 @@
            UpgradeCode="42c69ead-32da-4ae6-a348-a0ae7fd49e0e"
            Scope="perUserOrMachine">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 

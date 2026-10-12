@@ -178,6 +178,12 @@ ASCII/ANSI feed throughput, viewport snapshots, report floods and managed
 allocation. Run `dotnet run --project windows/Vex.Performance -c Release -- --feed`
 to reproduce the feed workloads.
 
+## Prompt responsiveness
+
+[Prompt latency measurements and refactor](PromptLatency.md) documents the
+input-echo scheduling fix, a before/after Neovim benchmark, and instructions for
+running the same isolated-profile measurement on NixOS/WSL.
+
 ## Validation
 
 Release solution build: no errors or warnings. Debug tests: 490 passed across

@@ -14,6 +14,7 @@ public sealed partial class NativeTerminalControl
     private bool _sessionStarting;
     private List<byte[]>? _pendingSessionInput;
     private int _firstOutputNoted;
+    private int _inputEchoPending;
     private readonly string? _initialCommand;
     private bool _layoutCommandSent;
 
@@ -88,6 +89,8 @@ public sealed partial class NativeTerminalControl
         if (_disposed)
             return;
         _terminal.AcknowledgeProgramStatus();
+        if (!input.IsEmpty)
+            Interlocked.Exchange(ref _inputEchoPending, 1);
         if (_sessionStarting)
         {
             // Only the UI thread queues input. Replay waits until startup
@@ -384,7 +387,7 @@ public sealed partial class NativeTerminalControl
             System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
         }
 
-        ScheduleRedraw();
+        ScheduleRedraw(interactive: Interlocked.Exchange(ref _inputEchoPending, 0) != 0);
     }
 
     private void OnSessionExited(TerminalSession source, int exitCode)

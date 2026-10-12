@@ -60,7 +60,7 @@ public sealed class EditorAppIconTests
                 pane.ApplyTerminalTitle(@"C:\work\project");
                 pane.RefreshAppIcon(shellOnly, new Dictionary<uint, string?>());
 
-                Assert.NotSame(AppIcon.Glyph("neovim"), pane.AppIcon);
+                Assert.Same(AppIcon.TerminalShellIcon(), pane.AppIcon);
                 Assert.False(pane.HasActiveProcess);
                 Assert.Null(pane.ActiveProcessName);
                 Assert.Equal("project", pane.Title);

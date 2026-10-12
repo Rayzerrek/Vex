@@ -110,7 +110,8 @@ public static class TabCloseConfirmation
             : parsed.AppName;
 
         var displayName = ResolveEditorDisplayName(appKey);
-        var icon = terminal.AppIcon ?? (!string.IsNullOrEmpty(appKey) ? (AppIconCatalog.Resolve(appKey, null, null) ?? AppIconCatalog.FromProcess(appKey)) : null);
+        var icon = terminal.AppIcon is { IsShellIcon: false } appIcon ? appIcon
+            : (!string.IsNullOrEmpty(appKey) ? (AppIconCatalog.Resolve(appKey, null, null) ?? AppIconCatalog.FromProcess(appKey)) : null);
         var title = displayName.Equals("Editor", StringComparison.OrdinalIgnoreCase)
             ? "Unsaved Changes"
             : $"Unsaved Changes in {displayName}";
@@ -153,7 +154,7 @@ public static class TabCloseConfirmation
     private static TabCloseInfo BuildAgentInfo(string toolName, TerminalPane terminal)
     {
         var displayName = char.ToUpperInvariant(toolName[0]) + toolName[1..];
-        var icon = terminal.AppIcon ?? AppIconCatalog.ResolveIcon(toolName);
+        var icon = terminal.AppIcon is { IsShellIcon: false } appIcon ? appIcon : AppIconCatalog.ResolveIcon(toolName);
         return new TabCloseInfo(
             NeedsConfirmation: true,
             AppName: displayName,
@@ -167,7 +168,7 @@ public static class TabCloseConfirmation
 
     private static TabCloseInfo BuildProcessInfo(string toolName, TerminalPane terminal)
     {
-        var icon = terminal.AppIcon ?? AppIconCatalog.ResolveIcon(toolName);
+        var icon = terminal.AppIcon is { IsShellIcon: false } appIcon ? appIcon : AppIconCatalog.ResolveIcon(toolName);
         return new TabCloseInfo(
             NeedsConfirmation: true,
             AppName: toolName,
@@ -187,7 +188,7 @@ public static class TabCloseConfirmation
             AppName: name,
             IsAgent: isAgent,
             IsDirty: false,
-            Icon: terminal.AppIcon,
+            Icon: terminal.AppIcon is { IsShellIcon: false } appIcon ? appIcon : null,
             Title: $"{name} is running",
             Message: isAgent
                 ? $"An agent session ({name}) is active in full-screen mode. Closing will terminate it."

@@ -9,6 +9,27 @@ namespace Vex.App.Tests;
 public sealed class AppIconRenderingTests
 {
     [Fact]
+    public void ShellIcons_ShareTerminalArtworkAndKeepApplicationIconsDistinct()
+    {
+        foreach (var dark in new[] { true, false })
+        {
+            var terminal = AppIcon.TerminalShellIcon(dark);
+            foreach (var name in new[] { "cmd", "wsl", "nu", "nushell", "pwsh", "powershell", "bash", "sh", "fish", "zsh", "dash", "ksh", "ash", "gitbash", "system", "PWSH" })
+                Assert.Same(terminal, AppIconCatalog.ResolveIcon(name, dark));
+            Assert.True(terminal.IsShellIcon);
+            Assert.True(terminal.Image.IsFrozen);
+            Assert.Equal(16, terminal.Image.Width);
+            Assert.Equal(16, terminal.Image.Height);
+            Assert.NotSame(terminal, AppIconCatalog.ResolveIcon("nvim", dark));
+        }
+        foreach (var shell in new[] { "cmd", "nu", "wsl", "wsl:/run/current-system/sw/bin/nu", "custom-shell" })
+        {
+            using var pane = new TerminalPane(@"C:\work", shellId: shell);
+            Assert.Same(AppIcon.TerminalShellIcon(), pane.AppIcon);
+        }
+    }
+
+    [Fact]
     public void CatalogIcons_PreserveArtboardAndRenderVisiblePixelsAtUiScales()
     {
         Exception? failure = null;
@@ -59,7 +80,7 @@ public sealed class AppIconRenderingTests
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
-    public void NushellIcon_SingleAndStackedTabs_PreserveWideLogo(int count)
+    public void TerminalShellIcon_SingleAndStackedTabs_RenderPromptGlyph(int count)
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -68,7 +89,7 @@ public sealed class AppIconRenderingTests
             {
                 var stack = new TabIconStack
                 {
-                    Icons = Enumerable.Repeat(AppIcon.Glyph("nushell", isDark: true), count).ToArray(),
+                    Icons = Enumerable.Repeat(AppIcon.TerminalShellIcon(isDark: true), count).ToArray(),
                     Background = Brushes.Transparent,
                     BorderBrush = Brushes.Transparent,
                 };
@@ -84,8 +105,7 @@ public sealed class AppIconRenderingTests
                     .Where(y => Enumerable.Range(0, width).Any(x => pixels[(y * width + x) * 4 + 3] != 0))
                     .ToArray();
                 Assert.NotEmpty(paintedRows);
-                Assert.InRange(paintedRows[^1] - paintedRows[0] + 1, 5, 8);
-                Assert.InRange(paintedRows[0], count == 1 ? 4 : 7, count == 1 ? 6 : 9);
+                Assert.InRange(paintedRows[^1] - paintedRows[0] + 1, 8, 12);
             }
             catch (Exception ex)
             {
@@ -94,7 +114,7 @@ public sealed class AppIconRenderingTests
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        Assert.True(thread.Join(10000), "Nushell icon rendering did not finish.");
+        Assert.True(thread.Join(10000), "Terminal shell icon rendering did not finish.");
         if (failure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
