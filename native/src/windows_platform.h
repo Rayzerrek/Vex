@@ -32,7 +32,8 @@ void vex_window_close(void);
 uint64_t vex_window_paint_count(void);
 void vex_window_error(const char* message);
 /* Tokens are nonzero, never reused, and cannot be interpreted as heap pointers. */
-int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPty** output);
+int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, const uint8_t* directory, size_t directory_length, VexPty** output);
+int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length);
 void vex_pty_close(VexPty* session);
 bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);

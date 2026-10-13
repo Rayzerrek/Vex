@@ -415,6 +415,15 @@ extern "C" void vex_window_error(const char* message) {
     MessageBoxA(IsWindow(window) ? window : nullptr, message, "Vex native rewrite", MB_OK | MB_ICONERROR);
     if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 0, 0);
 }
+extern "C" int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length) {
+    if (!bytes || !length || capacity > INT_MAX) return ERROR_INVALID_PARAMETER;
+    wchar_t name[MAX_COMPUTERNAME_LENGTH + 1]; DWORD units = MAX_COMPUTERNAME_LENGTH + 1;
+    if (!GetComputerNameW(name, &units)) return (int)GetLastError();
+    int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, name, (int)units, (char*)bytes, (int)capacity, nullptr, nullptr);
+    if (!count) return (int)GetLastError();
+    *length = (size_t)count;
+    return 0;
+}
 extern "C" void* vex_terminal_symbol(const char* name) {
     static HMODULE library;
     if (!library) {

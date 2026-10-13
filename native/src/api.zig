@@ -14,6 +14,7 @@ pub const Api = struct {
     ghostty_terminal_new: Function("ghostty_terminal_new"),
     ghostty_terminal_free: Function("ghostty_terminal_free"),
     ghostty_terminal_set: Function("ghostty_terminal_set"),
+    ghostty_terminal_get: Function("ghostty_terminal_get"),
     ghostty_terminal_vt_write: Function("ghostty_terminal_vt_write"),
     ghostty_terminal_resize: Function("ghostty_terminal_resize"),
     ghostty_terminal_scroll_viewport: Function("ghostty_terminal_scroll_viewport"),

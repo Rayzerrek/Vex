@@ -95,7 +95,7 @@ static DWORD WINAPI writePtyInput(void* context) {
     }
 }
 
-static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows) {
+static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, const wchar_t* directory) {
     session->outputConsumed = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!session->outputConsumed) return GetLastError();
     session->inputReady = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -141,7 +141,7 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows) {
             wcscat(shell, L"\\cmd.exe");
             if (!CreateProcessW(shell, command, nullptr, nullptr, FALSE,
                 EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
-                nullptr, nullptr, &startup.StartupInfo, &process)) error = GetLastError();
+                nullptr, directory, &startup.StartupInfo, &process)) error = GetLastError();
             else {
                 session->process = process.hProcess;
                 if (!AssignProcessToJobObject(session->job, process.hProcess)) error = GetLastError();
@@ -159,17 +159,27 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows) {
     return error;
 }
 
-extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPty** output) {
-    if (!output || token == 0 || columns < 2 || rows == 0 || columns > 32767 || rows > 32767 || findSession(token)) return ERROR_INVALID_PARAMETER;
+extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, const uint8_t* directory, size_t directoryLength, VexPty** output) {
+    if (!output || token == 0 || columns < 2 || rows == 0 || columns > 32767 || rows > 32767 || findSession(token) || !directory || !directoryLength || directoryLength > 32767 * 4 || memchr(directory, 0, directoryLength)) return ERROR_INVALID_PARAMETER;
     *output = nullptr;
+    int units = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)directory, (int)directoryLength, nullptr, 0);
+    if (!units) return (int)GetLastError();
+    if (units >= 32767) return ERROR_FILENAME_EXCED_RANGE;
+    auto wideDirectory = static_cast<wchar_t*>(HeapAlloc(GetProcessHeap(), 0, ((size_t)units + 1) * sizeof(wchar_t)));
+    if (!wideDirectory) return ERROR_OUTOFMEMORY;
+    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)directory, (int)directoryLength, wideDirectory, units)) {
+        DWORD error = GetLastError(); HeapFree(GetProcessHeap(), 0, wideDirectory); return (int)error;
+    }
+    wideDirectory[units] = 0;
     auto session = static_cast<VexPty*>(calloc(1, sizeof(VexPty)));
-    if (!session) return ERROR_OUTOFMEMORY;
+    if (!session) { HeapFree(GetProcessHeap(), 0, wideDirectory); return ERROR_OUTOFMEMORY; }
     session->token = token;
     session->window = vex_native_window();
     InitializeCriticalSection(&session->inputLock);
     session->next = sessions;
     sessions = session;
-    DWORD error = startPty(session, columns, rows);
+    DWORD error = startPty(session, columns, rows, wideDirectory);
+    HeapFree(GetProcessHeap(), 0, wideDirectory);
     if (error) { vex_pty_close(session); return (int)error; }
     *output = session;
     return 0;

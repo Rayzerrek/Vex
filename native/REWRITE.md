@@ -49,14 +49,14 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Area | Reference | Native milestone / remaining evidence |
 | --- | --- | --- |
 | Project -> tabs -> split tree, active leaf | `Model/Project.cs`, `WorkspaceTab.cs`, `PaneNode.cs` | First milestone: one project, up to 8 tabs, recursive splits, focus, close; multiple projects and drag/reorder still pending |
-| Split orientation/ratio | `SplitPaneView.xaml.cs` | Right/down at 0.5; ratio clamping 0.1..0.9 in model; interactive dividers and inheriting the focused pane's live working directory pending |
+| Split orientation/ratio | `SplitPaneView.xaml.cs` | Right/down at 0.5; ratio clamping 0.1..0.9 in model; interactive dividers pending; split directories use the last valid local OSC 7 report, otherwise the pane's launch directory |
 | Workspace shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
 | Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; auto-close/close confirmations and further cancellation/Win32 failure injection pending |
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache; ConPTY DCS filter parity pending |
 | Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*` | DirectWrite baseline and themed chrome; pixel fixtures, custom box/Powerline glyphs, color emoji and blink pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys/plain paste/wheel; full protocols, IME, click positioning, selection/copy/cut, bracketed paste pending |
 | Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | cmd.exe only; detected/custom shells and integration pending |
-| Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Pending; do not silently launch a Windows shell for a requested Linux shell |
+| Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local directory ownership/OSC 7/inheritance implemented; project UI/WSL pending; WSL directories explicitly reject Windows-shell launch |
 | Settings and session persistence | `Model/AppSettings.cs`, `Session*`, `VexJsonContext.cs` | Pending; native currently does not read/write the production profile |
 | Saved layouts | `SavedTerminalLayout.cs`, `MainWindow.SavedLayouts.cs` | Pending; opening explicitly executes commands once; restore must never replay commands |
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts first; all remaining palettes/settings pending |
@@ -98,6 +98,19 @@ These are behavioral contracts, not opportunities to redesign the app.
 - Windows desktop smoke: three live panes, independent tabs, background output,
   stale output tokens, process-tree teardown and flooding resize/close.
 - Artifacts: `zig-out/verification/{result.json,native-window.png,native-workspace.png}`.
+
+## Directory checkpoint verification
+
+- Each session owns a parsed launch path and the last valid local OSC 7 path.
+- PWD callbacks parse each report synchronously, including several reports in
+  one read. Invalid/remote/empty reports do not erase the previous valid path.
+- Splits clone the focused pane's directory; new tabs retain the project root.
+- URI percent/Unicode decoding, local-host matching, control/relative/WSL
+  rejection and allocation/callback rollback have pure/real-DLL fixtures.
+- Windows smoke verifies actual `%CD%` in a split under a Unicode/spaced folder,
+  and verifies a new tab still launches in the project root.
+- cmd does not emit OSC 7 by default; shell integration remains pending. Do not
+  infer a split directory from prompt text (the WPF split path does not do so).
 
 No WPF profile is read/overwritten. This milestone does not replace production,
 certify native memory safety, or establish complete parity/performance.
