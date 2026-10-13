@@ -1,6 +1,7 @@
 const std = @import("std");
 const panes = @import("pane_tree.zig");
 const terminal = @import("terminal.zig");
+const directory = @import("directory.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
 pub const c = @cImport({
@@ -40,9 +41,9 @@ pub const TerminalSize = struct { columns: u16, rows: u16, cell_width_px: u32, c
 pub const PtyOwner = struct {
     handle: std.meta.Child(?*c.VexPty),
     /// Tokens must be fresh, nonzero pane IDs; failed startup releases all partial resources.
-    pub fn init(id: panes.PaneId) !PtyOwner {
+    pub fn init(id: panes.PaneId, path: directory.DirectoryPath) !PtyOwner {
         var pointer: ?*c.VexPty = null;
-        if (c.vex_pty_open(@intFromEnum(id), 80, 24, &pointer) != 0) return error.PtyLaunchFailed;
+        if (c.vex_pty_open(@intFromEnum(id), 80, 24, path.bytes.ptr, path.bytes.len, &pointer) != 0) return error.PtyLaunchFailed;
         return .{ .handle = pointer orelse return error.PtyNullHandle };
     }
     /// Consumes this owner. No registered callback or queued event retains its pointer.
@@ -155,6 +156,14 @@ pub fn runWindow(owner: anytype) !void {
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
+/// Returns the actual local machine name, not a spoofable environment variable; caller owns the UTF-8 copy.
+pub fn machineNameAlloc(allocator: std.mem.Allocator) ![]u8 {
+    var buffer: [64]u8 = undefined;
+    var length: usize = 0;
+    if (c.vex_machine_name(&buffer, buffer.len, &length) != 0) return error.MachineNameReadFailed;
+    if (length == 0 or length > buffer.len or !std.unicode.utf8ValidateSlice(buffer[0..length])) return error.InvalidMachineName;
+    return allocator.dupe(u8, buffer[0..length]);
+}
 /// Startup timestamps begin before terminal/DLL initialization, not OS process creation.
 pub fn beginStartup() void {
     c.vex_startup_begin();

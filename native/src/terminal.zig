@@ -55,7 +55,8 @@ pub const Terminal = struct {
     search_row: std.ArrayList(u8) = .empty,
     frame_valid: bool = false,
     response_sink: ?ResponseSink = null,
-    response_error: ?anyerror = null,
+    callback_error: ?anyerror = null,
+    directory_sink: ?struct { context: *anyopaque, on_report: *const fn (*anyopaque, []const u8) anyerror!void } = null,
     const max_frame_cells = 1024 * 1024;
     const max_grapheme_bytes = 64 * 1024;
     const max_frame_text_bytes = 64 * 1024 * 1024;
@@ -110,19 +111,40 @@ pub const Terminal = struct {
         const callback: c.GhosttyTerminalWritePtyFn = terminalResponse;
         try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_WRITE_PTY, @ptrCast(callback)));
     }
+    /// Registers a stable typed directory owner; each report is parsed before a later report can overwrite it.
+    pub fn attachDirectorySink(self: *Terminal, owner: anytype) !void {
+        const Owner = @TypeOf(owner);
+        const Adapter = struct {
+            fn write(context: *anyopaque, bytes: []const u8) !void {
+                const typed: Owner = @ptrCast(@alignCast(context));
+                try typed.onDirectoryReport(bytes);
+            }
+        };
+        self.directory_sink = .{ .context = owner, .on_report = Adapter.write };
+        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
+        const callback: c.GhosttyTerminalPwdChangedFn = directoryChanged;
+        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_PWD_CHANGED, @ptrCast(callback)));
+    }
     /// Consumes arbitrary VT bytes, including UTF-8 split across pipe reads; not a text-only input.
     pub fn feedOutput(self: *Terminal, bytes: []const u8) !void {
-        if (self.response_error) |err| return err;
+        if (self.callback_error) |err| return err;
         self.api.ghostty_terminal_vt_write(self.handle, bytes.ptr, bytes.len);
-        if (self.response_error) |err| return err;
+        if (self.callback_error) |err| return err;
+    }
+    /// Borrows raw directory-report bytes only until the next feed/reset/deinit; the caller parses the URI.
+    pub fn reportedDirectory(self: *const Terminal) ![]const u8 {
+        var value: c.GhosttyString = .{ .ptr = null, .len = 0 };
+        try check(self.api.ghostty_terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_PWD, &value));
+        if (value.len != 0 and value.ptr == null) return error.InvalidTerminalDirectoryString;
+        return if (value.len == 0) &.{} else value.ptr[0..value.len];
     }
     /// Validate ConPTY-compatible dimensions before entering the native emulator.
     pub fn resize(self: *Terminal, columns: u16, rows: u16, width_px: u32, height_px: u32) !void {
         if (columns < 2 or rows == 0 or columns > 32767 or rows > 32767 or width_px == 0 or height_px == 0) return error.InvalidTerminalSize;
-        if (self.response_error) |err| return err;
+        if (self.callback_error) |err| return err;
         try check(self.api.ghostty_terminal_resize(self.handle, columns, rows, width_px, height_px));
         self.frame_valid = false;
-        if (self.response_error) |err| return err;
+        if (self.callback_error) |err| return err;
     }
     /// Scroll changes invalidate the cached viewport without changing the live shell cursor.
     pub fn scroll(self: *Terminal, delta: i32) void {
@@ -305,21 +327,35 @@ pub const Terminal = struct {
 
 fn terminalResponse(_: c.GhosttyTerminal, userdata: ?*anyopaque, bytes: [*c]const u8, length: usize) callconv(.c) void {
     const context = userdata orelse return;
-    // The only cast of callback userdata: registered by attachResponseSink at a stable address.
+    // Callback userdata is registered only after the terminal owner reaches its stable address.
     const self: *Terminal = @ptrCast(@alignCast(context));
-    if (length == 0) return;
+    if (self.callback_error != null or length == 0) return;
     if (bytes == null or length > 64 * 1024) {
-        self.response_error = error.InvalidTerminalResponse;
+        self.callback_error = error.InvalidTerminalResponse;
         return;
     }
     const sink = self.response_sink orelse {
-        self.response_error = error.MissingResponseSink;
+        self.callback_error = error.MissingResponseSink;
         return;
     };
     sink.write(sink.context, bytes[0..length]) catch |err| {
-        self.response_error = err;
+        self.callback_error = err;
     };
 }
+fn directoryChanged(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) void {
+    const context = userdata orelse return;
+    const self: *Terminal = @ptrCast(@alignCast(context));
+    if (self.callback_error != null) return;
+    const sink = self.directory_sink orelse return;
+    const report = self.reportedDirectory() catch |err| {
+        self.callback_error = err;
+        return;
+    };
+    sink.on_report(sink.context, report) catch |err| {
+        self.callback_error = err;
+    };
+}
+
 fn colorRgb(color: u32) c.GhosttyColorRgb {
     return .{ .r = @truncate(color >> 16), .g = @truncate(color >> 8), .b = @truncate(color) };
 }
@@ -473,6 +509,59 @@ test "long combining graphemes grow owned buffers without truncation" {
     const frame = try terminal.readFrame();
     try std.testing.expectEqualStrings(&input, frame.cellText(frame.cells.items[0]));
     try std.testing.expect(terminal.grapheme.capacity >= input.len);
+}
+
+test "OSC 7 borrowed directory reports survive every UTF-8/terminator chunk boundary" {
+    const api = try binding.Api.load();
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |terminator| {
+        const report = "file:///C:/My%20files/%C5%BB%C3%B3%C5%82%C4%87";
+        const bytes = try std.mem.concat(std.testing.allocator, u8, &.{ "\x1b]7;", report, terminator });
+        defer std.testing.allocator.free(bytes);
+        for (1..bytes.len) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, &api);
+            defer terminal.deinit();
+            try terminal.feedOutput(bytes[0..split]);
+            try terminal.feedOutput(bytes[split..]);
+            try std.testing.expectEqualStrings(report, try terminal.reportedDirectory());
+        }
+    }
+}
+
+const paths = @import("directory.zig");
+const TestDirectoryOwner = struct {
+    directory: paths.PaneDirectory,
+    pub fn onDirectoryReport(self: *@This(), report: []const u8) !void {
+        try self.directory.applyReport(report, "my-pc");
+    }
+};
+
+test "directory callbacks preserve valid reports before invalid/empty reports in the same read" {
+    const api = try binding.Api.load();
+    var owner: TestDirectoryOwner = .{ .directory = try paths.PaneDirectory.init(std.testing.allocator, try paths.DirectoryPath.parse("C:\\launch")) };
+    defer owner.directory.deinit();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.attachDirectorySink(&owner);
+    try terminal.feedOutput("\x1b]7;file:///C:/good\x07\x1b]7;file://remote/C:/bad\x07\x1b]7;\x07");
+    try std.testing.expectEqualStrings("C:\\good", owner.directory.current().bytes);
+}
+
+fn checkDirectoryCallbackAllocations(allocator: std.mem.Allocator, api: *const binding.Api) !void {
+    var owner: TestDirectoryOwner = .{ .directory = try paths.PaneDirectory.init(allocator, try paths.DirectoryPath.parse("C:\\launch")) };
+    defer owner.directory.deinit();
+    var terminal = try Terminal.init(allocator, api);
+    defer terminal.deinit();
+    try terminal.attachDirectorySink(&owner);
+    terminal.feedOutput("\x1b]7;file:///C:/reported\x07") catch |err| {
+        try std.testing.expectEqualStrings("C:\\launch", owner.directory.current().bytes);
+        return err;
+    };
+    try std.testing.expectEqualStrings("C:\\reported", owner.directory.current().bytes);
+}
+
+test "native directory callback OOM reaches feedOutput and releases both owners" {
+    const api = try binding.Api.load();
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkDirectoryCallbackAllocations, .{&api});
 }
 
 test "OSC palette updates invalidate cached resolved colors" {

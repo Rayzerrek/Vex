@@ -34,7 +34,9 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
 - `Ctrl+Shift+W`: close a split or tab; a tab's **×** / middle-click closes it.
 - The last tab stays open, as in WPF. Closing a split focuses the first remaining
   leaf. Closing an active tab selects the left neighbor, or right for tab zero.
-- Each pane currently starts `cmd.exe /d` in the launch directory. Navigation
+- Each pane currently starts `cmd.exe /d`. New tabs use the project launch
+  directory; splits inherit the focused pane's last valid local OSC 7 directory,
+  otherwise its starting directory (matching WPF, not a guessed prompt). Navigation
   and function keys use Ghostty's encoder; character input is UTF-8.
 - Mouse wheel scrolls the focused viewport; `Ctrl+Shift+V` pastes plain text.
 - Window resizing, caption controls and per-monitor DPI handling use Win32.
@@ -50,6 +52,8 @@ focus outline. Font/cell metrics come from DirectWrite. Initial window size is
 - `src/pane_tree.zig`: allocator-owned recursive split tree; transactional edits,
   stable IDs, ratio clamp 0.1..0.9, finite DIP geometry, 64-level depth guard.
 - `src/terminal_app.zig`: application/session owners, main-thread orchestration.
+- `src/directory.zig`: parsed absolute Windows paths, owned pane directories,
+  local file-URI decoding and transactional report/cache updates.
 - `src/api.zig`: checked symbol resolution and structured terminal API errors.
 - `src/terminal.zig`: one emulator/iterator/key encoder per pane,
   reusable parsed snapshots, typed colors/styles/widths/cursor, validated UTF-8.
@@ -76,6 +80,14 @@ selected, nor schedule active-window paints just for hidden output. Dirty snapsh
 rows after scroll shifts. Frame requests coalesce with a deadline check that
 prevents continuous posted pipe output from starving WM_TIMER/WM_PAINT. There
 is no repeating idle timer.
+
+Directory reports use the synchronous native PWD callback: each report is parsed
+before a later one in the same read can replace it. There is no per-output-block
+directory query. Empty, remote, malformed, control-bearing and non-Windows
+reports retain the last valid directory. Paths and cached reports are owned per
+pane; unchanged reports reuse storage. The local hostname comes from Win32,
+not an environment variable. WSL launch directories are explicitly rejected
+until Linux session support is implemented.
 
 Native limits: 1,000 columns/rows for window grids, 1 Mi cells/frame, 64 KiB per
 grapheme and 64 MiB text/frame. Oversized/malformed frames fail explicitly.
@@ -109,14 +121,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-NativeWorkspace.ps1
 
 Unit tests use the **real checked-in DLL**: ABI/Unicode/colors/wide cells,
 independent terminals, clean snapshot reuse, alternate screen, scrollback,
-application cursor encoding and PTY replies. Tree/workspace fixtures port WPF
+application cursor encoding and PTY replies. Directory fixtures cover every
+OSC 7 chunk boundary, local-host/Unicode/percent decoding, multiple reports in
+one read and callback/allocation failure propagation. Tree/workspace fixtures port WPF
 close/focus/tab-limit semantics. All Zig allocation points in the tested tree,
 workspace and frame workflows are exercised with allocator failure injection.
 This does not inject failures into libghostty/Win32's own allocators.
 
 The Windows test types commands via native character messages, checks the
 **parsed viewport**, resizes, floods output, uses three nested panes, switches
-independent tabs, verifies hidden output, ignores stale output tokens, exercises
+independent tabs, verifies hidden output, inherits a reported Unicode/spaced
+folder on split, retains project-root behavior for new tabs, ignores stale
+output tokens, exercises
 the 8-tab limit, kills a real child process with its pane, and closes a flooding
 tab/window. Sentinels are assembled by the shell so echoed input cannot pass.
 The test also checks that hidden output causes zero active-window paints.
@@ -137,7 +153,7 @@ benchmarks**, and working set excludes GPU allocations and child processes.
 ## Still pending
 
 See the full ledger in [REWRITE.md](REWRITE.md): multiple projects/WSL and shell
-profiles, inheriting a pane's live working directory on split, profile/session compatibility and persistence, saved layouts,
+profiles, profile/session compatibility and persistence, saved layouts,
 settings/themes, palette/tab peek/overlays, divider dragging/reorder, icons and
 program status, selection/copy/cut, hyperlinks/path completion, bracketed paste,
 IME/full mouse/key protocols, ConPTY DCS feed-filter parity, custom glyphs/color

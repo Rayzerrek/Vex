@@ -135,6 +135,18 @@ try {
     Assert-NativeProbe $window 10 1 'final tab stays open'
     Assert-NativeProbe $window 13 1 'closed pane workers/resources are removed'
 
+    $paneDirectory = Join-Path $OutputDirectory ([string][char]0x017B + [char]0x00F3 + [char]0x0142 + [char]0x0107 + ' pane with spaces')
+    New-Item -ItemType Directory -Force $paneDirectory | Out-Null
+    Send-NativeText $window ('@cd /d "' + $paneDirectory + '"' + "`r")
+    $reportDirectory = '@"' + $env:WINDIR + '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "[Console]::Write([char]27 + ' + "']7;' + ([uri](Get-Location).Path).AbsoluteUri + [char]7);[Console]::WriteLine('VEX_NATIVE_DIRECTORY_'+'REPORTED')" + '"'
+    Send-NativeText $window ($reportDirectory + "`r")
+    Assert-NativeProbe $window 30 1 'shell OSC 7 report crosses the real ConPTY stream'
+    Invoke-NativeAction $window 1
+    Send-NativeText $window ('@set VEX_DIRECTORY=VEX_NATIVE_DIRECTORY_' + "`r" + '@if /i "%CD%"=="' + $paneDirectory + '" echo %VEX_DIRECTORY%OK' + "`r")
+    Assert-NativeProbe $window 8 1 'split inherits a reported Unicode/spaced working directory'
+    Invoke-NativeAction $window 3
+    Assert-NativeProbe $window 13 1 'directory-owning pane resources are freed on close'
+
     Send-NativeText $window ('@set VEX_TAB=VEX_NATIVE_TAB_' + "`r" + '@echo %VEX_TAB%A' + "`r")
     Assert-NativeProbe $window 4 1 'first tab marker'
     Invoke-NativeAction $window 0
@@ -142,6 +154,8 @@ try {
     $freshToken = Get-NativeProbe $window 12
     if ($freshToken -le $closedToken) { throw 'Vex native smoke: a pane token was reused.' }
     Assert-NativeProbe $window 4 0 'new tab output isolation'
+    Send-NativeText $window ('@set VEX_ROOT=VEX_NATIVE_ROOT_DIRECTORY_' + "`r" + '@if /i "%CD%"=="' + $PSScriptRoot + '" echo %VEX_ROOT%OK' + "`r")
+    Assert-NativeProbe $window 9 1 'new tabs use the project root, not a changed pane directory'
     Send-NativeText $window ('@set VEX_TAB=VEX_NATIVE_TAB_' + "`r" + '@echo %VEX_TAB%B' + "`r")
     Assert-NativeProbe $window 5 1 'second tab marker'
     Invoke-NativeAction $window 5
@@ -201,7 +215,7 @@ try {
     Close-NativeInstance $process $window
     [pscustomobject]@{
         Result = 'PASS'
-        Checks = @('ConPTY round trip/resize', '2,000-line output', 'nested right/down splits', 'click focus', 'isolated pane/tab output', 'stale output token rejection', 'background parsing', 'close/focus fallback', '8-tab limit', 'process-tree teardown', 'resize under active output', 'flooding-tab close', 'active-output shutdown')
+        Checks = @('ConPTY round trip/resize', '2,000-line output', 'nested right/down splits', 'click focus', 'isolated pane/tab output', 'stale output token rejection', 'background parsing', 'Unicode OSC 7 split directory', 'new-tab project directory', 'close/focus fallback', '8-tab limit', 'process-tree teardown', 'resize under active output', 'flooding-tab close', 'active-output shutdown')
         WindowReadyMs = [Math]::Round($windowReadyMs, 2)
         SinglePaneWorkingSetBytes = $singlePaneMemory
         ThreePaneWorkingSetBytes = $threePaneMemory
