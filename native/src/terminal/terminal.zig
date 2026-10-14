@@ -154,6 +154,7 @@ pub const Terminal = struct {
     }
     /// Internal feed-filter seam; every native callback failure reaches the caller before later reports.
     pub fn writeTerminalOutput(self: *Terminal, bytes: []const u8) !void {
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         self.api.terminal_vt_write(self.handle, bytes.ptr, bytes.len);
         if (self.callback_error) |err| return err;
     }
@@ -187,6 +188,7 @@ pub const Terminal = struct {
     pub fn resize(self: *Terminal, columns: u16, rows: u16, width_px: u32, height_px: u32) !void {
         if (columns < 2 or rows == 0 or columns > 32767 or rows > 32767 or width_px == 0 or height_px == 0) return error.InvalidTerminalSize;
         if (self.callback_error) |err| return err;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         try check(self.api.terminal_resize(self.handle, columns, rows, width_px, height_px));
         self.frame_valid = false;
         if (self.callback_error) |err| return err;
@@ -449,6 +451,8 @@ pub const Terminal = struct {
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_STYLE, &cursor_style));
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK, &cursor_blink));
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_RESIZE_PULL_SCROLLBACK, &pull_scrollback));
+        const bell_callback: c.GhosttyTerminalBellFn = terminalBell;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_BELL, @ptrCast(bell_callback)));
         const foreground = colorRgb(0xe4e4e7);
         const background = colorRgb(0x282c34);
         const cursor = colorRgb(0xe4e4e7);
@@ -470,6 +474,12 @@ pub const Terminal = struct {
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette));
     }
 };
+
+fn terminalBell(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) void {
+    const context = userdata orelse return;
+    const self: *Terminal = @ptrCast(@alignCast(context));
+    self.program_status.onBell();
+}
 
 fn terminalResponse(_: c.GhosttyTerminal, userdata: ?*anyopaque, bytes: [*c]const u8, length: usize) callconv(.c) void {
     const context = userdata orelse return;
@@ -1066,5 +1076,17 @@ test "write-only OSC 52 and OSC 1337 Copy sequences decode Unicode across splits
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkClipboardAllocationFailures, .{&api});
 }
 
-
-
+test "BEL control latches background attention without firing on OSC BEL terminators or changing program status" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.feedOutput("\x1b]7;file:///C:/project\x07\x1b]7501;state=working\x07\x1b]133;A\x07\x1b]0;Window Title\x07");
+    try std.testing.expect(!terminal.program_status.takeAttention());
+    try terminal.feedOutput("before\x07after");
+    try std.testing.expect(terminal.program_status.takeAttention());
+    try std.testing.expect(!terminal.program_status.takeAttention());
+    try std.testing.expectEqual(.idle, terminal.program_status.programStatus().state);
+    try std.testing.expect(try terminal.containsViewportText("beforeafter"));
+    try terminal.feedOutput("\x07\x1bc");
+    try std.testing.expect(!terminal.program_status.takeAttention());
+}

@@ -226,6 +226,10 @@ pub const ProgramStatusTracker = struct {
         self.attention_pending = false;
         return pending;
     }
+    /// Terminal bell (BEL) latches background tab attention without altering program status badges.
+    pub fn onBell(self: *ProgramStatusTracker) void {
+        self.attention_pending = true;
+    }
     /// Process exit removes running/blocked/idle records but retains unread results.
     pub fn onProgramExited(self: *ProgramStatusTracker) void {
         self.removeRunningRecords();
