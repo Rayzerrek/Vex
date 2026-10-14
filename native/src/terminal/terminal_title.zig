@@ -87,17 +87,18 @@ const shell_prefixes = [_][]const u8{
     "nushell", "wsl",        "wslhost", "conhost", "Windows PowerShell", "Command Prompt",
 };
 const known_apps = [_][]const u8{
-    "nvim",   "neovim",      "vim",    "vi",     "nano",   "emacs",       "hx",       "helix",     "micro",     "kak",     "amp",    "lapce",   "code", "cursor", "zed",
-    "claude", "claude-code", "codex",  "gemini", "agy",    "antigravity", "opencode", "open-code", "oc",        "pi",      "aider",  "goose",   "qwen", "git",    "lazygit",
-    "tig",    "gh",          "ssh",    "mosh",   "docker", "kubectl",     "k9s",      "htop",      "btop",      "btm",     "top",    "glances", "tmux", "zellij", "screen",
-    "yazi",   "lf",          "ranger", "nnn",    "mc",     "broot",       "less",     "more",      "bat",       "man",     "cargo",  "rustc",   "go",   "dotnet", "make",
-    "cmake",  "just",        "pytest", "jest",   "vitest", "psql",        "sqlite3",  "mysql",     "redis-cli", "mongosh", "ollama", "llm",     "mods", "glow",   "fzf",
-    "rg",     "zig",         "uv",     "lua",    "luajit",
+    "nvim",       "neovim",      "vim",      "gvim",       "vi",          "nano",       "emacs",       "hx",          "helix",     "micro",     "kak",         "kakoune", "amp",    "lapce",   "code",   "cursor", "zed",
+    "claude",     "claude-code", "codex",    "codex-cli",  "gemini",      "gemini-cli", "agy",         "antigravity", "opencode",  "open-code", "opencode-ai", "oc",      "pi",     "aider",   "aider-chat", "goose", "qwen",
+    "qwen-code",  "copilot",     "git",      "lazygit",    "gitui",       "tig",        "gh",          "ssh",         "mosh",      "docker",    "lazydocker",  "kubectl", "k9s",    "htop",    "btop",   "btm",    "bottom",
+    "top",        "glances",     "tmux",     "zellij",     "screen",      "yazi",       "lf",          "ranger",      "nnn",       "mc",        "broot",       "less",    "more",   "bat",     "man",    "cargo",  "rustc",
+    "rustup",     "go",          "dotnet",   "make",       "cmake",       "just",       "pytest",      "ruff",        "poetry",    "uvicorn",   "ipython",     "jest",    "vitest", "vite",    "tsc",    "next",   "astro",
+    "esbuild",    "psql",        "sqlite3",  "mysql",      "redis-cli",   "mongosh",    "ollama",      "llm",         "mods",      "glow",      "fzf",         "rg",      "zig",    "uv",      "lua",    "luajit",
 };
 const runner_prefixes = [_][]const u8{
-    "bun", "bunx", "npx", "pnpm", "pnpx", "npm", "yarn", "deno", "node", "python", "python3", "py", "sudo",
+    "bun",  "bunx",       "npx",  "pnpm", "pnpx", "npm", "yarn", "deno", "node", "nodejs", "tsx", "ts-node",
+    "python", "python3",  "py",   "uv",   "uvx",  "pipx", "sudo", "cmd",  "pwsh", "powershell", "bash", "sh", "wsl", "wslhost",
 };
-const runner_subcommands = [_][]const u8{ "run", "exec", "dlx", "x" };
+const runner_subcommands = [_][]const u8{ "run", "exec", "dlx", "x", "tool" };
 const modified_markers = [_][]const u8{ "[+]", "[*]", "[modified]", "(modified)", "●", "•" };
 const script_or_exe_extensions = [_][]const u8{
     ".exe", ".cmd", ".bat", ".ps1", ".mjs", ".cjs", ".mts", ".cts", ".js", ".ts", ".py", ".sh",
@@ -421,9 +422,17 @@ fn truncateRedirectionAndPipes(text: []const u8) []const u8 {
 
 fn stripCommandRunners(text: []const u8) []const u8 {
     var remaining = text;
-    while (remaining.len > 0) {
+    var depth: usize = 0;
+    while (remaining.len > 0 and depth < 8) : (depth += 1) {
         const next = popNextToken(remaining);
         if (next.token.len == 0) break;
+        if (std.mem.indexOfAny(u8, next.token, " \t")) |first_space| {
+            const first_sep = std.mem.indexOfAny(u8, next.token, "/\\") orelse next.token.len;
+            if (first_space < first_sep) {
+                remaining = next.token;
+                continue;
+            }
+        }
         const leaf = getFileNameWithoutExe(next.token);
         if (std.ascii.eqlIgnoreCase(leaf, "cargo")) {
             const sub = popNextToken(next.rest);
@@ -431,7 +440,9 @@ fn stripCommandRunners(text: []const u8) []const u8 {
             break;
         }
         if (isRunnerPrefix(leaf)) {
-            remaining = skipRunnerSubcommandsAndFlags(next.rest);
+            const after_runner = skipRunnerSubcommandsAndFlags(leaf, next.rest);
+            if (after_runner.len == 0) return cleanProgramName(next.token);
+            remaining = after_runner;
             continue;
         }
         return cleanProgramName(next.token);
@@ -439,24 +450,69 @@ fn stripCommandRunners(text: []const u8) []const u8 {
     return cleanProgramName(extractFirstToken(text));
 }
 
-fn skipRunnerSubcommandsAndFlags(input: []const u8) []const u8 {
+fn skipRunnerSubcommandsAndFlags(runner_leaf: []const u8, input: []const u8) []const u8 {
     var remaining = std.mem.trimLeft(u8, input, whitespace);
-    const first = popNextToken(remaining);
-    for (runner_subcommands) |sub| {
-        if (std.ascii.eqlIgnoreCase(first.token, sub)) {
-            remaining = std.mem.trimLeft(u8, first.rest, whitespace);
-            break;
-        }
-    }
+    const is_cmd = std.ascii.eqlIgnoreCase(runner_leaf, "cmd");
+    const is_wsl = std.ascii.eqlIgnoreCase(runner_leaf, "wsl") or std.ascii.eqlIgnoreCase(runner_leaf, "wslhost");
+    const is_python = std.ascii.eqlIgnoreCase(runner_leaf, "python") or
+        std.ascii.eqlIgnoreCase(runner_leaf, "python3") or
+        std.ascii.eqlIgnoreCase(runner_leaf, "py");
     while (remaining.len > 0) {
         const next = popNextToken(remaining);
         if (next.token.len == 0) break;
-        if (std.mem.eql(u8, next.token, "--")) return std.mem.trimLeft(u8, next.rest, whitespace);
+        if (std.mem.eql(u8, next.token, "--")) {
+            remaining = std.mem.trimLeft(u8, next.rest, whitespace);
+            break;
+        }
+        if (is_wsl) {
+            if (std.ascii.eqlIgnoreCase(next.token, "-d") or
+                std.ascii.eqlIgnoreCase(next.token, "--distribution") or
+                std.ascii.eqlIgnoreCase(next.token, "-u") or
+                std.ascii.eqlIgnoreCase(next.token, "--user") or
+                std.ascii.eqlIgnoreCase(next.token, "--cd"))
+            {
+                const arg_tok = popNextToken(next.rest);
+                remaining = std.mem.trimLeft(u8, arg_tok.rest, whitespace);
+                continue;
+            }
+            if (std.mem.eql(u8, next.token, "~")) {
+                remaining = std.mem.trimLeft(u8, next.rest, whitespace);
+                continue;
+            }
+        }
+        if (is_cmd and next.token.len == 2 and next.token[0] == '/' and
+            (std.ascii.eqlIgnoreCase(next.token, "/d") or
+            std.ascii.eqlIgnoreCase(next.token, "/s") or
+            std.ascii.eqlIgnoreCase(next.token, "/c") or
+            std.ascii.eqlIgnoreCase(next.token, "/k") or
+            std.ascii.eqlIgnoreCase(next.token, "/q")))
+        {
+            remaining = std.mem.trimLeft(u8, next.rest, whitespace);
+            continue;
+        }
         if (next.token[0] == '-') {
             remaining = std.mem.trimLeft(u8, next.rest, whitespace);
             continue;
         }
+        var matched_sub = false;
+        if (!is_cmd and !is_python) {
+            for (runner_subcommands) |sub| {
+                if (std.ascii.eqlIgnoreCase(next.token, sub)) {
+                    remaining = std.mem.trimLeft(u8, next.rest, whitespace);
+                    matched_sub = true;
+                    break;
+                }
+            }
+        }
+        if (matched_sub) continue;
         break;
+    }
+    if (remaining.len >= 2 and remaining[0] == '"' and remaining[1] == '"') {
+        remaining = remaining[1..];
+        if (remaining.len > 0 and remaining[remaining.len - 1] == '"') {
+            remaining = remaining[0 .. remaining.len - 1];
+        }
+        remaining = std.mem.trimLeft(u8, remaining, whitespace);
     }
     return remaining;
 }
@@ -474,7 +530,44 @@ fn cleanProgramName(token: []const u8) []const u8 {
             break;
         }
     }
+    if (leaf.len > "-script".len and endsWithIgnoreCase(leaf, "-script")) {
+        leaf = leaf[0 .. leaf.len - "-script".len];
+    }
+    if (std.ascii.eqlIgnoreCase(leaf, "__main__") or
+        std.ascii.eqlIgnoreCase(leaf, "main") or
+        std.ascii.eqlIgnoreCase(leaf, "cli") or
+        std.ascii.eqlIgnoreCase(leaf, "index"))
+    {
+        if (extractParentPackageName(unquoted)) |parent_pkg| return parent_pkg;
+    }
     return leaf;
+}
+
+fn extractParentPackageName(path: []const u8) ?[]const u8 {
+    const sep = lastPathSeparator(path) orelse return null;
+    if (sep == 0) return null;
+    const dir = std.mem.trimRight(u8, path[0..sep], "/\\");
+    if (dir.len == 0) return null;
+    const parent = if (lastPathSeparator(dir)) |psep|
+        (if (psep + 1 < dir.len) dir[psep + 1 ..] else return null)
+    else
+        dir;
+    if (parent.len == 0 or parent[0] == '.' or parent[0] == '@' or
+        (parent.len == 2 and parent[1] == ':') or
+        std.ascii.eqlIgnoreCase(parent, "bin") or
+        std.ascii.eqlIgnoreCase(parent, "scripts") or
+        std.ascii.eqlIgnoreCase(parent, "src") or
+        std.ascii.eqlIgnoreCase(parent, "lib") or
+        std.ascii.eqlIgnoreCase(parent, "dist") or
+        std.ascii.eqlIgnoreCase(parent, "build") or
+        std.ascii.eqlIgnoreCase(parent, "out") or
+        std.ascii.eqlIgnoreCase(parent, "app") or
+        std.ascii.eqlIgnoreCase(parent, "cli") or
+        std.ascii.eqlIgnoreCase(parent, "site-packages"))
+    {
+        return null;
+    }
+    return matchKnownApp(parent) orelse parent;
 }
 
 fn extractPackageFromNodeModules(path: []const u8) ?[]const u8 {
@@ -525,10 +618,16 @@ fn matchKnownApp(segment: []const u8) ?[]const u8 {
     const cleaned = getFileNameWithoutExe(first_word);
     if (std.ascii.eqlIgnoreCase(cleaned, "opencode") or
         std.ascii.eqlIgnoreCase(cleaned, "open-code") or
+        std.ascii.eqlIgnoreCase(cleaned, "opencode-ai") or
         std.ascii.eqlIgnoreCase(cleaned, "oc"))
     {
         return "OpenCode";
     }
+    if (std.ascii.eqlIgnoreCase(cleaned, "claude-code")) return "claude";
+    if (std.ascii.eqlIgnoreCase(cleaned, "codex-cli")) return "codex";
+    if (std.ascii.eqlIgnoreCase(cleaned, "gemini-cli")) return "gemini";
+    if (std.ascii.eqlIgnoreCase(cleaned, "qwen-code")) return "qwen";
+    if (std.ascii.eqlIgnoreCase(cleaned, "aider-chat")) return "aider";
     for (known_apps) |app| {
         if (std.ascii.eqlIgnoreCase(cleaned, app)) return cleaned;
     }
@@ -693,4 +792,9 @@ test "terminal title formatter matches WPF shell, editor, agent, path, and runne
 
     try std.testing.expectEqualStrings("vitest", parseCommandLineApp("npx --yes vitest --run").?);
     try std.testing.expectEqualStrings("pi", parseCommandLineApp("node C:\\Users\\Ziut\\AppData\\Roaming\\npm\\node_modules\\@mariozechner\\pi-coding-agent\\dist\\cli.js").?);
+    try std.testing.expectEqualStrings("claude", parseCommandLineApp("C:\\WINDOWS\\system32\\cmd.exe /d /s /c \"\"C:\\Users\\Ziut\\AppData\\Roaming\\npm\\claude.cmd\" --help\"").?);
+    try std.testing.expectEqualStrings("gemini", parseCommandLineApp("\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\Ziut\\AppData\\Roaming\\npm\\node_modules\\@google\\gemini-cli\\dist\\index.js\"").?);
+    try std.testing.expectEqualStrings("pytest", parseCommandLineApp("python.exe -u -m pytest tests/").?);
+    try std.testing.expectEqualStrings("aider", parseCommandLineApp("python.exe \"C:\\Users\\Ziut\\AppData\\Roaming\\uv\\tools\\aider-chat\\Scripts\\aider-script.py\"").?);
+    try std.testing.expectEqualStrings("ruff", parseCommandLineApp("uv tool run ruff check .").?);
 }

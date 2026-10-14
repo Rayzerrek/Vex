@@ -230,11 +230,16 @@ const aliases = [_]AliasEntry{
     .{ .alias = "agy", .canonical = "googlegemini" },
     .{ .alias = "antigravity", .canonical = "googlegemini" },
     .{ .alias = "gemini", .canonical = "googlegemini" },
+    .{ .alias = "gemini-cli", .canonical = "googlegemini" },
     .{ .alias = "oc", .canonical = "opencode" },
     .{ .alias = "open-code", .canonical = "opencode" },
+    .{ .alias = "opencode-ai", .canonical = "opencode" },
     .{ .alias = "claude", .canonical = "claudecode" },
     .{ .alias = "claude-code", .canonical = "claudecode" },
     .{ .alias = "codex", .canonical = "codex" },
+    .{ .alias = "codex-cli", .canonical = "codex" },
+    .{ .alias = "qwen-code", .canonical = "qwen" },
+    .{ .alias = "aider-chat", .canonical = "aider" },
     .{ .alias = "nvim", .canonical = "neovim" },
     .{ .alias = "vim", .canonical = "vim" },
     .{ .alias = "gvim", .canonical = "vim" },
@@ -251,18 +256,34 @@ const aliases = [_]AliasEntry{
     .{ .alias = "http", .canonical = "httpie" },
     .{ .alias = "cargo", .canonical = "rust" },
     .{ .alias = "rustc", .canonical = "rust" },
+    .{ .alias = "rustup", .canonical = "rust" },
+    .{ .alias = "rustfmt", .canonical = "rust" },
+    .{ .alias = "cargo-clippy", .canonical = "rust" },
+    .{ .alias = "cargo-nextest", .canonical = "rust" },
     .{ .alias = "py", .canonical = "python" },
     .{ .alias = "python3", .canonical = "python" },
+    .{ .alias = "pytest", .canonical = "python" },
+    .{ .alias = "ruff", .canonical = "python" },
+    .{ .alias = "poetry", .canonical = "python" },
+    .{ .alias = "pip", .canonical = "python" },
+    .{ .alias = "pip3", .canonical = "python" },
+    .{ .alias = "ipython", .canonical = "python" },
+    .{ .alias = "uvicorn", .canonical = "python" },
     .{ .alias = "uvx", .canonical = "uv" },
+    .{ .alias = "pipx", .canonical = "python" },
     .{ .alias = "luajit", .canonical = "lua" },
     .{ .alias = "mosh", .canonical = "ssh" },
     .{ .alias = "btm", .canonical = "btop" },
+    .{ .alias = "bottom", .canonical = "btop" },
     .{ .alias = "top", .canonical = "btop" },
     .{ .alias = "glances", .canonical = "btop" },
     .{ .alias = "tig", .canonical = "lazygit" },
+    .{ .alias = "gitui", .canonical = "lazygit" },
+    .{ .alias = "lazydocker", .canonical = "docker" },
     .{ .alias = "gh", .canonical = "github" },
     .{ .alias = "kubectl", .canonical = "kubernetes" },
     .{ .alias = "k9s", .canonical = "kubernetes" },
+    .{ .alias = "helm", .canonical = "kubernetes" },
     .{ .alias = "psql", .canonical = "postgresql" },
     .{ .alias = "sqlite3", .canonical = "sqlite" },
     .{ .alias = "redis-cli", .canonical = "redis" },
@@ -271,6 +292,7 @@ const aliases = [_]AliasEntry{
     .{ .alias = "screen", .canonical = "tmux" },
     .{ .alias = "node", .canonical = "nodedotjs" },
     .{ .alias = "nodejs", .canonical = "nodedotjs" },
+    .{ .alias = "tsc", .canonical = "typescript" },
     .{ .alias = "tsx", .canonical = "typescript" },
     .{ .alias = "ts-node", .canonical = "typescript" },
     .{ .alias = "deno", .canonical = "typescript" },
@@ -291,12 +313,13 @@ const SpecialBadgeEntry = struct {
 const special_badges = [_]SpecialBadgeEntry{};
 
 const shell_icon_names = [_][]const u8{
-    "cmd",  "wsl",       "nu",  "nushell", "pwsh", "powershell", "bash",    "sh",     "gnubash",
-    "fish", "fishshell", "zsh", "dash",    "ksh",  "ash",        "gitbash", "system",
+    "cmd",  "wsl",       "wslhost", "nu",   "nushell", "pwsh", "powershell", "bash", "sh", "gnubash",
+    "fish", "fishshell", "zsh",     "dash", "ksh",     "ash",  "gitbash",    "system",
 };
 
 const shim_hosts = [_][]const u8{
-    "node", "nodejs", "deno", "wsl", "bun", "bunx", "tsx", "ts-node", "npx", "pnpm", "pnpx", "yarn",
+    "node",    "nodejs", "deno",   "wsl", "wslhost", "bun",        "bunx", "tsx",  "ts-node", "npx", "pnpm", "pnpx", "yarn", "npm",
+    "python",  "python3", "py",    "uv",  "uvx",     "pipx",       "cmd",  "pwsh", "powershell", "bash", "sh",
 };
 
 const editor_hosts = [_][]const u8{
@@ -380,7 +403,11 @@ pub fn fromCommandLine(command_line: []const u8, shim_name: []const u8) ?AppIcon
 
     if (terminal_title.parseCommandLineApp(trimmed)) |app| {
         if (!std.ascii.eqlIgnoreCase(app, clean_shim)) {
-            if (resolveDirect(app)) |icon| return icon;
+            if (resolveDirect(app)) |icon| {
+                if (!icon.is_shell) return icon;
+            } else if (isShellIconName(clean_shim) and app.len > 0 and std.ascii.isAlphabetic(app[0])) {
+                return fromProcess(app);
+            }
         }
     }
 
@@ -400,7 +427,9 @@ pub fn fromCommandLine(command_line: []const u8, shim_name: []const u8) ?AppIcon
     while (token_iter.next()) |raw_seg| {
         const seg = stripExtension(raw_seg);
         if (seg.len == 0 or std.ascii.eqlIgnoreCase(seg, clean_shim) or isCommandLineNoise(seg)) continue;
-        if (resolveDirect(seg)) |icon| return icon;
+        if (resolveDirect(seg)) |icon| {
+            if (!icon.is_shell) return icon;
+        }
         if (seg.len >= 3 and std.ascii.eqlIgnoreCase(seg[0..3], "pi-")) return resolveDirect("pi");
     }
     return null;
@@ -525,6 +554,13 @@ fn isCommandLineNoise(segment: []const u8) bool {
     return false;
 }
 
+fn isShellIconName(clean: []const u8) bool {
+    for (shell_icon_names) |shell_name| {
+        if (std.ascii.eqlIgnoreCase(clean, shell_name)) return true;
+    }
+    return false;
+}
+
 fn cleanExecutableName(raw: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n\"'");
     if (trimmed.len == 0) return "";
@@ -597,6 +633,30 @@ test "app icon resolution handles shim command lines, OSC titles, and unknown pr
     );
     try std.testing.expectEqual(GlyphId.claudecode, claude_shim.glyph);
 
+    const gemini_shim = resolve(
+        "node.exe",
+        "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\Ziut\\AppData\\Roaming\\npm\\node_modules\\@google\\gemini-cli\\dist\\index.js\"",
+        null,
+        null,
+    );
+    try std.testing.expectEqual(GlyphId.googlegemini, gemini_shim.glyph);
+
+    const cmd_claude = resolve(
+        "cmd.exe",
+        "cmd.exe /d /s /c \"\"C:\\Users\\Ziut\\AppData\\Roaming\\npm\\claude.cmd\"\"",
+        null,
+        null,
+    );
+    try std.testing.expectEqual(GlyphId.claudecode, cmd_claude.glyph);
+
+    const python_pytest = resolve(
+        "python.exe",
+        "\"C:\\Python312\\python.exe\" -m pytest tests/",
+        null,
+        null,
+    );
+    try std.testing.expectEqual(GlyphId.python, python_pytest.glyph);
+
     const pi_shim = resolve(
         "node",
         "node C:\\Users\\Ziut\\AppData\\Roaming\\npm\\node_modules\\@mariozechner\\pi-coding-agent\\dist\\cli.js",
@@ -620,3 +680,4 @@ test "app icon resolution handles shim command lines, OSC titles, and unknown pr
     try std.testing.expectEqual(Kind.shell, idle_shell.kind);
     try std.testing.expect(idle_shell.is_shell);
 }
+

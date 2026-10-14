@@ -271,7 +271,10 @@ static bool matchStem(const wchar_t* stem, const wchar_t* const* list, size_t co
 }
 
 static bool isIgnoredHelper(const wchar_t* stem) {
-    static const wchar_t* const list[] = { L"conhost", L"openconsole", L"wslhost", L"wslrelay", L"wslservice" };
+    static const wchar_t* const list[] = {
+        L"conhost", L"openconsole", L"wslhost", L"wslrelay", L"wslservice",
+        L"git-remote-https", L"git-credential-manager", L"ssh-agent", L"gpg-agent"
+    };
     return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
 }
 
@@ -284,14 +287,27 @@ static bool isShellStem(const wchar_t* stem) {
 }
 
 static bool isTerminalHostStem(const wchar_t* stem) {
-    static const wchar_t* const list[] = { L"nvim", L"vim", L"vi", L"hx", L"helix", L"nano", L"micro", L"emacs", L"kak" };
+    static const wchar_t* const list[] = {
+        L"nvim", L"vim", L"vi", L"hx", L"helix", L"nano", L"micro", L"emacs", L"kak",
+        L"lazygit", L"gitui", L"tig", L"btop", L"btm", L"htop", L"top", L"yazi", L"ranger", L"lf",
+        L"claude", L"codex", L"opencode", L"aider", L"zig", L"cargo", L"rustc", L"go", L"dotnet",
+        L"rg", L"fd", L"fzf"
+    };
+    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
+}
+
+static bool isRuntimeHostStem(const wchar_t* stem) {
+    static const wchar_t* const list[] = {
+        L"node", L"nodejs", L"bun", L"deno", L"python", L"python3", L"py"
+    };
     return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
 }
 
 static bool needsCommandLineRead(const wchar_t* stem) {
     static const wchar_t* const list[] = {
-        L"node", L"bun", L"deno", L"python", L"python3", L"py", L"ruby", L"perl",
-        L"java", L"javaw", L"dotnet", L"wsl", L"npx", L"pnpm", L"yarn", L"uv", L"uvx", L"pipx"
+        L"node", L"nodejs", L"bun", L"deno", L"python", L"python3", L"py", L"ruby", L"perl",
+        L"java", L"javaw", L"dotnet", L"wsl", L"npx", L"pnpm", L"yarn", L"npm",
+        L"uv", L"uvx", L"pipx", L"cmd", L"pwsh", L"powershell", L"bash", L"sh"
     };
     return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
 }
@@ -323,6 +339,71 @@ static size_t readProcessCommandLineUtf8(HANDLE process, uint8_t* out, size_t ca
     return utf8Len > 0 ? static_cast<size_t>(utf8Len) : 0;
 }
 
+static bool containsAsciiIgnoreCase(const uint8_t* hay, size_t hayLen, const char* needle) {
+    size_t nLen = strlen(needle);
+    if (!nLen || hayLen < nLen) return false;
+    for (size_t i = 0; i + nLen <= hayLen; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < nLen; ++j) {
+            uint8_t c = hay[i + j];
+            if (c >= 'A' && c <= 'Z') c = static_cast<uint8_t>(c + 32);
+            if (c != static_cast<uint8_t>(needle[j])) { match = false; break; }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
+static bool isPackageRunnerCommandLine(DWORD pid) {
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (!proc) return false;
+    uint8_t cmd[512];
+    size_t len = readProcessCommandLineUtf8(proc, cmd, sizeof(cmd));
+    CloseHandle(proc);
+    if (!len) return false;
+    return containsAsciiIgnoreCase(cmd, len, "npm-cli.js") ||
+           containsAsciiIgnoreCase(cmd, len, "npx-cli.js") ||
+           containsAsciiIgnoreCase(cmd, len, "\\npm\\bin\\") ||
+           containsAsciiIgnoreCase(cmd, len, "pnpm.cjs") ||
+           containsAsciiIgnoreCase(cmd, len, "\\pnpm\\") ||
+           containsAsciiIgnoreCase(cmd, len, "\\yarn\\") ||
+           containsAsciiIgnoreCase(cmd, len, "corepack") ||
+           containsAsciiIgnoreCase(cmd, len, "bun run ") ||
+           containsAsciiIgnoreCase(cmd, len, "bunx ");
+}
+
+struct SnapshotNode {
+    DWORD pid;
+    DWORD ppid;
+    wchar_t exe[64];
+};
+static SnapshotNode snapshotNodes[4096];
+static size_t snapshotCount = 0;
+static ULONGLONG snapshotTickMs = 0;
+
+static void refreshProcessSnapshot() {
+    ULONGLONG now = GetTickCount64();
+    if (snapshotCount > 0 && now - snapshotTickMs < 50) return;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    size_t count = 0;
+    PROCESSENTRY32W pe = {};
+    pe.dwSize = sizeof(pe);
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (count < 4096) {
+                snapshotNodes[count].pid = pe.th32ProcessID;
+                snapshotNodes[count].ppid = pe.th32ParentProcessID;
+                wcsncpy_s(snapshotNodes[count].exe, pe.szExeFile, _TRUNCATE);
+                ++count;
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+    snapshotCount = count;
+    snapshotTickMs = now;
+}
+
 extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length) {
     if (!session || !exe_bytes || !exe_length || !cmd_bytes || !cmd_length || !exe_capacity || !cmd_capacity) return ERROR_INVALID_PARAMETER;
     *exe_length = 0;
@@ -330,57 +411,73 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
     if (!session->process || InterlockedCompareExchange(&session->stopping, 0, 0)) return 0;
     DWORD rootPid = GetProcessId(session->process);
     if (!rootPid) return 0;
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return 0;
-    struct ProcNode {
-        DWORD pid;
-        DWORD ppid;
-        wchar_t exe[64];
-        wchar_t stem[64];
-    };
-    ProcNode nodes[512];
-    size_t nodeCount = 0;
-    PROCESSENTRY32W pe = {};
-    pe.dwSize = sizeof(pe);
-    if (Process32FirstW(snap, &pe)) {
-        do {
-            if (nodeCount < 512) {
-                nodes[nodeCount].pid = pe.th32ProcessID;
-                nodes[nodeCount].ppid = pe.th32ParentProcessID;
-                wcsncpy_s(nodes[nodeCount].exe, pe.szExeFile, _TRUNCATE);
-                extractLowerStem(nodes[nodeCount].exe, nodes[nodeCount].stem);
-                ++nodeCount;
-            }
-        } while (Process32NextW(snap, &pe));
-    }
-    CloseHandle(snap);
 
-    DWORD currentPid = rootPid;
+    refreshProcessSnapshot();
+
+    struct QueueEntry {
+        DWORD pid;
+        uint8_t depth;
+    };
+    QueueEntry queue[64];
+    size_t qHead = 0;
+    size_t qTail = 0;
+    queue[qTail++] = { rootPid, 0 };
+
     DWORD chosenPid = 0;
     const wchar_t* chosenExe = nullptr;
-    const wchar_t* chosenStem = nullptr;
-    for (int depth = 0; depth < 16; ++depth) {
-        DWORD nextPid = 0;
-        const wchar_t* nextExe = nullptr;
-        const wchar_t* nextStem = nullptr;
-        for (size_t i = 0; i < nodeCount; ++i) {
-            if (nodes[i].ppid != currentPid || nodes[i].pid == currentPid) continue;
-            if (isIgnoredHelper(nodes[i].stem)) continue;
-            nextPid = nodes[i].pid;
-            nextExe = nodes[i].exe;
-            nextStem = nodes[i].stem;
+    wchar_t chosenStem[64] = {};
+
+    DWORD fallbackShellPid = 0;
+    const wchar_t* fallbackShellExe = nullptr;
+    wchar_t fallbackShellStem[64] = {};
+
+    while (qHead < qTail) {
+        QueueEntry curr = queue[qHead++];
+        if (curr.depth >= 12) continue;
+
+        for (size_t i = 0; i < snapshotCount; ++i) {
+            DWORD childPid = snapshotNodes[i].pid;
+            if (snapshotNodes[i].ppid != curr.pid || childPid == curr.pid || childPid == rootPid) continue;
+            bool alreadyQueued = false;
+            for (size_t q = 0; q < qTail; ++q) {
+                if (queue[q].pid == childPid) { alreadyQueued = true; break; }
+            }
+            if (alreadyQueued) continue;
+
+            wchar_t stem[64];
+            extractLowerStem(snapshotNodes[i].exe, stem);
+            if (isIgnoredHelper(stem)) continue;
+
+            bool isShell = isShellStem(stem) && wcscmp(stem, L"wsl") != 0;
+            if (!isShell) {
+                chosenPid = childPid;
+                chosenExe = snapshotNodes[i].exe;
+                wcscpy_s(chosenStem, stem);
+            } else if (fallbackShellPid == 0) {
+                fallbackShellPid = childPid;
+                fallbackShellExe = snapshotNodes[i].exe;
+                wcscpy_s(fallbackShellStem, stem);
+            }
+
+            bool expandChildren = true;
+            if (isTerminalHostStem(stem)) {
+                expandChildren = false;
+            } else if (isRuntimeHostStem(stem)) {
+                expandChildren = isPackageRunnerCommandLine(childPid);
+            }
+            if (expandChildren && qTail < 64) {
+                queue[qTail++] = { childPid, static_cast<uint8_t>(curr.depth + 1) };
+            }
         }
-        if (!nextPid) break;
-        if (!isShellStem(nextStem) || wcscmp(nextStem, L"wsl") == 0) {
-            chosenPid = nextPid;
-            chosenExe = nextExe;
-            chosenStem = nextStem;
-        }
-        if (isTerminalHostStem(nextStem)) break;
-        currentPid = nextPid;
     }
 
-    if (!chosenPid || !chosenExe || !chosenStem) {
+    if (!chosenPid && fallbackShellPid) {
+        chosenPid = fallbackShellPid;
+        chosenExe = fallbackShellExe;
+        wcscpy_s(chosenStem, fallbackShellStem);
+    }
+
+    if (!chosenPid || !chosenExe || !chosenStem[0]) {
         session->fgPid = 0;
         session->fgCreateTime = 0;
         session->fgExeLen = 0;
@@ -399,8 +496,9 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
         }
     }
 
-    // Fast path: if PID and creation timestamp match cached state, skip PEB/memory reads entirely.
-    if (chosenPid == session->fgPid && createTime != 0 && createTime == session->fgCreateTime) {
+    // Fast path: if PID and creation timestamp match cached state (and PEB command line succeeded when needed), skip memory reads.
+    if (chosenPid == session->fgPid && createTime != 0 && createTime == session->fgCreateTime &&
+        (!needsCommandLineRead(chosenStem) || session->fgCmdLen > 0)) {
         if (proc) CloseHandle(proc);
         size_t eLen = session->fgExeLen < exe_capacity ? session->fgExeLen : exe_capacity;
         size_t cLen = session->fgCmdLen < cmd_capacity ? session->fgCmdLen : cmd_capacity;
@@ -428,4 +526,5 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
     *cmd_length = cLen;
     return 0;
 }
+
 
