@@ -929,6 +929,27 @@ pub const Terminal = struct {
         }
         return .{ .foreground = packedRgb(foreground), .background = packedRgb(background), .bold = style.bold, .italic = style.italic, .underline = style.underline != 0, .strikethrough = style.strikethrough, .invisible = style.invisible };
     }
+    pub fn applyPalette(self: *Terminal, foreground_rgb: u32, background_rgb: u32, cursor_rgb: u32, ansi: *const [16]u32) !void {
+        const foreground = colorRgb(foreground_rgb);
+        const background = colorRgb(background_rgb);
+        const cursor = colorRgb(cursor_rgb);
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &cursor));
+        var palette: [256]c.GhosttyColorRgb = undefined;
+        for (ansi.*, 0..) |color, index| palette[index] = colorRgb(color);
+        const levels = [_]u8{ 0, 95, 135, 175, 215, 255 };
+        for (16..232) |index| {
+            const offset = index - 16;
+            palette[index] = .{ .r = levels[offset / 36], .g = levels[(offset / 6) % 6], .b = levels[offset % 6] };
+        }
+        for (232..256) |index| {
+            const level: u8 = @intCast(8 + (index - 232) * 10);
+            palette[index] = .{ .r = level, .g = level, .b = level };
+        }
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette));
+        self.frame_valid = false;
+    }
     fn applyDefaultPalette(self: *Terminal) !void {
         const behaviors: c.GhosttySelectionGestureBehaviors = .{
             .single_click = c.GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL,
@@ -951,25 +972,8 @@ pub const Terminal = struct {
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_BELL, @ptrCast(bell_callback)));
         const title_callback: c.GhosttyTerminalTitleChangedFn = titleChanged;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, @ptrCast(title_callback)));
-        const foreground = colorRgb(0xe4e4e7);
-        const background = colorRgb(0x282c34);
-        const cursor = colorRgb(0xe4e4e7);
-        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground));
-        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background));
-        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &cursor));
-        var palette: [256]c.GhosttyColorRgb = undefined;
         const ansi = [_]u32{ 0x282c34, 0xff5a5a, 0x5af05a, 0xf0d25a, 0x5a5aff, 0xf05af0, 0x5af0f0, 0xe4e4e7, 0x3d4354, 0xff8c8c, 0x8cff8c, 0xffe68c, 0x8c8cff, 0xff8cff, 0x8cffff, 0xffffff };
-        for (ansi, 0..) |color, index| palette[index] = colorRgb(color);
-        const levels = [_]u8{ 0, 95, 135, 175, 215, 255 };
-        for (16..232) |index| {
-            const offset = index - 16;
-            palette[index] = .{ .r = levels[offset / 36], .g = levels[(offset / 6) % 6], .b = levels[offset % 6] };
-        }
-        for (232..256) |index| {
-            const level: u8 = @intCast(8 + (index - 232) * 10);
-            palette[index] = .{ .r = level, .g = level, .b = level };
-        }
-        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette));
+        try self.applyPalette(0xe4e4e7, 0x282c34, 0xe4e4e7, &ansi);
         const track_last_cell = true;
         self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL, &track_last_cell);
         self.updateMouseEncoderSize(80, 24, self.cell_width_px, self.cell_height_px);

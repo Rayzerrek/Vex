@@ -102,13 +102,37 @@ try {
     Assert-NativeProbe $window 60 $lastId 'compact last-to-first drop'
     Assert-NativeProbe $window 14 $lastPid 'compact drag preserves PTY'
     Assert-NativeProbe $window 13 8 'compact drag preserves session count'
+    Assert-NativeProbe $window 51 0 'default theme is Vex Obsidian'
+    Assert-NativeProbe $window 52 1 'default theme is dark'
+    Invoke-NativeAction $window 10 99
+    Assert-NativeProbe $window 51 6 'toggle switches to default light theme Vex Alabaster'
+    Assert-NativeProbe $window 52 0 'light theme sets is_dark to 0'
+    Invoke-NativeAction $window 10 9
+    Assert-NativeProbe $window 51 8 'applyTheme selects Tokyo Night Day'
+    Assert-NativeProbe $window 52 0 'Tokyo Night Day is light'
+    Invoke-NativeAction $window 10 99
+    Assert-NativeProbe $window 51 0 'toggle returns to last dark theme'
+    Assert-NativeProbe $window 52 1 'dark mode restored'
+    Invoke-NativeAction $window 10 99
+    Assert-NativeProbe $window 51 8 'toggle remembers last selected light theme'
+    Invoke-NativeAction $window 10 2
+    Assert-NativeProbe $window 51 1 'applyTheme selects Tokyo Night Storm'
+    Assert-NativeProbe $window 52 1 'Tokyo Night Storm is dark'
+    Invoke-NativeAction $window 9 0
+    Assert-NativeProbe $window 53 1 'command palette overlay opens'
+    Invoke-NativeAction $window 10 0
+    Assert-NativeProbe $window 53 2 'theme studio overlay opens'
+    Invoke-NativeAction $window 11 0
+    Assert-NativeProbe $window 53 3 'tab peek overlay opens'
+    Invoke-NativeAction $window 9 1
+    Assert-NativeProbe $window 53 0 'overlay closes cleanly'
     Send-NativeText $window ('@set VEX_FLOOD=VEX_NATIVE_FLOOD_' + "`r" + '@for /l %i in (1,1,1000000) do @echo %VEX_FLOOD%OK' + "`r")
     Assert-NativeProbe $window 1 1 'flooding output reaches the real viewport before captured shutdown'
     Assert-NativeTabGesture (Invoke-NativeTabGesture $window 0 3000 20 7) $lastId
     if (!$process.WaitForExit(5000) -or $process.ExitCode -ne 0) { throw 'Vex native tabs: flooding captured shutdown failed.' }
     $process = $null
     New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
-    @{ result = 'PASS'; checks = 'atomic Win32 replay, threshold, selection, both move directions, stable tab/pane/PTY/viewport/status owners, outside drop, cancellation/DPI, source close, eight tabs and flooding captured shutdown' } | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $OutputDirectory 'tabs.json')
+    @{ result = 'PASS'; checks = 'atomic Win32 replay, threshold, selection, both move directions, stable tab/pane/PTY/viewport/status owners, outside drop, cancellation/DPI, source close, eight tabs, dark/light themes, overlays and flooding captured shutdown' } | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $OutputDirectory 'tabs.json')
     Write-Host 'Vex native tabs: PASS'
 } finally {
     if ($process -and !$process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null }

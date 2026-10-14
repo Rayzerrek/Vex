@@ -30,6 +30,7 @@ test {
     _ = @import("workspace/divider_drag.zig");
     _ = @import("workspace/tab_strip.zig");
     _ = @import("workspace/tab_drag.zig");
+    _ = @import("workspace/terminal_theme.zig");
     _ = @import("workspace/workspace_model.zig");
     _ = platform;
     _ = @import("shell/shell_launch.zig");

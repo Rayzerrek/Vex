@@ -14,6 +14,7 @@ const TabDrag = @import("../workspace/tab_drag.zig").TabDrag;
 const tab_strip = @import("../workspace/tab_strip.zig");
 const app_icon = @import("../terminal/app_icon.zig");
 const url_detector = @import("../terminal/url_detector.zig");
+const terminal_theme = @import("../workspace/terminal_theme.zig");
 
 const HoveredLink = struct {
     pane_id: panes.PaneId,
@@ -57,6 +58,66 @@ const TabRename = struct {
     select_all: bool = true,
 };
 
+const ThemePickerOverlay = struct {
+    dark_mode: bool,
+    selected_slot: usize,
+    hovered_slot: ?usize = null,
+    initial_theme_index: usize,
+};
+
+const CommandPaletteOverlay = struct {
+    query_buf: [64]u8 = undefined,
+    query_len: u8 = 0,
+    selected_index: usize = 0,
+    hovered_index: ?usize = null,
+};
+
+const TabPeekOverlay = struct {
+    selected_index: usize = 0,
+    hovered_index: ?usize = null,
+};
+
+const OverlayState = union(enum) {
+    none,
+    theme_picker: ThemePickerOverlay,
+    command_palette: CommandPaletteOverlay,
+    tab_peek: TabPeekOverlay,
+};
+
+const CommandId = enum {
+    open_theme_picker,
+    toggle_dark_light,
+    open_tab_peek,
+    new_tab,
+    split_right,
+    split_down,
+    toggle_focus_mode,
+    rename_active_tab,
+    next_tab,
+    previous_tab,
+    close_active,
+};
+
+const CommandDef = struct {
+    id: CommandId,
+    title: []const u8,
+    shortcut: []const u8,
+};
+
+const command_defs = [_]CommandDef{
+    .{ .id = .open_theme_picker, .title = "Color Theme: Open Theme Studio...", .shortcut = "Ctrl+Shift+M" },
+    .{ .id = .toggle_dark_light, .title = "Color Theme: Toggle Dark / Light Mode", .shortcut = "Tab in Studio" },
+    .{ .id = .open_tab_peek, .title = "Tab Overview: Peek All Tabs", .shortcut = "Ctrl+Shift+Space" },
+    .{ .id = .new_tab, .title = "Workspace: New Tab", .shortcut = "Ctrl+Shift+T" },
+    .{ .id = .split_right, .title = "Pane: Split Right", .shortcut = "Ctrl+Shift+R" },
+    .{ .id = .split_down, .title = "Pane: Split Down", .shortcut = "Ctrl+Shift+D" },
+    .{ .id = .toggle_focus_mode, .title = "Pane: Toggle Focus / Zoom Mode", .shortcut = "" },
+    .{ .id = .rename_active_tab, .title = "Tab: Rename Active Tab", .shortcut = "Double-Click" },
+    .{ .id = .next_tab, .title = "Workspace: Next Tab", .shortcut = "Ctrl+Tab" },
+    .{ .id = .previous_tab, .title = "Workspace: Previous Tab", .shortcut = "Ctrl+Shift+Tab" },
+    .{ .id = .close_active, .title = "Workspace: Close Active Pane or Tab", .shortcut = "Ctrl+Shift+W" },
+};
+
 const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, pane: PaneDrag, selection: SelectionDrag, mouse: MouseDrag, scrollbar: ScrollbarDrag };
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
@@ -72,6 +133,10 @@ const WorkspaceApplication = struct {
     metrics: ?platform.WindowMetrics = null,
     pointer_drag: PointerDrag = .none,
     editing_tab: ?TabRename = null,
+    overlay: OverlayState = .none,
+    theme_index: usize = terminal_theme.default_dark_index,
+    last_dark_theme: usize = terminal_theme.default_dark_index,
+    last_light_theme: usize = terminal_theme.default_light_index,
     hovered_pane: ?panes.PaneId = null,
     hovered_header_action: ?panes.PaneHeaderAction = null,
     hovered_scrollbar: ?panes.PaneId = null,
@@ -109,6 +174,7 @@ const WorkspaceApplication = struct {
         var branch_buf: [128]u8 = undefined;
         const branch = readGitBranch(parsed.bytes, &branch_buf);
         try platform.setProjectInfo(projectDisplayName(parsed.bytes), branch);
+        platform.setChromePalette(terminal_theme.themes[terminal_theme.default_dark_index].chromePalette());
         return .{ .allocator = allocator, .api = api, .project_directory = parsed, .machine_name = machine_name, .launch = launch };
     }
     fn deinit(self: *WorkspaceApplication) void {
@@ -125,6 +191,35 @@ const WorkspaceApplication = struct {
         if (self.health == .failed) return;
         self.health = .{ .failed = err };
         platform.closeWindow();
+    }
+    fn currentTheme(self: *const WorkspaceApplication) terminal_theme.TerminalTheme {
+        return terminal_theme.themes[@min(self.theme_index, terminal_theme.themes.len - 1)];
+    }
+    fn applyTheme(self: *WorkspaceApplication, index: usize) !void {
+        const clamped = @min(index, terminal_theme.themes.len - 1);
+        self.theme_index = clamped;
+        const t = terminal_theme.themes[clamped];
+        if (t.is_dark) {
+            self.last_dark_theme = clamped;
+        } else {
+            self.last_light_theme = clamped;
+        }
+        platform.setChromePalette(t.chromePalette());
+        for (self.sessions.items) |session| {
+            try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
+        }
+        platform.invalidateWindow();
+    }
+    fn toggleDarkLightTheme(self: *WorkspaceApplication) !void {
+        const current = self.currentTheme();
+        const target = if (current.is_dark) self.last_light_theme else self.last_dark_theme;
+        try self.applyTheme(target);
+    }
+    fn refreshProjectChrome(self: *WorkspaceApplication) void {
+        const dir_bytes = if (self.activeSession()) |session| session.directory.current().bytes else self.project_directory.bytes;
+        var branch_buf: [128]u8 = undefined;
+        const branch = readGitBranch(dir_bytes, &branch_buf);
+        platform.setProjectInfo(projectDisplayName(dir_bytes), branch) catch {};
     }
     fn findSession(self: *WorkspaceApplication, id: panes.PaneId) ?*TerminalSession {
         for (self.sessions.items) |session| if (session.id == id) return session;
@@ -206,6 +301,9 @@ const WorkspaceApplication = struct {
         const token = self.next_token;
         self.next_token = try std.math.add(u32, token, 1);
         const session = try TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, &self.launch);
+        errdefer session.destroy(self.allocator);
+        const t = self.currentTheme();
+        try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
         self.sessions.appendAssumeCapacity(session);
         return session;
     }
@@ -250,6 +348,7 @@ const WorkspaceApplication = struct {
             _ = session.refreshAppIcon(true);
             session.last_icon_probe_ms = now;
         }
+        self.refreshProjectChrome();
         platform.invalidateWindow();
     }
     pub fn onResize(self: *WorkspaceApplication, metrics: platform.WindowMetrics) void {
@@ -286,6 +385,9 @@ const WorkspaceApplication = struct {
             if (chrome_changed) _ = session.refreshAppIcon(false);
             session.sync_defer_since_ms = null;
             return chrome_changed;
+        }
+        if (chrome_changed and model.activeTab().active_pane == id) {
+            self.refreshProjectChrome();
         }
         const now_probe = std.time.milliTimestamp();
         if (chrome_changed or now_probe - session.last_icon_probe_ms >= 200) {
@@ -332,6 +434,7 @@ const WorkspaceApplication = struct {
     }
     fn paintWorkspace(self: *WorkspaceApplication) !void {
         const model = if (self.model) |*model| model else return;
+        const active_theme = self.currentTheme();
         for (model.tabs.items, 0..) |tab, index| {
             const presentation = try self.tabProgramStatus(tab.tree.root);
             const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
@@ -355,15 +458,15 @@ const WorkspaceApplication = struct {
         for (self.placements.items) |placement| {
             if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
-            const focused = active_tab.active_pane == placement.id;
-            const hovered = self.hovered_pane == placement.id;
+            const focused = active_tab.active_pane == placement.id and self.overlay == .none;
+            const hovered = self.hovered_pane == placement.id and self.overlay == .none;
             const hovered_action = if (hovered) self.hovered_header_action else null;
             const frame = try session.terminal.readFrame();
-            const pane_link: ?platform.HoveredLinkSpan = if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null;
+            const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
             {
-                platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.displayTitle(), session.icon, session.terminal.program_status.programStatus());
+                platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.displayTitle(), session.icon, session.terminal.program_status.programStatus());
                 defer platform.endPane();
-                try platform.drawTerminalFrame(frame, focused, pane_link);
+                try platform.drawTerminalFrame(frame, focused, pane_link, active_theme);
             }
             if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
                 const sb_active = self.hovered_scrollbar == placement.id or (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id);
@@ -376,6 +479,120 @@ const WorkspaceApplication = struct {
                     platform.drawSplitPreview(preview);
                 }
             }
+        }
+        try self.drawActiveOverlay();
+    }
+    fn drawActiveOverlay(self: *WorkspaceApplication) !void {
+        const model = if (self.model) |*model| model else return;
+        switch (self.overlay) {
+            .none => {},
+            .theme_picker => |tp| {
+                var cards: [6]platform.c.VexThemeCard = undefined;
+                var count: usize = 0;
+                for (terminal_theme.themes, 0..) |t, idx| {
+                    if (t.is_dark != tp.dark_mode) continue;
+                    if (count >= cards.len) break;
+                    cards[count] = .{
+                        .name = t.name.ptr,
+                        .name_length = t.name.len,
+                        .subtitle = t.subtitle.ptr,
+                        .subtitle_length = t.subtitle.len,
+                        .bg_rgb = t.background,
+                        .fg_rgb = t.foreground,
+                        .accent_rgb = t.accent,
+                        .swatches = .{ t.ansi[1], t.ansi[2], t.ansi[3], t.ansi[4], t.ansi[5] },
+                        .is_dark = t.is_dark,
+                        .active = idx == tp.initial_theme_index,
+                        .selected = count == tp.selected_slot,
+                        .hovered = if (tp.hovered_slot) |hs| hs == count else false,
+                    };
+                    count += 1;
+                }
+                platform.drawThemePicker(tp.dark_mode, cards[0..count]);
+            },
+            .command_palette => |cp| {
+                var matched: [command_defs.len]CommandDef = undefined;
+                const count = filterCommands(cp.query_buf[0..cp.query_len], &matched);
+                var items: [command_defs.len]platform.c.VexCommandItem = undefined;
+                const visible = @min(count, 9);
+                for (matched[0..visible], 0..) |cmd, idx| {
+                    items[idx] = .{
+                        .title = cmd.title.ptr,
+                        .title_length = cmd.title.len,
+                        .shortcut = if (cmd.shortcut.len == 0) null else cmd.shortcut.ptr,
+                        .shortcut_length = cmd.shortcut.len,
+                        .selected = idx == cp.selected_index,
+                        .hovered = if (cp.hovered_index) |hi| hi == idx else false,
+                    };
+                }
+                platform.drawCommandPalette(cp.query_buf[0..cp.query_len], items[0..visible]);
+            },
+            .tab_peek => |tpk| {
+                var cards: [9]platform.c.VexTabPeekCard = undefined;
+                const visible = @min(model.tabs.items.len, cards.len);
+                for (model.tabs.items[0..visible], 0..) |tab, idx| {
+                    const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
+                    const presentation = try self.tabProgramStatus(tab.tree.root);
+                    const title = tab.customTitle() orelse active_session.displayTitle();
+                    cards[idx] = .{
+                        .title = if (title.len == 0) null else title.ptr,
+                        .title_length = title.len,
+                        .index = @intCast(idx),
+                        .pane_count = @intCast(tab.tree.paneCount()),
+                        .icon = platform.nativeAppIcon(active_session.icon),
+                        .status = platform.nativeStatusBadge(presentation.summary),
+                        .active = idx == model.selected_tab,
+                        .selected = idx == tpk.selected_index,
+                        .hovered = if (tpk.hovered_index) |hi| hi == idx else false,
+                    };
+                }
+                platform.drawTabPeek(cards[0..visible]);
+            },
+        }
+    }
+    fn openThemePicker(self: *WorkspaceApplication) void {
+        self.commitTabRename();
+        const slot_info = themeSlotForIndex(self.theme_index);
+        self.overlay = .{ .theme_picker = .{
+            .dark_mode = slot_info.dark_mode,
+            .selected_slot = slot_info.slot,
+            .initial_theme_index = self.theme_index,
+        } };
+        platform.invalidateWindow();
+    }
+    fn openCommandPalette(self: *WorkspaceApplication) void {
+        self.commitTabRename();
+        self.overlay = .{ .command_palette = .{} };
+        platform.invalidateWindow();
+    }
+    fn openTabPeek(self: *WorkspaceApplication) void {
+        self.commitTabRename();
+        const model = if (self.model) |*model| model else return;
+        self.overlay = .{ .tab_peek = .{ .selected_index = model.selected_tab } };
+        platform.invalidateWindow();
+    }
+    fn executeCommand(self: *WorkspaceApplication, id: CommandId) !void {
+        self.overlay = .none;
+        switch (id) {
+            .open_theme_picker => self.openThemePicker(),
+            .toggle_dark_light => try self.toggleDarkLightTheme(),
+            .open_tab_peek => self.openTabPeek(),
+            .new_tab => try self.applyAction(.new_tab, 0),
+            .split_right => try self.applyAction(.split_right, 0),
+            .split_down => try self.applyAction(.split_down, 0),
+            .toggle_focus_mode => {
+                if (self.model) |*model| {
+                    if (model.toggleFocusMode()) try self.updateLayout() else platform.invalidateWindow();
+                }
+            },
+            .rename_active_tab => {
+                if (self.model) |*model| {
+                    self.beginTabRename(model.selected_tab);
+                }
+            },
+            .next_tab => try self.applyAction(.next_tab, 0),
+            .previous_tab => try self.applyAction(.previous_tab, 0),
+            .close_active => try self.applyAction(.close_active, 0),
         }
     }
     fn collectTabIcons(self: *WorkspaceApplication, node: anytype, out: *[8]app_icon.AppIcon, count: *usize) anyerror!void {
@@ -414,6 +631,12 @@ const WorkspaceApplication = struct {
     pub fn onKey(self: *WorkspaceApplication, key: u32, modifiers: u32) bool {
         if (self.health == .failed) return true;
         if (isModifierKey(key)) return false;
+        if (self.overlay != .none) {
+            return self.handleOverlayKey(key, modifiers) catch |err| {
+                self.fail(err);
+                return true;
+            };
+        }
         if (self.editing_tab) |*edit| {
             if (platform.workspaceShortcut(key, modifiers)) |action| {
                 self.commitTabRename();
@@ -456,6 +679,126 @@ const WorkspaceApplication = struct {
             self.fail(err);
             return true;
         };
+    }
+    fn handleOverlayKey(self: *WorkspaceApplication, key: u32, modifiers: u32) !bool {
+        if (platform.workspaceShortcut(key, modifiers)) |action| {
+            if (action == .theme_picker or action == .command_palette or action == .tab_peek) {
+                if (self.overlay == .theme_picker) {
+                    try self.applyTheme(self.overlay.theme_picker.initial_theme_index);
+                }
+                const same = (action == .theme_picker and self.overlay == .theme_picker) or
+                    (action == .command_palette and self.overlay == .command_palette) or
+                    (action == .tab_peek and self.overlay == .tab_peek);
+                self.overlay = .none;
+                if (!same) try self.applyAction(action, 0) else platform.invalidateWindow();
+                return true;
+            }
+        }
+        switch (self.overlay) {
+            .none => return false,
+            .theme_picker => |*tp| {
+                if (key == 0x1B) {
+                    const initial = tp.initial_theme_index;
+                    self.overlay = .none;
+                    try self.applyTheme(initial);
+                    return true;
+                }
+                if (key == 0x0D) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if (key == 0x09) {
+                    tp.dark_mode = !tp.dark_mode;
+                    const fallback = if (tp.dark_mode) self.last_dark_theme else self.last_light_theme;
+                    tp.selected_slot = themeSlotForIndex(fallback).slot;
+                    try self.applyTheme(themeIndexForModeSlot(tp.dark_mode, tp.selected_slot));
+                    return true;
+                }
+                const prev_slot = tp.selected_slot;
+                switch (key) {
+                    0x25 => tp.selected_slot = if (tp.selected_slot > 0) tp.selected_slot - 1 else 5,
+                    0x27 => tp.selected_slot = (tp.selected_slot + 1) % 6,
+                    0x26 => tp.selected_slot = if (tp.selected_slot >= 2) tp.selected_slot - 2 else tp.selected_slot + 4,
+                    0x28 => tp.selected_slot = (tp.selected_slot + 2) % 6,
+                    else => {},
+                }
+                if (tp.selected_slot != prev_slot) {
+                    try self.applyTheme(themeIndexForModeSlot(tp.dark_mode, tp.selected_slot));
+                }
+                return true;
+            },
+            .command_palette => |*cp| {
+                if (key == 0x1B) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                var matched: [command_defs.len]CommandDef = undefined;
+                const count = @min(filterCommands(cp.query_buf[0..cp.query_len], &matched), 9);
+                if (key == 0x0D) {
+                    if (count > 0 and cp.selected_index < count) {
+                        try self.executeCommand(matched[cp.selected_index].id);
+                    } else {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                    return true;
+                }
+                if (key == 0x26 and count > 0) {
+                    cp.selected_index = if (cp.selected_index > 0) cp.selected_index - 1 else count - 1;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if (key == 0x28 and count > 0) {
+                    cp.selected_index = (cp.selected_index + 1) % count;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if (key == 0x08 or key == 0x2E) {
+                    if ((modifiers & 2) != 0) {
+                        cp.query_len = 0;
+                    } else if (cp.query_len > 0) {
+                        var idx: u8 = cp.query_len - 1;
+                        while (idx > 0 and (cp.query_buf[idx] & 0xC0) == 0x80) : (idx -= 1) {}
+                        cp.query_len = idx;
+                    }
+                    cp.selected_index = 0;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if ((modifiers & 6) == 0 and key >= 0x20 and !(key >= 0x21 and key <= 0x28) and !(key >= 0x70 and key <= 0x87)) {
+                    return false;
+                }
+                return true;
+            },
+            .tab_peek => |*tpk| {
+                if (key == 0x1B) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                const model = if (self.model) |*model| model else return true;
+                const visible = @min(model.tabs.items.len, 9);
+                if (visible == 0) return true;
+                if (key == 0x0D) {
+                    const target_tab = @min(tpk.selected_index, visible - 1);
+                    self.overlay = .none;
+                    try self.applyAction(.select_tab, @intCast(target_tab));
+                    return true;
+                }
+                const cols: usize = if (visible <= 2) visible else 3;
+                switch (key) {
+                    0x25 => tpk.selected_index = if (tpk.selected_index > 0) tpk.selected_index - 1 else visible - 1,
+                    0x27 => tpk.selected_index = (tpk.selected_index + 1) % visible,
+                    0x26 => tpk.selected_index = if (tpk.selected_index >= cols) tpk.selected_index - cols else tpk.selected_index,
+                    0x28 => tpk.selected_index = if (tpk.selected_index + cols < visible) tpk.selected_index + cols else tpk.selected_index,
+                    else => {},
+                }
+                platform.invalidateWindow();
+                return true;
+            },
+        }
     }
     fn handleSessionKey(self: *WorkspaceApplication, session: *TerminalSession, key: u32, modifiers: u32) !bool {
         if (try session.terminal.scrollViewportShortcut(key, modifiers)) {
@@ -508,6 +851,18 @@ const WorkspaceApplication = struct {
     }
     pub fn onText(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
+        if (self.overlay == .command_palette) {
+            if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
+            var cp = &self.overlay.command_palette;
+            if (@as(usize, cp.query_len) + bytes.len <= cp.query_buf.len) {
+                @memcpy(cp.query_buf[cp.query_len .. cp.query_len + bytes.len], bytes);
+                cp.query_len += @intCast(bytes.len);
+                cp.selected_index = 0;
+                platform.invalidateWindow();
+            }
+            return;
+        }
+        if (self.overlay != .none) return;
         if (self.editing_tab) |*edit| {
             if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
             if (edit.select_all) {
@@ -538,6 +893,20 @@ const WorkspaceApplication = struct {
     }
     pub fn onPaste(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
+        if (self.overlay == .command_palette) {
+            const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
+            if (trimmed.len > 0) {
+                var cp = &self.overlay.command_palette;
+                const space = cp.query_buf.len - cp.query_len;
+                const n = @min(trimmed.len, space);
+                @memcpy(cp.query_buf[cp.query_len .. cp.query_len + n], trimmed[0..n]);
+                cp.query_len += @intCast(n);
+                cp.selected_index = 0;
+                platform.invalidateWindow();
+            }
+            return;
+        }
+        if (self.overlay != .none) return;
         if (self.editing_tab) |*edit| {
             const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
             if (trimmed.len > 0) {
@@ -569,7 +938,7 @@ const WorkspaceApplication = struct {
         }
     }
     pub fn onScroll(self: *WorkspaceApplication, delta: i32, x: f32, y: f32, modifiers: u32) void {
-        if (self.health == .failed or delta == 0) return;
+        if (self.health == .failed or delta == 0 or self.overlay != .none) return;
         self.handleScroll(delta, x, y, modifiers) catch |err| self.fail(err);
     }
     fn handleScroll(self: *WorkspaceApplication, delta: i32, x: f32, y: f32, modifiers: u32) !void {
@@ -598,7 +967,7 @@ const WorkspaceApplication = struct {
         platform.invalidateWindow();
     }
     pub fn onMouseButton(self: *WorkspaceApplication, button: terminal.MouseButton, pressed: bool, x: f32, y: f32, modifiers: u32) void {
-        if (self.health == .failed) return;
+        if (self.health == .failed or self.overlay != .none) return;
         self.handleMouseButton(button, pressed, x, y, modifiers) catch |err| self.fail(err);
     }
     fn handleMouseButton(self: *WorkspaceApplication, button: terminal.MouseButton, pressed: bool, x: f32, y: f32, modifiers: u32) !void {
@@ -614,6 +983,7 @@ const WorkspaceApplication = struct {
                 const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
                 _ = model.focusPane(placement.id);
                 try self.clearOtherSelections(placement.id);
+                self.refreshProjectChrome();
                 platform.invalidateWindow();
                 if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
                     self.reported_mouse_pane = placement.id;
@@ -644,6 +1014,7 @@ const WorkspaceApplication = struct {
         self.handleClick(x, y) catch |err| self.fail(err);
     }
     fn handleClick(self: *WorkspaceApplication, x: f32, y: f32) !void {
+        if (self.overlay != .none) return;
         const model = if (self.model) |*model| model else return;
         const can_focus = model.activeTab().tree.paneCount() > 1;
         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
@@ -652,6 +1023,7 @@ const WorkspaceApplication = struct {
                     .focus_toggle => {
                         _ = model.focusPane(placement.id);
                         try self.clearOtherSelections(placement.id);
+                        self.refreshProjectChrome();
                         if (model.toggleFocusMode()) try self.updateLayout() else platform.invalidateWindow();
                     },
                     .split_right, .split_down => {
@@ -675,9 +1047,152 @@ const WorkspaceApplication = struct {
             }
             _ = model.focusPane(placement.id);
             try self.clearOtherSelections(placement.id);
+            self.refreshProjectChrome();
             platform.invalidateWindow();
             return;
         };
+    }
+    fn handleOverlayPointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) !void {
+        const metrics = self.metrics orelse return;
+        const model = if (self.model) |*model| model else return;
+        switch (self.overlay) {
+            .none => {},
+            .theme_picker => |*tp| {
+                const mw = @min(@as(f32, 560.0), @max(@as(f32, 320.0), metrics.width - 48.0));
+                const mh: f32 = 384.0;
+                const mx = @round((metrics.width - mw) * 0.5);
+                const my = @round(@max(@as(f32, 48.0), (metrics.height - mh) * 0.44));
+                const toggle_x = mx + mw - 148.0;
+                const toggle_y = my + 15.0;
+                const grid_x = mx + 20.0;
+                const grid_y = my + 58.0;
+                const col_gap: f32 = 12.0;
+                const row_gap: f32 = 10.0;
+                const card_w = (mw - 40.0 - col_gap) * 0.5;
+                const card_h: f32 = 88.0;
+
+                var hit_slot: ?usize = null;
+                for (0..6) |i| {
+                    const cx = grid_x + @as(f32, @floatFromInt(i % 2)) * (card_w + col_gap);
+                    const cy = grid_y + @as(f32, @floatFromInt(i / 2)) * (card_h + row_gap);
+                    if (x >= cx and x < cx + card_w and y >= cy and y < cy + card_h) {
+                        hit_slot = i;
+                        break;
+                    }
+                }
+                if (event == .hover or event == .move) {
+                    if (tp.hovered_slot != hit_slot) {
+                        tp.hovered_slot = hit_slot;
+                        platform.invalidateWindow();
+                    }
+                    return;
+                }
+                if (event == .begin) {
+                    if (x >= toggle_x and x < toggle_x + 128.0 and y >= toggle_y and y < toggle_y + 26.0) {
+                        const want_dark = x < toggle_x + 64.0;
+                        if (tp.dark_mode != want_dark) {
+                            tp.dark_mode = want_dark;
+                            const fallback = if (want_dark) self.last_dark_theme else self.last_light_theme;
+                            tp.selected_slot = themeSlotForIndex(fallback).slot;
+                            try self.applyTheme(themeIndexForModeSlot(tp.dark_mode, tp.selected_slot));
+                        }
+                        return;
+                    }
+                    if (hit_slot) |slot| {
+                        tp.selected_slot = slot;
+                        try self.applyTheme(themeIndexForModeSlot(tp.dark_mode, slot));
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                        return;
+                    }
+                    if (x < mx or x >= mx + mw or y < my or y >= my + mh) {
+                        const initial = tp.initial_theme_index;
+                        self.overlay = .none;
+                        try self.applyTheme(initial);
+                    }
+                }
+            },
+            .command_palette => |*cp| {
+                var matched: [command_defs.len]CommandDef = undefined;
+                const count = @min(filterCommands(cp.query_buf[0..cp.query_len], &matched), 9);
+                const mw = @min(@as(f32, 520.0), @max(@as(f32, 300.0), metrics.width - 48.0));
+                const mh = 58.0 + @as(f32, @floatFromInt(@max(count, 1))) * 34.0 + 12.0;
+                const mx = @round((metrics.width - mw) * 0.5);
+                const my: f32 = 58.0;
+                const list_y = my + 52.0;
+
+                var hit_idx: ?usize = null;
+                if (x >= mx + 10.0 and x < mx + mw - 10.0 and y >= list_y) {
+                    const row = @floor((y - list_y) / 34.0);
+                    if (row >= 0 and row < @as(f32, @floatFromInt(count))) {
+                        hit_idx = @intFromFloat(row);
+                    }
+                }
+                if (event == .hover or event == .move) {
+                    if (cp.hovered_index != hit_idx) {
+                        cp.hovered_index = hit_idx;
+                        if (hit_idx) |hi| cp.selected_index = hi;
+                        platform.invalidateWindow();
+                    }
+                    return;
+                }
+                if (event == .begin) {
+                    if (hit_idx) |hi| {
+                        try self.executeCommand(matched[hi].id);
+                        return;
+                    }
+                    if (x < mx or x >= mx + mw or y < my or y >= my + mh) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                }
+            },
+            .tab_peek => |*tpk| {
+                const visible = @min(model.tabs.items.len, 9);
+                if (visible == 0) return;
+                const cols: usize = if (visible <= 2) visible else 3;
+                const rows: usize = (visible + cols - 1) / cols;
+                const mw = @min(@as(f32, 620.0), @max(@as(f32, 340.0), metrics.width - 48.0));
+                const card_h: f32 = 86.0;
+                const col_gap: f32 = 12.0;
+                const row_gap: f32 = 12.0;
+                const mh = 62.0 + @as(f32, @floatFromInt(rows)) * card_h + @as(f32, @floatFromInt(if (rows > 0) rows - 1 else 0)) * row_gap + 24.0;
+                const mx = @round((metrics.width - mw) * 0.5);
+                const my = @round(@max(@as(f32, 52.0), (metrics.height - mh) * 0.42));
+                const grid_x = mx + 20.0;
+                const grid_y = my + 50.0;
+                const card_w = (mw - 40.0 - @as(f32, @floatFromInt(cols - 1)) * col_gap) / @as(f32, @floatFromInt(cols));
+
+                var hit_idx: ?usize = null;
+                for (0..visible) |i| {
+                    const cx = grid_x + @as(f32, @floatFromInt(i % cols)) * (card_w + col_gap);
+                    const cy = grid_y + @as(f32, @floatFromInt(i / cols)) * (card_h + row_gap);
+                    if (x >= cx and x < cx + card_w and y >= cy and y < cy + card_h) {
+                        hit_idx = i;
+                        break;
+                    }
+                }
+                if (event == .hover or event == .move) {
+                    if (tpk.hovered_index != hit_idx) {
+                        tpk.hovered_index = hit_idx;
+                        if (hit_idx) |hi| tpk.selected_index = hi;
+                        platform.invalidateWindow();
+                    }
+                    return;
+                }
+                if (event == .begin) {
+                    if (hit_idx) |hi| {
+                        self.overlay = .none;
+                        try self.applyAction(.select_tab, @intCast(hi));
+                        return;
+                    }
+                    if (x < mx or x >= mx + mw or y < my or y >= my + mh) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                }
+            },
+        }
     }
     fn updateHoverState(self: *WorkspaceApplication, can_focus: bool, x: f32, y: f32, modifiers: u32) !void {
         var next_pane: ?panes.PaneId = null;
@@ -755,6 +1270,10 @@ const WorkspaceApplication = struct {
         };
     }
     fn handlePointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32, modifiers: u32) !platform.PointerResponse {
+        if (self.overlay != .none) {
+            try self.handleOverlayPointer(event, x, y);
+            return .normal;
+        }
         const model = if (self.model) |*model| model else return .normal;
         const metrics = self.metrics orelse return .normal;
         const layout = try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len);
@@ -804,6 +1323,7 @@ const WorkspaceApplication = struct {
                             if (placement.bounds.isHeaderDragArea(can_focus, x, y)) {
                                 _ = model.focusPane(placement.id);
                                 try self.clearOtherSelections(placement.id);
+                                self.refreshProjectChrome();
                                 self.pointer_drag = .{ .pane = .{
                                     .pane_id = placement.id,
                                     .start_x = x,
@@ -818,6 +1338,7 @@ const WorkspaceApplication = struct {
                                     if (sb.containsPoint(placement.bounds, x, y)) {
                                         _ = model.focusPane(placement.id);
                                         try self.clearOtherSelections(placement.id);
+                                        self.refreshProjectChrome();
                                         if (sb.containsThumb(y)) {
                                             self.pointer_drag = .{ .scrollbar = .{
                                                 .pane_id = placement.id,
@@ -841,6 +1362,7 @@ const WorkspaceApplication = struct {
                                         if (match.url_len > 0) {
                                             _ = model.focusPane(placement.id);
                                             try self.clearOtherSelections(placement.id);
+                                            self.refreshProjectChrome();
                                             platform.openUrl(url_buf[0..match.url_len]) catch {};
                                             platform.invalidateWindow();
                                             break;
@@ -849,6 +1371,7 @@ const WorkspaceApplication = struct {
                                 }
                                 _ = model.focusPane(placement.id);
                                 try self.clearOtherSelections(placement.id);
+                                self.refreshProjectChrome();
                                 if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
                                     if (try session.terminal.hasSelection()) {
                                         try session.terminal.clearSelection(true);
@@ -992,9 +1515,42 @@ const WorkspaceApplication = struct {
     }
     fn applyAction(self: *WorkspaceApplication, action: platform.WorkspaceAction, index: u32) !void {
         if (try self.cancelPointerDrag()) try self.updateLayout();
-        if (action == .rename_tab) {
-            self.beginTabRename(index);
-            return;
+        switch (action) {
+            .command_palette => {
+                if (index > 0) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return;
+                }
+                self.openCommandPalette();
+                return;
+            },
+            .theme_picker => {
+                if (index == 99) {
+                    try self.toggleDarkLightTheme();
+                    return;
+                }
+                if (index > 0 and index <= terminal_theme.themes.len) {
+                    try self.applyTheme(index - 1);
+                    return;
+                }
+                self.openThemePicker();
+                return;
+            },
+            .tab_peek => {
+                if (index > 0) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return;
+                }
+                self.openTabPeek();
+                return;
+            },
+            .rename_tab => {
+                self.beginTabRename(index);
+                return;
+            },
+            else => {},
         }
         const model = if (self.model) |*model| model else return;
         if (action != .select_tab) {
@@ -1026,7 +1582,7 @@ const WorkspaceApplication = struct {
                 if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
-            .rename_tab => unreachable,
+            .rename_tab, .command_palette, .theme_picker, .tab_peek => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
@@ -1091,6 +1647,14 @@ const WorkspaceApplication = struct {
             },
             49 => return if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) if (self.pointer_drag.tab.dragging.destination) |index| index + 1 else 0 else 0,
             50 => return @intFromBool(model.activeTab().is_focus_mode),
+            51 => return self.theme_index,
+            52 => return @intFromBool(self.currentTheme().is_dark),
+            53 => return switch (self.overlay) {
+                .none => 0,
+                .command_palette => 1,
+                .theme_picker => 2,
+                .tab_peek => 3,
+            },
             60...67 => return if (query - 60 < model.tabs.items.len) @intFromEnum(model.tabs.items[query - 60].id) else 0,
             43 => return if (self.activeSession()) |session| if (session.size) |size| size.columns else 0 else 0,
             44 => return if (self.activeSession()) |session| if (session.size) |size| size.rows else 0 else 0,
@@ -1136,6 +1700,48 @@ const WorkspaceApplication = struct {
         return @intFromBool(found);
     }
 };
+
+fn themeIndexForModeSlot(dark_mode: bool, target_slot: usize) usize {
+    var slot: usize = 0;
+    for (terminal_theme.themes, 0..) |t, idx| {
+        if (t.is_dark != dark_mode) continue;
+        if (slot == target_slot) return idx;
+        slot += 1;
+    }
+    return if (dark_mode) terminal_theme.default_dark_index else terminal_theme.default_light_index;
+}
+
+fn themeSlotForIndex(theme_index: usize) struct { dark_mode: bool, slot: usize } {
+    const clamped = @min(theme_index, terminal_theme.themes.len - 1);
+    const dark_mode = terminal_theme.themes[clamped].is_dark;
+    var slot: usize = 0;
+    for (terminal_theme.themes[0..clamped]) |t| {
+        if (t.is_dark == dark_mode) slot += 1;
+    }
+    return .{ .dark_mode = dark_mode, .slot = slot };
+}
+
+fn filterCommands(query: []const u8, out: *[command_defs.len]CommandDef) usize {
+    const trimmed = std.mem.trim(u8, query, " \t");
+    var count: usize = 0;
+    for (command_defs) |cmd| {
+        if (trimmed.len == 0 or containsAsciiIgnoreCase(cmd.title, trimmed) or containsAsciiIgnoreCase(cmd.shortcut, trimmed)) {
+            out[count] = cmd;
+            count += 1;
+        }
+    }
+    return count;
+}
+
+fn containsAsciiIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
+    }
+    return false;
+}
 
 fn workspaceBounds(metrics: platform.WindowMetrics) panes.PaneRect {
     return .{ .x = 6, .y = 44, .width = @max(0, metrics.width - 12), .height = @max(0, metrics.height - 50) };
