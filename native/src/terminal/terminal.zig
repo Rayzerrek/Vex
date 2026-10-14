@@ -26,7 +26,12 @@ pub const TerminalCursor = struct {
     column: u16 = 0,
     row: u16 = 0,
     visible: bool = false,
+    wide_tail: bool = false,
     shape: enum(u32) { bar = 0, block = 1, underline = 2, hollow = 3 } = .bar,
+    /// Caret boundary column; wide-tail cursors sit after the second cell of the wide glyph.
+    pub fn caretColumn(self: TerminalCursor) u16 {
+        return self.column +| @intFromBool(self.wide_tail);
+    }
 };
 /// A terminal owns this reusable snapshot; consumers must not retain slices across updates.
 pub const TerminalFrame = struct {
@@ -60,6 +65,11 @@ pub const Terminal = struct {
     key_event: std.meta.Child(c.GhosttyKeyEvent),
     cell_width_px: u32 = 9,
     cell_height_px: u32 = 17,
+    kb_selection_active: bool = false,
+    kb_anchor_col: u16 = 0,
+    kb_anchor_row: u16 = 0,
+    kb_focus_col: u16 = 0,
+    kb_focus_row: u16 = 0,
     frame: TerminalFrame = .{},
     grapheme: std.ArrayList(u8) = .empty,
     search_row: std.ArrayList(u8) = .empty,
@@ -244,6 +254,7 @@ pub const Terminal = struct {
         try check(self.api.terminal_resize(self.handle, columns, rows, width_px, height_px));
         self.cell_width_px = width_px;
         self.cell_height_px = height_px;
+        self.kb_selection_active = false;
         self.frame_valid = false;
         if (self.callback_error) |err| return err;
     }
@@ -257,12 +268,14 @@ pub const Terminal = struct {
     }
     /// Clears the active screen selection and optionally resets multi-click gesture history.
     pub fn clearSelection(self: *Terminal, reset_gesture: bool) !void {
+        self.kb_selection_active = false;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_SELECTION, null));
         if (reset_gesture) self.api.selection_gesture_reset(self.selection_gesture, self.handle);
         self.frame_valid = false;
     }
     /// Starts or advances a pointer selection gesture, returning the click count (1=cell, 2=word, 3=line, 0=out of bounds).
     pub fn selectionPress(self: *Terminal, column: u16, row: u16, x_px: f64, y_px: f64) !u8 {
+        self.kb_selection_active = false;
         var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
         grid_ref.size = @sizeOf(c.GhosttyGridRef);
         const point: c.GhosttyPoint = .{
@@ -282,7 +295,10 @@ pub const Terminal = struct {
         if (event_result == c.GHOSTTY_SUCCESS) {
             try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_SELECTION, &snapshot));
             self.frame_valid = false;
-        } else if (event_result != c.GHOSTTY_NO_VALUE) {
+        } else if (event_result == c.GHOSTTY_NO_VALUE) {
+            try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_SELECTION, null));
+            self.frame_valid = false;
+        } else {
             try check(event_result);
         }
         var click_count: u8 = 0;
@@ -355,6 +371,11 @@ pub const Terminal = struct {
         const clamped_focus_col: u32 = @min(@as(u32, focus_col), cols_u32);
         const clamped_anchor_row: u32 = @min(@as(u32, anchor_row), @as(u32, rows - 1));
         const clamped_focus_row: u32 = @min(@as(u32, focus_row), @as(u32, rows - 1));
+        self.kb_selection_active = true;
+        self.kb_anchor_col = @intCast(clamped_anchor_col);
+        self.kb_anchor_row = @intCast(clamped_anchor_row);
+        self.kb_focus_col = @intCast(clamped_focus_col);
+        self.kb_focus_row = @intCast(clamped_focus_row);
         var start: u32 = clamped_anchor_row * cols_u32 + clamped_anchor_col;
         var end: u32 = clamped_focus_row * cols_u32 + clamped_focus_col;
         if (start == end) return;
@@ -380,6 +401,93 @@ pub const Terminal = struct {
             (@as(f64, @floatFromInt(end_row)) + 0.5) * cell_h,
         );
         try self.selectionRelease(end_col, end_row);
+        self.kb_selection_active = true;
+    }
+    /// Extends or starts a primary-screen keyboard selection on Shift/Ctrl+Shift + Arrow/Home/End.
+    pub fn extendKeyboardSelection(self: *Terminal, virtual_key: u32, mods: u32) !bool {
+        if (mods != 1 and mods != 3) return false;
+        switch (virtual_key) {
+            0x23, 0x24, 0x25, 0x26, 0x27, 0x28 => {},
+            else => return false,
+        }
+        if (try self.isAlternateScreen()) return false;
+        const frame = try self.readFrame();
+        if (frame.columns == 0 or frame.rows == 0) return false;
+        if (!self.kb_selection_active) {
+            const start_col = @min(frame.cursor.caretColumn(), frame.columns);
+            const start_row = @min(frame.cursor.row, frame.rows - 1);
+            self.kb_anchor_col = start_col;
+            self.kb_anchor_row = start_row;
+            self.kb_focus_col = start_col;
+            self.kb_focus_row = start_row;
+            self.kb_selection_active = true;
+        }
+        var focus_col = @min(self.kb_focus_col, frame.columns);
+        var focus_row = @min(self.kb_focus_row, frame.rows - 1);
+        if (mods == 3) {
+            switch (virtual_key) {
+                0x25 => focus_col = wordBoundaryCol(frame, focus_row, focus_col, false),
+                0x27 => focus_col = wordBoundaryCol(frame, focus_row, focus_col, true),
+                0x26 => focus_row -|= 1,
+                0x28 => focus_row = @min(frame.rows - 1, focus_row +| 1),
+                0x24 => focus_col = 0,
+                0x23 => focus_col = frame.columns,
+                else => unreachable,
+            }
+        } else {
+            switch (virtual_key) {
+                0x25 => {
+                    if (focus_col > 0) {
+                        focus_col -= 1;
+                    } else if (focus_row > 0) {
+                        focus_row -= 1;
+                        focus_col = frame.columns - 1;
+                    }
+                },
+                0x27 => {
+                    if (focus_col < frame.columns) {
+                        focus_col += 1;
+                    } else if (focus_row + 1 < frame.rows) {
+                        focus_row += 1;
+                        focus_col = 1;
+                    }
+                },
+                0x26 => focus_row -|= 1,
+                0x28 => focus_row = @min(frame.rows - 1, focus_row +| 1),
+                0x24 => focus_col = 0,
+                0x23 => focus_col = frame.columns,
+                else => unreachable,
+            }
+        }
+        try self.setKeyboardSelection(self.kb_anchor_col, self.kb_anchor_row, focus_col, focus_row);
+        return true;
+    }
+    /// Consumes a keyboard selection ending at the live cursor and returns the number of 0x7f backspaces to send.
+    pub fn consumeKeyboardSelectionBackspaces(self: *Terminal) !usize {
+        if (!self.kb_selection_active or !try self.hasSelection() or try self.isAlternateScreen()) return 0;
+        var scrollbar: c.GhosttyTerminalScrollbar = .{ .total = 0, .offset = 0, .len = 0 };
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar));
+        if (scrollbar.offset +| scrollbar.len < scrollbar.total) return 0;
+        const frame = try self.readFrame();
+        if (frame.columns == 0 or frame.rows == 0 or !frame.cursor.visible) return 0;
+        const cols_usize: usize = frame.columns;
+        const start_linear: usize = @as(usize, @min(self.kb_anchor_row, frame.rows - 1)) * cols_usize + @min(self.kb_anchor_col, frame.columns);
+        const end_linear: usize = @as(usize, @min(self.kb_focus_row, frame.rows - 1)) * cols_usize + @min(self.kb_focus_col, frame.columns);
+        if (start_linear == end_linear) return 0;
+        const sel_min = @min(start_linear, end_linear);
+        const sel_max = @max(start_linear, end_linear);
+        const cursor_linear: usize = @as(usize, frame.cursor.row) * cols_usize + frame.cursor.caretColumn();
+        if (sel_max != cursor_linear or sel_max > frame.cells.items.len) return 0;
+        const selected = (try self.selectedTextAlloc(self.allocator, false)) orelse return 0;
+        defer self.allocator.free(selected);
+        if (selected.len == 0 or std.mem.indexOfAny(u8, selected, "\r\n") != null) return 0;
+        var count: usize = 0;
+        for (frame.cells.items[sel_min..sel_max]) |cell| {
+            if (cell.width != .tail) count += 1;
+        }
+        if (count == 0) return 0;
+        try self.clearSelection(true);
+        return count;
     }
     /// Formats the active selection as UTF-8 plain text with soft-wrap unwrapping; returns null when no selection is active.
     pub fn selectedTextAlloc(self: *const Terminal, allocator: std.mem.Allocator, trim: bool) !?[]u8 {
@@ -408,16 +516,19 @@ pub const Terminal = struct {
     /// Scroll changes invalidate the cached viewport without changing the live shell cursor.
     pub fn scroll(self: *Terminal, delta: i32) void {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
+        self.kb_selection_active = false;
         self.frame_valid = false;
     }
     /// Scrolls the viewport to the oldest scrollback row and invalidates the cached snapshot.
     pub fn scrollToTop(self: *Terminal) void {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_TOP, .value = .{ .delta = 0 } });
+        self.kb_selection_active = false;
         self.frame_valid = false;
     }
     /// Scrolls the viewport back to the live bottom screen and invalidates the cached snapshot.
     pub fn scrollToBottom(self: *Terminal) void {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_BOTTOM, .value = .{ .delta = 0 } });
+        self.kb_selection_active = false;
         self.frame_valid = false;
     }
     /// True while the alternate screen buffer (?1049h / ?1047h / ?47h) is active.
@@ -607,9 +718,10 @@ pub const Terminal = struct {
             else => return error.InvalidTerminalCursorShape,
         };
         cursor.visible = cursor.visible and in_viewport;
-        if (cursor.visible) {
+        if (in_viewport) {
             try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, &cursor.column);
             try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, &cursor.row);
+            try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL, &cursor.wide_tail);
         }
         return cursor;
     }
@@ -828,6 +940,26 @@ fn physicalTerminalKey(virtual_key: u32) ?c.GhosttyKey {
         0x70...0x87 => @as(c.GhosttyKey, c.GHOSTTY_KEY_F1) + virtual_key - 0x70,
         else => null,
     };
+}
+fn wordBoundaryCol(frame: *const TerminalFrame, row: u16, col: u16, forward: bool) u16 {
+    var cursor = @min(col, frame.columns);
+    if (!forward) {
+        while (cursor > 0 and isWhitespaceOrEmptyCell(frame, row, cursor - 1)) : (cursor -= 1) {}
+        while (cursor > 0 and !isWhitespaceOrEmptyCell(frame, row, cursor - 1)) : (cursor -= 1) {}
+    } else {
+        while (cursor < frame.columns and isWhitespaceOrEmptyCell(frame, row, cursor)) : (cursor += 1) {}
+        while (cursor < frame.columns and !isWhitespaceOrEmptyCell(frame, row, cursor)) : (cursor += 1) {}
+    }
+    return cursor;
+}
+fn isWhitespaceOrEmptyCell(frame: *const TerminalFrame, row: u16, col: u16) bool {
+    if (row >= frame.rows or col >= frame.columns) return true;
+    const index: usize = @as(usize, row) * @as(usize, frame.columns) + @as(usize, col);
+    if (index >= frame.cells.items.len) return true;
+    const cell = frame.cells.items[index];
+    if (cell.width == .tail) return false;
+    const bytes = frame.cellText(cell);
+    return std.mem.trim(u8, bytes, " \t\r\n\x0b\x0c").len == 0;
 }
 
 test "pinned sized structs and UTF-8/color/wide cells match the actual DLL" {
@@ -1411,5 +1543,35 @@ test "selection gestures, keyboard selection, cell highlight flags and soft-wrap
     try std.testing.expectEqualStrings("word_two rest", line);
 
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkSelectionAllocationFailures, .{&api});
+}
+
+test "extendKeyboardSelection and consumeKeyboardSelectionBackspaces handle word navigation, wide glyphs, and cursor-end deletion" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(20, 4, 8, 16);
+    try terminal.feedOutput("first\r\ncmd arg1 界x");
+
+    // Ctrl+Shift+Left from cursor at end of "cmd arg1 界x" (col 12, row 1) selects "界x" (3 cells, 2 codepoints).
+    try std.testing.expect(try terminal.extendKeyboardSelection(0x25, 3));
+    {
+        const text = (try terminal.selectedTextAlloc(std.testing.allocator, true)).?;
+        defer std.testing.allocator.free(text);
+        try std.testing.expectEqualStrings("界x", text);
+    }
+    try std.testing.expectEqual(@as(usize, 2), try terminal.consumeKeyboardSelectionBackspaces());
+    try std.testing.expect(!try terminal.hasSelection());
+
+    // Shift+Home selects the entire current line up to the cursor ("cmd arg1 界x" = 11 codepoints).
+    try std.testing.expect(try terminal.extendKeyboardSelection(0x24, 1));
+    try std.testing.expectEqual(@as(usize, 11), try terminal.consumeKeyboardSelectionBackspaces());
+
+    // Selections crossing a hard newline cannot be deleted via backspaces.
+    try terminal.setKeyboardSelection(0, 0, 12, 1);
+    try std.testing.expectEqual(@as(usize, 0), try terminal.consumeKeyboardSelectionBackspaces());
+
+    // Alternate screen yields keyboard selection chords back to the terminal application.
+    try terminal.feedOutput("\x1b[?1049h");
+    try std.testing.expect(!try terminal.extendKeyboardSelection(0x25, 1));
 }
 
