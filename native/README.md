@@ -1,6 +1,7 @@
 # Vex native rewrite — milestone 1
 
 Work on `feat/zig-native`, alongside the unchanged `../windows/` application.
+The target is Windows + WSL; native Linux/macOS ports are out of scope for now.
 This is not yet a daily-driver replacement. The full behavior/visual contract
 and remaining work are in [REWRITE.md](REWRITE.md).
 
@@ -39,7 +40,7 @@ built-ins fall back to cmd. Custom programs must be absolute and available;
 custom arguments are an explicit raw Windows command-line fragment, not shell
 text guessed by the app. These presets are not a whitelist: any ConPTY-compatible
 executable can use the custom launch path; the emulator/workspace do not branch
-on a shell's name and custom programs are not wrapped in cmd. WSL IDs are rejected until Linux launch support exists.
+on a shell's name and custom programs are not wrapped in cmd.
 The selected profile applies to all tabs/splits in this checkpoint; profile UI,
 per-pane overrides and persisted settings remain pending.
 
@@ -56,6 +57,37 @@ UTF-16 executable/command/directory buffers only until CreateProcessW returns;
 no reader/writer retains them. TERM defaults to `xterm-256color` when absent/dumb
 and COLORTERM to `truecolor` when absent, preserving explicit user overrides.
 The normalized environment belongs to the child launch, not global app state.
+
+## WSL launches
+
+```powershell
+zig build run -- --shell wsl --distribution Ubuntu
+zig build run -- --shell wsl:/bin/bash --distribution Ubuntu --arguments '-l'
+zig build run -- --shell wsl:/usr/bin/fish --distribution Ubuntu
+```
+
+WSL uses the actual system `wsl.exe` with an **explicit distribution** in this
+checkpoint. `wsl` starts the distribution's `$SHELL` (or `/bin/sh`) as a login
+shell; `wsl:/absolute/program` directly executes any Linux program, without a
+shell-name whitelist, interpolated bootstrap or guessed login arguments.
+`--arguments` remains a raw Windows argv fragment and requires an explicit
+program. An unavailable launcher errors; missing distributions/programs report
+WSL's failure in the pane, never fall back to cmd.
+
+Each pane builds its own `--cd`: Windows drive directories are passed unchanged
+for WSL to resolve with its mount configuration; `\\\\wsl.localhost\\DISTRO\\...`
+and `\\\\wsl$\\DISTRO\\...` preserve Linux paths. A mismatched distribution or a
+WSL directory with a Windows shell is rejected. CreateProcessW starts the
+launcher in its Windows directory, not a Linux filesystem view.
+
+Linux OSC 7 reports become owned paths in the selected distribution. Splits
+inherit them; new tabs retain the project root. Local hosts are empty,
+`localhost` or the Win32 machine name. A differently configured Linux hostname
+is not yet recognized; remote/malformed reports preserve the previous path.
+Linux backslash filenames reject rather than undergoing a lossy conversion.
+No Linux prompt integration is injected and no user startup file is rewritten;
+existing OSC 7/133/7501 integration remains optional. Default-distribution
+selection, profile UI and Linux foreground-process tracking remain pending.
 
 ## Implemented workspace
 
@@ -107,10 +139,13 @@ circular dependency through the rendering/window adapter.
 - `src/main.zig`: allocator/error boundary and explicit root test imports.
 - `src/app/workspace_application.zig`: main-thread workspace orchestration.
 - `src/app/terminal_session.zig`: stable per-pane ownership and teardown.
-- `src/shell/shell_launch.zig`: startup selection, executable resolution, Windows
-  quoting, encoded bootstraps and owned child environment.
+- `src/shell/shell_launch.zig`: startup selection, executable resolution,
+  encoded Windows bootstraps and owned child environment.
+- `src/shell/windows_arguments.zig`: shared Windows argv quoting/UTF-16 bounds.
+- `src/shell/wsl_launch.zig`: owned distribution/Linux argv and per-pane WSL commands.
+- `src/shell/wsl_paths.zig`: parsed distribution/Linux paths and lossless UNC mapping.
 - `src/shell/directory.zig`: parsed absolute Windows paths, owned pane directories,
-  local file-URI decoding and transactional report/cache updates.
+  launch-domain file-URI decoding and transactional report/cache updates.
 - `src/terminal/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
   acknowledgement and bounded text parsing.
 - `src/terminal/terminal_feed.zig`: bounded status interception; unrelated VT is
@@ -128,7 +163,9 @@ contain IDs, not pointers into movable session arrays. All emulator/UI access is
 on the window thread; pipe workers never dereference a Zig object. Session IDs
 are never reused, and queued output carries an ID rather than a heap pointer.
 Workers are joined before freeing their buffers. ConPTY output is drained during
-close; a kill-on-close job object owns the shell's descendant process tree.
+close; a kill-on-close job object owns the Windows descendant process tree.
+The WSL smoke separately verifies Linux shell/child exit on busy pane close;
+this is not a guarantee for Linux daemons or deliberately detached processes.
 
 PTY input has a bounded 1 MiB queue; overflow is an error, not dropped input.
 Output uses one acknowledged 64 KiB block per session. Copies use contiguous
@@ -144,11 +181,11 @@ is no repeating idle timer.
 
 Directory reports use the synchronous native PWD callback: each report is parsed
 before a later one in the same read can replace it. There is no per-output-block
-directory query. Empty, remote, malformed, control-bearing and non-Windows
+directory query. Empty, remote, malformed, control-bearing and wrong-domain
 reports retain the last valid directory. Paths and cached reports are owned per
 pane; unchanged reports reuse storage. The local hostname comes from Win32,
-not an environment variable. WSL launch directories are explicitly rejected
-until Linux session support is implemented.
+not an environment variable. WSL reports use the selected distribution without
+Windows path normalization, preserving POSIX symlink/parent path spelling.
 
 OSC 7501 is independent of OSC 7. Each terminal owns up to 256 hierarchical
 records; reports replace fields atomically, inherit ancestor app names and clear
@@ -206,6 +243,7 @@ zig build test -Doptimize=ReleaseSafe
 zig build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShells.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWsl.ps1 -Distribution Ubuntu
 ```
 
 Unit tests use the **real checked-in DLL**: ABI/Unicode/colors/wide cells,
@@ -236,6 +274,10 @@ child environment, integrated prompt state, PowerShell/Nushell command errors
 and duration, automatic OSC 7 split inheritance, and cmd bootstrapping from a
 Unicode/spaced installation directory. The workspace/status fixture uses a raw
 custom cmd to isolate explicit status reports from prompt cleanup.
+The WSL test requires its selected distribution and Bash. It exercises default
+login and an explicit Linux program at a Unicode/spaced/apostrophe path, child
+environment defaults/overrides, Linux OSC 7, split/new-tab directories, UNC
+project startup and Linux shell/child exit on busy pane close.
 
 Diagnostic probes/actions require `VEX_NATIVE_SELFTEST=1`. Synthetic messages
 are not physical keyboard/IME or accessibility tests.
@@ -245,7 +287,8 @@ Ignored artifacts under `zig-out/verification/`:
 - `native-window.png`: one-pane output fixture.
 - `native-workspace.png`: three live panes with distinct markers.
 - `result.json`, `startup.txt`: smoke verification/measurements.
-- `shells.json`: live shell transport/integration results.
+- `shells.json`: live Windows shell transport/integration results.
+- `wsl.json`: live selected-distribution WSL results.
 
 `VEX_NATIVE_METRICS=<absolute-path>` enables local milestone logs. Timing starts
 at Zig main, before DLL initialization, not OS process creation. The test also
@@ -254,7 +297,8 @@ benchmarks**, and working set excludes GPU allocations and child processes.
 
 ## Still pending
 
-See the full ledger in [REWRITE.md](REWRITE.md): multiple projects/WSL,
+See the full ledger in [REWRITE.md](REWRITE.md): multiple projects, WSL default-distribution
+selection/Linux process metadata/prompt adapters,
 shell-profile UI/per-pane overrides, profile/session compatibility and persistence, saved layouts,
 settings/themes, palette/tab peek/overlays, divider dragging/reorder, shell icons,
 status tooltips/origin routing, selection/copy/cut,

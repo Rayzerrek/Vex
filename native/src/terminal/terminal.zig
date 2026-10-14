@@ -646,6 +646,22 @@ const TestDirectoryOwner = struct {
     }
 };
 
+test "WSL OSC 7 directory callbacks decode Linux paths at every real-DLL chunk boundary" {
+    const api = try binding.Api.load();
+    const distribution = try @import("../shell/wsl_paths.zig").WslDistribution.parse("Ubuntu");
+    const output = "\x1b]7;file://localhost/home/Żółć%20O%27Brien\x1b\\\x1b]7;file://remote/home/other\x07";
+    for (0..output.len + 1) |boundary| {
+        var owner: TestDirectoryOwner = .{ .directory = try paths.PaneDirectory.initForContext(std.testing.allocator, try paths.DirectoryPath.parse("C:\\launch"), .{ .wsl = distribution }) };
+        defer owner.directory.deinit();
+        var terminal = try Terminal.init(std.testing.allocator, &api);
+        defer terminal.deinit();
+        try terminal.attachDirectorySink(&owner);
+        try terminal.feedOutput(output[0..boundary]);
+        try terminal.feedOutput(output[boundary..]);
+        try std.testing.expectEqualStrings("\\\\wsl.localhost\\Ubuntu\\home\\Żółć O'Brien", owner.directory.current().bytes);
+    }
+}
+
 test "directory callbacks preserve valid reports before invalid/empty reports in the same read" {
     const api = try binding.Api.load();
     var owner: TestDirectoryOwner = .{ .directory = try paths.PaneDirectory.init(std.testing.allocator, try paths.DirectoryPath.parse("C:\\launch")) };

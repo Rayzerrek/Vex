@@ -1,4 +1,8 @@
 const std = @import("std");
+const wsl = @import("wsl_paths.zig");
+
+/// Directory reports are decoded in the pane's launch domain; WSL names borrow the application launch owner.
+pub const DirectoryContext = union(enum) { windows, wsl: wsl.WslDistribution };
 
 /// A fully qualified UTF-8 Windows directory; parsing does not probe the filesystem.
 pub const DirectoryPath = struct {
@@ -13,21 +17,30 @@ pub const DirectoryPath = struct {
         const drive = std.ascii.isAlphabetic(bytes[0]) and bytes[1] == ':' and (bytes[2] == '\\' or bytes[2] == '/');
         const unc = std.mem.startsWith(u8, bytes, "\\\\") and bytes.len > 4 and std.mem.indexOfScalarPos(u8, bytes, 2, '\\') != null;
         if (!drive and !unc) return error.InvalidDirectoryPath;
-        if (std.ascii.startsWithIgnoreCase(bytes, "\\\\wsl.localhost\\") or std.ascii.startsWithIgnoreCase(bytes, "\\\\wsl$\\")) return error.WslDirectoryUnsupported;
+        _ = try wsl.networkDistribution(bytes);
         return .{ .bytes = bytes };
     }
 };
 
-/// Owns a pane's launch directory and last valid local OSC 7 report. Never copy a live owner.
+/// Owns a pane's launch directory and last valid local OSC 7 report in its launch domain. Never copy a live owner.
 pub const PaneDirectory = struct {
     allocator: std.mem.Allocator,
     launch: []u8,
+    context: DirectoryContext = .windows,
     reported: ?[]u8 = null,
     last_report: std.ArrayList(u8) = .empty,
 
     /// Clones a parsed launch directory so sibling panes never borrow each other's storage.
     pub fn init(allocator: std.mem.Allocator, path: DirectoryPath) !PaneDirectory {
-        return .{ .allocator = allocator, .launch = try allocator.dupe(u8, path.bytes) };
+        return initForContext(allocator, path, .windows);
+    }
+    /// Clones the launch path after checking that WSL directories cannot cross distribution/shell boundaries.
+    pub fn initForContext(allocator: std.mem.Allocator, path: DirectoryPath, context: DirectoryContext) !PaneDirectory {
+        if (try wsl.networkDistribution(path.bytes)) |distribution| switch (context) {
+            .windows => return error.WslDirectoryRequiresShell,
+            .wsl => |expected| if (!std.ascii.eqlIgnoreCase(distribution.bytes, expected.bytes)) return error.WslDistributionMismatch,
+        };
+        return .{ .allocator = allocator, .launch = try allocator.dupe(u8, path.bytes), .context = context };
     }
     /// Releases both path owners and the raw-report cache.
     pub fn deinit(self: *PaneDirectory) void {
@@ -42,7 +55,7 @@ pub const PaneDirectory = struct {
     /// Invalid/remote/empty reports preserve the last local path, matching the WPF feed contract.
     pub fn applyReport(self: *PaneDirectory, bytes: []const u8, machine_name: []const u8) !void {
         if (bytes.len > DirectoryPath.max_bytes or std.mem.eql(u8, bytes, self.last_report.items)) return;
-        const path = decodeLocalDirectory(self.allocator, bytes, machine_name) catch |err| switch (err) {
+        const path = decodeLocalDirectory(self.allocator, bytes, machine_name, self.context) catch |err| switch (err) {
             error.InvalidDirectoryReport => null,
             else => return err,
         };
@@ -58,7 +71,7 @@ pub const PaneDirectory = struct {
     }
 };
 
-fn decodeLocalDirectory(allocator: std.mem.Allocator, report: []const u8, machine_name: []const u8) ![]u8 {
+fn decodeLocalDirectory(allocator: std.mem.Allocator, report: []const u8, machine_name: []const u8, context: DirectoryContext) ![]u8 {
     const uri = std.Uri.parse(report) catch return error.InvalidDirectoryReport;
     if (!std.ascii.eqlIgnoreCase(uri.scheme, "file") or uri.user != null or uri.password != null or uri.port != null) return error.InvalidDirectoryReport;
     if (uri.host) |component| {
@@ -85,6 +98,16 @@ fn decodeLocalDirectory(allocator: std.mem.Allocator, report: []const u8, machin
             decoded[written] = encoded[read_index];
             read_index += 1;
         }
+    }
+    if (context == .wsl) {
+        if (uri.query != null or uri.fragment != null or std.mem.startsWith(u8, decoded[0..written], "//")) return error.InvalidDirectoryReport;
+        if (written >= 4 and decoded[0] == '/' and std.ascii.isAlphabetic(decoded[1]) and decoded[2] == ':') return error.InvalidDirectoryReport;
+        const linux = wsl.LinuxDirectory.parse(decoded[0..written]) catch return error.InvalidDirectoryReport;
+        const owned = try wsl.networkDirectoryFromLinuxAlloc(allocator, context.wsl, linux);
+        errdefer allocator.free(owned);
+        _ = DirectoryPath.parse(owned) catch return error.InvalidDirectoryReport;
+        allocator.free(decoded);
+        return owned;
     }
     const offset: usize = if (written >= 4 and decoded[0] == '/' and std.ascii.isAlphabetic(decoded[1]) and decoded[2] == ':') 1 else 0;
     std.mem.copyForwards(u8, decoded[0 .. written - offset], decoded[offset..written]);
@@ -140,8 +163,36 @@ test "directory allocation failures roll back path/cache and free every buffer" 
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkDirectoryAllocations, .{});
 }
 
-test "launch paths reject relative/control/WSL inputs before spawning a Windows shell" {
+test "launch paths reject relative/control inputs and require a WSL context for WSL shares" {
     for ([_][]const u8{ "", "C:relative", "relative", "C:\\bad\npath" }) |path| try std.testing.expectError(error.InvalidDirectoryPath, DirectoryPath.parse(path));
-    try std.testing.expectError(error.WslDirectoryUnsupported, DirectoryPath.parse("\\\\wsl.localhost\\Ubuntu\\home\\user"));
+    const network = try DirectoryPath.parse("\\\\wsl.localhost\\Ubuntu\\home\\user");
+    try std.testing.expectError(error.WslDirectoryRequiresShell, PaneDirectory.init(std.testing.allocator, network));
     try std.testing.expectEqualStrings("\\\\server\\share", (try DirectoryPath.parse("\\\\server\\share")).bytes);
+}
+
+fn checkWslDirectoryAllocations(allocator: std.mem.Allocator) !void {
+    const context: DirectoryContext = .{ .wsl = try wsl.WslDistribution.parse("Ubuntu") };
+    var pane = try PaneDirectory.initForContext(allocator, try DirectoryPath.parse("C:\\launch"), context);
+    defer pane.deinit();
+    try pane.applyReport("file://localhost/home/Żółć%20O%27Brien", "my-pc");
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\Ubuntu\\home\\Żółć O'Brien", pane.current().bytes);
+    var sibling = try PaneDirectory.initForContext(allocator, pane.current(), context);
+    defer sibling.deinit();
+    for ([_][]const u8{ "", "file://remote/home/other", "file:///relative%5Cfilename", "file:///bad%FFpath", "file:///bad%00path", "file:///bad%GGpath", "file:///home/user?query", "file:///home/user#fragment", "file:///C:/windows", "file:////server/share" }) |report| {
+        try pane.applyReport(report, "my-pc");
+        try std.testing.expectEqualStrings(sibling.current().bytes, pane.current().bytes);
+    }
+    pane.applyReport("file://MY-PC/home/next", "my-pc") catch |err| {
+        try std.testing.expectEqualStrings(sibling.current().bytes, pane.current().bytes);
+        try std.testing.expectEqualStrings("file:////server/share", pane.last_report.items);
+        return err;
+    };
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\Ubuntu\\home\\next", pane.current().bytes);
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\Ubuntu\\home\\Żółć O'Brien", sibling.current().bytes);
+}
+
+test "WSL OSC 7 reports preserve pane isolation and path/cache state under allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkWslDirectoryAllocations, .{});
+    const context: DirectoryContext = .{ .wsl = try wsl.WslDistribution.parse("Ubuntu") };
+    try std.testing.expectError(error.WslDistributionMismatch, PaneDirectory.initForContext(std.testing.allocator, try DirectoryPath.parse("\\\\wsl$\\Debian\\home"), context));
 }

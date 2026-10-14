@@ -19,6 +19,9 @@ test {
     _ = application;
     _ = @import("terminal/terminal.zig");
     _ = @import("shell/directory.zig");
+    _ = @import("shell/wsl_paths.zig");
+    _ = @import("shell/wsl_launch.zig");
+    _ = @import("shell/windows_arguments.zig");
     _ = @import("workspace/pane_tree.zig");
     _ = @import("workspace/workspace_model.zig");
     _ = platform;

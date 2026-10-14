@@ -46,9 +46,13 @@ pub const PtyOwner = struct {
     pub fn init(allocator: std.mem.Allocator, id: panes.PaneId, path: directory.DirectoryPath, launch: *const shell.ShellLaunch) !PtyOwner {
         const program = try std.unicode.utf8ToUtf16LeAllocZ(allocator, launch.program);
         defer allocator.free(program);
-        const command = try std.unicode.utf8ToUtf16LeAllocZ(allocator, launch.command_line);
+        const command_bytes = try launch.commandForDirectoryAlloc(allocator, path);
+        defer allocator.free(command_bytes);
+        const command = try std.unicode.utf8ToUtf16LeAllocZ(allocator, command_bytes);
         defer allocator.free(command);
-        const working_directory = try std.unicode.utf8ToUtf16LeAllocZ(allocator, path.bytes);
+        // WSL receives its directory through --cd; CreateProcessW must not probe the Linux filesystem view.
+        const windows_directory = if (launch.backend == .wsl) std.fs.path.dirname(launch.program) orelse return error.InvalidShellProgram else path.bytes;
+        const working_directory = try std.unicode.utf8ToUtf16LeAllocZ(allocator, windows_directory);
         defer allocator.free(working_directory);
         var pointer: ?*c.VexPty = null;
         const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len };

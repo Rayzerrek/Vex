@@ -22,7 +22,7 @@ pub const TerminalSession = struct {
     pub fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch) !*TerminalSession {
         const session = try allocator.create(TerminalSession);
         errdefer allocator.destroy(session);
-        var pane_directory = try directory.PaneDirectory.init(allocator, path);
+        var pane_directory = try directory.PaneDirectory.initForContext(allocator, path, launch.directoryContext());
         errdefer pane_directory.deinit();
         var terminal = try core.Terminal.init(allocator, api);
         errdefer terminal.deinit();
