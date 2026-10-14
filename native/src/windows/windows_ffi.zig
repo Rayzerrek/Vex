@@ -296,6 +296,10 @@ pub fn beginStartup() void {
 pub fn invalidateWindow() void {
     c.vex_window_invalidate();
 }
+/// Extends the pending frame deadline up to 100ms while a DEC 2026 synchronized output block is open.
+pub fn deferSynchronizedInvalidation() void {
+    c.vex_window_defer_synchronized();
+}
 /// Counts native paint calls for opt-in desktop diagnostics, not GPU presentations.
 pub fn paintCount() u64 {
     return c.vex_window_paint_count();

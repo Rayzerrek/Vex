@@ -99,11 +99,21 @@ static void renderScheduledFrame() {
 }
 extern "C" void vex_window_invalidate() {
     if (!IsWindow(window)) return;
-    if (!frameScheduled) {
-        frameDeadline = GetTickCount64() + 8;
+    ULONGLONG now = GetTickCount64();
+    if (!frameScheduled || frameDeadline > now + 8) {
+        frameDeadline = now + 8;
         if (!SetTimer(window, 1, 8, nullptr)) { platformError = (int)GetLastError(); DestroyWindow(window); }
         else frameScheduled = true;
-    } else if (GetTickCount64() >= frameDeadline) renderScheduledFrame();
+    } else if (now >= frameDeadline) renderScheduledFrame();
+}
+extern "C" void vex_window_defer_synchronized() {
+    if (!IsWindow(window)) return;
+    ULONGLONG now = GetTickCount64();
+    if (!frameScheduled || frameDeadline < now + 100) {
+        frameDeadline = now + 100;
+        if (!SetTimer(window, 1, 100, nullptr)) { platformError = (int)GetLastError(); DestroyWindow(window); }
+        else frameScheduled = true;
+    } else if (now >= frameDeadline) renderScheduledFrame();
 }
 extern "C" void vex_window_close() { if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 0, 0); }
 extern "C" uint64_t vex_window_paint_count() { return paintCount; }
