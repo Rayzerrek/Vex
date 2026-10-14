@@ -52,6 +52,18 @@ pub const Api = struct {
     key_event_set_action: Function("key_event_set_action"),
     key_event_set_key: Function("key_event_set_key"),
     key_event_set_mods: Function("key_event_set_mods"),
+    mouse_encoder_new: Function("mouse_encoder_new"),
+    mouse_encoder_free: Function("mouse_encoder_free"),
+    mouse_encoder_setopt: Function("mouse_encoder_setopt"),
+    mouse_encoder_reset: Function("mouse_encoder_reset"),
+    mouse_encoder_encode: Function("mouse_encoder_encode"),
+    mouse_event_new: Function("mouse_event_new"),
+    mouse_event_free: Function("mouse_event_free"),
+    mouse_event_set_action: Function("mouse_event_set_action"),
+    mouse_event_set_button: Function("mouse_event_set_button"),
+    mouse_event_clear_button: Function("mouse_event_clear_button"),
+    mouse_event_set_mods: Function("mouse_event_set_mods"),
+    mouse_event_set_position: Function("mouse_event_set_position"),
 
     /// Returns an initialized table or an error; no partially populated table is exposed.
     pub fn load() !Api {

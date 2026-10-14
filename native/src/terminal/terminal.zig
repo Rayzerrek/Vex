@@ -46,10 +46,45 @@ pub const TerminalFrame = struct {
         return self.utf8.items[cell.text_start..][0..cell.text_length];
     }
 };
+/// Terminal mouse tracking mode negotiated via DEC private modes 9, 1000, 1002, 1003.
+pub const MouseTrackingMode = enum(c.GhosttyMouseTrackingMode) {
+    none = c.GHOSTTY_MOUSE_TRACKING_NONE,
+    x10 = c.GHOSTTY_MOUSE_TRACKING_X10,
+    normal = c.GHOSTTY_MOUSE_TRACKING_NORMAL,
+    button = c.GHOSTTY_MOUSE_TRACKING_BUTTON,
+    any = c.GHOSTTY_MOUSE_TRACKING_ANY,
+};
+/// Terminal mouse output wire format negotiated via DEC private modes 1005, 1006, 1015, 1016.
+pub const MouseFormat = enum(c.GhosttyMouseFormat) {
+    x10 = c.GHOSTTY_MOUSE_FORMAT_X10,
+    utf8 = c.GHOSTTY_MOUSE_FORMAT_UTF8,
+    sgr = c.GHOSTTY_MOUSE_FORMAT_SGR,
+    urxvt = c.GHOSTTY_MOUSE_FORMAT_URXVT,
+    sgr_pixels = c.GHOSTTY_MOUSE_FORMAT_SGR_PIXELS,
+};
+/// Normalized pointer action for terminal mouse protocol encoding.
+pub const MouseAction = enum(c.GhosttyMouseAction) {
+    press = c.GHOSTTY_MOUSE_ACTION_PRESS,
+    release = c.GHOSTTY_MOUSE_ACTION_RELEASE,
+    motion = c.GHOSTTY_MOUSE_ACTION_MOTION,
+};
+/// Normalized mouse button identity for terminal mouse protocol encoding.
+pub const MouseButton = enum(c.GhosttyMouseButton) {
+    none = c.GHOSTTY_MOUSE_BUTTON_UNKNOWN,
+    left = c.GHOSTTY_MOUSE_BUTTON_LEFT,
+    right = c.GHOSTTY_MOUSE_BUTTON_RIGHT,
+    middle = c.GHOSTTY_MOUSE_BUTTON_MIDDLE,
+    wheel_up = c.GHOSTTY_MOUSE_BUTTON_FOUR,
+    wheel_down = c.GHOSTTY_MOUSE_BUTTON_FIVE,
+    wheel_left = c.GHOSTTY_MOUSE_BUTTON_SIX,
+    wheel_right = c.GHOSTTY_MOUSE_BUTTON_SEVEN,
+    back = c.GHOSTTY_MOUSE_BUTTON_EIGHT,
+    forward = c.GHOSTTY_MOUSE_BUTTON_NINE,
+};
 /// PTY replies are borrowed only during write; failures are returned by feedOutput.
 pub const ResponseSink = struct { context: *anyopaque, write: *const fn (*anyopaque, []const u8) anyerror!void };
 
-/// Owns one emulator, iterators, key encoder and frame buffers. Never copy a live owner.
+/// Owns one emulator, iterators, key/mouse encoders and frame buffers. Never copy a live owner.
 pub const Terminal = struct {
     allocator: std.mem.Allocator,
     api: *const binding.Api,
@@ -63,6 +98,8 @@ pub const Terminal = struct {
     release_event: std.meta.Child(c.GhosttySelectionGestureEvent),
     key_encoder: std.meta.Child(c.GhosttyKeyEncoder),
     key_event: std.meta.Child(c.GhosttyKeyEvent),
+    mouse_encoder: std.meta.Child(c.GhosttyMouseEncoder),
+    mouse_event: std.meta.Child(c.GhosttyMouseEvent),
     cell_width_px: u32 = 9,
     cell_height_px: u32 = 17,
     kb_selection_active: bool = false,
@@ -129,6 +166,14 @@ pub const Terminal = struct {
         try check(api.key_event_new(null, &event));
         const key_event = event orelse return error.TerminalNullHandle;
         errdefer api.key_event_free(key_event);
+        var m_encoder: c.GhosttyMouseEncoder = null;
+        try check(api.mouse_encoder_new(null, &m_encoder));
+        const mouse_encoder = m_encoder orelse return error.TerminalNullHandle;
+        errdefer api.mouse_encoder_free(mouse_encoder);
+        var m_event: c.GhosttyMouseEvent = null;
+        try check(api.mouse_event_new(null, &m_event));
+        const mouse_event = m_event orelse return error.TerminalNullHandle;
+        errdefer api.mouse_event_free(mouse_event);
         var owner: Terminal = .{
             .allocator = allocator,
             .api = api,
@@ -142,6 +187,8 @@ pub const Terminal = struct {
             .release_event = release_event,
             .key_encoder = key_encoder,
             .key_event = key_event,
+            .mouse_encoder = mouse_encoder,
+            .mouse_event = mouse_event,
             .program_status = .{ .allocator = allocator },
             .status_clock = try std.time.Timer.start(),
         };
@@ -150,6 +197,8 @@ pub const Terminal = struct {
     }
     /// Consumes this owner after all output callbacks have stopped; no worker owns these handles.
     pub fn deinit(self: *Terminal) void {
+        self.api.mouse_event_free(self.mouse_event);
+        self.api.mouse_encoder_free(self.mouse_encoder);
         self.api.key_event_free(self.key_event);
         self.api.key_encoder_free(self.key_encoder);
         self.api.selection_gesture_event_free(self.release_event);
@@ -254,6 +303,7 @@ pub const Terminal = struct {
         try check(self.api.terminal_resize(self.handle, columns, rows, width_px, height_px));
         self.cell_width_px = width_px;
         self.cell_height_px = height_px;
+        self.updateMouseEncoderSize(columns, rows, width_px, height_px);
         self.kb_selection_active = false;
         self.frame_valid = false;
         if (self.callback_error) |err| return err;
@@ -572,6 +622,69 @@ pub const Terminal = struct {
     pub fn bracketedPaste(self: *const Terminal) !bool {
         return self.decMode(2004);
     }
+    /// True while DEC private mode 2026 (synchronized output) is active.
+    pub fn synchronizedOutput(self: *const Terminal) !bool {
+        return self.decMode(2026);
+    }
+    /// True while DEC private mode 2048 (in-band resize notifications) is active.
+    pub fn inBandResize(self: *const Terminal) !bool {
+        return self.decMode(2048);
+    }
+    /// Resolves the highest-priority active mouse tracking mode from live DEC mode bits (1003 > 1002 > 1000 > 9).
+    pub fn mouseTrackingMode(self: *const Terminal) !MouseTrackingMode {
+        if (try self.decMode(1003)) return .any;
+        if (try self.decMode(1002)) return .button;
+        if (try self.decMode(1000)) return .normal;
+        if (try self.decMode(9)) return .x10;
+        return .none;
+    }
+    /// Resolves the highest-priority active mouse wire format from live DEC mode bits (1016 > 1015 > 1005 > 1006 > X10).
+    pub fn mouseFormat(self: *const Terminal) !MouseFormat {
+        if (try self.decMode(1016)) return .sgr_pixels;
+        if (try self.decMode(1015)) return .urxvt;
+        if (try self.decMode(1005)) return .utf8;
+        if (try self.decMode(1006)) return .sgr;
+        return .x10;
+    }
+    /// True when any terminal mouse tracking mode (9, 1000, 1002, 1003) is enabled.
+    pub fn isMouseTracking(self: *const Terminal) !bool {
+        return (try self.mouseTrackingMode()) != .none;
+    }
+    /// Resets the mouse encoder's motion cell deduplication state.
+    pub fn resetMouseEncoder(self: *Terminal) void {
+        self.api.mouse_encoder_reset(self.mouse_encoder);
+    }
+    /// Encodes a pointer event into the active mouse protocol format; returns an empty slice when filtered out.
+    pub fn encodeMouse(
+        self: *Terminal,
+        action: MouseAction,
+        button: MouseButton,
+        mods: u32,
+        x_px: f32,
+        y_px: f32,
+        any_button_pressed: bool,
+        output: []u8,
+    ) ![]const u8 {
+        if (mods > 7) return error.InvalidKeyModifiers;
+        const tracking_mode: c.GhosttyMouseTrackingMode = @intFromEnum(try self.mouseTrackingMode());
+        if (tracking_mode == c.GHOSTTY_MOUSE_TRACKING_NONE) return output[0..0];
+        const format: c.GhosttyMouseFormat = @intFromEnum(try self.mouseFormat());
+        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_EVENT, &tracking_mode);
+        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_FORMAT, &format);
+        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &any_button_pressed);
+        self.api.mouse_event_set_action(self.mouse_event, @intFromEnum(action));
+        if (button == .none) {
+            self.api.mouse_event_clear_button(self.mouse_event);
+        } else {
+            self.api.mouse_event_set_button(self.mouse_event, @intFromEnum(button));
+        }
+        self.api.mouse_event_set_mods(self.mouse_event, @intCast(mods));
+        self.api.mouse_event_set_position(self.mouse_event, .{ .x = @max(0.0, x_px), .y = @max(0.0, y_px) });
+        var length: usize = 0;
+        try check(self.api.mouse_encoder_encode(self.mouse_encoder, self.mouse_event, output.ptr, output.len, &length));
+        if (length > output.len) return error.InvalidTerminalBufferLength;
+        return output[0..length];
+    }
     /// Normalizes CRLF/LF to CR, strips bracket-closing escapes, and wraps in DEC 2004 markers when active.
     pub fn encodePasteAlloc(self: *const Terminal, allocator: std.mem.Allocator, text: []const u8) ![]u8 {
         if (text.len == 0) return allocator.alloc(u8, 0);
@@ -819,6 +932,20 @@ pub const Terminal = struct {
             palette[index] = .{ .r = level, .g = level, .b = level };
         }
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette));
+        const track_last_cell = true;
+        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL, &track_last_cell);
+        self.updateMouseEncoderSize(80, 24, self.cell_width_px, self.cell_height_px);
+    }
+    fn updateMouseEncoderSize(self: *Terminal, columns: u16, rows: u16, cell_width_px: u32, cell_height_px: u32) void {
+        const cw = @max(1, cell_width_px);
+        const ch = @max(1, cell_height_px);
+        var size = std.mem.zeroes(c.GhosttyMouseEncoderSize);
+        size.size = @sizeOf(c.GhosttyMouseEncoderSize);
+        size.screen_width = @max(1, @as(u32, columns) * cw);
+        size.screen_height = @max(1, @as(u32, rows) * ch);
+        size.cell_width = cw;
+        size.cell_height = ch;
+        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
     }
 };
 
@@ -1574,4 +1701,55 @@ test "extendKeyboardSelection and consumeKeyboardSelectionBackspaces handle word
     try terminal.feedOutput("\x1b[?1049h");
     try std.testing.expect(!try terminal.extendKeyboardSelection(0x25, 1));
 }
+
+test "mouse tracking priority, partial mode reset resilience, SGR/pixel formats, wheel, motion deduplication, and DEC 2026/2048" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(20, 10, 10, 20);
+    var out: [64]u8 = undefined;
+
+    try std.testing.expect(!try terminal.isMouseTracking());
+    try std.testing.expectEqual(MouseTrackingMode.none, try terminal.mouseTrackingMode());
+    try std.testing.expectEqual(MouseFormat.x10, try terminal.mouseFormat());
+    try std.testing.expectEqualStrings("", try terminal.encodeMouse(.press, .left, 0, 15.0, 25.0, true, &out));
+
+    // Enabling 1000 and 1002, then resetting 1000 must keep 1002 active rather than collapsing to none.
+    try terminal.feedOutput("\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?1000l");
+    try std.testing.expect(try terminal.isMouseTracking());
+    try std.testing.expectEqual(MouseTrackingMode.button, try terminal.mouseTrackingMode());
+    try std.testing.expectEqual(MouseFormat.sgr, try terminal.mouseFormat());
+
+    // Cell (1, 1) in 0-based (x=15..19, y=25..39 with 10x20 cells) is (2, 2) in 1-based SGR coordinates.
+    try std.testing.expectEqualStrings("\x1b[<0;2;2M", try terminal.encodeMouse(.press, .left, 0, 15.0, 25.0, true, &out));
+    // Motion within the same cell is deduplicated; moving to cell (3, 2) -> 1-based (4, 3) emits button-motion 32.
+    try std.testing.expectEqualStrings("", try terminal.encodeMouse(.motion, .left, 0, 18.0, 29.0, true, &out));
+    try std.testing.expectEqualStrings("\x1b[<32;4;3M", try terminal.encodeMouse(.motion, .left, 0, 35.0, 45.0, true, &out));
+    // Unpressed motion is filtered in button-event mode (1002) but emitted in any-event mode (1003).
+    try std.testing.expectEqualStrings("", try terminal.encodeMouse(.motion, .none, 0, 55.0, 45.0, false, &out));
+    try terminal.feedOutput("\x1b[?1003h");
+    try std.testing.expectEqual(MouseTrackingMode.any, try terminal.mouseTrackingMode());
+    try std.testing.expectEqualStrings("\x1b[<35;6;3M", try terminal.encodeMouse(.motion, .none, 0, 55.0, 45.0, false, &out));
+    try std.testing.expectEqualStrings("\x1b[<0;6;3m", try terminal.encodeMouse(.release, .left, 0, 55.0, 45.0, false, &out));
+
+    // Wheel up/down in SGR format (buttons 64 and 65).
+    try std.testing.expectEqualStrings("\x1b[<64;2;2M", try terminal.encodeMouse(.press, .wheel_up, 0, 15.0, 25.0, false, &out));
+    try std.testing.expectEqualStrings("\x1b[<65;2;2M", try terminal.encodeMouse(.press, .wheel_down, 0, 15.0, 25.0, false, &out));
+
+    // SGR-Pixels format (1016) encodes pixel coordinates directly.
+    try terminal.feedOutput("\x1b[?1016h");
+    try std.testing.expectEqual(MouseFormat.sgr_pixels, try terminal.mouseFormat());
+    try std.testing.expectEqualStrings("\x1b[<0;15;25M", try terminal.encodeMouse(.press, .left, 0, 15.0, 25.0, true, &out));
+
+    // Synchronized output (DEC 2026) and in-band resize (DEC 2048) live mode bits.
+    try std.testing.expect(!try terminal.synchronizedOutput());
+    try std.testing.expect(!try terminal.inBandResize());
+    try terminal.feedOutput("\x1b[?2026h\x1b[?2048h");
+    try std.testing.expect(try terminal.synchronizedOutput());
+    try std.testing.expect(try terminal.inBandResize());
+    try terminal.feedOutput("\x1b[?2026l\x1b[?2048l");
+    try std.testing.expect(!try terminal.synchronizedOutput());
+    try std.testing.expect(!try terminal.inBandResize());
+}
+
 
