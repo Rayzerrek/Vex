@@ -1,10 +1,10 @@
 param(
-    [string]$Executable = "$PSScriptRoot\zig-out\bin\vex-native.exe",
-    [string]$OutputDirectory = "$PSScriptRoot\zig-out\verification"
+    [string]$Executable = "$PSScriptRoot\..\zig-out\bin\vex-native.exe",
+    [string]$OutputDirectory = "$PSScriptRoot\..\zig-out\verification"
 )
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\tests\DesktopHarness.ps1"
-$NativeWorkingDirectory = $PSScriptRoot
+. "$PSScriptRoot\DesktopHarness.ps1"
+$NativeWorkingDirectory = Split-Path $PSScriptRoot -Parent
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 $OutputDirectory = (Resolve-Path $OutputDirectory).Path
 $oldSelftest = $env:VEX_NATIVE_SELFTEST

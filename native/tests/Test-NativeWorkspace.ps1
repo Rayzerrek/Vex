@@ -1,10 +1,10 @@
 param(
-    [string]$Executable = "$PSScriptRoot\zig-out\bin\vex-native.exe",
-    [string]$OutputDirectory = "$PSScriptRoot\zig-out\verification"
+    [string]$Executable = "$PSScriptRoot\..\zig-out\bin\vex-native.exe",
+    [string]$OutputDirectory = "$PSScriptRoot\..\zig-out\verification"
 )
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\tests\DesktopHarness.ps1"
-$NativeWorkingDirectory = $PSScriptRoot
+. "$PSScriptRoot\DesktopHarness.ps1"
+$NativeWorkingDirectory = Split-Path $PSScriptRoot -Parent
 # Raw custom cmd isolates OSC 7501 tests from the integrated shell's prompt lifecycle.
 $NativeLaunchArguments = '--program "' + $env:WINDIR + '\System32\cmd.exe" --arguments /d'
 
@@ -120,7 +120,7 @@ try {
     $freshToken = Get-NativeProbe $window 12
     if ($freshToken -le $closedToken) { throw 'Vex native smoke: a pane token was reused.' }
     Assert-NativeProbe $window 4 0 'new tab output isolation'
-    Send-NativeText $window ('@set VEX_ROOT=VEX_NATIVE_ROOT_DIRECTORY_' + "`r" + '@if /i "%CD%"=="' + $PSScriptRoot + '" echo %VEX_ROOT%OK' + "`r")
+    Send-NativeText $window ('@set VEX_ROOT=VEX_NATIVE_ROOT_DIRECTORY_' + "`r" + '@if /i "%CD%"=="' + $NativeWorkingDirectory + '" echo %VEX_ROOT%OK' + "`r")
     Assert-NativeProbe $window 9 1 'new tabs use the project root, not a changed pane directory'
     Send-NativeText $window ('@set VEX_TAB=VEX_NATIVE_TAB_' + "`r" + '@echo %VEX_TAB%B' + "`r")
     Assert-NativeProbe $window 5 1 'second tab marker'

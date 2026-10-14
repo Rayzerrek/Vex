@@ -169,5 +169,19 @@ These are behavioral contracts, not opportunities to redesign the app.
   pending. cmd bootstrap paths with `%` or quotes reject explicitly; this is
   a documented launch limitation, not full path/profile compatibility parity.
 
+## Source structure checkpoint
+
+- `src/main.zig` is the allocator/error entrypoint and explicit test-module root.
+- `src/app/` separates workspace orchestration from the stable session owner.
+- `src/workspace/` is pure tab/tree state; `src/terminal/` owns emulator/ABI/feed
+  parsing; `src/shell/` owns launch/directory state plus integration scripts.
+- `src/windows/` contains the Windows event/render/process seams. ABI symbol
+  resolution no longer depends on the entire rendering/window adapter.
+- Live tests are in `tests/` with one shared desktop harness. Unit tests stay
+  beside the implementation, and the full 52-test suite is retained after moves.
+- Built-in shell IDs are presets, not an execution whitelist. Custom launch
+  accepts any available absolute ConPTY-compatible executable and raw arguments;
+  no universal cross-platform backend or Linux launch support is claimed here.
+
 No WPF profile is read/overwritten. This milestone does not replace production,
 certify native memory safety, or establish complete parity/performance.

@@ -1,8 +1,7 @@
-const platform = @import("windows_ffi.zig");
-
 /// Pinned libghostty C declarations; C pointers must not escape terminal/FFI modules.
 pub const c = @cImport({
     @cInclude("ghostty/vt.h");
+    @cInclude("windows_platform.h");
 });
 
 fn Function(comptime name: []const u8) type {
@@ -47,7 +46,7 @@ pub const Api = struct {
     pub fn load() !Api {
         var loaded: Api = undefined;
         inline for (@typeInfo(Api).@"struct".fields) |field| {
-            const pointer = platform.c.vex_terminal_symbol(field.name) orelse return error.MissingTerminalSymbol;
+            const pointer = c.vex_terminal_symbol(field.name) orelse return error.MissingTerminalSymbol;
             // GetProcAddress has no typed result; pinned headers plus ABI tests are the contract.
             @field(loaded, field.name) = @ptrCast(pointer);
         }

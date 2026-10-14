@@ -37,7 +37,9 @@ zig build run -- --program 'C:\Windows\System32\cmd.exe' --arguments /d
 once using canonical locations and absolute PATH entries; missing Windows
 built-ins fall back to cmd. Custom programs must be absolute and available;
 custom arguments are an explicit raw Windows command-line fragment, not shell
-text guessed by the app. WSL IDs are rejected until Linux launch support exists.
+text guessed by the app. These presets are not a whitelist: any ConPTY-compatible
+executable can use the custom launch path; the emulator/workspace do not branch
+on a shell's name and custom programs are not wrapped in cmd. WSL IDs are rejected until Linux launch support exists.
 The selected profile applies to all tabs/splits in this checkpoint; profile UI,
 per-pane overrides and persisted settings remain pending.
 
@@ -80,25 +82,46 @@ focus outline. Font/cell metrics come from DirectWrite. Initial window size is
 
 ## Ownership and rendering
 
-- `src/workspace_model.zig`: tab selection/close/focus rules, capped at 8 tabs.
-- `src/pane_tree.zig`: allocator-owned recursive split tree; transactional edits,
+Code is grouped by responsibility, not by one class per file:
+
+```text
+src/
+  main.zig
+  app/         workspace/session owners
+  workspace/   pure tab and pane-tree models
+  terminal/    emulator, typed ABI, feed/status parsing
+  shell/       launch/directory models and integration scripts
+  windows/     Win32/ConPTY/rendering seams
+tests/         live desktop fixtures and shared harness
+```
+
+Unit `test` blocks remain beside their implementation. `src/main.zig` explicitly
+references the test modules so moving a file cannot silently drop it from the
+suite. The application owns sessions; pure workspace models never import the
+window adapter. Terminal ABI resolution uses its C seam directly, not a
+circular dependency through the rendering/window adapter.
+
+- `src/workspace/workspace_model.zig`: tab selection/close/focus rules, capped at 8 tabs.
+- `src/workspace/pane_tree.zig`: allocator-owned recursive split tree; transactional edits,
   stable IDs, ratio clamp 0.1..0.9, finite DIP geometry, 64-level depth guard.
-- `src/terminal_app.zig`: application/session owners, main-thread orchestration.
-- `src/shell_launch.zig`: startup selection, executable resolution, Windows
+- `src/main.zig`: allocator/error boundary and explicit root test imports.
+- `src/app/workspace_application.zig`: main-thread workspace orchestration.
+- `src/app/terminal_session.zig`: stable per-pane ownership and teardown.
+- `src/shell/shell_launch.zig`: startup selection, executable resolution, Windows
   quoting, encoded bootstraps and owned child environment.
-- `src/directory.zig`: parsed absolute Windows paths, owned pane directories,
+- `src/shell/directory.zig`: parsed absolute Windows paths, owned pane directories,
   local file-URI decoding and transactional report/cache updates.
-- `src/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
+- `src/terminal/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
   acknowledgement and bounded text parsing.
-- `src/terminal_feed.zig`: bounded status interception; unrelated VT is
+- `src/terminal/terminal_feed.zig`: bounded status interception; unrelated VT is
   forwarded unchanged and plain chunks bypass copying.
-- `src/api.zig`: checked symbol resolution and structured terminal API errors.
-- `src/terminal.zig`: one emulator/iterator/key encoder per pane,
+- `src/terminal/api.zig`: checked symbol resolution and structured terminal API errors.
+- `src/terminal/terminal.zig`: one emulator/iterator/key encoder per pane,
   reusable parsed snapshots, typed colors/styles/widths/cursor, validated UTF-8.
-- `src/windows_ffi.zig`: callback-pointer conversion, opaque PTY owners,
+- `src/windows/windows_ffi.zig`: callback-pointer conversion, opaque PTY owners,
   validated window/input seams and presentation of parsed snapshots.
-- `src/windows_platform.cpp`: Win32 event loop and Direct2D/DirectWrite COM.
-- `src/windows_pty.cpp`: per-session ConPTY worker/queue ownership and job objects.
+- `src/windows/windows_platform.cpp`: Win32 event loop and Direct2D/DirectWrite COM.
+- `src/windows/windows_pty.cpp`: per-session ConPTY worker/queue ownership and job objects.
 
 Each terminal owns and frees its native handles and Zig buffers. Workspace trees
 contain IDs, not pointers into movable session arrays. All emulator/UI access is
@@ -177,12 +200,12 @@ DLL SHA-256:
 
 ```powershell
 cd native
-zig fmt --check build.zig src/*.zig
+zig fmt --check build.zig src
 zig build test -Doptimize=Debug
 zig build test -Doptimize=ReleaseSafe
 zig build
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-NativeWorkspace.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-NativeShells.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShells.ps1
 ```
 
 Unit tests use the **real checked-in DLL**: ABI/Unicode/colors/wide cells,

@@ -153,7 +153,7 @@ pub fn buildShellCommandLine(allocator: std.mem.Allocator, kind: ShellKind, prog
             break :blk try std.fmt.allocPrint(allocator, "/q /k \"call \"{s}\\Vex.cmd\"\"", .{integration_directory});
         },
         .powershell, .pwsh => blk: {
-            const script = try std.unicode.utf8ToUtf16LeAlloc(allocator, @embedFile("shell_integration/Vex.ps1"));
+            const script = try std.unicode.utf8ToUtf16LeAlloc(allocator, @embedFile("integration/Vex.ps1"));
             defer allocator.free(script);
             const bytes = std.mem.sliceAsBytes(script);
             const encoded = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(bytes.len));
