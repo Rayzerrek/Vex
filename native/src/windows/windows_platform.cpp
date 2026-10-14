@@ -170,9 +170,13 @@ static void pasteClipboard() {
         MessageBoxA(window, message, "Vex native paste", MB_OK | MB_ICONWARNING);
     }
 }
+extern "C" void vex_window_paste_clipboard() { pasteClipboard(); }
+static uint32_t currentModifiers() {
+    return (GetKeyState(VK_SHIFT) < 0 ? 1u : 0u) | (GetKeyState(VK_CONTROL) < 0 ? 2u : 0u) | (GetKeyState(VK_MENU) < 0 ? 4u : 0u);
+}
 static bool handleKey(uint32_t key) {
-    uint32_t mods = (GetKeyState(VK_SHIFT) < 0 ? 1u : 0u) | (GetKeyState(VK_CONTROL) < 0 ? 2u : 0u) | (GetKeyState(VK_MENU) < 0 ? 4u : 0u);
-    if (key == 'V' && mods == 3) { pasteClipboard(); return true; }
+    uint32_t mods = currentModifiers();
+    if ((key == 'V' && mods == 3) || (key == VK_INSERT && mods == 1)) { pasteClipboard(); return true; }
     return callbacks.key(callbacks.context, key, mods);
 }
 static void setPointerCursor(uint32_t response, float y) {
@@ -201,7 +205,7 @@ static void releasePointerCapture() {
 }
 static void cancelPointerGesture() {
     if (pointerCaptureState == PointerCaptureState::none || pointerCaptureState == PointerCaptureState::cancelled) return;
-    callbacks.pointer(callbacks.context, VEX_POINTER_CANCEL, 0, 0);
+    callbacks.pointer(callbacks.context, VEX_POINTER_CANCEL, 0, 0, currentModifiers());
     // Also release if a failed application ignores further callbacks during destruction.
     releasePointerCapture();
 }
@@ -211,7 +215,7 @@ static void capturePointerGesture(HWND hwnd) {
     if (GetCapture() != hwnd) cancelPointerGesture();
 }
 static void beginPointerGesture(HWND hwnd, float x, float y) {
-    uint32_t response = callbacks.pointer(callbacks.context, VEX_POINTER_BEGIN, x, y);
+    uint32_t response = callbacks.pointer(callbacks.context, VEX_POINTER_BEGIN, x, y, currentModifiers());
     if (response == VEX_POINTER_NORMAL) return;
     SetFocus(hwnd);
     if (response == VEX_POINTER_TAB_ARMED) pointerCaptureState = PointerCaptureState::armed;
@@ -262,7 +266,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             if (!GetCursorPos(&point) || !ScreenToClient(hwnd, &point)) break;
             float scale = GetDpiForWindow(hwnd) / 96.0f;
             float x = point.x / scale, y = point.y / scale;
-            setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y), y);
+            setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y, currentModifiers()), y);
             return TRUE;
         }
         break;
@@ -280,16 +284,42 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             else beginPointerGesture(hwnd, x, y);
         } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 32) callbacks.action(callbacks.context, 0, 0);
         else if (y >= 44) {
-            if (message == WM_LBUTTONDOWN) beginPointerGesture(hwnd, x, y);
-            if (pointerCaptureState == PointerCaptureState::none) callbacks.click(callbacks.context, x, y);
+            if (message == WM_LBUTTONDOWN) {
+                beginPointerGesture(hwnd, x, y);
+                if (pointerCaptureState == PointerCaptureState::none) callbacks.click(callbacks.context, x, y);
+            } else {
+                SetFocus(hwnd);
+                callbacks.mouse_button(callbacks.context, 3, true, x, y, currentModifiers());
+            }
         }
+        return 0;
+    }
+    case WM_MBUTTONUP: {
+        float scale = GetDpiForWindow(hwnd) / 96.0f;
+        float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        callbacks.mouse_button(callbacks.context, 3, false, x, y, currentModifiers());
+        return 0;
+    }
+    case WM_RBUTTONDOWN: {
+        float scale = GetDpiForWindow(hwnd) / 96.0f;
+        float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        if (y >= 44) {
+            SetFocus(hwnd);
+            callbacks.mouse_button(callbacks.context, 2, true, x, y, currentModifiers());
+        }
+        return 0;
+    }
+    case WM_RBUTTONUP: {
+        float scale = GetDpiForWindow(hwnd) / 96.0f;
+        float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        callbacks.mouse_button(callbacks.context, 2, false, x, y, currentModifiers());
         return 0;
     }
     case WM_LBUTTONUP: {
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         if (pointerCaptureState != PointerCaptureState::none) {
-            if (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging) callbacks.pointer(callbacks.context, VEX_POINTER_END, x, y);
+            if (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging) callbacks.pointer(callbacks.context, VEX_POINTER_END, x, y, currentModifiers());
             releasePointerCapture();
             pointerCaptureState = PointerCaptureState::none;
             return 0;
@@ -306,7 +336,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         if (pointerCaptureState == PointerCaptureState::armed && !(wparam & MK_LBUTTON)) cancelPointerGesture();
         uint32_t event = pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging ? VEX_POINTER_MOVE : VEX_POINTER_HOVER;
-        uint32_t response = callbacks.pointer(callbacks.context, event, x, y);
+        uint32_t response = callbacks.pointer(callbacks.context, event, x, y, currentModifiers());
         if (pointerCaptureState == PointerCaptureState::armed && response == VEX_POINTER_TAB_DRAGGING) capturePointerGesture(hwnd);
         else if (response == VEX_POINTER_NORMAL) cancelPointerGesture();
         setPointerCursor(response, y);
@@ -415,7 +445,13 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (length > 0) callbacks.text(callbacks.context, bytes, (size_t)length);
         return 0;
     }
-    case WM_MOUSEWHEEL: callbacks.scroll(callbacks.context, -(GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) * 3); vex_window_invalidate(); return 0;
+    case WM_MOUSEWHEEL: {
+        POINT point = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+        ScreenToClient(hwnd, &point);
+        float scale = GetDpiForWindow(hwnd) / 96.0f;
+        callbacks.scroll(callbacks.context, -(GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) * 3, point.x / scale, point.y / scale, currentModifiers());
+        return 0;
+    }
     case WM_CLOSE: cancelPointerGesture(); DestroyWindow(hwnd); return 0;
     case WM_DESTROY: cancelPointerGesture(); KillTimer(hwnd, 1); PostQuitMessage(0); return 0;
     }
