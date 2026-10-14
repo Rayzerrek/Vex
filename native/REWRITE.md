@@ -5,6 +5,7 @@ Reference implementation: `../windows/`, especially `docs/architecture.md`,
 `feat/zig-native`. The WPF application stays runnable and unchanged until native
 functional and visual parity is demonstrated. This is a staged rewrite, not a
 claim that a reduced-feature terminal replaces Vex already.
+Current platform scope is Windows + WSL; native Linux/macOS ports are not planned in this stage.
 
 ## Safety rules
 
@@ -57,8 +58,8 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache; ConPTY DCS filter parity pending |
 | Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*` | DirectWrite baseline and themed chrome; pixel fixtures, custom box/Powerline glyphs, color emoji and blink pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys/plain paste/wheel; full protocols, IME, click positioning, selection/copy/cut, bracketed paste pending |
-| Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash and absolute custom executables; cmd/PS/Nu integration implemented; profile menu, per-pane overrides and persistence pending |
-| Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local directory ownership/OSC 7/inheritance implemented; project UI/WSL pending; WSL directories explicitly reject Windows-shell launch |
+| Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash, absolute custom executables and explicit-distribution WSL/Linux programs; cmd/PS/Nu integration implemented; profile menu, per-pane overrides and persistence pending |
+| Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local/selected-distribution Linux OSC 7 ownership/inheritance and WSL UNC project startup implemented; cross-distribution/Windows-shell mismatches reject; project UI, default distribution and Linux process metadata pending |
 | Settings and session persistence | `Model/AppSettings.cs`, `Session*`, `VexJsonContext.cs` | Pending; native currently does not read/write the production profile |
 | Saved layouts | `SavedTerminalLayout.cs`, `MainWindow.SavedLayouts.cs` | Pending; opening explicitly executes commands once; restore must never replay commands |
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts first; all remaining palettes/settings pending |
@@ -146,7 +147,8 @@ These are behavioral contracts, not opportunities to redesign the app.
 
 - Startup-only `--shell` IDs or an absolute `--program` plus raw `--arguments`;
   one resolved, owned launch applies to every new tab/split. No settings UI or
-  production-profile read/write is implied. WSL requests explicitly reject.
+  production-profile read/write is implied. WSL requests rejected at this historical checkpoint;
+  explicit-distribution launch is implemented in the later checkpoint below.
 - Windows argv quoting, UTF-16 command-line bounds, canonical/PATH resolution,
   missing-profile fallback, missing bootstrap errors and environment ownership
   have allocator-failure fixtures. Custom programs validate before filesystem IO.
@@ -165,9 +167,38 @@ These are behavioral contracts, not opportunities to redesign the app.
   scripts pass. On this machine all five built-ins are present and exercised,
   including PowerShell/Nushell automatic Unicode OSC 7 split inheritance,
   completion/failure status and a Unicode/spaced cmd installation path.
-- Profile menus/per-pane shell overrides, Linux projects and settings remain
-  pending. cmd bootstrap paths with `%` or quotes reject explicitly; this is
-  a documented launch limitation, not full path/profile compatibility parity.
+- At that checkpoint, profile menus/per-pane shell overrides, Linux projects
+  and settings were pending. The WSL checkpoint below adds Linux launch, not
+  the remaining UI/settings. cmd bootstrap paths with `%` or quotes reject
+  explicitly; this is not full path/profile compatibility parity.
+
+## WSL checkpoint verification
+
+- Windows + WSL is the explicit platform target, without native Linux/macOS ports.
+- `--shell wsl --distribution NAME` starts the Linux login shell;
+  `--shell wsl:/absolute/program` executes arbitrary Linux programs, with optional
+  raw argv arguments. No shell-name whitelist, guessed flags or cmd fallback.
+- `wsl_launch.zig` owns distribution/argv metadata; `wsl_paths.zig` parses Linux
+  directories/distribution names and maps the two WSL UNC host forms. Shared
+  Windows argv quoting lives in `windows_arguments.zig`, without import cycles.
+- Windows drive paths go unchanged to WSL `--cd` for its mount configuration;
+  WSL UNC paths retain their Linux spelling and selected distribution. The
+  Windows launcher starts in its own directory rather than probing a Linux UNC cwd.
+- Pane directory context borrows application-owned distribution metadata until
+  teardown. Linux OSC 7 maps into that context; invalid/remote/wrong-domain reports
+  preserve the previous path. No POSIX symlink/parent path normalization is guessed.
+- Parser, per-pane argv, ownership and transactional path/cache allocation failures
+  have unit fixtures; real-DLL directory callbacks cover every UTF-8/OSC chunk boundary.
+- Live Ubuntu smoke covers default login, a Linux executable under a Unicode/spaced/
+  apostrophe path, TERM/COLORTERM defaults and explicit overrides, Linux OSC 7/split
+  inheritance, new-tab project root, UNC project startup and busy shell/child shutdown.
+- 59 tests pass in Debug and ReleaseSafe; ReleaseSafe app build, workspace smoke,
+  all five installed Windows built-in shells and Ubuntu WSL smoke pass. WPF files
+  remain unchanged; no fresh WPF test result is implied by these native checks.
+- Explicit distribution is required for now. Default-distribution discovery,
+  custom Linux hostname recognition, prompt adapters, Linux process/icon tracking
+  and deliberately detached Linux process cleanup are still pending. Existing shell
+  integration remains optional; no user startup file or production profile is rewritten.
 
 ## Source structure checkpoint
 
@@ -181,7 +212,8 @@ These are behavioral contracts, not opportunities to redesign the app.
   beside the implementation, and the full 52-test suite is retained after moves.
 - Built-in shell IDs are presets, not an execution whitelist. Custom launch
   accepts any available absolute ConPTY-compatible executable and raw arguments;
-  no universal cross-platform backend or Linux launch support is claimed here.
+  no universal cross-platform backend was claimed at that structural checkpoint.
+  Linux program launch through Windows WSL is covered by the WSL checkpoint above.
 
 No WPF profile is read/overwritten. This milestone does not replace production,
 certify native memory safety, or establish complete parity/performance.
