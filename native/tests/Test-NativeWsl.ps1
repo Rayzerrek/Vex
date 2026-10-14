@@ -27,6 +27,29 @@ try {
     $env:VEX_NATIVE_SELFTEST = '1'
     $env:TERM = 'dumb'
     $env:COLORTERM = $null
+    $defaultKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Lxss')
+    if ($null -eq $defaultKey) { throw 'Vex native WSL smoke: no default distribution is registered.' }
+    try {
+        $defaultGuid = $defaultKey.GetValue('DefaultDistribution')
+        if ($defaultGuid -isnot [string] -or $defaultGuid -notmatch '^\{[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\}$') { throw 'Vex native WSL smoke: invalid default distribution GUID.' }
+        $distributionKey = $defaultKey.OpenSubKey($defaultGuid)
+        if ($null -eq $distributionKey) { throw 'Vex native WSL smoke: default distribution key is missing.' }
+        try { $defaultDistribution = $distributionKey.GetValue('DistributionName') }
+        finally { $distributionKey.Dispose() }
+        if ($defaultDistribution -isnot [string] -or $defaultDistribution.Length -eq 0) { throw 'Vex native WSL smoke: invalid default distribution name.' }
+    } finally { $defaultKey.Dispose() }
+    $instance = Start-NativeInstance -Arguments '--shell wsl'
+    $process = $instance.Process
+    $window = $instance.Window
+    Assert-NativeProbe $window 34 7 'automatic distribution uses WSL without a cmd fallback'
+    $defaultCheck = '[ "$WSL_DISTRO_NAME" = ' + (Quote-PosixArgument $defaultDistribution) + ' ] && printf "%s%s\n" VEX_NATIVE_SHELL_ DIRECTORY_OK'
+    Send-NativeText $window ($defaultCheck + "`r")
+    Assert-NativeProbe $window 36 1 'automatic WSL launch selects the registered default distribution'
+    Invoke-NativeAction $window 1
+    Send-NativeText $window ($defaultCheck + "`r")
+    Assert-NativeProbe $window 36 1 'split retains the resolved default distribution'
+    Close-NativeInstance $process $window
+
     Invoke-WslFixture ('mkdir -p -- ' + (Quote-PosixArgument $linuxFolder)) | Out-Null
     $linuxProgram = $linuxFolder + '/custom bash program'
     Invoke-WslFixture ('ln -s -- /bin/bash ' + (Quote-PosixArgument $linuxProgram)) | Out-Null
@@ -84,10 +107,19 @@ try {
     Send-NativeText $window ('if [ "$PWD" = ' + $quotedFolder + ' ]; then printf "%s%s\n" VEX_NATIVE_SHELL_ DIRECTORY_OK; fi' + "`r")
     Assert-NativeProbe $window 36 1 'WSL network project starts in the selected Linux distribution directory'
     Close-NativeInstance $process $window
+
+    $instance = Start-NativeInstance -Arguments '' -WorkingDirectory $networkFolder
+    $process = $instance.Process
+    $window = $instance.Window
+    Assert-NativeProbe $window 34 7 'WSL project chooses Linux instead of system cmd without CLI shell flags'
+    Send-NativeText $window ('if [ "$PWD" = ' + $quotedFolder + ' ] && [ "$WSL_DISTRO_NAME" = ' + (Quote-PosixArgument $Distribution) + ' ]; then printf "%s%s\n" VEX_NATIVE_SHELL_ DIRECTORY_OK; fi' + "`r")
+    Assert-NativeProbe $window 36 1 'UNC project pins its own distribution and Linux directory automatically'
+    Close-NativeInstance $process $window
     [pscustomobject]@{
         Result = 'PASS'
         Distribution = $Distribution
-        Checks = @('default login shell', 'Unicode/spaced/apostrophe explicit Linux program/arguments', 'Linux TERM/COLORTERM defaults/overrides', 'Unicode Linux OSC 7', 'split directory inheritance', 'new-tab project directory', 'Linux shell/child shutdown on busy pane close', 'WSL UNC project startup')
+        RegisteredDefaultDistribution = $defaultDistribution
+        Checks = @('registered default selection without CLI distribution', 'pinned default in split', 'automatic WSL UNC project selection', 'default login shell', 'Unicode/spaced/apostrophe explicit Linux program/arguments', 'Linux TERM/COLORTERM defaults/overrides', 'Unicode Linux OSC 7', 'split directory inheritance', 'new-tab project directory', 'Linux shell/child shutdown on busy pane close', 'WSL UNC project startup')
     } | ConvertTo-Json | Tee-Object -FilePath (Join-Path $OutputDirectory 'wsl.json')
 } finally {
     if ($null -ne $process -and !$process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null }
