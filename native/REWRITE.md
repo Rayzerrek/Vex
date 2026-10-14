@@ -61,7 +61,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Saved layouts | `SavedTerminalLayout.cs`, `MainWindow.SavedLayouts.cs` | Pending; opening explicitly executes commands once; restore must never replay commands |
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts first; all remaining palettes/settings pending |
 | Palette, tab peek, overlays/popups | `CommandPalette*`, `TabPeek*`, `MainWindow.Overlays.cs` | Pending |
-| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | Pending; raw terminal titles must not become trusted UI controls |
+| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, pane/tab priority badges, progress and acknowledgement implemented; OSC 9;4/133 fallback, tooltips/origin routing, project aggregation and shell icons pending; raw terminal titles must not become trusted UI controls |
 | Links/path completion/search | `*Links*`, `*PathCompletion*` | Pending |
 | UI Automation / accessibility / installer / crash log | Windows UI and packaging | Pending |
 
@@ -111,6 +111,34 @@ These are behavioral contracts, not opportunities to redesign the app.
   and verifies a new tab still launches in the project root.
 - cmd does not emit OSC 7 by default; shell integration remains pending. Do not
   infer a split directory from prompt text (the WPF split path does not do so).
+
+## OSC 7501 checkpoint verification
+
+- Separate from OSC 7 directory reporting; status owns no directory state.
+- Bounded per-terminal hierarchy: 256 records, 4,096-byte framed reports,
+  128-byte/eight-level IDs, 32-byte app IDs, 192-byte titles and 2,048-byte messages.
+- WPF fixtures port replacement, duplicate-field rules, inherited app names,
+  subtree clearing, priority/recency, result acknowledgement, eviction and
+  strict Base64/UTF-8/control/format-character handling.
+- The streaming filter preserves unrelated VT and shields opaque string payloads.
+  Replies are ordered against real-DLL cursor queries; each chunk boundary,
+  BEL/ST framing limit and oversized/repeated-ESC recovery is tested.
+- Allocation failure injection covers replacement/insert and failures at the
+  record cap, with previous records retained. No native allocator failure
+  injection or native memory-safety certification is implied.
+- Real ConPTY smoke covers isolated panes, tab priority, blocked/result input
+  semantics, hidden-status repaint and unchanged zero-paint hidden text output.
+- Latest checkpoint: 41 tests in Debug and ReleaseSafe, ReleaseSafe application
+  build and desktop smoke pass. The captured status screenshot in this session
+  is black; these checks do not establish visual parity.
+- WPF files are unchanged. Release solution build has zero warnings/errors and
+  all 139 libghostty tests pass. The application suite passes 533/536 tests;
+  the two clipboard tests still fail in isolation (clipboard lock/notification
+  unavailable), while the animation test passes on isolated rerun. The suite
+  therefore cannot be reported fully passing in this desktop session.
+- OSC 9;4 progress fallback and OSC 133 shell lifecycle markers deliberately
+  remain for the shell-integration checkpoint. Full tooltip/message presentation,
+  project aggregation and attention-origin navigation remain pending.
 
 No WPF profile is read/overwritten. This milestone does not replace production,
 certify native memory safety, or establish complete parity/performance.

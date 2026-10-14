@@ -54,6 +54,10 @@ focus outline. Font/cell metrics come from DirectWrite. Initial window size is
 - `src/terminal_app.zig`: application/session owners, main-thread orchestration.
 - `src/directory.zig`: parsed absolute Windows paths, owned pane directories,
   local file-URI decoding and transactional report/cache updates.
+- `src/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
+  acknowledgement and bounded text parsing.
+- `src/terminal_feed.zig`: bounded status interception; unrelated VT is
+  forwarded unchanged and plain chunks bypass copying.
 - `src/api.zig`: checked symbol resolution and structured terminal API errors.
 - `src/terminal.zig`: one emulator/iterator/key encoder per pane,
   reusable parsed snapshots, typed colors/styles/widths/cursor, validated UTF-8.
@@ -89,6 +93,24 @@ pane; unchanged reports reuse storage. The local hostname comes from Win32,
 not an environment variable. WSL launch directories are explicitly rejected
 until Linux session support is implemented.
 
+OSC 7501 is independent of OSC 7. Each terminal owns up to 256 hierarchical
+records; reports replace fields atomically, inherit ancestor app names and clear
+only their own subtree. Status priority is Blocked > Error > Done > Working >
+Idle. Titles/messages decode strict UTF-8 Base64, reject controls and remove
+Unicode formatting characters. Reports over 4,096 bytes (including framing)
+are discarded through BEL/ST, without leaking text into the grid. Capability
+queries reply `ESC ] 7501 ; ? ESC \` through the reporting pane's PTY, in byte
+order with emulator responses. Allocation failures preserve previous records
+and propagate to the application.
+
+Pane headers show status/progress; tabs aggregate the first highest-priority
+pane in tree order. User input acknowledges done/error results, not blocked
+records. Selecting a tab alone does not acknowledge results. Background status
+changes repaint tab indicators; ordinary hidden output still causes zero
+paints. Attention is latched across a pipe batch, even if a later report clears
+its record. Exit removes running/blocked/idle records; RIS clears all records,
+while soft reset and alternate-screen switches preserve them.
+
 Native limits: 1,000 columns/rows for window grids, 1 Mi cells/frame, 64 KiB per
 grapheme and 64 MiB text/frame. Oversized/malformed frames fail explicitly.
 Longer graphemes grow a reusable buffer rather than overflowing a fixed stack
@@ -123,7 +145,10 @@ Unit tests use the **real checked-in DLL**: ABI/Unicode/colors/wide cells,
 independent terminals, clean snapshot reuse, alternate screen, scrollback,
 application cursor encoding and PTY replies. Directory fixtures cover every
 OSC 7 chunk boundary, local-host/Unicode/percent decoding, multiple reports in
-one read and callback/allocation failure propagation. Tree/workspace fixtures port WPF
+one read and callback/allocation failure propagation. Status fixtures cover
+OSC 7501 framing limits/chunk boundaries, response ordering, replacement,
+hierarchy, priority, acknowledgement, text sanitization, record eviction and
+OOM rollback (including at capacity). Tree/workspace fixtures port WPF
 close/focus/tab-limit semantics. All Zig allocation points in the tested tree,
 workspace and frame workflows are exercised with allocator failure injection.
 This does not inject failures into libghostty/Win32's own allocators.
@@ -135,7 +160,9 @@ folder on split, retains project-root behavior for new tabs, ignores stale
 output tokens, exercises
 the 8-tab limit, kills a real child process with its pane, and closes a flooding
 tab/window. Sentinels are assembled by the shell so echoed input cannot pass.
-The test also checks that hidden output causes zero active-window paints.
+The test also checks that hidden output causes zero active-window paints,
+while a hidden OSC 7501 update repaints its tab indicator. Status/priority and
+acknowledgement are exercised through real ConPTY, not injected status state.
 Diagnostic probes/actions require `VEX_NATIVE_SELFTEST=1`. Synthetic messages
 are not physical keyboard/IME or accessibility tests.
 
@@ -154,8 +181,9 @@ benchmarks**, and working set excludes GPU allocations and child processes.
 
 See the full ledger in [REWRITE.md](REWRITE.md): multiple projects/WSL and shell
 profiles, profile/session compatibility and persistence, saved layouts,
-settings/themes, palette/tab peek/overlays, divider dragging/reorder, icons and
-program status, selection/copy/cut, hyperlinks/path completion, bracketed paste,
+settings/themes, palette/tab peek/overlays, divider dragging/reorder, shell icons,
+status tooltips/origin routing, OSC 9;4/133 fallback, selection/copy/cut,
+hyperlinks/path completion, bracketed paste,
 IME/full mouse/key protocols, ConPTY DCS feed-filter parity, custom glyphs/color
 emoji, true block cursor/blink, accessibility and packaging. Automatic close on
 process exit and running-program close confirmation are also not yet migrated.
