@@ -4,6 +4,8 @@ const c = binding.c;
 const check = binding.checkResult;
 const status = @import("program_status.zig");
 const feed = @import("terminal_feed.zig");
+const title_mod = @import("terminal_title.zig");
+pub const TerminalTitle = title_mod.TerminalTitle;
 
 /// Rendered cell width comes from the public Ghostty API, never packed cell bits.
 pub const CellWidth = enum { narrow, wide, tail, head };
@@ -58,6 +60,7 @@ pub const Terminal = struct {
     frame_valid: bool = false,
     feed_filter: feed.TerminalFeedFilter = .{},
     program_status: status.ProgramStatusTracker,
+    title: title_mod.TerminalTitle = .{},
     status_clock: std.time.Timer,
     response_sink: ?ResponseSink = null,
     callback_error: ?anyerror = null,
@@ -173,15 +176,23 @@ pub const Terminal = struct {
     pub fn onProgressOsc(self: *Terminal, body: []const u8) void {
         self.program_status.applyProgressReport(body);
     }
-    /// RIS resets status after the emulator; screen switches/soft resets deliberately do not.
+    /// RIS resets status and custom title after the emulator; screen switches/soft resets deliberately do not.
     pub fn onTerminalReset(self: *Terminal) void {
         self.program_status.resetProgramStatus();
+        self.title.reset();
     }
     /// Borrows raw directory-report bytes only until the next feed/reset/deinit; the caller parses the URI.
     pub fn reportedDirectory(self: *const Terminal) ![]const u8 {
         var value: c.GhosttyString = .{ .ptr = null, .len = 0 };
         try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_PWD, &value));
         if (value.len != 0 and value.ptr == null) return error.InvalidTerminalDirectoryString;
+        return if (value.len == 0) &.{} else value.ptr[0..value.len];
+    }
+    /// Borrows raw OSC 0/2 title bytes only until the next feed/reset/deinit; the caller sanitizes the string.
+    pub fn reportedTitle(self: *const Terminal) ![]const u8 {
+        var value: c.GhosttyString = .{ .ptr = null, .len = 0 };
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_TITLE, &value));
+        if (value.len != 0 and value.ptr == null) return error.InvalidTerminalTitleString;
         return if (value.len == 0) &.{} else value.ptr[0..value.len];
     }
     /// Validate ConPTY-compatible dimensions before entering the native emulator.
@@ -453,6 +464,8 @@ pub const Terminal = struct {
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_RESIZE_PULL_SCROLLBACK, &pull_scrollback));
         const bell_callback: c.GhosttyTerminalBellFn = terminalBell;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_BELL, @ptrCast(bell_callback)));
+        const title_callback: c.GhosttyTerminalTitleChangedFn = titleChanged;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, @ptrCast(title_callback)));
         const foreground = colorRgb(0xe4e4e7);
         const background = colorRgb(0x282c34);
         const cursor = colorRgb(0xe4e4e7);
@@ -479,6 +492,17 @@ fn terminalBell(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) void {
     const context = userdata orelse return;
     const self: *Terminal = @ptrCast(@alignCast(context));
     self.program_status.onBell();
+}
+
+fn titleChanged(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) void {
+    const context = userdata orelse return;
+    const self: *Terminal = @ptrCast(@alignCast(context));
+    if (self.callback_error != null) return;
+    const raw = self.reportedTitle() catch |err| {
+        self.callback_error = err;
+        return;
+    };
+    self.title.applyReport(raw) catch {};
 }
 
 fn terminalResponse(_: c.GhosttyTerminal, userdata: ?*anyopaque, bytes: [*c]const u8, length: usize) callconv(.c) void {
@@ -1089,4 +1113,19 @@ test "BEL control latches background attention without firing on OSC BEL termina
     try std.testing.expect(try terminal.containsViewportText("beforeafter"));
     try terminal.feedOutput("\x07\x1bc");
     try std.testing.expect(!terminal.program_status.takeAttention());
+}
+
+test "OSC 0 and OSC 2 update sanitized terminal title and reset on shell prefix or RIS" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try std.testing.expectEqualStrings("", terminal.title.slice());
+    try terminal.feedOutput("\x1b]0;App.xaml.cs [+] - nvim\x07");
+    try std.testing.expectEqualStrings("App.xaml.cs*", terminal.title.slice());
+    try terminal.feedOutput("\x1b]2;Administrator: Windows PowerShell\x1b\\");
+    try std.testing.expectEqualStrings("", terminal.title.slice());
+    try terminal.feedOutput("\x1b]2;claude - Fix rendering pipeline\x07");
+    try std.testing.expectEqualStrings("Fix rendering pipeline", terminal.title.slice());
+    try terminal.feedOutput("\x1bc");
+    try std.testing.expectEqualStrings("", terminal.title.slice());
 }

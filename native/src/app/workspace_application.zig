@@ -129,6 +129,7 @@ const WorkspaceApplication = struct {
         // A queued event from a removed pane cannot target another pane, even after many opens/closes.
         const session = self.findSession(id) orelse return false;
         const previous = platform.statusBadgeKey(session.terminal.program_status.programStatus());
+        const previous_title = session.terminal.title.generation;
         const previous_attention = session.needs_attention;
         session.terminal.feedOutput(bytes) catch |err| {
             self.fail(err);
@@ -138,7 +139,8 @@ const WorkspaceApplication = struct {
         const visible = model.activeTab().tree.containsPane(id);
         const attention = session.terminal.program_status.takeAttention();
         session.needs_attention = !visible and (session.needs_attention or attention);
-        return visible or previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
+        const title_changed = previous_title != session.terminal.title.generation;
+        return visible or title_changed or previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
     }
     pub fn onPaint(self: *WorkspaceApplication) void {
         if (self.health == .failed) return;
@@ -148,7 +150,8 @@ const WorkspaceApplication = struct {
         const model = if (self.model) |*model| model else return;
         for (model.tabs.items, 0..) |tab, index| {
             const presentation = try self.tabProgramStatus(tab.tree.root);
-            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, presentation.summary, presentation.attention);
+            const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
+            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, active_session.terminal.title.slice(), presentation.summary, presentation.attention);
         }
         if (self.pointer_drag == .tab) {
             const metrics = self.metrics orelse return;
@@ -159,7 +162,7 @@ const WorkspaceApplication = struct {
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             const focused = model.activeTab().active_pane == placement.id;
             const frame = try session.terminal.readFrame();
-            platform.beginPane(placement.bounds, focused, session.terminal.program_status.programStatus());
+            platform.beginPane(placement.bounds, focused, session.terminal.title.slice(), session.terminal.program_status.programStatus());
             defer platform.endPane();
             try platform.drawTerminalFrame(frame, focused);
         }
