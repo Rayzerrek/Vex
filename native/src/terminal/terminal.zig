@@ -180,6 +180,47 @@ pub const Terminal = struct {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
         self.frame_valid = false;
     }
+    /// Queries a DEC private mode from the emulator without caching stale host state.
+    pub fn decMode(self: *const Terminal, mode: u15) !bool {
+        var config: c.GhosttyTerminalModeConfig = .{ .mode = c.ghostty_mode_new(mode, false), .value = false };
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_MODE, &config));
+        return config.value;
+    }
+    /// True while DEC private mode 2004 (bracketed paste) is active.
+    pub fn bracketedPaste(self: *const Terminal) !bool {
+        return self.decMode(2004);
+    }
+    /// Normalizes CRLF/LF to CR, strips bracket-closing escapes, and wraps in DEC 2004 markers when active.
+    pub fn encodePasteAlloc(self: *const Terminal, allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+        if (text.len == 0) return allocator.alloc(u8, 0);
+        const bracketed = try self.bracketedPaste();
+        var encoded: std.ArrayList(u8) = .empty;
+        errdefer encoded.deinit(allocator);
+        const wrapper_len: usize = if (bracketed) 12 else 0;
+        try encoded.ensureTotalCapacity(allocator, try std.math.add(usize, text.len, wrapper_len));
+        if (bracketed) encoded.appendSliceAssumeCapacity("\x1b[200~");
+        var index: usize = 0;
+        while (index < text.len) {
+            if (std.mem.startsWith(u8, text[index..], "\x1b[201~")) {
+                index += 6;
+                continue;
+            }
+            if (text[index] == '\r') {
+                encoded.appendAssumeCapacity('\r');
+                index += if (index + 1 < text.len and text[index + 1] == '\n') 2 else 1;
+                continue;
+            }
+            if (text[index] == '\n') {
+                encoded.appendAssumeCapacity('\r');
+                index += 1;
+                continue;
+            }
+            encoded.appendAssumeCapacity(text[index]);
+            index += 1;
+        }
+        if (bracketed) encoded.appendSliceAssumeCapacity("\x1b[201~");
+        return encoded.toOwnedSlice(allocator);
+    }
     /// Encode navigation/function keys with the terminal's currently negotiated ConPTY-compatible modes.
     pub fn encodeKey(self: *Terminal, virtual_key: u32, mods: u32, output: []u8) !?[]const u8 {
         const key = physicalTerminalKey(virtual_key) orelse return null;
@@ -773,3 +814,31 @@ test "default cursor is bar, DECSCUSR updates and resets shape, and encodeKey st
     try std.testing.expectEqualStrings("\x1b[A", (try terminal.encodeKey(0x26, 0, &encoded)).?);
     try std.testing.expectEqualStrings("\x1b[1;2A", (try terminal.encodeKey(0x26, 1, &encoded)).?);
 }
+
+fn checkPasteAllocationFailures(allocator: std.mem.Allocator, api: *const binding.Api) !void {
+    var terminal = try Terminal.init(allocator, api);
+    defer terminal.deinit();
+    try terminal.feedOutput("\x1b[?2004h");
+    const pasted = try terminal.encodePasteAlloc(allocator, "first\r\nsecond\n\x1b[201~third");
+    defer allocator.free(pasted);
+    try std.testing.expectEqualStrings("\x1b[200~first\rsecond\rthird\x1b[201~", pasted);
+}
+
+test "encodePasteAlloc normalizes newlines, tracks DEC 2004 across screens/resets, and strips breakout sequences" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try std.testing.expect(!try terminal.bracketedPaste());
+    const plain = try terminal.encodePasteAlloc(std.testing.allocator, "a\r\nb\nc\rd");
+    defer std.testing.allocator.free(plain);
+    try std.testing.expectEqualStrings("a\rb\rc\rd", plain);
+    try terminal.feedOutput("\x1b[?2004h");
+    try std.testing.expect(try terminal.bracketedPaste());
+    const bracketed = try terminal.encodePasteAlloc(std.testing.allocator, "line1\r\nline2\n\x1b[201~safe");
+    defer std.testing.allocator.free(bracketed);
+    try std.testing.expectEqualStrings("\x1b[200~line1\rline2\rsafe\x1b[201~", bracketed);
+    try terminal.feedOutput("\x1b[?2004l");
+    try std.testing.expect(!try terminal.bracketedPaste());
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkPasteAllocationFailures, .{&api});
+}
+

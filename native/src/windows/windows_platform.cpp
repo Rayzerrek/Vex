@@ -152,7 +152,7 @@ static void pasteClipboard() {
                         auto bytes = static_cast<uint8_t*>(HeapAlloc(GetProcessHeap(), 0, size));
                         if (!bytes) error = ERROR_OUTOFMEMORY;
                         else {
-                            if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, (int)units, (char*)bytes, size, nullptr, nullptr)) callbacks.text(callbacks.context, bytes, size);
+                            if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, (int)units, (char*)bytes, size, nullptr, nullptr)) callbacks.paste(callbacks.context, bytes, size);
                             else error = GetLastError();
                             HeapFree(GetProcessHeap(), 0, bytes);
                         }
