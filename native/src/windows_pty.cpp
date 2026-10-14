@@ -95,7 +95,7 @@ static DWORD WINAPI writePtyInput(void* context) {
     }
 }
 
-static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, const wchar_t* directory) {
+static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLaunch launch) {
     session->outputConsumed = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!session->outputConsumed) return GetLastError();
     session->inputReady = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -133,21 +133,14 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, const wc
         startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         startup.lpAttributeList = attributes;
         PROCESS_INFORMATION process = {};
-        wchar_t command[] = L"cmd.exe /d";
-        wchar_t shell[MAX_PATH];
-        UINT length = GetSystemDirectoryW(shell, MAX_PATH);
-        if (!length || length + 9 >= MAX_PATH) error = ERROR_INSUFFICIENT_BUFFER;
+        if (!CreateProcessW(reinterpret_cast<const wchar_t*>(launch.program), reinterpret_cast<wchar_t*>(launch.command), nullptr, nullptr, FALSE,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
+            const_cast<uint16_t*>(launch.environment), reinterpret_cast<const wchar_t*>(launch.directory), &startup.StartupInfo, &process)) error = GetLastError();
         else {
-            wcscat(shell, L"\\cmd.exe");
-            if (!CreateProcessW(shell, command, nullptr, nullptr, FALSE,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
-                nullptr, directory, &startup.StartupInfo, &process)) error = GetLastError();
-            else {
-                session->process = process.hProcess;
-                if (!AssignProcessToJobObject(session->job, process.hProcess)) error = GetLastError();
-                else if (ResumeThread(process.hThread) == (DWORD)-1) error = GetLastError();
-                CloseHandle(process.hThread);
-            }
+            session->process = process.hProcess;
+            if (!AssignProcessToJobObject(session->job, process.hProcess)) error = GetLastError();
+            else if (ResumeThread(process.hThread) == (DWORD)-1) error = GetLastError();
+            CloseHandle(process.hThread);
         }
     }
     DeleteProcThreadAttributeList(attributes);
@@ -159,27 +152,25 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, const wc
     return error;
 }
 
-extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, const uint8_t* directory, size_t directoryLength, VexPty** output) {
-    if (!output || token == 0 || columns < 2 || rows == 0 || columns > 32767 || rows > 32767 || findSession(token) || !directory || !directoryLength || directoryLength > 32767 * 4 || memchr(directory, 0, directoryLength)) return ERROR_INVALID_PARAMETER;
+static bool validLaunchString(const uint16_t* text, size_t length) {
+    if (!text || !length || length >= 32767 || text[length] != 0) return false;
+    for (size_t index = 0; index < length; ++index) if (!text[index]) return false;
+    return true;
+}
+extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPtyLaunch launch, VexPty** output) {
+    if (!output || token == 0 || columns < 2 || rows == 0 || columns > 32767 || rows > 32767 || findSession(token) ||
+        !validLaunchString(launch.program, launch.program_length) || !validLaunchString(launch.command, launch.command_length) ||
+        !validLaunchString(launch.directory, launch.directory_length) || !launch.environment || launch.environment_length < 2 ||
+        launch.environment_length > 1024 * 1024 || launch.environment[launch.environment_length - 1] != 0 || launch.environment[launch.environment_length - 2] != 0) return ERROR_INVALID_PARAMETER;
     *output = nullptr;
-    int units = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)directory, (int)directoryLength, nullptr, 0);
-    if (!units) return (int)GetLastError();
-    if (units >= 32767) return ERROR_FILENAME_EXCED_RANGE;
-    auto wideDirectory = static_cast<wchar_t*>(HeapAlloc(GetProcessHeap(), 0, ((size_t)units + 1) * sizeof(wchar_t)));
-    if (!wideDirectory) return ERROR_OUTOFMEMORY;
-    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)directory, (int)directoryLength, wideDirectory, units)) {
-        DWORD error = GetLastError(); HeapFree(GetProcessHeap(), 0, wideDirectory); return (int)error;
-    }
-    wideDirectory[units] = 0;
     auto session = static_cast<VexPty*>(calloc(1, sizeof(VexPty)));
-    if (!session) { HeapFree(GetProcessHeap(), 0, wideDirectory); return ERROR_OUTOFMEMORY; }
+    if (!session) return ERROR_OUTOFMEMORY;
     session->token = token;
     session->window = vex_native_window();
     InitializeCriticalSection(&session->inputLock);
     session->next = sessions;
     sessions = session;
-    DWORD error = startPty(session, columns, rows, wideDirectory);
-    HeapFree(GetProcessHeap(), 0, wideDirectory);
+    DWORD error = startPty(session, columns, rows, launch);
     if (error) { vex_pty_close(session); return (int)error; }
     *output = session;
     return 0;

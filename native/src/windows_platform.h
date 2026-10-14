@@ -11,6 +11,13 @@ typedef struct VexPty VexPty;
 typedef struct { float x, y, width, height; } VexPaneRect;
 /* State: none/idle/working/done/blocked/error. Kind: none/permission/question/auth. */
 typedef struct { uint32_t state, kind; int32_t progress; } VexProgramStatus;
+/* Borrowed UTF-16 strings exclude sentinel lengths; environment includes its final double NUL. */
+typedef struct {
+    const uint16_t* program; size_t program_length;
+    uint16_t* command; size_t command_length;
+    const uint16_t* directory; size_t directory_length;
+    const uint16_t* environment; size_t environment_length;
+} VexPtyLaunch;
 /* All callbacks run on the window thread. Context and borrowed bytes must remain live. */
 typedef struct {
     void* context;
@@ -33,9 +40,11 @@ void vex_window_invalidate(void);
 void vex_window_close(void);
 uint64_t vex_window_paint_count(void);
 void vex_window_error(const char* message);
+int vex_window_shell_name(const uint8_t* bytes, size_t length);
 /* Tokens are nonzero, never reused, and cannot be interpreted as heap pointers. */
-int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, const uint8_t* directory, size_t directory_length, VexPty** output);
+int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPtyLaunch launch, VexPty** output);
 int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length);
+int vex_system_directory(uint8_t* bytes, size_t capacity, size_t* length);
 void vex_pty_close(VexPty* session);
 bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);
