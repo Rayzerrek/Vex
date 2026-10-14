@@ -13,6 +13,8 @@ pub const PaneHeaderAction = enum(u8) {
     split_down = 3,
     close = 4,
 };
+/// Edge drop zone for pane header drag-to-split gestures, matching MainWindow.PaneDrag.cs.
+pub const DropZone = enum { none, left, right, top, bottom };
 /// Pane bounds use device-independent pixels, never physical screen coordinates.
 pub const PaneRect = struct {
     x: f32,
@@ -37,6 +39,35 @@ pub const PaneRect = struct {
         if (x >= right - 64 and x < right - 44) return .split_right;
         if (can_focus and x >= right - 86 and x < right - 66) return .focus_toggle;
         return null;
+    }
+    /// True when the pointer is inside the 28 DIP pane title bar and not on a header action button.
+    pub fn isHeaderDragArea(self: PaneRect, can_focus: bool, x: f32, y: f32) bool {
+        return self.contains(x, y) and self.height >= 28 and y < self.y + 28 and self.hitHeaderAction(can_focus, x, y) == null;
+    }
+    /// Maps a point inside the pane to a non-corner 25% edge band, matching MainWindow.PaneDrag.GetDropZone.
+    pub fn dropZoneAt(self: PaneRect, x: f32, y: f32) DropZone {
+        if (!self.contains(x, y) or self.width <= 0 or self.height <= 0) return .none;
+        const rx = (x - self.x) / self.width;
+        const ry = (y - self.y) / self.height;
+        const edge: f32 = 0.25;
+        if (rx < edge and ry >= edge and ry <= 1.0 - edge) return .left;
+        if (rx > 1.0 - edge and ry >= edge and ry <= 1.0 - edge) return .right;
+        if (ry < edge and rx >= edge and rx <= 1.0 - edge) return .top;
+        if (ry > 1.0 - edge and rx >= edge and rx <= 1.0 - edge) return .bottom;
+        return .none;
+    }
+    /// Computes the 42% inset split preview overlay rectangle for an active drop zone.
+    pub fn splitPreviewRect(self: PaneRect, zone: DropZone) ?PaneRect {
+        const fraction: f32 = 0.42;
+        const inset: f32 = 4.0;
+        if (self.width <= inset * 2 or self.height <= inset * 2) return null;
+        return switch (zone) {
+            .none => null,
+            .left => .{ .x = self.x + inset, .y = self.y + inset, .width = @max(0, self.width * fraction - inset), .height = @max(0, self.height - inset * 2) },
+            .right => .{ .x = self.x + self.width * (1.0 - fraction), .y = self.y + inset, .width = @max(0, self.width * fraction - inset), .height = @max(0, self.height - inset * 2) },
+            .top => .{ .x = self.x + inset, .y = self.y + inset, .width = @max(0, self.width - inset * 2), .height = @max(0, self.height * fraction - inset) },
+            .bottom => .{ .x = self.x + inset, .y = self.y + self.height * (1.0 - fraction), .width = @max(0, self.width - inset * 2), .height = @max(0, self.height * fraction - inset) },
+        };
     }
 };
 /// Layout result holds a stable identity rather than a pointer into a mutable tree.
@@ -306,3 +337,25 @@ test "pane header action hit testing aligns with right-anchored button slots and
     const narrow: PaneRect = .{ .x = 0, .y = 0, .width = 179, .height = 300 };
     try std.testing.expectEqual(@as(?PaneHeaderAction, null), narrow.hitHeaderAction(true, 165, 14));
 }
+
+test "pane header drag area, edge drop zones, and split preview geometry match WPF PaneDrag" {
+    const bounds: PaneRect = .{ .x = 100, .y = 50, .width = 400, .height = 300 };
+    try std.testing.expect(bounds.isHeaderDragArea(true, 150, 60));
+    try std.testing.expect(!bounds.isHeaderDragArea(true, 485, 60));
+    try std.testing.expect(!bounds.isHeaderDragArea(true, 150, 85));
+
+    try std.testing.expectEqual(DropZone.left, bounds.dropZoneAt(120, 200));
+    try std.testing.expectEqual(DropZone.right, bounds.dropZoneAt(480, 200));
+    try std.testing.expectEqual(DropZone.top, bounds.dropZoneAt(300, 70));
+    try std.testing.expectEqual(DropZone.bottom, bounds.dropZoneAt(300, 330));
+    try std.testing.expectEqual(DropZone.none, bounds.dropZoneAt(300, 200));
+    try std.testing.expectEqual(DropZone.none, bounds.dropZoneAt(110, 60)); // top-left corner excluded
+
+    const right_preview = bounds.splitPreviewRect(.right).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 332.0), right_preview.x, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 54.0), right_preview.y, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 164.0), right_preview.width, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 292.0), right_preview.height, 0.01);
+    try std.testing.expectEqual(@as(?PaneRect, null), bounds.splitPreviewRect(.none));
+}
+

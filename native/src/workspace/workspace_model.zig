@@ -4,7 +4,30 @@ const panes = @import("pane_tree.zig");
 /// Stable tab identity derives from its first fresh pane token and survives that pane's removal.
 pub const TabId = enum(u32) { _ };
 /// A tab owns its split tree; reordering transfers this owner without recreating terminals.
-pub const WorkspaceTab = struct { id: TabId, tree: panes.PaneTree, active_pane: panes.PaneId, is_focus_mode: bool = false };
+pub const WorkspaceTab = struct {
+    id: TabId,
+    tree: panes.PaneTree,
+    active_pane: panes.PaneId,
+    is_focus_mode: bool = false,
+    custom_title: [64]u8 = undefined,
+    custom_title_len: u8 = 0,
+
+    /// Returns the user-assigned tab name if non-empty, overriding dynamic terminal OSC titles.
+    pub fn customTitle(self: *const WorkspaceTab) ?[]const u8 {
+        return if (self.custom_title_len > 0) self.custom_title[0..self.custom_title_len] else null;
+    }
+
+    /// Trims whitespace and stores a bounded valid UTF-8 custom tab title; empty input leaves the previous title intact.
+    pub fn setCustomTitle(self: *WorkspaceTab, raw: []const u8) void {
+        const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+        if (trimmed.len == 0) return;
+        var limit: usize = @min(trimmed.len, self.custom_title.len);
+        while (limit > 0 and !std.unicode.utf8ValidateSlice(trimmed[0..limit])) : (limit -= 1) {}
+        if (limit == 0) return;
+        @memcpy(self.custom_title[0..limit], trimmed[0..limit]);
+        self.custom_title_len = @intCast(limit);
+    }
+};
 
 /// Owns one project's tabs, matching Project.MaxTabs and WPF close/focus behavior.
 pub const WorkspaceModel = struct {
@@ -245,3 +268,17 @@ test "focus mode requires multiple panes and unzooms when splitting or closing t
     try std.testing.expect(!model.activeTab().is_focus_mode);
     try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(1)), model.activeTab().active_pane);
 }
+
+test "custom tab title trims whitespace, preserves non-empty overrides, and survives tab reorder" {
+    var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+    defer model.deinit();
+    try std.testing.expectEqual(@as(?[]const u8, null), model.activeTab().customTitle());
+    model.activeTab().setCustomTitle("  Backend API  \r\n");
+    try std.testing.expectEqualStrings("Backend API", model.activeTab().customTitle().?);
+    model.activeTab().setCustomTitle("   ");
+    try std.testing.expectEqualStrings("Backend API", model.activeTab().customTitle().?);
+    try model.newTab(@enumFromInt(2));
+    try std.testing.expect(model.moveTab(@enumFromInt(1), 1));
+    try std.testing.expectEqualStrings("Backend API", model.tabs.items[1].customTitle().?);
+}
+

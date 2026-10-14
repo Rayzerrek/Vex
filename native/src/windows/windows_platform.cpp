@@ -446,12 +446,27 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             return TRUE;
         }
         break;
+    case WM_LBUTTONDBLCLK: {
+        float scale = GetDpiForWindow(hwnd) / 96.0f;
+        float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        if (y < 44 && x >= 140 && x < plusLeft()) {
+            uint32_t index = (uint32_t)((x - 140) / (tabWidthDip + 4));
+            float local = x - 140 - index * (tabWidthDip + 4);
+            if (index < tabStripCount && local <= tabWidthDip - 22) {
+                cancelPointerGesture();
+                pointerCaptureState = PointerCaptureState::none;
+                callbacks.action(callbacks.context, 8, index);
+                return 0;
+            }
+        }
+        [[fallthrough]];
+    }
     case WM_LBUTTONDOWN: case WM_MBUTTONDOWN: {
         cancelPointerGesture();
         pointerCaptureState = PointerCaptureState::none;
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
-        if (message == WM_LBUTTONDOWN && y < 44 && x >= clientWidth - 120) {
+        if (message != WM_MBUTTONDOWN && y < 44 && x >= clientWidth - 120) {
             pressedCaptionButton = (x >= clientWidth - 40) ? 3 : (x >= clientWidth - 80) ? 2 : 1;
             vex_window_invalidate();
             return 0;
@@ -465,7 +480,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             else beginPointerGesture(hwnd, x, y);
         } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 32) callbacks.action(callbacks.context, 0, 0);
         else if (y >= 44) {
-            if (message == WM_LBUTTONDOWN) {
+            if (message != WM_MBUTTONDOWN) {
                 beginPointerGesture(hwnd, x, y);
                 if (pointerCaptureState == PointerCaptureState::none) callbacks.click(callbacks.context, x, y);
             } else {
@@ -602,7 +617,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) callbacks.exited(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 5:
-        if (selftestEnabled() && wparam <= 7 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
+        if (selftestEnabled() && wparam <= 8 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 6: {
         uint32_t source = (uint32_t)(wparam & 0xff), operation = (uint32_t)(wparam >> 8);
@@ -741,7 +756,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     loadAppIcons(iconBig, iconSmall);
     if (SUCCEEDED(result)) {
         WNDCLASSEXW klass = {};
-        klass.cbSize = sizeof(klass); klass.lpfnWndProc = windowProcedure;
+        klass.cbSize = sizeof(klass); klass.style = CS_DBLCLKS; klass.lpfnWndProc = windowProcedure;
         klass.hInstance = GetModuleHandleW(nullptr); klass.lpszClassName = L"VexNativeWorkspace";
         klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32513));
         klass.hIcon = iconBig ? iconBig : LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
@@ -1336,7 +1351,7 @@ extern "C" int vex_window_project_info(const uint8_t* name, size_t name_length, 
     }
     return 0;
 }
-extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention) {
+extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool editing, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention) {
     if (count != tabStripCount || index >= count) return;
     float width = tabWidthDip, x = 140 + index * (width + 4);
     const bool isHovered = (int)index == hoveredTabIndex;
@@ -1390,7 +1405,24 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, const 
         rightReserve = 34.0f;
     }
     if (width >= 95.0f) {
-        labelUtf8OrDefault(title, title_length, x + inset, 13.0f, fmaxf(0.0f, width - inset - rightReserve), active ? 0xe4e4e7 : 0x8f9197);
+        const float textW = fmaxf(0.0f, width - inset - rightReserve);
+        if (editing && textW > 8.0f) {
+            const D2D1_ROUNDED_RECT editBox = D2D1::RoundedRect(D2D1::RectF(x + inset - 3.0f, 10.5f, x + inset + textW + 2.0f, 33.5f), 3.5f, 3.5f);
+            brush->SetColor(rgb(0x14161d));
+            target->FillRoundedRectangle(editBox, brush);
+            brush->SetColor(rgb(0x8286f5));
+            target->DrawRoundedRectangle(editBox, brush, 1.1f);
+            if (title && title_length > 0 && title_length <= 256) {
+                wchar_t text[257];
+                int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(title), (int)title_length, text, 256);
+                if (count > 0) {
+                    text[count] = 0;
+                    label(text, x + inset, 13.0f, textW, 0xffffff);
+                }
+            }
+        } else {
+            labelUtf8OrDefault(title, title_length, x + inset, 13.0f, textW, active ? 0xe4e4e7 : 0x8f9197);
+        }
     } else if (width < 68.0f) {
         wchar_t number[12]; swprintf(number, 12, L"%u", index + 1);
         label(number, x + 8.0f, 13.0f, fmaxf(0.0f, width - 22.0f), active ? 0xe4e4e7 : 0x8f9197);
@@ -1495,6 +1527,14 @@ extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thum
     const float radius = width * 0.5f;
     brush->SetColor(D2D1::ColorF(0xe4e4e7, active ? 0.62f : 0.32f));
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, thumb_y, right, thumb_y + thumb_height), radius, radius), brush);
+}
+extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
+    if (!target || !brush || bounds.width <= 0.0f || bounds.height <= 0.0f) return;
+    const D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), 6.0f, 6.0f);
+    brush->SetColor(D2D1::ColorF(0x8286f5, 0.18f));
+    target->FillRoundedRectangle(rect, brush);
+    brush->SetColor(D2D1::ColorF(0x8286f5, 0.72f));
+    target->DrawRoundedRectangle(rect, brush, 1.5f);
 }
 static float snapDip(float v) {
     return dpiScale > 0.0f ? roundf(v * dpiScale) / dpiScale : roundf(v);
