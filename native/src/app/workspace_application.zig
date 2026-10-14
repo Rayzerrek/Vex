@@ -12,6 +12,7 @@ const wsl_registry = @import("../windows/wsl_registry.zig");
 const DividerDrag = @import("../workspace/divider_drag.zig").DividerDrag;
 const TabDrag = @import("../workspace/tab_drag.zig").TabDrag;
 const tab_strip = @import("../workspace/tab_strip.zig");
+const app_icon = @import("../terminal/app_icon.zig");
 
 const SelectionDrag = struct {
     pane_id: panes.PaneId,
@@ -184,9 +185,12 @@ const WorkspaceApplication = struct {
             tab.is_focus_mode = false;
             try tab.tree.layout(self.allocator, &self.placements, bounds);
         }
+        const now = std.time.milliTimestamp();
         for (self.placements.items) |placement| {
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             try session.resize(try metrics.terminalSize(placement.bounds));
+            _ = session.refreshAppIcon(true);
+            session.last_icon_probe_ms = now;
         }
         platform.invalidateWindow();
     }
@@ -221,8 +225,14 @@ const WorkspaceApplication = struct {
         const title_changed = previous_title != session.terminal.title.generation;
         const chrome_changed = title_changed or previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
         if (!visible) {
+            if (chrome_changed) _ = session.refreshAppIcon(false);
             session.sync_defer_since_ms = null;
             return chrome_changed;
+        }
+        const now_probe = std.time.milliTimestamp();
+        if (chrome_changed or now_probe - session.last_icon_probe_ms >= 200) {
+            session.last_icon_probe_ms = now_probe;
+            _ = session.refreshAppIcon(true);
         }
         const sync_active = session.terminal.synchronizedOutput() catch |err| {
             self.fail(err);
@@ -253,7 +263,10 @@ const WorkspaceApplication = struct {
         for (model.tabs.items, 0..) |tab, index| {
             const presentation = try self.tabProgramStatus(tab.tree.root);
             const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
-            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, active_session.terminal.title.slice(), presentation.summary, presentation.attention);
+            var tab_icons: [8]app_icon.AppIcon = undefined;
+            var icon_count: usize = 0;
+            try self.collectTabIcons(tab.tree.root, &tab_icons, &icon_count);
+            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, active_session.terminal.title.slice(), tab_icons[0..icon_count], presentation.summary, presentation.attention);
         }
         if (self.pointer_drag == .tab) {
             const metrics = self.metrics orelse return;
@@ -269,7 +282,7 @@ const WorkspaceApplication = struct {
             const hovered_action = if (hovered) self.hovered_header_action else null;
             const frame = try session.terminal.readFrame();
             {
-                platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.terminal.title.slice(), session.terminal.program_status.programStatus());
+                platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.terminal.title.slice(), session.icon, session.terminal.program_status.programStatus());
                 defer platform.endPane();
                 try platform.drawTerminalFrame(frame, focused);
             }
@@ -277,6 +290,24 @@ const WorkspaceApplication = struct {
                 const sb_active = self.hovered_scrollbar == placement.id or (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id);
                 platform.drawScrollbar(placement.bounds, sb, sb_active);
             }
+        }
+    }
+    fn collectTabIcons(self: *WorkspaceApplication, node: anytype, out: *[8]app_icon.AppIcon, count: *usize) anyerror!void {
+        switch (node.*) {
+            .leaf => |id| {
+                const session = self.findSession(id) orelse return error.MissingPaneSession;
+                for (out[0..count.*]) |existing| {
+                    if (existing.eql(session.icon)) return;
+                }
+                if (count.* < out.len) {
+                    out[count.*] = session.icon;
+                    count.* += 1;
+                }
+            },
+            .split => |split| {
+                try self.collectTabIcons(split.first, out, count);
+                try self.collectTabIcons(split.second, out, count);
+            },
         }
     }
     const TabStatus = struct { summary: status.ProgramStatusSummary, attention: bool };
@@ -777,6 +808,7 @@ const WorkspaceApplication = struct {
         const session = self.findSession(id) orelse return;
         session.state = .{ .exited = code };
         session.terminal.program_status.onProgramExited();
+        _ = session.refreshAppIcon(false);
         // Automatic exit-close and agent/dirty confirmation need additional parity fixtures.
         platform.invalidateWindow();
     }
@@ -791,6 +823,7 @@ const WorkspaceApplication = struct {
             14 => return if (self.activeSession()) |session| session.pty.processId() else 0,
             20 => return platform.paintCount(),
             34 => return @intFromEnum(self.launch.kind),
+            38 => return if (self.activeSession()) |session| @intFromEnum(session.icon.glyph) else 0,
             40 => return switch (model.activeTab().tree.root.*) {
                 .leaf => 0,
                 .split => |split| @intFromFloat(@round(split.ratio * 1000)),
