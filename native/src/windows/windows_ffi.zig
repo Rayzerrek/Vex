@@ -335,6 +335,12 @@ pub fn machineNameAlloc(allocator: std.mem.Allocator) ![]u8 {
 pub fn setShellName(name: []const u8) !void {
     if (c.vex_window_shell_name(name.ptr, name.len) != 0) return error.InvalidShellDisplayName;
 }
+/// Publishes the active project folder name and optional Git branch into top-bar chrome.
+pub fn setProjectInfo(name: []const u8, branch: []const u8) !void {
+    const name_ptr: [*c]const u8 = if (name.len == 0) null else name.ptr;
+    const branch_ptr: [*c]const u8 = if (branch.len == 0) null else branch.ptr;
+    if (c.vex_window_project_info(name_ptr, name.len, branch_ptr, branch.len) != 0) return error.InvalidProjectInfo;
+}
 /// Resolves the actual Windows system directory without trusting WINDIR/SystemRoot environment variables.
 pub fn systemDirectoryAlloc(allocator: std.mem.Allocator) ![]u8 {
     var buffer: [1024]u8 = undefined;

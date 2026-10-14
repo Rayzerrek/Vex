@@ -15,6 +15,8 @@ static ID2D1HwndRenderTarget* target;
 static ID2D1SolidColorBrush* brush;
 static IDWriteTextFormat* terminalFonts[4];
 static IDWriteTextFormat* chromeFont;
+static IDWriteTextFormat* chromeBoldFont;
+static IDWriteTextFormat* badgeFont;
 static float cellWidth, cellHeight, clientWidth, clientHeight, gridLeft, gridTop;
 static uint32_t tabStripCount = 1;
 static float tabWidthDip = 160;
@@ -24,6 +26,14 @@ static int platformError;
 static LARGE_INTEGER startupCounter, counterFrequency;
 static uint16_t pendingSurrogate;
 static uint64_t paintCount;
+static wchar_t projectName[64] = L"Vex";
+static wchar_t projectBranch[64] = L"";
+static int hoveredCaptionButton;
+static int pressedCaptionButton;
+static bool hoveredNewTab;
+static int hoveredTabIndex = -1;
+static bool hoveredTabClose;
+static bool trackingMouseLeave;
 enum class PointerCaptureState { none, armed, dragging, cancelled };
 static PointerCaptureState pointerCaptureState = PointerCaptureState::none;
 
@@ -39,9 +49,12 @@ static void rectangle(float x, float y, float width, float height, uint32_t colo
     brush->SetColor(rgb(color));
     target->FillRectangle(D2D1::RectF(x, y, x + width, y + height), brush);
 }
-static void label(const wchar_t* text, float x, float y, float width, uint32_t color) {
+static void labelWithFont(IDWriteTextFormat* font, const wchar_t* text, float x, float y, float width, uint32_t color) {
     brush->SetColor(rgb(color));
-    target->DrawText(text, (UINT32)wcslen(text), chromeFont, D2D1::RectF(x, y, x + width, y + 24), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    target->DrawText(text, (UINT32)wcslen(text), font ? font : chromeFont, D2D1::RectF(x, y, x + width, y + 24), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+static void label(const wchar_t* text, float x, float y, float width, uint32_t color) {
+    labelWithFont(chromeFont, text, x, y, width, color);
 }
 static float plusLeft() { return 140 + tabStripCount * (tabWidthDip + 4); }
 extern "C" int vex_window_tab_strip(uint32_t count, float tab_width) {
@@ -117,23 +130,101 @@ extern "C" void vex_window_defer_synchronized() {
 }
 extern "C" void vex_window_close() { if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 0, 0); }
 extern "C" uint64_t vex_window_paint_count() { return paintCount; }
+
+static void drawProjectPill() {
+    const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(8.0f, 7.0f, 134.0f, 37.0f), 6.0f, 6.0f);
+    brush->SetColor(rgb(0x262936));
+    target->FillRoundedRectangle(pill, brush);
+    brush->SetColor(rgb(0x41439a));
+    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(8.5f, 7.5f, 133.5f, 36.5f), 5.5f, 5.5f), brush, 1.0f);
+    // Lucide Folder glyph on the left of the project pill.
+    brush->SetColor(rgb(0x9ea2ff));
+    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(15.5f, 18.0f, 28.5f, 27.5f), 1.5f, 1.5f), brush, 1.25f);
+    target->DrawLine(D2D1::Point2F(15.5f, 18.5f), D2D1::Point2F(15.5f, 15.5f), brush, 1.25f);
+    target->DrawLine(D2D1::Point2F(15.5f, 15.5f), D2D1::Point2F(20.5f, 15.5f), brush, 1.25f);
+    target->DrawLine(D2D1::Point2F(20.5f, 15.5f), D2D1::Point2F(22.0f, 18.0f), brush, 1.25f);
+    if (projectBranch[0] != 0) {
+        labelWithFont(chromeBoldFont, projectName, 34.0f, 8.5f, 82.0f, 0xe4e4e7);
+        labelWithFont(badgeFont, projectBranch, 34.0f, 22.0f, 82.0f, 0x8f9197);
+    } else {
+        labelWithFont(chromeBoldFont, projectName, 34.0f, 13.0f, 82.0f, 0xe4e4e7);
+    }
+    brush->SetColor(rgb(0x8f9197));
+    target->DrawLine(D2D1::Point2F(119.5f, 20.5f), D2D1::Point2F(122.5f, 23.5f), brush, 1.2f);
+    target->DrawLine(D2D1::Point2F(122.5f, 23.5f), D2D1::Point2F(125.5f, 20.5f), brush, 1.2f);
+}
+
+static void drawNewTabButton() {
+    const float bx = plusLeft() + 2.0f;
+    const float by = 8.0f;
+    const bool enabled = tabStripCount < 8;
+    if (enabled && hoveredNewTab) {
+        brush->SetColor(rgb(0x262932));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + 28.0f, by + 28.0f), 5.0f, 5.0f), brush);
+    }
+    const float cx = bx + 14.0f;
+    const float cy = by + 14.0f;
+    brush->SetColor(rgb(enabled ? (hoveredNewTab ? 0xffffff : 0xe4e4e7) : 0x60636a));
+    target->DrawLine(D2D1::Point2F(cx - 5.0f, cy), D2D1::Point2F(cx + 5.0f, cy), brush, 1.35f);
+    target->DrawLine(D2D1::Point2F(cx, cy - 5.0f), D2D1::Point2F(cx, cy + 5.0f), brush, 1.35f);
+}
+
+static void drawCaptionButtons() {
+    const float baseLeft = clientWidth - 120.0f;
+    // Minimize button (button 1)
+    {
+        const float left = baseLeft;
+        if (pressedCaptionButton == 1 || hoveredCaptionButton == 1) {
+            rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 1 ? 0x353944 : 0x262932);
+        }
+        const float cx = left + 20.0f, cy = 21.5f;
+        brush->SetColor(rgb(0xe4e4e7));
+        target->DrawLine(D2D1::Point2F(cx - 5.0f, cy), D2D1::Point2F(cx + 5.0f, cy), brush, 1.0f);
+    }
+    // Maximize / Restore button (button 2)
+    {
+        const float left = baseLeft + 40.0f;
+        if (pressedCaptionButton == 2 || hoveredCaptionButton == 2) {
+            rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 2 ? 0x353944 : 0x262932);
+        }
+        const float cx = left + 20.0f, cy = 21.5f;
+        brush->SetColor(rgb(0xe4e4e7));
+        if (IsZoomed(window)) {
+            target->DrawRectangle(D2D1::RectF(cx - 4.5f, cy - 2.5f, cx + 2.5f, cy + 4.5f), brush, 1.0f);
+            target->DrawLine(D2D1::Point2F(cx - 2.5f, cy - 2.5f), D2D1::Point2F(cx - 2.5f, cy - 4.5f), brush, 1.0f);
+            target->DrawLine(D2D1::Point2F(cx - 2.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.0f);
+            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy + 2.5f), brush, 1.0f);
+            target->DrawLine(D2D1::Point2F(cx + 2.5f, cy + 2.5f), D2D1::Point2F(cx + 4.5f, cy + 2.5f), brush, 1.0f);
+        } else {
+            target->DrawRectangle(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), brush, 1.0f);
+        }
+    }
+    // Close button (button 3)
+    {
+        const float left = baseLeft + 80.0f;
+        const bool hot = pressedCaptionButton == 3 || hoveredCaptionButton == 3;
+        if (hot) {
+            rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 3 ? 0xf1707a : 0xe81123);
+        }
+        const float cx = left + 20.0f, cy = 21.5f;
+        brush->SetColor(rgb(hot ? 0xffffff : 0xe4e4e7));
+        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy + 4.5f), brush, 1.15f);
+        target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.15f);
+    }
+}
+
 static void drawWindow() {
     HRESULT result = createRenderTarget();
     if (FAILED(result)) { platformError = (int)result; DestroyWindow(window); return; }
     target->BeginDraw();
     paintCount++;
     target->Clear(rgb(0x0f1114));
-    brush->SetColor(rgb(0x9b3bb9));
-    target->DrawRectangle(D2D1::RectF(16, 17, 29, 27), brush, 1);
-    target->DrawLine(D2D1::Point2F(16, 17), D2D1::Point2F(16, 14), brush, 1);
-    target->DrawLine(D2D1::Point2F(16, 14), D2D1::Point2F(22, 14), brush, 1);
-    label(L"Vex", 38, 12, 85, 0xe4e4e7);
-    rectangle(128, 12, 1, 20, 0x60636a);
+    rectangle(0.0f, 0.0f, clientWidth, 44.0f, 0x181a1f);
+    rectangle(0.0f, 43.0f, clientWidth, 1.0f, 0x2d3139);
+    drawProjectPill();
     callbacks.paint(callbacks.context);
-    label(L"+", plusLeft() + 8, 12, 24, tabStripCount < 8 ? 0xe4e4e7 : 0x60636a);
-    label(L"\x2014", clientWidth - 112, 12, 24, 0xe4e4e7);
-    label(IsZoomed(window) ? L"\x2750" : L"\x25A1", clientWidth - 72, 12, 24, 0xe4e4e7);
-    label(L"\x00D7", clientWidth - 32, 12, 24, 0xe4e4e7);
+    drawNewTabButton();
+    drawCaptionButtons();
     result = target->EndDraw();
     if (result == D2DERR_RECREATE_TARGET) {
         releaseCom(brush); releaseCom(target); InvalidateRect(window, nullptr, FALSE);
@@ -232,6 +323,34 @@ static void beginPointerGesture(HWND hwnd, float x, float y) {
     else capturePointerGesture(hwnd);
     setPointerCursor(response, y);
 }
+static void updateTopChromeHover(float x, float y) {
+    int nextCaption = 0;
+    bool nextNewTab = false;
+    int nextTab = -1;
+    bool nextTabClose = false;
+    if (pointerCaptureState == PointerCaptureState::none && y >= 0.0f && y < 44.0f) {
+        if (x >= clientWidth - 120.0f && x < clientWidth) {
+            nextCaption = (x >= clientWidth - 40.0f) ? 3 : (x >= clientWidth - 80.0f) ? 2 : 1;
+        } else if (x >= plusLeft() && x < plusLeft() + 32.0f && y >= 7.0f && y <= 37.0f) {
+            nextNewTab = true;
+        } else if (x >= 140.0f && x < plusLeft() && y >= 7.0f && y <= 37.0f) {
+            uint32_t idx = (uint32_t)((x - 140.0f) / (tabWidthDip + 4.0f));
+            float local = x - 140.0f - idx * (tabWidthDip + 4.0f);
+            if (idx < tabStripCount && local >= 0.0f && local < tabWidthDip) {
+                nextTab = (int)idx;
+                nextTabClose = local > tabWidthDip - 22.0f;
+            }
+        }
+    }
+    if (nextCaption != hoveredCaptionButton || nextNewTab != hoveredNewTab ||
+        nextTab != hoveredTabIndex || nextTabClose != hoveredTabClose) {
+        hoveredCaptionButton = nextCaption;
+        hoveredNewTab = nextNewTab;
+        hoveredTabIndex = nextTab;
+        hoveredTabClose = nextTabClose;
+        vex_window_invalidate();
+    }
+}
 static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_NCCALCSIZE: if (wparam) return 0; break;
@@ -285,6 +404,11 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         pointerCaptureState = PointerCaptureState::none;
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        if (message == WM_LBUTTONDOWN && y < 44 && x >= clientWidth - 120) {
+            pressedCaptionButton = (x >= clientWidth - 40) ? 3 : (x >= clientWidth - 80) ? 2 : 1;
+            vex_window_invalidate();
+            return 0;
+        }
         if (y < 44 && x >= 140 && x < plusLeft()) {
             uint32_t index = (uint32_t)((x - 140) / (tabWidthDip + 4));
             float local = x - 140 - index * (tabWidthDip + 4);
@@ -328,6 +452,11 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_LBUTTONUP: {
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        int wasPressedCaption = pressedCaptionButton;
+        if (pressedCaptionButton != 0) {
+            pressedCaptionButton = 0;
+            vex_window_invalidate();
+        }
         if (pointerCaptureState != PointerCaptureState::none) {
             if (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging) callbacks.pointer(callbacks.context, VEX_POINTER_END, x, y, currentModifiers());
             releasePointerCapture();
@@ -335,13 +464,23 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             return 0;
         }
         if (y < 44 && x >= clientWidth - 120) {
-            if (x >= clientWidth - 40) SendMessageW(hwnd, WM_CLOSE, 0, 0);
-            else if (x >= clientWidth - 80) ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
-            else ShowWindow(hwnd, SW_MINIMIZE);
+            int btn = (x >= clientWidth - 40) ? 3 : (x >= clientWidth - 80) ? 2 : 1;
+            if (wasPressedCaption == 0 || wasPressedCaption == btn) {
+                if (btn == 3) SendMessageW(hwnd, WM_CLOSE, 0, 0);
+                else if (btn == 2) ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+                else ShowWindow(hwnd, SW_MINIMIZE);
+            }
         }
         return 0;
     }
     case WM_MOUSEMOVE: {
+        if (!trackingMouseLeave) {
+            TRACKMOUSEEVENT tme = {};
+            tme.cbSize = sizeof(tme);
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hwnd;
+            if (TrackMouseEvent(&tme)) trackingMouseLeave = true;
+        }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         if (pointerCaptureState == PointerCaptureState::armed && !(wparam & MK_LBUTTON)) cancelPointerGesture();
@@ -349,9 +488,21 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         uint32_t response = callbacks.pointer(callbacks.context, event, x, y, currentModifiers());
         if (pointerCaptureState == PointerCaptureState::armed && response == VEX_POINTER_TAB_DRAGGING) capturePointerGesture(hwnd);
         else if (response == VEX_POINTER_NORMAL) cancelPointerGesture();
+        updateTopChromeHover(x, y);
         setPointerCursor(response, y);
         return 0;
     }
+    case WM_MOUSELEAVE:
+        trackingMouseLeave = false;
+        if (hoveredCaptionButton != 0 || pressedCaptionButton != 0 || hoveredNewTab || hoveredTabIndex != -1 || hoveredTabClose) {
+            hoveredCaptionButton = 0;
+            pressedCaptionButton = 0;
+            hoveredNewTab = false;
+            hoveredTabIndex = -1;
+            hoveredTabClose = false;
+            vex_window_invalidate();
+        }
+        return 0;
     case WM_CAPTURECHANGED: case WM_CANCELMODE:
         cancelPointerGesture();
         return 0;
@@ -468,6 +619,19 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
+static void loadAppIcons(HICON& outBig, HICON& outSmall) {
+    outBig = nullptr;
+    outSmall = nullptr;
+    wchar_t path[32768];
+    DWORD length = GetModuleFileNameW(nullptr, path, 32768);
+    if (!length || length >= 32768) return;
+    wchar_t* slash = wcsrchr(path, L'\\');
+    if (!slash || (slash - path) + 12 >= 32768) return;
+    wcscpy(slash + 1, L"app.ico");
+    outBig = static_cast<HICON>(LoadImageW(nullptr, path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE));
+    outSmall = static_cast<HICON>(LoadImageW(nullptr, path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE));
+}
+
 extern "C" void vex_startup_begin() { QueryPerformanceCounter(&startupCounter); QueryPerformanceFrequency(&counterFrequency); }
 extern "C" int vex_window_run(VexWindowCallbacks value) {
     callbacks = value;
@@ -475,15 +639,22 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     HRESULT result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &drawingFactory);
     if (FAILED(result)) return (int)result;
     result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&textFactory);
-    if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13, L"en-us", &chromeFont);
-    if (SUCCEEDED(result)) result = chromeFont->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    if (SUCCEEDED(result)) {
+    const auto configureChromeFormat = [](IDWriteTextFormat* fmt) -> HRESULT {
+        HRESULT hr = fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        if (FAILED(hr)) return hr;
         IDWriteInlineObject* ellipsis = nullptr;
-        result = textFactory->CreateEllipsisTrimmingSign(chromeFont, &ellipsis);
+        hr = textFactory->CreateEllipsisTrimmingSign(fmt, &ellipsis);
         DWRITE_TRIMMING trimming = {}; trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
-        if (SUCCEEDED(result)) result = chromeFont->SetTrimming(&trimming, ellipsis);
+        if (SUCCEEDED(hr)) hr = fmt->SetTrimming(&trimming, ellipsis);
         releaseCom(ellipsis);
-    }
+        return hr;
+    };
+    if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.5f, L"en-us", &chromeFont);
+    if (SUCCEEDED(result)) result = configureChromeFormat(chromeFont);
+    if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us", &chromeBoldFont);
+    if (SUCCEEDED(result)) result = configureChromeFormat(chromeBoldFont);
+    if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f, L"en-us", &badgeFont);
+    if (SUCCEEDED(result)) result = configureChromeFormat(badgeFont);
     for (int i = 0; i < 4 && SUCCEEDED(result); i++) {
         result = textFactory->CreateTextFormat(L"Cascadia Mono", nullptr, (i & 1) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
             (i & 2) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14, L"en-us", &terminalFonts[i]);
@@ -504,19 +675,29 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
             releaseCom(measure);
         }
     }
+    HICON iconBig = nullptr, iconSmall = nullptr;
+    loadAppIcons(iconBig, iconSmall);
     if (SUCCEEDED(result)) {
         WNDCLASSEXW klass = {};
         klass.cbSize = sizeof(klass); klass.lpfnWndProc = windowProcedure;
         klass.hInstance = GetModuleHandleW(nullptr); klass.lpszClassName = L"VexNativeWorkspace";
         klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32513));
+        klass.hIcon = iconBig ? iconBig : LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+        klass.hIconSm = iconSmall ? iconSmall : klass.hIcon;
         if (!RegisterClassExW(&klass)) platformError = (int)GetLastError();
         else {
             const float initialScale = GetDpiForSystem() / 96.0f;
-            window = CreateWindowExW(0, klass.lpszClassName, L"Vex — native rewrite", WS_OVERLAPPEDWINDOW,
+            window = CreateWindowExW(0, klass.lpszClassName, L"Vex", WS_OVERLAPPEDWINDOW,
                 CW_USEDEFAULT, CW_USEDEFAULT, (int)(1120 * initialScale), (int)(700 * initialScale), nullptr, nullptr, klass.hInstance, nullptr);
             if (!window) platformError = (int)GetLastError();
             else {
+                if (iconBig) SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconBig));
+                if (iconSmall) SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
+                MARGINS margins = { 0, 0, 1, 0 };
+                DwmExtendFrameIntoClientArea(window, &margins);
                 BOOL dark = TRUE; DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
+                DWORD corner = 2; DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
+                COLORREF border = 0x0039312D; DwmSetWindowAttribute(window, 34, &border, sizeof(border));
                 SetEnvironmentVariableW(L"TERM", L"xterm-256color"); SetEnvironmentVariableW(L"COLORTERM", L"truecolor");
                 updateWindowMetrics();
                 ShowWindow(window, SW_SHOW); UpdateWindow(window);
@@ -531,7 +712,10 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
             }
         }
     } else platformError = (int)result;
-    releaseCom(brush); releaseCom(target); releaseCom(chromeFont);
+    if (iconBig) DestroyIcon(iconBig);
+    if (iconSmall) DestroyIcon(iconSmall);
+    releaseCom(brush); releaseCom(target);
+    releaseCom(chromeFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
     for (auto& font : terminalFonts) releaseCom(font);
     releaseCom(textFactory); releaseCom(drawingFactory);
     return platformError;
@@ -576,11 +760,34 @@ extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
     shellName[count] = 0;
     return 0;
 }
+extern "C" int vex_window_project_info(const uint8_t* name, size_t name_length, const uint8_t* branch, size_t branch_length) {
+    if ((name_length && !name) || name_length > 128 || (branch_length && !branch) || branch_length > 128) return ERROR_INVALID_PARAMETER;
+    if (name_length > 0 && !memchr(name, 0, name_length)) {
+        int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(name), (int)name_length, projectName, 63);
+        if (count > 0) projectName[count] = 0;
+    } else {
+        wcscpy_s(projectName, L"Vex");
+    }
+    if (branch_length > 0 && !memchr(branch, 0, branch_length)) {
+        int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(branch), (int)branch_length, projectBranch, 63);
+        if (count > 0) projectBranch[count] = 0;
+        else projectBranch[0] = 0;
+    } else {
+        projectBranch[0] = 0;
+    }
+    return 0;
+}
 extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, const uint8_t* title, size_t title_length, VexProgramStatus status, bool attention) {
     if (count != tabStripCount || index >= count) return;
     float width = tabWidthDip, x = 140 + index * (width + 4);
+    const bool isHovered = (int)index == hoveredTabIndex;
     if (active) {
         brush->SetColor(rgb(0x25213d));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 7, x + width, 37), 5, 5), brush);
+        brush->SetColor(rgb(0x41439a));
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, 7.5f, x + width - 0.5f, 36.5f), 4.5f, 4.5f), brush, 1.0f);
+    } else if (isHovered) {
+        brush->SetColor(rgb(0x1f2229));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 7, x + width, 37), 5, 5), brush);
     }
     bool hasStatus = status.state >= 2 && status.state <= 5;
@@ -593,9 +800,18 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, const 
     }
     if (!active && attention && status.state != 3 && status.state != 4 && status.state != 5) {
         brush->SetColor(rgb(0xf2cd83));
-        target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + width - 28, 23), 2, 2), brush);
+        target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + width - 28, 22), 2.5f, 2.5f), brush);
     }
-    label(L"\x00D7", x + width - 19, 12, 16, 0x8f9197);
+    const float closeX = x + width - 21.0f, closeY = 14.0f;
+    const bool closeHot = isHovered && hoveredTabClose;
+    if (closeHot) {
+        brush->SetColor(rgb(0x353944));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(closeX, closeY, closeX + 16.0f, closeY + 16.0f), 4.0f, 4.0f), brush);
+    }
+    const float cx = closeX + 8.0f, cy = closeY + 8.0f;
+    brush->SetColor(rgb(closeHot ? 0xe4e4e7 : 0x8f9197));
+    target->DrawLine(D2D1::Point2F(cx - 3.0f, cy - 3.0f), D2D1::Point2F(cx + 3.0f, cy + 3.0f), brush, 1.15f);
+    target->DrawLine(D2D1::Point2F(cx + 3.0f, cy - 3.0f), D2D1::Point2F(cx - 3.0f, cy + 3.0f), brush, 1.15f);
 }
 static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action) {
     if (bounds.width < 180.0f || bounds.height < 28.0f) return;

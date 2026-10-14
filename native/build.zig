@@ -18,8 +18,10 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{ .name = "vex-native", .root_module = module });
     exe.subsystem = .Windows;
     const dll = b.addInstallFileWithDir(b.path("../Vendor/libghostty/ghostty-vt.dll"), .bin, "ghostty-vt.dll");
+    const app_icon = b.addInstallFileWithDir(b.path("assets/app.ico"), .bin, "app.ico");
     b.installArtifact(exe);
     b.getInstallStep().dependOn(&dll.step);
+    b.getInstallStep().dependOn(&app_icon.step);
     const cmd_integration = b.addInstallFileWithDir(b.path("src/shell/integration/Vex.cmd"), .bin, "ShellIntegration/Vex.cmd");
     const nu_integration = b.addInstallFileWithDir(b.path("src/shell/integration/Vex.nu"), .bin, "ShellIntegration/Vex.nu");
     b.getInstallStep().dependOn(&cmd_integration.step);
