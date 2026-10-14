@@ -44,6 +44,7 @@ typedef struct {
 int vex_window_run(VexWindowCallbacks callbacks);
 void vex_startup_begin(void);
 void vex_window_invalidate(void);
+void vex_window_defer_synchronized(void);
 void vex_window_close(void);
 void vex_window_paste_clipboard(void);
 uint64_t vex_window_paint_count(void);

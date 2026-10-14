@@ -210,7 +210,30 @@ const WorkspaceApplication = struct {
         const attention = session.terminal.program_status.takeAttention();
         session.needs_attention = !visible and (session.needs_attention or attention);
         const title_changed = previous_title != session.terminal.title.generation;
-        return visible or title_changed or previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
+        const chrome_changed = title_changed or previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
+        if (!visible) {
+            session.sync_defer_since_ms = null;
+            return chrome_changed;
+        }
+        const sync_active = session.terminal.synchronizedOutput() catch |err| {
+            self.fail(err);
+            return false;
+        };
+        if (sync_active) {
+            const now = std.time.milliTimestamp();
+            const since = session.sync_defer_since_ms orelse blk: {
+                session.sync_defer_since_ms = now;
+                break :blk now;
+            };
+            if (now - since < 100) {
+                platform.deferSynchronizedInvalidation();
+                return chrome_changed;
+            }
+            session.sync_defer_since_ms = now;
+        } else {
+            session.sync_defer_since_ms = null;
+        }
+        return true;
     }
     pub fn onPaint(self: *WorkspaceApplication) void {
         if (self.health == .failed) return;

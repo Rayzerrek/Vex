@@ -17,6 +17,7 @@ pub const TerminalSession = struct {
     size: ?platform.TerminalSize = null,
     state: SessionState = .running,
     needs_attention: bool = false,
+    sync_defer_since_ms: ?i64 = null,
 
     /// Allocates at the final address before registering callbacks; startup failure releases every partial owner.
     pub fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch) !*TerminalSession {
@@ -90,5 +91,12 @@ pub const TerminalSession = struct {
         if (self.state == .running) try self.pty.resize(size);
         try self.terminal.resize(size.columns, size.rows, size.cell_width_px, size.cell_height_px);
         self.size = size;
+        if (self.state == .running and try self.terminal.inBandResize()) {
+            var buffer: [64]u8 = undefined;
+            const height_px: u64 = @as(u64, size.rows) * @as(u64, size.cell_height_px);
+            const width_px: u64 = @as(u64, size.columns) * @as(u64, size.cell_width_px);
+            const report = try std.fmt.bufPrint(&buffer, "\x1b[48;{d};{d};{d};{d}t", .{ size.rows, size.columns, height_px, width_px });
+            try self.pty.write(report);
+        }
     }
 };
