@@ -550,13 +550,80 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, const 
     }
     label(L"\x00D7", x + width - 19, 12, 16, 0x8f9197);
 }
-extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, const uint8_t* title, size_t title_length, VexProgramStatus status) {
+static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action) {
+    if (bounds.width < 180.0f || bounds.height < 28.0f) return;
+    const float right = bounds.x + bounds.width - 6.0f;
+    const float top = bounds.y + 4.0f;
+    const uint32_t baseColor = (focused || hovered) ? 0x9da1aa : 0x5c6068;
+    const auto drawButtonPill = [&](float bx, uint32_t fill) {
+        brush->SetColor(rgb(fill));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, top, bx + 20.0f, top + 20.0f), 4.0f, 4.0f), brush);
+    };
+    if (can_focus) {
+        const float bx = right - 86.0f, cx = bx + 10.0f, cy = top + 10.0f;
+        if (zoomed) drawButtonPill(bx, hovered_action == 1 ? 0x3b3e6b : 0x2d2f52);
+        else if (hovered_action == 1) drawButtonPill(bx, 0x353944);
+        brush->SetColor(rgb(zoomed ? 0x9ea2ff : (hovered_action == 1 ? 0xe4e4e7 : baseColor)));
+        if (!zoomed) {
+            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 1.0f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx + 1.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 1.5f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 1.0f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx - 1.5f, cy + 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx - 4.5f, cy + 4.5f), D2D1::Point2F(cx - 4.5f, cy + 1.5f), brush, 1.15f);
+        } else {
+            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 1.0f, cy - 1.0f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 4.0f), D2D1::Point2F(cx + 1.0f, cy - 1.0f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 1.0f), D2D1::Point2F(cx + 4.0f, cy - 1.0f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx - 4.5f, cy + 4.5f), D2D1::Point2F(cx - 1.0f, cy + 1.0f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 4.0f), D2D1::Point2F(cx - 1.0f, cy + 1.0f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 1.0f), D2D1::Point2F(cx - 4.0f, cy + 1.0f), brush, 1.15f);
+        }
+    }
+    {
+        const float bx = right - 64.0f, cx = bx + 10.0f, cy = top + 10.0f;
+        if (hovered_action == 2) drawButtonPill(bx, 0x353944);
+        brush->SetColor(rgb(hovered_action == 2 ? 0xe4e4e7 : baseColor));
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), 1.5f, 1.5f), brush, 1.1f);
+        target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.1f);
+    }
+    {
+        const float bx = right - 42.0f, cx = bx + 10.0f, cy = top + 10.0f;
+        if (hovered_action == 3) drawButtonPill(bx, 0x353944);
+        brush->SetColor(rgb(hovered_action == 3 ? 0xe4e4e7 : baseColor));
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), 1.5f, 1.5f), brush, 1.1f);
+        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.1f);
+    }
+    {
+        const float bx = right - 20.0f, cx = bx + 10.0f, cy = top + 10.0f;
+        if (hovered_action == 4) drawButtonPill(bx, 0x4d2b31);
+        brush->SetColor(rgb(hovered_action == 4 ? 0xffb4be : baseColor));
+        target->DrawLine(D2D1::Point2F(cx - 3.5f, cy - 3.5f), D2D1::Point2F(cx + 3.5f, cy + 3.5f), brush, 1.2f);
+        target->DrawLine(D2D1::Point2F(cx + 3.5f, cy - 3.5f), D2D1::Point2F(cx - 3.5f, cy + 3.5f), brush, 1.2f);
+    }
+}
+extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexProgramStatus status) {
     rectangle(bounds.x, bounds.y, bounds.width, bounds.height, 0x282c34);
-    brush->SetColor(rgb(focused ? 0x41439a : 0x484b52));
+    if (bounds.height >= 28.0f) {
+        rectangle(bounds.x + 1.0f, bounds.y + 1.0f, fmaxf(0, bounds.width - 2.0f), 26.0f, 0x21252b);
+        rectangle(bounds.x + 1.0f, bounds.y + 27.0f, fmaxf(0, bounds.width - 2.0f), 1.0f, 0x333842);
+    }
+    brush->SetColor(rgb(focused ? 0x41439a : (hovered ? 0x525660 : 0x484b52)));
     target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x + 0.5f, bounds.y + 0.5f, bounds.x + bounds.width - 0.5f, bounds.y + bounds.height - 0.5f), 6, 6), brush, 1);
-    float statusWidth = status.state >= 2 && status.state <= 5 ? fminf(bounds.width < 260 ? 20 : 190, fmaxf(0, bounds.width - 20)) : 0;
-    if (statusWidth > 0) drawProgramStatus(status, bounds.x + bounds.width - statusWidth - 10, bounds.y + 2, statusWidth, bounds.width < 260);
-    labelUtf8OrDefault(title, title_length, bounds.x + 10, bounds.y + 2, fmaxf(0, bounds.width - statusWidth - 20), focused ? 0xe4e4e7 : 0x8f9197);
+    drawPaneHeaderActions(bounds, focused, hovered, can_focus, zoomed, hovered_action);
+    const float actionsWidth = (bounds.width >= 180.0f && bounds.height >= 28.0f) ? (can_focus ? 94.0f : 72.0f) : 0.0f;
+    const float remainingWidth = fmaxf(0, bounds.width - actionsWidth);
+    const float statusWidth = status.state >= 2 && status.state <= 5 ? fminf(remainingWidth < 260 ? 20 : 190, fmaxf(0, remainingWidth - 20)) : 0;
+    if (statusWidth > 0) drawProgramStatus(status, bounds.x + remainingWidth - statusWidth - 8, bounds.y + 4, statusWidth, remainingWidth < 260);
+    float titleInset = 10.0f;
+    if (bounds.width >= 90.0f && bounds.height >= 28.0f) {
+        brush->SetColor(rgb(focused ? 0x8286f5 : 0x6c7079));
+        target->DrawLine(D2D1::Point2F(bounds.x + 10.0f, bounds.y + 11.0f), D2D1::Point2F(bounds.x + 13.5f, bounds.y + 14.0f), brush, 1.2f);
+        target->DrawLine(D2D1::Point2F(bounds.x + 13.5f, bounds.y + 14.0f), D2D1::Point2F(bounds.x + 10.0f, bounds.y + 17.0f), brush, 1.2f);
+        target->DrawLine(D2D1::Point2F(bounds.x + 15.0f, bounds.y + 17.0f), D2D1::Point2F(bounds.x + 19.0f, bounds.y + 17.0f), brush, 1.2f);
+        titleInset = 24.0f;
+    }
+    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4, fmaxf(0, remainingWidth - statusWidth - titleInset - 8), focused ? 0xe4e4e7 : 0x8f9197);
     gridLeft = bounds.x + 6; gridTop = bounds.y + 30;
     target->PushAxisAlignedClip(D2D1::RectF(gridLeft, gridTop, fmaxf(gridLeft, bounds.x + bounds.width - 6), fmaxf(gridTop, bounds.y + bounds.height - 6)), D2D1_ANTIALIAS_MODE_ALIASED);
 }

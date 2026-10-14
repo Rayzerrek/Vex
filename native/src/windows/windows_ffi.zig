@@ -281,8 +281,9 @@ pub fn statusBadgeKey(summary: status.ProgramStatusSummary) u32 {
     return badge.state | (badge.kind << 8) | (@as(u32, @intCast(badge.progress + 1)) << 16);
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
-pub fn beginPane(bounds: panes.PaneRect, focused: bool, title: []const u8, summary: status.ProgramStatusSummary) void {
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, if (title.len == 0) null else title.ptr, title.len, nativeStatusBadge(summary));
+pub fn beginPane(bounds: panes.PaneRect, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, summary: status.ProgramStatusSummary) void {
+    const action_code: u8 = if (hovered_action) |action| @intFromEnum(action) else 0;
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeStatusBadge(summary));
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {

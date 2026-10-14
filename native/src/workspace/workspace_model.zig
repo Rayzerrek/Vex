@@ -4,7 +4,7 @@ const panes = @import("pane_tree.zig");
 /// Stable tab identity derives from its first fresh pane token and survives that pane's removal.
 pub const TabId = enum(u32) { _ };
 /// A tab owns its split tree; reordering transfers this owner without recreating terminals.
-pub const WorkspaceTab = struct { id: TabId, tree: panes.PaneTree, active_pane: panes.PaneId };
+pub const WorkspaceTab = struct { id: TabId, tree: panes.PaneTree, active_pane: panes.PaneId, is_focus_mode: bool = false };
 
 /// Owns one project's tabs, matching Project.MaxTabs and WPF close/focus behavior.
 pub const WorkspaceModel = struct {
@@ -78,20 +78,41 @@ pub const WorkspaceModel = struct {
         self.selected_tab = if (selected > index) selected - 1 else selected;
         return true;
     }
-    /// New splits focus the fresh pane, matching WorkspaceTab.Split.
-    pub fn splitActivePane(self: *WorkspaceModel, id: panes.PaneId, axis: panes.SplitAxis) !void {
+    /// Toggles focus/zoom mode on the active tab when multiple panes exist, matching WorkspaceTab.ToggleFocusMode.
+    pub fn toggleFocusMode(self: *WorkspaceModel) bool {
+        const tab = self.activeTab();
+        if (tab.tree.paneCount() <= 1) {
+            tab.is_focus_mode = false;
+            return false;
+        }
+        tab.is_focus_mode = !tab.is_focus_mode;
+        return true;
+    }
+    /// Splits a specific leaf in the active tab, unzooming and focusing the fresh pane.
+    pub fn splitPane(self: *WorkspaceModel, target: panes.PaneId, id: panes.PaneId, axis: panes.SplitAxis) !void {
         for (self.tabs.items) |existing| if (existing.tree.containsPane(id)) return error.DuplicatePaneId;
         const tab = self.activeTab();
-        try tab.tree.splitPane(tab.active_pane, id, axis);
+        try tab.tree.splitPane(target, id, axis);
         tab.active_pane = id;
+        tab.is_focus_mode = false;
+    }
+    /// New splits focus the fresh pane, matching WorkspaceTab.Split.
+    pub fn splitActivePane(self: *WorkspaceModel, id: panes.PaneId, axis: panes.SplitAxis) !void {
+        return self.splitPane(self.activeTab().active_pane, id, axis);
+    }
+    /// Closes a specific leaf in the active tab; falls back to the first leaf if the active pane was closed.
+    pub fn closePaneSplit(self: *WorkspaceModel, target: panes.PaneId) ?panes.PaneId {
+        const tab = self.activeTab();
+        if (!tab.tree.closePane(target)) return null;
+        if (tab.active_pane == target or !tab.tree.containsPane(tab.active_pane)) {
+            tab.active_pane = tab.tree.firstLeaf();
+        }
+        if (tab.tree.paneCount() <= 1 or tab.is_focus_mode) tab.is_focus_mode = false;
+        return target;
     }
     /// A split close falls back to the first leaf; the final leaf must be closed as a tab.
     pub fn closeActiveSplit(self: *WorkspaceModel) ?panes.PaneId {
-        const tab = self.activeTab();
-        const closing = tab.active_pane;
-        if (!tab.tree.closePane(closing)) return null;
-        tab.active_pane = tab.tree.firstLeaf();
-        return closing;
+        return self.closePaneSplit(self.activeTab().active_pane);
     }
     /// Focus changes only after hit testing an actual leaf of the selected tab.
     pub fn focusPane(self: *WorkspaceModel, id: panes.PaneId) bool {
@@ -203,3 +224,25 @@ test "tab identity survives removal of its first pane and close fallback follows
     try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(4)), model.activeTab().active_pane);
     try std.testing.expect(!model.moveTab(@enumFromInt(3), 1));
 }
+
+test "focus mode requires multiple panes and unzooms when splitting or closing to a single leaf" {
+    var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+    defer model.deinit();
+    try std.testing.expect(!model.toggleFocusMode());
+    try std.testing.expect(!model.activeTab().is_focus_mode);
+    try model.splitPane(@enumFromInt(1), @enumFromInt(2), .right);
+    try std.testing.expect(model.toggleFocusMode());
+    try std.testing.expect(model.activeTab().is_focus_mode);
+    try model.splitPane(@enumFromInt(1), @enumFromInt(3), .down);
+    try std.testing.expect(!model.activeTab().is_focus_mode);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(3)), model.activeTab().active_pane);
+    try std.testing.expect(model.toggleFocusMode());
+    try std.testing.expectEqual(@as(?panes.PaneId, @enumFromInt(2)), model.closePaneSplit(@enumFromInt(2)));
+    try std.testing.expect(!model.activeTab().is_focus_mode);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(3)), model.activeTab().active_pane);
+    try std.testing.expect(model.toggleFocusMode());
+    try std.testing.expectEqual(@as(?panes.PaneId, @enumFromInt(3)), model.closePaneSplit(@enumFromInt(3)));
+    try std.testing.expect(!model.activeTab().is_focus_mode);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(1)), model.activeTab().active_pane);
+}
+

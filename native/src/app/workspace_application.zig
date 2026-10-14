@@ -26,6 +26,8 @@ const WorkspaceApplication = struct {
     placements: std.ArrayList(panes.PanePlacement) = .empty,
     metrics: ?platform.WindowMetrics = null,
     pointer_drag: PointerDrag = .none,
+    hovered_pane: ?panes.PaneId = null,
+    hovered_header_action: ?panes.PaneHeaderAction = null,
     next_token: u32 = 1,
     health: union(enum) { running, failed: anyerror } = .running,
 
@@ -104,7 +106,17 @@ const WorkspaceApplication = struct {
         const model = if (self.model) |*model| model else return;
         const metrics = self.metrics orelse return;
         try platform.setTabStripLayout(try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len));
-        try model.activeTab().tree.layout(self.allocator, &self.placements, workspaceBounds(metrics));
+        const tab = model.activeTab();
+        const bounds = workspaceBounds(metrics);
+        if (tab.is_focus_mode and tab.tree.paneCount() > 1) {
+            try bounds.validate();
+            try self.placements.ensureTotalCapacity(self.allocator, 1);
+            self.placements.clearRetainingCapacity();
+            self.placements.appendAssumeCapacity(.{ .id = tab.active_pane, .bounds = bounds });
+        } else {
+            tab.is_focus_mode = false;
+            try tab.tree.layout(self.allocator, &self.placements, bounds);
+        }
         for (self.placements.items) |placement| {
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             try session.resize(try metrics.terminalSize(placement.bounds));
@@ -157,12 +169,16 @@ const WorkspaceApplication = struct {
             const metrics = self.metrics orelse return;
             if (try self.pointer_drag.tab.markerX(model, try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len))) |x| try platform.drawTabInsertionMarker(x);
         }
+        const active_tab = model.activeTab();
+        const can_focus = active_tab.tree.paneCount() > 1;
         for (self.placements.items) |placement| {
             if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
-            const focused = model.activeTab().active_pane == placement.id;
+            const focused = active_tab.active_pane == placement.id;
+            const hovered = self.hovered_pane == placement.id;
+            const hovered_action = if (hovered) self.hovered_header_action else null;
             const frame = try session.terminal.readFrame();
-            platform.beginPane(placement.bounds, focused, session.terminal.title.slice(), session.terminal.program_status.programStatus());
+            platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.terminal.title.slice(), session.terminal.program_status.programStatus());
             defer platform.endPane();
             try platform.drawTerminalFrame(frame, focused);
         }
@@ -225,12 +241,57 @@ const WorkspaceApplication = struct {
     }
     pub fn onClick(self: *WorkspaceApplication, x: f32, y: f32) void {
         if (self.health == .failed) return;
+        self.handleClick(x, y) catch |err| self.fail(err);
+    }
+    fn handleClick(self: *WorkspaceApplication, x: f32, y: f32) !void {
         const model = if (self.model) |*model| model else return;
+        const can_focus = model.activeTab().tree.paneCount() > 1;
         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
+            if (placement.bounds.hitHeaderAction(can_focus, x, y)) |header_action| {
+                switch (header_action) {
+                    .focus_toggle => {
+                        _ = model.focusPane(placement.id);
+                        if (model.toggleFocusMode()) try self.updateLayout() else platform.invalidateWindow();
+                    },
+                    .split_right, .split_down => {
+                        const target_session = self.findSession(placement.id) orelse return error.MissingPaneSession;
+                        const session = try self.addSession(target_session.directory.current());
+                        errdefer self.removeSession(session.id);
+                        try model.splitPane(placement.id, session.id, if (header_action == .split_right) .right else .down);
+                        try self.updateLayout();
+                    },
+                    .close => {
+                        if (model.closePaneSplit(placement.id)) |id| {
+                            self.removeSession(id);
+                            try self.updateLayout();
+                        } else {
+                            try self.closeTab(model.selected_tab);
+                            try self.updateLayout();
+                        }
+                    },
+                }
+                return;
+            }
             _ = model.focusPane(placement.id);
             platform.invalidateWindow();
             return;
         };
+    }
+    fn updateHoverState(self: *WorkspaceApplication, can_focus: bool, x: f32, y: f32) void {
+        var next_pane: ?panes.PaneId = null;
+        var next_action: ?panes.PaneHeaderAction = null;
+        if (self.pointer_drag == .none) {
+            for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
+                next_pane = placement.id;
+                next_action = placement.bounds.hitHeaderAction(can_focus, x, y);
+                break;
+            };
+        }
+        if (self.hovered_pane != next_pane or self.hovered_header_action != next_action) {
+            self.hovered_pane = next_pane;
+            self.hovered_header_action = next_action;
+            platform.invalidateWindow();
+        }
     }
     fn cancelPointerDrag(self: *WorkspaceApplication) !bool {
         const model = if (self.model) |*model| model else return false;
@@ -257,22 +318,23 @@ const WorkspaceApplication = struct {
         const layout = try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len);
         const point: tab_strip.TabPointer = .{ .x = x, .y = y };
         const bounds = workspaceBounds(metrics);
+        const can_focus = model.activeTab().tree.paneCount() > 1;
         switch (event) {
-            .hover => {},
+            .hover => self.updateHoverState(can_focus, x, y),
             .begin => {
                 if (try layout.hitTab(point)) |hit| {
                     if (hit.part == .close) return .normal;
                     try self.applyAction(.select_tab, @intCast(hit.index));
                     var drag: TabDrag = .none;
                     if (try drag.begin(model, layout, model.activeTab().id, point)) self.pointer_drag = .{ .tab = drag };
-                } else {
+                } else if (!model.activeTab().is_focus_mode) {
                     var drag: DividerDrag = .{};
                     if (try drag.begin(&model.activeTab().tree, bounds, x, y)) self.pointer_drag = .{ .divider = drag };
                 }
             },
             .move, .end => {
                 switch (self.pointer_drag) {
-                    .none => {},
+                    .none => self.updateHoverState(can_focus, x, y),
                     .divider => |*drag| if (try drag.move(&model.activeTab().tree, bounds, x, y)) try self.updateLayout(),
                     .tab => |*drag| {
                         if (event == .end) {
@@ -283,6 +345,7 @@ const WorkspaceApplication = struct {
                 }
                 if (event == .end) {
                     self.pointer_drag = .none;
+                    self.updateHoverState(model.activeTab().tree.paneCount() > 1, x, y);
                     return .normal;
                 }
             },
@@ -296,6 +359,7 @@ const WorkspaceApplication = struct {
             .armed => .tab_armed,
             .dragging => .tab_dragging,
         };
+        if (model.activeTab().is_focus_mode) return .normal;
         const drag: DividerDrag = if (self.pointer_drag == .divider) self.pointer_drag.divider else .{};
         const axis = try drag.cursorAxis(&model.activeTab().tree, bounds, x, y) orelse return .normal;
         return switch (axis) {
@@ -385,6 +449,7 @@ const WorkspaceApplication = struct {
                 return @intFromFloat(@round(layout.tab_width * 1000));
             },
             49 => return if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) if (self.pointer_drag.tab.dragging.destination) |index| index + 1 else 0 else 0,
+            50 => return @intFromBool(model.activeTab().is_focus_mode),
             60...67 => return if (query - 60 < model.tabs.items.len) @intFromEnum(model.tabs.items[query - 60].id) else 0,
             43 => return if (self.activeSession()) |session| if (session.size) |size| size.columns else 0 else 0,
             44 => return if (self.activeSession()) |session| if (session.size) |size| size.rows else 0 else 0,
