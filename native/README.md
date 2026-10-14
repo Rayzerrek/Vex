@@ -183,11 +183,11 @@ circular dependency through the rendering/window adapter.
   launch-domain file-URI decoding and transactional report/cache updates.
 - `src/terminal/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
   acknowledgement and bounded text parsing.
-- `src/terminal/terminal_feed.zig`: bounded status interception; unrelated VT is
+- `src/terminal/terminal_feed.zig`: bounded status and ConPTY-stripped DCS (`+q` XTGETTCAP / `$qm` DECRQSS) interception; unrelated VT is
   forwarded unchanged and plain chunks bypass copying.
 - `src/terminal/api.zig`: checked symbol resolution and structured terminal API errors.
 - `src/terminal/terminal.zig`: one emulator/iterator/key encoder per pane,
-  reusable parsed snapshots, typed colors/styles/widths/cursor, validated UTF-8.
+  reusable parsed snapshots, typed colors/styles/widths/cursor, ConPTY resize/cursor/key-encoder parity, validated UTF-8.
 - `src/windows/windows_ffi.zig`: callback-pointer conversion, opaque PTY owners,
   validated window/input seams and presentation of parsed snapshots.
 - `src/windows/wsl_registry.zig`: read-only, bounded/typed default distribution
@@ -365,7 +365,7 @@ settings/themes, palette/tab peek/overlays, pane reorder, tab drag ghost/push an
 final divider styling, shell icons,
 status tooltips/origin routing, selection/copy/cut,
 hyperlinks/path completion, bracketed paste,
-IME/full mouse/key protocols, ConPTY DCS feed-filter parity, custom glyphs/color
+IME/full mouse/key protocols, custom glyphs/color
 emoji, true block cursor/blink, accessibility and packaging. Automatic close on
 process exit and running-program close confirmation are also not yet migrated.
 Native currently does not read or overwrite the production WPF profile.
