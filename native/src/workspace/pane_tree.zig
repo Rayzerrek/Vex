@@ -6,6 +6,13 @@ pub const PaneId = enum(u32) { _ };
 pub const SplitAxis = enum { right, down };
 /// Divider identity derives from the fresh pane ID that created it; the application must never reuse IDs.
 pub const DividerId = enum(u32) { _ };
+/// Action buttons in the 28 DIP pane header bar (Focus/Zoom, Split Right, Split Down, Close).
+pub const PaneHeaderAction = enum(u8) {
+    focus_toggle = 1,
+    split_right = 2,
+    split_down = 3,
+    close = 4,
+};
 /// Pane bounds use device-independent pixels, never physical screen coordinates.
 pub const PaneRect = struct {
     x: f32,
@@ -19,6 +26,17 @@ pub const PaneRect = struct {
     /// Hit testing excludes right/bottom edges so adjacent panes cannot both win.
     pub fn contains(self: PaneRect, x: f32, y: f32) bool {
         return x >= self.x and y >= self.y and x < self.x + self.width and y < self.y + self.height;
+    }
+    /// Hit-tests the right-aligned 20x20 DIP header buttons when the pane is at least 180 DIPs wide.
+    pub fn hitHeaderAction(self: PaneRect, can_focus: bool, x: f32, y: f32) ?PaneHeaderAction {
+        if (!self.contains(x, y) or self.width < 180 or self.height < 28) return null;
+        if (y < self.y + 4 or y >= self.y + 24) return null;
+        const right = self.x + self.width - 6;
+        if (x >= right - 20 and x < right) return .close;
+        if (x >= right - 42 and x < right - 22) return .split_down;
+        if (x >= right - 64 and x < right - 44) return .split_right;
+        if (can_focus and x >= right - 86 and x < right - 66) return .focus_toggle;
+        return null;
     }
 };
 /// Layout result holds a stable identity rather than a pointer into a mutable tree.
@@ -276,3 +294,16 @@ test "duplicate IDs, invalid ratios/geometry and excessive depth fail without mu
     for (3..66) |value| try tree.splitPane(@enumFromInt(@as(u32, @intCast(value - 1))), @enumFromInt(@as(u32, @intCast(value))), .right);
     try std.testing.expectError(error.PaneDepthLimit, tree.splitPane(@enumFromInt(65), @enumFromInt(66), .right));
 }
+
+test "pane header action hit testing aligns with right-anchored button slots and width guard" {
+    const bounds: PaneRect = .{ .x = 100, .y = 50, .width = 400, .height = 300 };
+    try std.testing.expectEqual(@as(?PaneHeaderAction, .close), bounds.hitHeaderAction(true, 485, 60));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, .split_down), bounds.hitHeaderAction(true, 463, 60));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, .split_right), bounds.hitHeaderAction(true, 441, 60));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, .focus_toggle), bounds.hitHeaderAction(true, 419, 60));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderAction(false, 419, 60));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderAction(true, 485, 90));
+    const narrow: PaneRect = .{ .x = 0, .y = 0, .width = 179, .height = 300 };
+    try std.testing.expectEqual(@as(?PaneHeaderAction, null), narrow.hitHeaderAction(true, 165, 14));
+}
+
