@@ -117,7 +117,8 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
   changing order. ×/middle-click do not arm a drag. Sessions, split focus,
   directory and unread status remain attached to the same tab.
   This checkpoint draws an insertion marker, not WPF's animated ghost/push preview.
-- `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down.
+- `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down (also exits focus/zoom mode if active so the new split is visible).
+- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs and pane headers render sanitized OSC 0/2 terminal titles with fallback labels and background attention indicators.
 - Click a pane to focus it. Drag a right/down divider to resize its two subtrees
   live, without changing terminal focus. Ratios stay in 0.1..0.9; interactive
   dragging also keeps each neighbor at least 100 DIPs. Too-small containers
@@ -126,13 +127,14 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
 - Escape, capture/focus loss, cancel mode, window/DPI resize and tab/tree changes
   cancel a divider drag and restore its original ratio. Release commits; a captured or
   cancelled release over caption buttons cannot activate them.
-- `Ctrl+Shift+W`: close a split or tab; a tab's **×** / middle-click closes it.
+- `Ctrl+Shift+W`: close a split or tab; a tab's **×** / middle-click or a pane header's **×** closes it.
 - The last tab stays open, as in WPF. Closing a split focuses the first remaining
   leaf. Closing an active tab selects the left neighbor, or right for tab zero.
 - Each pane uses the selected shell profile (integrated cmd by default). New tabs use the project launch
   directory; splits inherit the focused pane's last valid local OSC 7 directory,
   otherwise its starting directory (matching WPF, not a guessed prompt). Navigation
   and function keys use Ghostty's encoder (`Ctrl+Backspace` emits `0x17`); character input is UTF-8.
+- Mouse selection (cell click-drag, word double-click, line triple-click, captured outside-pane drag clamping) and keyboard selection (`Shift+Left/Right/Home/End`, `Ctrl+Shift+Left/Right/Home/End`) highlight selected cells; `Ctrl+C` (when a selection is active) / `Ctrl+Shift+C` copy, `Ctrl+Shift+X` cuts, and `Backspace` deletes a selection anchored at the live cursor.
 - Mouse wheel and primary-screen scroll shortcuts (`Shift+PageUp/PageDown`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+Home/End`) scroll the focused viewport; `Ctrl+Shift+V` and `Shift+Insert` paste text with newline normalization and DEC 2004 bracketed paste; write-only OSC 52 / OSC 1337 Copy sequences update the system clipboard.
 - Window resizing, caption controls and per-monitor DPI handling use Win32.
 
@@ -162,13 +164,13 @@ suite. The application owns sessions; pure workspace models never import the
 window adapter. Terminal ABI resolution uses its C seam directly, not a
 circular dependency through the rendering/window adapter.
 
-- `src/workspace/workspace_model.zig`: stable tab IDs, allocation-free reorder and
+- `src/workspace/workspace_model.zig`: stable tab IDs, per-tab focus/zoom mode, allocation-free reorder and
   selection/close/focus rules, capped at 8 tabs.
 - `src/workspace/tab_strip.zig`: one DIP geometry definition for tab widths,
   body/close/gap hit testing and insertion slots; Win32 copies its parsed projection.
 - `src/workspace/tab_drag.zig`: typed none/armed/dragging transitions and commit-on-drop.
 - `src/workspace/pane_tree.zig`: allocator-owned recursive split tree; transactional edits,
-  stable IDs, ratio clamp 0.1..0.9, finite DIP geometry, 64-level depth guard.
+  stable IDs, ratio clamp 0.1..0.9, finite DIP geometry, single-leaf zoom layout, 64-level depth guard.
 - `src/workspace/divider_drag.zig`: allocation-free divider hit/drag lifecycle,
   grab offset, minimum-size limits and rollback using stable divider IDs.
 - `src/main.zig`: allocator/error boundary and explicit root test imports.
@@ -182,12 +184,13 @@ circular dependency through the rendering/window adapter.
 - `src/shell/directory.zig`: parsed absolute Windows paths, owned pane directories,
   launch-domain file-URI decoding and transactional report/cache updates.
 - `src/terminal/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
-  acknowledgement and bounded text parsing.
+  BEL (`\x07`) attention, acknowledgement and bounded text parsing.
+- `src/terminal/terminal_title.zig`: bounded OSC 0/2 terminal title sanitization and fallback formatting.
 - `src/terminal/terminal_feed.zig`: bounded status and ConPTY-stripped DCS (`+q` XTGETTCAP / `$qm` DECRQSS) interception; unrelated VT is
   forwarded unchanged and plain chunks bypass copying.
 - `src/terminal/api.zig`: checked symbol resolution and structured terminal API errors.
-- `src/terminal/terminal.zig`: one emulator/iterator/key encoder per pane,
-  reusable parsed snapshots, typed colors/styles/widths/cursor, ConPTY resize/cursor/key-encoder parity, bracketed paste encoding, write-only OSC 52/1337 clipboard callbacks, validated UTF-8.
+- `src/terminal/terminal.zig`: one emulator/iterator/key encoder/selection gesture per pane,
+  reusable parsed snapshots, typed colors/styles/widths/cursor, mouse and keyboard selection/copy/cut, ConPTY resize/cursor/key-encoder parity, bracketed paste encoding, write-only OSC 52/1337 clipboard and OSC 0/2 title callbacks, validated UTF-8.
 - `src/windows/windows_ffi.zig`: callback-pointer conversion, opaque PTY owners,
   validated window/input seams and presentation of parsed snapshots.
 - `src/windows/wsl_registry.zig`: read-only, bounded/typed default distribution
@@ -363,8 +366,8 @@ process metadata/prompt adapters,
 shell-profile UI/per-pane overrides, profile/session compatibility and persistence, saved layouts,
 settings/themes, palette/tab peek/overlays, pane reorder, tab drag ghost/push animations and strip scrolling,
 final divider styling, shell icons,
-status tooltips/origin routing, selection/copy/cut,
-hyperlinks/path completion, bracketed paste,
+status tooltips/origin routing,
+hyperlinks/path completion,
 IME/full mouse/key protocols, custom glyphs/color
 emoji, true block cursor/blink, accessibility and packaging. Automatic close on
 process exit and running-program close confirmation are also not yet migrated.
