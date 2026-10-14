@@ -439,6 +439,13 @@ pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active
 }
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
 pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !void {
+    const cursor = frame.cursor;
+    const cursor_visible = focused and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
+    const block_cursor = cursor_visible and cursor.shape == .block;
+    var cached_fg: u32 = 0xe4e4e7;
+    var cached_bg: u32 = 0x282c34;
+    var cached_corrected_fg: u32 = 0xe4e4e7;
+
     for (0..frame.rows) |row| {
         const cells = frame.cells.items[row * frame.columns ..][0..frame.columns];
         var start: usize = 0;
@@ -448,8 +455,23 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !v
         var style: terminal.TextStyle = .{ .foreground = 0xe4e4e7, .background = 0x282c34 };
         for (cells, 0..) |cell, column| {
             if (cell.width == .tail) continue;
-            const cell_style = effectiveCellStyle(cell);
             const text = frame.cellText(cell);
+            const is_block_cursor_cell = block_cursor and row == cursor.row and column == cursor.column;
+            var cell_style = cell.style;
+            if (is_block_cursor_cell) {
+                cell_style.background = 0xe4e4e7;
+                cell_style.foreground = 0x282c34;
+            } else if (cell.selected) {
+                cell_style.background = 0x3b4261;
+                cell_style.foreground = 0xffffff;
+            } else if (!cell_style.invisible and !isBlockGraphic(text)) {
+                if (cell_style.foreground != cached_fg or cell_style.background != cached_bg) {
+                    cached_fg = cell_style.foreground;
+                    cached_bg = cell_style.background;
+                    cached_corrected_fg = ensureMinimumContrast(cached_fg, cached_bg);
+                }
+                cell_style.foreground = cached_corrected_fg;
+            }
             const ascii = cell.width == .narrow and (text.len == 0 or (text.len == 1 and text[0] >= 32 and text[0] <= 126));
             if (!ascii or !std.meta.eql(style, cell_style) or length == buffer.len) {
                 try drawRun(start, row, run_cells, buffer[0..length], style);
@@ -470,19 +492,101 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !v
         }
         try drawRun(start, row, run_cells, buffer[0..length], style);
     }
-    const cursor = frame.cursor;
-    if (focused and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows) c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), 0xe4e4e7);
-}
-fn effectiveCellStyle(cell: terminal.TerminalCell) terminal.TextStyle {
-    var style = cell.style;
-    if (cell.selected) {
-        style.background = 0x3b4261;
-        style.foreground = 0xffffff;
+    if (cursor_visible and cursor.shape != .block) {
+        c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), 0xe4e4e7);
     }
-    return style;
 }
+
+pub fn isBlockGraphic(text: []const u8) bool {
+    if (text.len != 3 or (text[0] & 0xF0) != 0xE0) return false;
+    const cp: u32 = (@as(u32, text[0] & 0x0F) << 12) | (@as(u32, text[1] & 0x3F) << 6) | @as(u32, text[2] & 0x3F);
+    return (cp >= 0x2580 and cp <= 0x259F) or (cp >= 0xE0B0 and cp <= 0xE0B7);
+}
+
+pub fn ensureMinimumContrast(fg_rgb: u32, bg_rgb: u32) u32 {
+    if (fg_rgb == bg_rgb) return fg_rgb;
+    const min_delta_l: f32 = 0.40;
+    const bg_l = srgbToOklabL(bg_rgb);
+    const fg_lab = srgbToOklab(fg_rgb);
+    const delta = @abs(fg_lab.l - bg_l);
+    if (delta >= min_delta_l) return fg_rgb;
+
+    var target_l: f32 = undefined;
+    if (bg_l < 0.5) {
+        target_l = @min(@as(f32, 0.96), bg_l + min_delta_l);
+        if (target_l - bg_l < min_delta_l * 0.6 and bg_l > min_delta_l) {
+            target_l = @max(@as(f32, 0.04), bg_l - min_delta_l);
+        }
+    } else {
+        target_l = @max(@as(f32, 0.04), bg_l - min_delta_l);
+        if (bg_l - target_l < min_delta_l * 0.6 and (1.0 - bg_l) > min_delta_l) {
+            target_l = @min(@as(f32, 0.96), bg_l + min_delta_l);
+        }
+    }
+    return oklabToSrgb(target_l, fg_lab.a, fg_lab.b);
+}
+
+const Oklab = struct { l: f32, a: f32, b: f32 };
+
+fn srgbChannelToLinear(c_val: u32) f32 {
+    const v = @as(f32, @floatFromInt(c_val & 0xFF)) / 255.0;
+    return if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4);
+}
+
+fn linearChannelToSrgb(v: f32) u32 {
+    const clamped = std.math.clamp(v, 0.0, 1.0);
+    const s = if (clamped <= 0.0031308) clamped * 12.92 else 1.055 * std.math.pow(f32, clamped, 1.0 / 2.4) - 0.055;
+    return @intFromFloat(@round(std.math.clamp(s * 255.0, 0.0, 255.0)));
+}
+
+fn srgbToOklabL(rgb_val: u32) f32 {
+    const r = srgbChannelToLinear(rgb_val >> 16);
+    const g = srgbChannelToLinear(rgb_val >> 8);
+    const b = srgbChannelToLinear(rgb_val);
+    const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+    const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+    const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+    const l_ = std.math.cbrt(l);
+    const m_ = std.math.cbrt(m);
+    const s_ = std.math.cbrt(s);
+    return 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_;
+}
+
+fn srgbToOklab(rgb_val: u32) Oklab {
+    const r = srgbChannelToLinear(rgb_val >> 16);
+    const g = srgbChannelToLinear(rgb_val >> 8);
+    const b = srgbChannelToLinear(rgb_val);
+    const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+    const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+    const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+    const l_ = std.math.cbrt(l);
+    const m_ = std.math.cbrt(m);
+    const s_ = std.math.cbrt(s);
+    return .{
+        .l = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        .a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        .b = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+    };
+}
+
+fn oklabToSrgb(l_val: f32, a_val: f32, b_val: f32) u32 {
+    const l_ = l_val + 0.3963377774 * a_val + 0.2158037573 * b_val;
+    const m_ = l_val - 0.1055613458 * a_val - 0.0638541728 * b_val;
+    const s_ = l_val - 0.0894841775 * a_val - 1.2914855480 * b_val;
+    const l = l_ * l_ * l_;
+    const m = m_ * m_ * m_;
+    const s = s_ * s_ * s_;
+    const r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+    const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+    const b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+    return (linearChannelToSrgb(r) << 16) | (linearChannelToSrgb(g) << 8) | linearChannelToSrgb(b);
+}
+
 fn drawRun(column: usize, row: usize, cells: usize, text: []const u8, style: terminal.TextStyle) !void {
     if (cells == 0) return;
+    if (style.background == 0x282c34 and !style.underline and !style.strikethrough) {
+        if (std.mem.indexOfNonePos(u8, text, 0, " ") == null) return;
+    }
     const flags = @as(u32, @intFromBool(style.bold)) | (@as(u32, @intFromBool(style.italic)) << 1) |
         (@as(u32, @intFromBool(style.underline)) << 2) | (@as(u32, @intFromBool(style.strikethrough)) << 3) | (@as(u32, @intFromBool(style.invisible)) << 4);
     if (c.vex_draw_run(@intCast(column), @intCast(row), @intCast(cells), text.ptr, text.len, style.foreground, style.background, flags) != 0) return error.NativeTextRenderingFailed;
@@ -549,3 +653,21 @@ test "ScrollbarGeometry computes thumb travel, right-edge hit zone, and drag tar
     try std.testing.expectEqual(@as(u64, 38), mid.targetOffsetForY(155.0, 10.0));
     try std.testing.expectEqual(@as(u64, 75), mid.targetOffsetForY(230.0, 10.0));
 }
+
+test "ensureMinimumContrast preserves readable colors and boosts low-contrast foregrounds while exempting block graphics" {
+    // High contrast default foreground on default background stays untouched.
+    try std.testing.expectEqual(@as(u32, 0xe4e4e7), ensureMinimumContrast(0xe4e4e7, 0x282c34));
+    // Identical fg and bg (intentionally hidden text) stays untouched.
+    try std.testing.expectEqual(@as(u32, 0x282c34), ensureMinimumContrast(0x282c34, 0x282c34));
+    // Dark navy foreground on dark background gets lifted in lightness.
+    const boosted = ensureMinimumContrast(0x1f2430, 0x282c34);
+    try std.testing.expect(boosted != 0x1f2430);
+    try std.testing.expect(srgbToOklabL(boosted) - srgbToOklabL(0x282c34) >= 0.38);
+    // Block elements and Powerline glyphs are recognized so their exact shade/separator colors are preserved.
+    try std.testing.expect(isBlockGraphic("█"));
+    try std.testing.expect(isBlockGraphic("░"));
+    try std.testing.expect(isBlockGraphic("\u{E0B0}"));
+    try std.testing.expect(!isBlockGraphic("─"));
+    try std.testing.expect(!isBlockGraphic("A"));
+}
+
