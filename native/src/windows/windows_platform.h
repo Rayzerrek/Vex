@@ -31,10 +31,11 @@ typedef struct {
     bool (*key)(void*, uint32_t, uint32_t);
     void (*text)(void*, const uint8_t*, size_t);
     void (*paste)(void*, const uint8_t*, size_t);
-    void (*scroll)(void*, int32_t);
+    void (*scroll)(void*, int32_t, float, float, uint32_t);
     void (*click)(void*, float, float);
-    /* Event: hover/begin/move/end/cancel. DIP coordinates. Result: cursor/armed-tab/captured-tab response. */
-    uint32_t (*pointer)(void*, uint32_t, float, float);
+    void (*mouse_button)(void*, uint32_t, bool, float, float, uint32_t);
+    /* Event: hover/begin/move/end/cancel. DIP coordinates + modifiers. Result: cursor/armed-tab/captured-tab response. */
+    uint32_t (*pointer)(void*, uint32_t, float, float, uint32_t);
     void (*action)(void*, uint32_t, uint32_t);
     void (*exited)(void*, uint32_t, uint32_t);
     uint64_t (*probe)(void*, uint32_t);
@@ -44,6 +45,7 @@ int vex_window_run(VexWindowCallbacks callbacks);
 void vex_startup_begin(void);
 void vex_window_invalidate(void);
 void vex_window_close(void);
+void vex_window_paste_clipboard(void);
 uint64_t vex_window_paint_count(void);
 /* Window thread only; releasing capture may synchronously deliver WM_CAPTURECHANGED. */
 int vex_window_cancel_pointer_capture(void);

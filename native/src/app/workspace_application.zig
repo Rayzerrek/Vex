@@ -6,13 +6,29 @@ const workspace = @import("../workspace/workspace_model.zig");
 const directory = @import("../shell/directory.zig");
 const status = @import("../terminal/program_status.zig");
 const shell = @import("../shell/shell_launch.zig");
+const terminal = @import("../terminal/terminal.zig");
 const TerminalSession = @import("terminal_session.zig").TerminalSession;
 const wsl_registry = @import("../windows/wsl_registry.zig");
 const DividerDrag = @import("../workspace/divider_drag.zig").DividerDrag;
 const TabDrag = @import("../workspace/tab_drag.zig").TabDrag;
 const tab_strip = @import("../workspace/tab_strip.zig");
 
-const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, selection: panes.PaneId };
+const SelectionDrag = struct {
+    pane_id: panes.PaneId,
+    click_count: u8,
+    dragged: bool = false,
+    start_column: u16,
+    start_row: u16,
+    start_x_px: f64,
+    start_y_px: f64,
+};
+
+const MouseDrag = struct {
+    pane_id: panes.PaneId,
+    button: terminal.MouseButton,
+};
+
+const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, selection: SelectionDrag, mouse: MouseDrag };
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
 const WorkspaceApplication = struct {
@@ -28,6 +44,8 @@ const WorkspaceApplication = struct {
     pointer_drag: PointerDrag = .none,
     hovered_pane: ?panes.PaneId = null,
     hovered_header_action: ?panes.PaneHeaderAction = null,
+    reported_mouse_pane: ?panes.PaneId = null,
+    reported_mouse_buttons: u8 = 0,
     next_token: u32 = 1,
     health: union(enum) { running, failed: anyerror } = .running,
 
@@ -88,6 +106,31 @@ const WorkspaceApplication = struct {
             }
         }
     }
+    fn reportMouseEvent(
+        self: *WorkspaceApplication,
+        session: *TerminalSession,
+        action: terminal.MouseAction,
+        button: terminal.MouseButton,
+        modifiers: u32,
+        vp: platform.ViewportPoint,
+        any_button_pressed: bool,
+    ) !void {
+        _ = self;
+        if (session.state != .running) return;
+        var buffer: [128]u8 = undefined;
+        const bytes = try session.terminal.encodeMouse(
+            action,
+            button,
+            modifiers,
+            @floatCast(vp.x_px),
+            @floatCast(vp.y_px),
+            any_button_pressed,
+            &buffer,
+        );
+        if (bytes.len > 0) {
+            try session.pty.write(bytes);
+        }
+    }
     fn activeSession(self: *WorkspaceApplication) ?*TerminalSession {
         const model = if (self.model) |*model| model else return null;
         return self.findSession(model.activeTab().active_pane);
@@ -102,6 +145,10 @@ const WorkspaceApplication = struct {
         return session;
     }
     fn removeSession(self: *WorkspaceApplication, id: panes.PaneId) void {
+        if (self.reported_mouse_pane == id) {
+            self.reported_mouse_pane = null;
+            self.reported_mouse_buttons = 0;
+        }
         for (self.sessions.items, 0..) |session, index| if (session.id == id) {
             _ = self.sessions.swapRemove(index);
             session.destroy(self.allocator);
@@ -304,10 +351,75 @@ const WorkspaceApplication = struct {
             session.paste(self.allocator, bytes) catch |err| self.fail(err);
         }
     }
-    pub fn onScroll(self: *WorkspaceApplication, delta: i32) void {
-        if (self.health == .failed) return;
+    pub fn onScroll(self: *WorkspaceApplication, delta: i32, x: f32, y: f32, modifiers: u32) void {
+        if (self.health == .failed or delta == 0) return;
+        self.handleScroll(delta, x, y, modifiers) catch |err| self.fail(err);
+    }
+    fn handleScroll(self: *WorkspaceApplication, delta: i32, x: f32, y: f32, modifiers: u32) !void {
+        const metrics = self.metrics orelse return;
+        for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
+            const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
+            if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
+                if (try metrics.viewportPoint(placement.bounds, x, y, true)) |vp| {
+                    const wheel_button: terminal.MouseButton = if (delta < 0) .wheel_up else .wheel_down;
+                    const steps: usize = @max(1, @divTrunc(@abs(delta), 3));
+                    const any_pressed = (self.pointer_drag == .mouse and self.pointer_drag.mouse.pane_id == placement.id) or
+                        (self.reported_mouse_pane == placement.id and self.reported_mouse_buttons != 0);
+                    for (0..steps) |_| {
+                        try self.reportMouseEvent(session, .press, wheel_button, modifiers, vp, any_pressed);
+                        try self.reportMouseEvent(session, .release, wheel_button, modifiers, vp, any_pressed);
+                    }
+                    return;
+                }
+            }
+            session.terminal.scroll(delta);
+            platform.invalidateWindow();
+            return;
+        };
         const session = self.activeSession() orelse return;
         session.terminal.scroll(delta);
+        platform.invalidateWindow();
+    }
+    pub fn onMouseButton(self: *WorkspaceApplication, button: terminal.MouseButton, pressed: bool, x: f32, y: f32, modifiers: u32) void {
+        if (self.health == .failed) return;
+        self.handleMouseButton(button, pressed, x, y, modifiers) catch |err| self.fail(err);
+    }
+    fn handleMouseButton(self: *WorkspaceApplication, button: terminal.MouseButton, pressed: bool, x: f32, y: f32, modifiers: u32) !void {
+        const model = if (self.model) |*model| model else return;
+        const metrics = self.metrics orelse return;
+        const can_focus = model.activeTab().tree.paneCount() > 1;
+        const bit: u8 = if (button == .middle) 2 else if (button == .right) 4 else 1;
+        if (pressed) {
+            for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
+                if (placement.bounds.hitHeaderAction(can_focus, x, y) != null) return;
+                const vp = (try metrics.viewportPoint(placement.bounds, x, y, false)) orelse return;
+                const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
+                _ = model.focusPane(placement.id);
+                try self.clearOtherSelections(placement.id);
+                platform.invalidateWindow();
+                if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
+                    self.reported_mouse_pane = placement.id;
+                    self.reported_mouse_buttons |= bit;
+                    try self.reportMouseEvent(session, .press, button, modifiers, vp, true);
+                } else if (button == .right) {
+                    platform.pasteClipboard();
+                }
+                return;
+            };
+        } else {
+            const pane_id = self.reported_mouse_pane orelse return;
+            if ((self.reported_mouse_buttons & bit) == 0) return;
+            self.reported_mouse_buttons &= ~bit;
+            const any_remaining = self.reported_mouse_buttons != 0;
+            if (!any_remaining) self.reported_mouse_pane = null;
+            const placement = self.findPlacement(pane_id) orelse return;
+            const session = self.findSession(pane_id) orelse return;
+            if (try session.terminal.isMouseTracking()) {
+                if (try metrics.viewportPoint(placement.bounds, x, y, true)) |vp| {
+                    try self.reportMouseEvent(session, .release, button, modifiers, vp, any_remaining);
+                }
+            }
+        }
     }
     pub fn onClick(self: *WorkspaceApplication, x: f32, y: f32) void {
         if (self.health == .failed) return;
@@ -369,28 +481,33 @@ const WorkspaceApplication = struct {
         const model = if (self.model) |*model| model else return false;
         const clear_preview = self.pointer_drag == .tab or self.pointer_drag == .selection;
         const changed = switch (self.pointer_drag) {
-            .none, .tab => false,
-            .selection => |pane_id| blk: {
-                if (self.findSession(pane_id)) |session| {
-                    try session.terminal.selectionRelease(0, 0);
+            .none, .tab, .mouse => false,
+            .selection => |sel| blk: {
+                if (self.findSession(sel.pane_id)) |session| {
+                    try session.terminal.selectionRelease(sel.start_column, sel.start_row);
+                    if (!sel.dragged and sel.click_count <= 1) {
+                        try session.terminal.clearSelection(false);
+                    }
                 }
                 break :blk false;
             },
             .divider => |*drag| try drag.cancel(&model.activeTab().tree),
         };
         self.pointer_drag = .none;
+        self.reported_mouse_pane = null;
+        self.reported_mouse_buttons = 0;
         try platform.cancelPointerCapture();
         if (clear_preview) platform.invalidateWindow();
         return changed;
     }
-    pub fn onPointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) platform.PointerResponse {
+    pub fn onPointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32, modifiers: u32) platform.PointerResponse {
         if (self.health == .failed) return .normal;
-        return self.handlePointer(event, x, y) catch |err| {
+        return self.handlePointer(event, x, y, modifiers) catch |err| {
             self.fail(err);
             return .normal;
         };
     }
-    fn handlePointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) !platform.PointerResponse {
+    fn handlePointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32, modifiers: u32) !platform.PointerResponse {
         const model = if (self.model) |*model| model else return .normal;
         const metrics = self.metrics orelse return .normal;
         const layout = try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len);
@@ -398,7 +515,22 @@ const WorkspaceApplication = struct {
         const bounds = workspaceBounds(metrics);
         const can_focus = model.activeTab().tree.paneCount() > 1;
         switch (event) {
-            .hover => self.updateHoverState(can_focus, x, y),
+            .hover => {
+                self.updateHoverState(can_focus, x, y);
+                if (self.pointer_drag == .none and (modifiers & 1) == 0) {
+                    for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
+                        const session = self.findSession(placement.id) orelse break;
+                        if (try session.terminal.isMouseTracking()) {
+                            if (try metrics.viewportPoint(placement.bounds, x, y, false)) |vp| {
+                                const any_pressed = self.reported_mouse_pane == placement.id and self.reported_mouse_buttons != 0;
+                                const button: terminal.MouseButton = if ((self.reported_mouse_buttons & 2) != 0) .middle else if ((self.reported_mouse_buttons & 4) != 0) .right else .none;
+                                try self.reportMouseEvent(session, .motion, button, modifiers, vp, any_pressed);
+                            }
+                        }
+                        break;
+                    };
+                }
+            },
             .begin => {
                 if (try layout.hitTab(point)) |hit| {
                     if (hit.part == .close) return .normal;
@@ -417,8 +549,23 @@ const WorkspaceApplication = struct {
                                 _ = model.focusPane(placement.id);
                                 try self.clearOtherSelections(placement.id);
                                 const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
-                                _ = try session.terminal.selectionPress(vp.column, vp.row, vp.x_px, vp.y_px);
-                                self.pointer_drag = .{ .selection = placement.id };
+                                if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
+                                    if (try session.terminal.hasSelection()) {
+                                        try session.terminal.clearSelection(true);
+                                    }
+                                    try self.reportMouseEvent(session, .press, .left, modifiers, vp, true);
+                                    self.pointer_drag = .{ .mouse = .{ .pane_id = placement.id, .button = .left } };
+                                } else {
+                                    const click_count = try session.terminal.selectionPress(vp.column, vp.row, vp.x_px, vp.y_px);
+                                    self.pointer_drag = .{ .selection = .{
+                                        .pane_id = placement.id,
+                                        .click_count = click_count,
+                                        .start_column = vp.column,
+                                        .start_row = vp.row,
+                                        .start_x_px = vp.x_px,
+                                        .start_y_px = vp.y_px,
+                                    } };
+                                }
                                 platform.invalidateWindow();
                             }
                             break;
@@ -436,16 +583,41 @@ const WorkspaceApplication = struct {
                             platform.invalidateWindow();
                         } else if (try drag.move(model, layout, point)) platform.invalidateWindow();
                     },
-                    .selection => |pane_id| {
-                        if (self.findPlacement(pane_id)) |placement| {
-                            if (self.findSession(pane_id)) |session| {
+                    .selection => |*sel| {
+                        if (self.findPlacement(sel.pane_id)) |placement| {
+                            if (self.findSession(sel.pane_id)) |session| {
                                 if (try metrics.viewportPoint(placement.bounds, x, y, true)) |vp| {
                                     if (event == .end) {
                                         try session.terminal.selectionRelease(vp.column, vp.row);
+                                        if (!sel.dragged and sel.click_count <= 1) {
+                                            // A single click without drag clears the 1-cell anchor while keeping multi-click history.
+                                            try session.terminal.clearSelection(false);
+                                        } else {
+                                            _ = try session.copySelectionToClipboard(self.allocator);
+                                        }
+                                        platform.invalidateWindow();
                                     } else {
-                                        try session.terminal.selectionDrag(vp.column, vp.row, vp.x_px, vp.y_px);
+                                        const moved_cell = vp.column != sel.start_column or vp.row != sel.start_row;
+                                        const moved_px = @abs(vp.x_px - sel.start_x_px) >= 3.0 or @abs(vp.y_px - sel.start_y_px) >= 3.0;
+                                        if (sel.dragged or moved_cell or moved_px or sel.click_count > 1) {
+                                            if (moved_cell or moved_px) sel.dragged = true;
+                                            try session.terminal.selectionDrag(vp.column, vp.row, vp.x_px, vp.y_px);
+                                            platform.invalidateWindow();
+                                        }
                                     }
-                                    platform.invalidateWindow();
+                                }
+                            }
+                        }
+                    },
+                    .mouse => |mouse_drag| {
+                        if (self.findPlacement(mouse_drag.pane_id)) |placement| {
+                            if (self.findSession(mouse_drag.pane_id)) |session| {
+                                if (try metrics.viewportPoint(placement.bounds, x, y, true)) |vp| {
+                                    if (event == .end) {
+                                        try self.reportMouseEvent(session, .release, mouse_drag.button, modifiers, vp, false);
+                                    } else {
+                                        try self.reportMouseEvent(session, .motion, mouse_drag.button, modifiers, vp, true);
+                                    }
                                 }
                             }
                         }
@@ -467,7 +639,7 @@ const WorkspaceApplication = struct {
             .armed => .tab_armed,
             .dragging => .tab_dragging,
         };
-        if (self.pointer_drag == .selection) return .selection;
+        if (self.pointer_drag == .selection or self.pointer_drag == .mouse) return .selection;
         if (model.activeTab().is_focus_mode) return .normal;
         const drag: DividerDrag = if (self.pointer_drag == .divider) self.pointer_drag.divider else .{};
         const axis = try drag.cursorAxis(&model.activeTab().tree, bounds, x, y) orelse return .normal;

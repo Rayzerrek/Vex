@@ -186,13 +186,30 @@ pub fn runWindow(owner: anytype) !void {
             }
             app.onPaste(input);
         }
-        fn scroll(context: ?*anyopaque, delta: i32) callconv(.c) void {
-            if (recover(context)) |app| app.onScroll(delta);
+        fn scroll(context: ?*anyopaque, delta: i32, x: f32, y: f32, modifiers: u32) callconv(.c) void {
+            if (std.math.isFinite(x) and std.math.isFinite(y)) if (recover(context)) |app| app.onScroll(delta, x, y, modifiers);
         }
         fn click(context: ?*anyopaque, x: f32, y: f32) callconv(.c) void {
             if (std.math.isFinite(x) and std.math.isFinite(y)) if (recover(context)) |app| app.onClick(x, y);
         }
-        fn pointerInput(context: ?*anyopaque, value: u32, x: f32, y: f32) callconv(.c) u32 {
+        fn mouseButton(context: ?*anyopaque, button: u32, pressed: bool, x: f32, y: f32, modifiers: u32) callconv(.c) void {
+            const app = recover(context) orelse return;
+            const parsed: terminal.MouseButton = switch (button) {
+                1 => .left,
+                2 => .right,
+                3 => .middle,
+                else => {
+                    app.fail(error.InvalidMouseButton);
+                    return;
+                },
+            };
+            if (!std.math.isFinite(x) or !std.math.isFinite(y)) {
+                app.fail(error.InvalidDividerPoint);
+                return;
+            }
+            app.onMouseButton(parsed, pressed, x, y, modifiers);
+        }
+        fn pointerInput(context: ?*anyopaque, value: u32, x: f32, y: f32, modifiers: u32) callconv(.c) u32 {
             const app = recover(context) orelse return 0;
             const event = std.meta.intToEnum(PointerEvent, value) catch {
                 app.fail(error.InvalidPointerEvent);
@@ -202,7 +219,7 @@ pub fn runWindow(owner: anytype) !void {
                 app.fail(error.InvalidDividerPoint);
                 return 0;
             }
-            return @intFromEnum(app.onPointer(event, x, y));
+            return @intFromEnum(app.onPointer(event, x, y, modifiers));
         }
         fn action(context: ?*anyopaque, value: u32, index: u32) callconv(.c) void {
             const app = recover(context) orelse return;
@@ -220,7 +237,7 @@ pub fn runWindow(owner: anytype) !void {
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .probe = Adapter.probe });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .probe = Adapter.probe });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
@@ -266,6 +283,10 @@ pub fn systemDirectoryAlloc(allocator: std.mem.Allocator) ![]u8 {
 pub fn writeClipboardText(text: []const u8) !void {
     if (text.len == 0 or std.mem.indexOfScalar(u8, text, 0) != null or !std.unicode.utf8ValidateSlice(text)) return error.InvalidClipboardText;
     if (c.vex_clipboard_write(text.ptr, text.len) != 0) return error.ClipboardWriteFailed;
+}
+/// Reads CF_UNICODETEXT from the system clipboard and routes it through the active session paste handler.
+pub fn pasteClipboard() void {
+    c.vex_window_paste_clipboard();
 }
 /// Startup timestamps begin before terminal/DLL initialization, not OS process creation.
 pub fn beginStartup() void {
