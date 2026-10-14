@@ -33,10 +33,12 @@ claim that a reduced-feature terminal replaces Vex already.
 
 Use [Ghostty](https://github.com/ghostty-org/ghostty) as the primary reference for
 idiomatic Zig, not as a reason to copy optimizations or weaken runtime checks.
-Two inspected examples:
+Inspected examples:
 
 - [`src/lib/allocator.zig`](https://github.com/ghostty-org/ghostty/blob/9e080c5a/src/lib/allocator.zig): explicit allocator interfaces, pointer-stable C adapters and leak-checking test allocators.
 - [`src/tripwire.zig`](https://github.com/ghostty-org/ghostty/blob/2ac3c1f1/src/tripwire.zig): exercise failure paths to verify `errdefer`, not merely happy-path behavior. Native currently injects Zig allocation failures; Win32 failure points remain follow-up work.
+
+- [`src/main.zig`](https://github.com/ghostty-org/ghostty/blob/main/src/main.zig): thin entrypoint, explicit module imports and a root `test` block referencing the implementation. This current-main structural example targets a newer Zig; copy the organization principle, not its version-specific APIs.
 
 Keep ownership contracts local, tests beside the module and abstractions tied to
 an actual requirement. Reuse standard-library helpers before adding a framework.
@@ -55,13 +57,13 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache; ConPTY DCS filter parity pending |
 | Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*` | DirectWrite baseline and themed chrome; pixel fixtures, custom box/Powerline glyphs, color emoji and blink pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys/plain paste/wheel; full protocols, IME, click positioning, selection/copy/cut, bracketed paste pending |
-| Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | cmd.exe only; detected/custom shells and integration pending |
+| Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash and absolute custom executables; cmd/PS/Nu integration implemented; profile menu, per-pane overrides and persistence pending |
 | Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local directory ownership/OSC 7/inheritance implemented; project UI/WSL pending; WSL directories explicitly reject Windows-shell launch |
 | Settings and session persistence | `Model/AppSettings.cs`, `Session*`, `VexJsonContext.cs` | Pending; native currently does not read/write the production profile |
 | Saved layouts | `SavedTerminalLayout.cs`, `MainWindow.SavedLayouts.cs` | Pending; opening explicitly executes commands once; restore must never replay commands |
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts first; all remaining palettes/settings pending |
 | Palette, tab peek, overlays/popups | `CommandPalette*`, `TabPeek*`, `MainWindow.Overlays.cs` | Pending |
-| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, pane/tab priority badges, progress and acknowledgement implemented; OSC 9;4/133 fallback, tooltips/origin routing, project aggregation and shell icons pending; raw terminal titles must not become trusted UI controls |
+| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, pane/tab priority badges, progress and acknowledgement implemented, including OSC 9;4/133 fallback; tooltips/origin routing, project aggregation and shell icons pending; raw terminal titles must not become trusted UI controls |
 | Links/path completion/search | `*Links*`, `*PathCompletion*` | Pending |
 | UI Automation / accessibility / installer / crash log | Windows UI and packaging | Pending |
 
@@ -109,7 +111,7 @@ These are behavioral contracts, not opportunities to redesign the app.
   rejection and allocation/callback rollback have pure/real-DLL fixtures.
 - Windows smoke verifies actual `%CD%` in a split under a Unicode/spaced folder,
   and verifies a new tab still launches in the project root.
-- cmd does not emit OSC 7 by default; shell integration remains pending. Do not
+- cmd does not emit OSC 7 by default (including its later prompt integration). Do not
   infer a split directory from prompt text (the WPF split path does not do so).
 
 ## OSC 7501 checkpoint verification
@@ -128,7 +130,7 @@ These are behavioral contracts, not opportunities to redesign the app.
   injection or native memory-safety certification is implied.
 - Real ConPTY smoke covers isolated panes, tab priority, blocked/result input
   semantics, hidden-status repaint and unchanged zero-paint hidden text output.
-- Latest checkpoint: 41 tests in Debug and ReleaseSafe, ReleaseSafe application
+- OSC 7501-only checkpoint: 41 tests in Debug and ReleaseSafe, ReleaseSafe application
   build and desktop smoke pass. The captured status screenshot in this session
   is black; these checks do not establish visual parity.
 - WPF files are unchanged. Release solution build has zero warnings/errors and
@@ -136,9 +138,36 @@ These are behavioral contracts, not opportunities to redesign the app.
   the two clipboard tests still fail in isolation (clipboard lock/notification
   unavailable), while the animation test passes on isolated rerun. The suite
   therefore cannot be reported fully passing in this desktop session.
-- OSC 9;4 progress fallback and OSC 133 shell lifecycle markers deliberately
-  remain for the shell-integration checkpoint. Full tooltip/message presentation,
-  project aggregation and attention-origin navigation remain pending.
+- OSC 9;4 progress fallback and OSC 133 lifecycle are covered by the later shell
+  checkpoint below. Full tooltip/message presentation, project aggregation and
+  attention-origin navigation remain pending.
+
+## Shell integration checkpoint verification
+
+- Startup-only `--shell` IDs or an absolute `--program` plus raw `--arguments`;
+  one resolved, owned launch applies to every new tab/split. No settings UI or
+  production-profile read/write is implied. WSL requests explicitly reject.
+- Windows argv quoting, UTF-16 command-line bounds, canonical/PATH resolution,
+  missing-profile fallback, missing bootstrap errors and environment ownership
+  have allocator-failure fixtures. Custom programs validate before filesystem IO.
+- ConPTY receives fresh, borrowed UTF-16 launch buffers and a child-owned
+  environment; no worker borrows them after CreateProcessW. TERM/COLORTERM
+  defaults preserve explicit overrides and do not mutate parent app globals.
+- cmd integration emits prompt markers only. PowerShell preserves the user's
+  prompt/history handler and reports command boundaries/directories; unavailable
+  PSReadLine explicitly reports degraded start tracking. Nushell enables its own
+  OSC 7/133; Git Bash/custom launch retains existing integration without injection.
+- OSC 133 routine/long/failed commands, prompt cleanup and result persistence
+  are tested with deterministic monotonic timestamps. OSC 9;4 is suppressed by
+  valid OSC 7501 (including clear) until full reset. Marker stripping preserves
+  the real-DLL prompt cursor, including every read boundary.
+- 52 tests pass in Debug and ReleaseSafe; ReleaseSafe app build and both desktop
+  scripts pass. On this machine all five built-ins are present and exercised,
+  including PowerShell/Nushell automatic Unicode OSC 7 split inheritance,
+  completion/failure status and a Unicode/spaced cmd installation path.
+- Profile menus/per-pane shell overrides, Linux projects and settings remain
+  pending. cmd bootstrap paths with `%` or quotes reject explicitly; this is
+  a documented launch limitation, not full path/profile compatibility parity.
 
 No WPF profile is read/overwritten. This milestone does not replace production,
 certify native memory safety, or establish complete parity/performance.

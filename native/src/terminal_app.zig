@@ -6,6 +6,7 @@ const panes = @import("pane_tree.zig");
 const workspace = @import("workspace_model.zig");
 const directory = @import("directory.zig");
 const status = @import("program_status.zig");
+const shell = @import("shell_launch.zig");
 
 const SessionState = union(enum) { running, exited: u32 };
 const TerminalSession = struct {
@@ -18,14 +19,14 @@ const TerminalSession = struct {
     state: SessionState = .running,
     needs_attention: bool = false,
 
-    fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8) !*TerminalSession {
+    fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch) !*TerminalSession {
         const session = try allocator.create(TerminalSession);
         errdefer allocator.destroy(session);
         var pane_directory = try directory.PaneDirectory.init(allocator, path);
         errdefer pane_directory.deinit();
         var terminal = try core.Terminal.init(allocator, api);
         errdefer terminal.deinit();
-        var pty = try platform.PtyOwner.init(id, pane_directory.current());
+        var pty = try platform.PtyOwner.init(allocator, id, pane_directory.current(), launch);
         errdefer pty.deinit();
         session.* = .{ .id = id, .terminal = terminal, .pty = pty, .directory = pane_directory, .machine_name = machine_name };
         try session.terminal.attachResponseSink(session.pty.responseSink());
@@ -61,6 +62,7 @@ const WorkspaceApplication = struct {
     api: binding.Api,
     project_directory: directory.DirectoryPath,
     machine_name: []u8,
+    launch: shell.ShellLaunch,
     sessions: std.ArrayList(*TerminalSession) = .empty,
     model: ?workspace.WorkspaceModel = null,
     placements: std.ArrayList(panes.PanePlacement) = .empty,
@@ -74,7 +76,22 @@ const WorkspaceApplication = struct {
         errdefer allocator.free(path);
         const parsed = try directory.DirectoryPath.parse(path);
         const machine_name = try platform.machineNameAlloc(allocator);
-        return .{ .allocator = allocator, .api = api, .project_directory = parsed, .machine_name = machine_name };
+        errdefer allocator.free(machine_name);
+        const argv = try std.process.argsAlloc(allocator);
+        defer std.process.argsFree(allocator, argv);
+        const request = try shell.ShellRequest.parseArguments(if (argv.len > 0) argv[1..] else &.{});
+        const system_directory = try platform.systemDirectoryAlloc(allocator);
+        defer allocator.free(system_directory);
+        const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+        defer allocator.free(executable_directory);
+        const integration_directory = try std.fmt.allocPrint(allocator, "{s}\\ShellIntegration", .{executable_directory});
+        defer allocator.free(integration_directory);
+        var environment = try std.process.getEnvMap(allocator);
+        defer environment.deinit();
+        var launch = try shell.ShellLaunch.resolve(allocator, request, system_directory, integration_directory, &environment);
+        errdefer launch.deinit();
+        try platform.setShellName(launch.shellName());
+        return .{ .allocator = allocator, .api = api, .project_directory = parsed, .machine_name = machine_name, .launch = launch };
     }
     fn deinit(self: *WorkspaceApplication) void {
         // Window callbacks have stopped before this runs. Native worker teardown precedes VT free.
@@ -84,6 +101,7 @@ const WorkspaceApplication = struct {
         self.placements.deinit(self.allocator);
         self.allocator.free(self.project_directory.bytes);
         self.allocator.free(self.machine_name);
+        self.launch.deinit();
     }
     pub fn fail(self: *WorkspaceApplication, err: anyerror) void {
         if (self.health == .failed) return;
@@ -103,7 +121,7 @@ const WorkspaceApplication = struct {
         try self.sessions.ensureUnusedCapacity(self.allocator, 1);
         const token = self.next_token;
         self.next_token = try std.math.add(u32, token, 1);
-        const session = try TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name);
+        const session = try TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, &self.launch);
         self.sessions.appendAssumeCapacity(session);
         return session;
     }
@@ -292,6 +310,12 @@ const WorkspaceApplication = struct {
             13 => return self.sessions.items.len,
             14 => return if (self.activeSession()) |session| session.pty.processId() else 0,
             20 => return platform.paintCount(),
+            34 => return @intFromEnum(self.launch.kind),
+            39 => {
+                const session = self.activeSession() orelse return 0;
+                const reported = session.directory.reported orelse return 0;
+                return @intFromBool(!std.mem.eql(u8, reported, session.directory.launch));
+            },
             31 => return if (self.activeSession()) |session| @intFromEnum(session.terminal.program_status.programStatus().state) else 0,
             32 => return @intFromEnum((self.tabProgramStatus(model.activeTab().tree.root) catch return 0).summary.state),
             33 => {
@@ -316,6 +340,9 @@ const WorkspaceApplication = struct {
             8 => "VEX_NATIVE_DIRECTORY_OK",
             9 => "VEX_NATIVE_ROOT_DIRECTORY_OK",
             30 => "VEX_NATIVE_DIRECTORY_REPORTED",
+            35 => "VEX_NATIVE_SHELL_READY",
+            36 => "VEX_NATIVE_SHELL_DIRECTORY_OK",
+            37 => "VEX_NATIVE_SHELL_ENV_OK",
             else => return 0,
         };
         const session = self.activeSession() orelse return 0;
@@ -355,4 +382,5 @@ test {
     _ = @import("pane_tree.zig");
     _ = @import("workspace_model.zig");
     _ = @import("windows_ffi.zig");
+    _ = @import("shell_launch.zig");
 }

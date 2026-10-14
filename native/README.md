@@ -23,6 +23,38 @@ Zig runtime safety is never disabled. Native C++ compiles with
 Or run `zig-out/bin/vex-native.exe` with `ghostty-vt.dll` beside it. No CLR/WPF,
 Electron, external packages, or separately installed C++ toolchain is used.
 
+## Shell profiles
+
+```powershell
+zig build run -- --shell pwsh
+zig build run -- --shell powershell
+zig build run -- --shell nu
+zig build run -- --shell gitbash
+zig build run -- --program 'C:\Windows\System32\cmd.exe' --arguments /d
+```
+
+`system`/`cmd` resolve to the actual Windows system cmd. Built-ins are resolved
+once using canonical locations and absolute PATH entries; missing Windows
+built-ins fall back to cmd. Custom programs must be absolute and available;
+custom arguments are an explicit raw Windows command-line fragment, not shell
+text guessed by the app. WSL IDs are rejected until Linux launch support exists.
+The selected profile applies to all tabs/splits in this checkpoint; profile UI,
+per-pane overrides and persisted settings remain pending.
+
+cmd gets OSC 133 prompt markers; PowerShell 5/7 get OSC 7 directory reporting
+and OSC 133 command lifecycle while retaining the user's prompt/history handler.
+PSReadLine-unavailable sessions report degraded start tracking explicitly.
+Nushell enables its own OSC 7/133 integration; Git Bash and custom programs retain
+their existing integration, as in WPF. No user shell startup file is rewritten.
+cmd does not automatically report OSC 7. cmd bootstrap paths containing `%` or
+quotes reject explicitly instead of silently expanding them.
+
+Launch storage is application-owned. Each ConPTY start borrows fresh, validated
+UTF-16 executable/command/directory buffers only until CreateProcessW returns;
+no reader/writer retains them. TERM defaults to `xterm-256color` when absent/dumb
+and COLORTERM to `truecolor` when absent, preserving explicit user overrides.
+The normalized environment belongs to the child launch, not global app state.
+
 ## Implemented workspace
 
 One project, with up to **8 tabs**, each owning independent terminal panes:
@@ -34,7 +66,7 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
 - `Ctrl+Shift+W`: close a split or tab; a tab's **×** / middle-click closes it.
 - The last tab stays open, as in WPF. Closing a split focuses the first remaining
   leaf. Closing an active tab selects the left neighbor, or right for tab zero.
-- Each pane currently starts `cmd.exe /d`. New tabs use the project launch
+- Each pane uses the selected shell profile (integrated cmd by default). New tabs use the project launch
   directory; splits inherit the focused pane's last valid local OSC 7 directory,
   otherwise its starting directory (matching WPF, not a guessed prompt). Navigation
   and function keys use Ghostty's encoder; character input is UTF-8.
@@ -52,6 +84,8 @@ focus outline. Font/cell metrics come from DirectWrite. Initial window size is
 - `src/pane_tree.zig`: allocator-owned recursive split tree; transactional edits,
   stable IDs, ratio clamp 0.1..0.9, finite DIP geometry, 64-level depth guard.
 - `src/terminal_app.zig`: application/session owners, main-thread orchestration.
+- `src/shell_launch.zig`: startup selection, executable resolution, Windows
+  quoting, encoded bootstraps and owned child environment.
 - `src/directory.zig`: parsed absolute Windows paths, owned pane directories,
   local file-URI decoding and transactional report/cache updates.
 - `src/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
@@ -111,6 +145,14 @@ paints. Attention is latched across a pipe batch, even if a later report clears
 its record. Exit removes running/blocked/idle records; RIS clears all records,
 while soft reset and alternate-screen switches preserve them.
 
+OSC 133 prompt/start/completion markers use a monotonic terminal clock. Routine
+successful commands under two seconds return to Idle; longer commands retain
+Done and failed commands retain an exit-code message until acknowledged. Prompt
+markers drop running/blocked/idle explicit records without erasing unread
+results. OSC 9;4 progress remains a fallback only until a valid OSC 7501 report
+(including clear), and RIS re-enables that fallback. Semantic markers are
+consumed before libghostty to preserve the ConPTY prompt-redraw workaround.
+
 Native limits: 1,000 columns/rows for window grids, 1 Mi cells/frame, 64 KiB per
 grapheme and 64 MiB text/frame. Oversized/malformed frames fail explicitly.
 Longer graphemes grow a reusable buffer rather than overflowing a fixed stack
@@ -137,8 +179,10 @@ DLL SHA-256:
 cd native
 zig fmt --check build.zig src/*.zig
 zig build test -Doptimize=Debug
+zig build test -Doptimize=ReleaseSafe
 zig build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-NativeWorkspace.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-NativeShells.ps1
 ```
 
 Unit tests use the **real checked-in DLL**: ABI/Unicode/colors/wide cells,
@@ -163,6 +207,13 @@ tab/window. Sentinels are assembled by the shell so echoed input cannot pass.
 The test also checks that hidden output causes zero active-window paints,
 while a hidden OSC 7501 update repaints its tab indicator. Status/priority and
 acknowledgement are exercised through real ConPTY, not injected status state.
+The shell test launches real cmd, Windows PowerShell, PowerShell 7, Nushell and
+Git Bash where installed (missing profiles are reported as SKIP). It verifies
+child environment, integrated prompt state, PowerShell/Nushell command errors
+and duration, automatic OSC 7 split inheritance, and cmd bootstrapping from a
+Unicode/spaced installation directory. The workspace/status fixture uses a raw
+custom cmd to isolate explicit status reports from prompt cleanup.
+
 Diagnostic probes/actions require `VEX_NATIVE_SELFTEST=1`. Synthetic messages
 are not physical keyboard/IME or accessibility tests.
 
@@ -171,6 +222,7 @@ Ignored artifacts under `zig-out/verification/`:
 - `native-window.png`: one-pane output fixture.
 - `native-workspace.png`: three live panes with distinct markers.
 - `result.json`, `startup.txt`: smoke verification/measurements.
+- `shells.json`: live shell transport/integration results.
 
 `VEX_NATIVE_METRICS=<absolute-path>` enables local milestone logs. Timing starts
 at Zig main, before DLL initialization, not OS process creation. The test also
@@ -179,10 +231,10 @@ benchmarks**, and working set excludes GPU allocations and child processes.
 
 ## Still pending
 
-See the full ledger in [REWRITE.md](REWRITE.md): multiple projects/WSL and shell
-profiles, profile/session compatibility and persistence, saved layouts,
+See the full ledger in [REWRITE.md](REWRITE.md): multiple projects/WSL,
+shell-profile UI/per-pane overrides, profile/session compatibility and persistence, saved layouts,
 settings/themes, palette/tab peek/overlays, divider dragging/reorder, shell icons,
-status tooltips/origin routing, OSC 9;4/133 fallback, selection/copy/cut,
+status tooltips/origin routing, selection/copy/cut,
 hyperlinks/path completion, bracketed paste,
 IME/full mouse/key protocols, ConPTY DCS feed-filter parity, custom glyphs/color
 emoji, true block cursor/blink, accessibility and packaging. Automatic close on

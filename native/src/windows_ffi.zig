@@ -3,6 +3,7 @@ const panes = @import("pane_tree.zig");
 const terminal = @import("terminal.zig");
 const directory = @import("directory.zig");
 const status = @import("program_status.zig");
+const shell = @import("shell_launch.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
 pub const c = @cImport({
@@ -42,9 +43,16 @@ pub const TerminalSize = struct { columns: u16, rows: u16, cell_width_px: u32, c
 pub const PtyOwner = struct {
     handle: std.meta.Child(?*c.VexPty),
     /// Tokens must be fresh, nonzero pane IDs; failed startup releases all partial resources.
-    pub fn init(id: panes.PaneId, path: directory.DirectoryPath) !PtyOwner {
+    pub fn init(allocator: std.mem.Allocator, id: panes.PaneId, path: directory.DirectoryPath, launch: *const shell.ShellLaunch) !PtyOwner {
+        const program = try std.unicode.utf8ToUtf16LeAllocZ(allocator, launch.program);
+        defer allocator.free(program);
+        const command = try std.unicode.utf8ToUtf16LeAllocZ(allocator, launch.command_line);
+        defer allocator.free(command);
+        const working_directory = try std.unicode.utf8ToUtf16LeAllocZ(allocator, path.bytes);
+        defer allocator.free(working_directory);
         var pointer: ?*c.VexPty = null;
-        if (c.vex_pty_open(@intFromEnum(id), 80, 24, path.bytes.ptr, path.bytes.len, &pointer) != 0) return error.PtyLaunchFailed;
+        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len };
+        if (c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer) != 0) return error.PtyLaunchFailed;
         return .{ .handle = pointer orelse return error.PtyNullHandle };
     }
     /// Consumes this owner. No registered callback or queued event retains its pointer.
@@ -163,6 +171,19 @@ pub fn machineNameAlloc(allocator: std.mem.Allocator) ![]u8 {
     var length: usize = 0;
     if (c.vex_machine_name(&buffer, buffer.len, &length) != 0) return error.MachineNameReadFailed;
     if (length == 0 or length > buffer.len or !std.unicode.utf8ValidateSlice(buffer[0..length])) return error.InvalidMachineName;
+    return allocator.dupe(u8, buffer[0..length]);
+}
+/// Copies a resolved shell display name into native chrome before opening the window.
+pub fn setShellName(name: []const u8) !void {
+    if (c.vex_window_shell_name(name.ptr, name.len) != 0) return error.InvalidShellDisplayName;
+}
+/// Resolves the actual Windows system directory without trusting WINDIR/SystemRoot environment variables.
+pub fn systemDirectoryAlloc(allocator: std.mem.Allocator) ![]u8 {
+    var buffer: [1024]u8 = undefined;
+    var length: usize = 0;
+    if (c.vex_system_directory(&buffer, buffer.len, &length) != 0) return error.SystemDirectoryReadFailed;
+    if (length == 0 or length > buffer.len) return error.InvalidSystemDirectory;
+    _ = try directory.DirectoryPath.parse(buffer[0..length]);
     return allocator.dupe(u8, buffer[0..length]);
 }
 /// Startup timestamps begin before terminal/DLL initialization, not OS process creation.

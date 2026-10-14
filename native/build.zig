@@ -20,6 +20,10 @@ pub fn build(b: *std.Build) void {
     const dll = b.addInstallFileWithDir(b.path("../Vendor/libghostty/ghostty-vt.dll"), .bin, "ghostty-vt.dll");
     b.installArtifact(exe);
     b.getInstallStep().dependOn(&dll.step);
+    const cmd_integration = b.addInstallFileWithDir(b.path("src/shell_integration/Vex.cmd"), .bin, "ShellIntegration/Vex.cmd");
+    const nu_integration = b.addInstallFileWithDir(b.path("src/shell_integration/Vex.nu"), .bin, "ShellIntegration/Vex.nu");
+    b.getInstallStep().dependOn(&cmd_integration.step);
+    b.getInstallStep().dependOn(&nu_integration.step);
     const run = b.addSystemCommand(&.{b.getInstallPath(.bin, "vex-native.exe")});
     run.step.dependOn(b.getInstallStep());
     if (b.args) |args| run.addArgs(args);

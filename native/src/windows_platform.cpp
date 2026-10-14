@@ -381,6 +381,14 @@ static void drawProgramStatus(VexProgramStatus status, float x, float y, float w
     else swprintf(caption, 64, L"%ls %ls", icon, text);
     label(caption, x, y, width, color);
 }
+static wchar_t shellName[64] = L"Command Prompt";
+extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
+    if (!bytes || !length || length > 128 || memchr(bytes, 0, length)) return ERROR_INVALID_PARAMETER;
+    int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(bytes), (int)length, shellName, 63);
+    if (!count) return (int)GetLastError();
+    shellName[count] = 0;
+    return 0;
+}
 extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexProgramStatus status, bool attention) {
     if (!count || count > 8 || index >= count) return;
     drawnTabCount = count;
@@ -392,7 +400,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexPro
     bool hasStatus = status.state >= 2 && status.state <= 5;
     float inset = hasStatus ? 30 : 10;
     if (hasStatus) drawProgramStatus(status, x + 8, 12, fmaxf(0, width - 30), true);
-    if (width >= 95) label(L"Command Prompt", x + inset, 12, fmaxf(0, width - inset - 24), active ? 0xe4e4e7 : 0x8f9197);
+    if (width >= 95) label(shellName, x + inset, 12, fmaxf(0, width - inset - 24), active ? 0xe4e4e7 : 0x8f9197);
     else if (!hasStatus) {
         wchar_t number[12]; swprintf(number, 12, L"%u", index + 1);
         label(number, x + 8, 12, fmaxf(0, width - 22), active ? 0xe4e4e7 : 0x8f9197);
@@ -409,7 +417,7 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, VexProgramStatu
     target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x + 0.5f, bounds.y + 0.5f, bounds.x + bounds.width - 0.5f, bounds.y + bounds.height - 0.5f), 6, 6), brush, 1);
     float statusWidth = status.state >= 2 && status.state <= 5 ? fminf(bounds.width < 260 ? 20 : 190, fmaxf(0, bounds.width - 20)) : 0;
     if (statusWidth > 0) drawProgramStatus(status, bounds.x + bounds.width - statusWidth - 10, bounds.y + 2, statusWidth, bounds.width < 260);
-    label(L">_  Command Prompt", bounds.x + 10, bounds.y + 2, fmaxf(0, bounds.width - statusWidth - 20), focused ? 0xe4e4e7 : 0x8f9197);
+    label(shellName, bounds.x + 10, bounds.y + 2, fmaxf(0, bounds.width - statusWidth - 20), focused ? 0xe4e4e7 : 0x8f9197);
     gridLeft = bounds.x + 6; gridTop = bounds.y + 30;
     target->PushAxisAlignedClip(D2D1::RectF(gridLeft, gridTop, fmaxf(gridLeft, bounds.x + bounds.width - 6), fmaxf(gridTop, bounds.y + bounds.height - 6)), D2D1_ANTIALIAS_MODE_ALIASED);
 }
@@ -449,6 +457,16 @@ extern "C" int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length)
     wchar_t name[MAX_COMPUTERNAME_LENGTH + 1]; DWORD units = MAX_COMPUTERNAME_LENGTH + 1;
     if (!GetComputerNameW(name, &units)) return (int)GetLastError();
     int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, name, (int)units, (char*)bytes, (int)capacity, nullptr, nullptr);
+    if (!count) return (int)GetLastError();
+    *length = (size_t)count;
+    return 0;
+}
+extern "C" int vex_system_directory(uint8_t* bytes, size_t capacity, size_t* length) {
+    if (!bytes || !length || capacity > INT_MAX) return ERROR_INVALID_PARAMETER;
+    wchar_t path[MAX_PATH]; UINT units = GetSystemDirectoryW(path, MAX_PATH);
+    if (!units) return (int)GetLastError();
+    if (units >= MAX_PATH) return ERROR_INSUFFICIENT_BUFFER;
+    int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path, (int)units, (char*)bytes, (int)capacity, nullptr, nullptr);
     if (!count) return (int)GetLastError();
     *length = (size_t)count;
     return 0;
