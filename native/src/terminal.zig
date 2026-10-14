@@ -2,6 +2,8 @@ const std = @import("std");
 const binding = @import("api.zig");
 const c = binding.c;
 const check = binding.checkResult;
+const status = @import("program_status.zig");
+const feed = @import("terminal_feed.zig");
 
 /// Rendered cell width comes from the public Ghostty API, never packed cell bits.
 pub const CellWidth = enum { narrow, wide, tail, head };
@@ -54,6 +56,8 @@ pub const Terminal = struct {
     grapheme: std.ArrayList(u8) = .empty,
     search_row: std.ArrayList(u8) = .empty,
     frame_valid: bool = false,
+    feed_filter: feed.TerminalFeedFilter = .{},
+    program_status: status.ProgramStatusTracker,
     response_sink: ?ResponseSink = null,
     callback_error: ?anyerror = null,
     directory_sink: ?struct { context: *anyopaque, on_report: *const fn (*anyopaque, []const u8) anyerror!void } = null,
@@ -87,7 +91,7 @@ pub const Terminal = struct {
         try check(api.ghostty_key_event_new(null, &event));
         const key_event = event orelse return error.TerminalNullHandle;
         errdefer api.ghostty_key_event_free(key_event);
-        var owner: Terminal = .{ .allocator = allocator, .api = api, .handle = handle, .render_state = render_state, .row_iterator = row_iterator, .row_cells = row_cells, .key_encoder = key_encoder, .key_event = key_event };
+        var owner: Terminal = .{ .allocator = allocator, .api = api, .handle = handle, .render_state = render_state, .row_iterator = row_iterator, .row_cells = row_cells, .key_encoder = key_encoder, .key_event = key_event, .program_status = .{ .allocator = allocator } };
         try owner.applyDefaultPalette();
         return owner;
     }
@@ -103,6 +107,7 @@ pub const Terminal = struct {
         self.frame.utf8.deinit(self.allocator);
         self.grapheme.deinit(self.allocator);
         self.search_row.deinit(self.allocator);
+        self.program_status.deinit();
     }
     /// Call only after placing the owner at its final stable address; callbacks borrow self.
     pub fn attachResponseSink(self: *Terminal, sink: ResponseSink) !void {
@@ -128,8 +133,23 @@ pub const Terminal = struct {
     /// Consumes arbitrary VT bytes, including UTF-8 split across pipe reads; not a text-only input.
     pub fn feedOutput(self: *Terminal, bytes: []const u8) !void {
         if (self.callback_error) |err| return err;
+        try self.feed_filter.feedTerminalOutput(self, bytes);
+    }
+    /// Internal feed-filter seam; every native callback failure reaches the caller before later reports.
+    pub fn writeTerminalOutput(self: *Terminal, bytes: []const u8) !void {
         self.api.ghostty_terminal_vt_write(self.handle, bytes.ptr, bytes.len);
         if (self.callback_error) |err| return err;
+    }
+    /// Capability replies use this pane's PTY sink, never the currently focused terminal.
+    pub fn onProgramStatusOsc(self: *Terminal, body: []const u8) !void {
+        if (std.mem.eql(u8, body, "?")) {
+            const sink = self.response_sink orelse return error.MissingResponseSink;
+            try sink.write(sink.context, "\x1b]7501;?\x1b\\");
+        } else try self.program_status.applyProgramStatus(body);
+    }
+    /// RIS resets status after the emulator; screen switches/soft resets deliberately do not.
+    pub fn onTerminalReset(self: *Terminal) void {
+        self.program_status.resetProgramStatus();
     }
     /// Borrows raw directory-report bytes only until the next feed/reset/deinit; the caller parses the URI.
     pub fn reportedDirectory(self: *const Terminal) ![]const u8 {
@@ -525,6 +545,72 @@ test "OSC 7 borrowed directory reports survive every UTF-8/terminator chunk boun
             try std.testing.expectEqualStrings(report, try terminal.reportedDirectory());
         }
     }
+}
+
+const StatusReplyLog = struct {
+    bytes: std.ArrayList(u8) = .empty,
+    fn write(context: *anyopaque, bytes: []const u8) !void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        try self.bytes.appendSlice(std.testing.allocator, bytes);
+    }
+};
+
+test "OSC 7501 real DLL transport preserves text, reply order and pane isolation at every boundary" {
+    const api = try binding.Api.load();
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |terminator| {
+        const bytes = try std.mem.concat(std.testing.allocator, u8, &.{ "before\x1b]7501;state=working:progress=42", terminator, "after\x1b]7501;?", terminator, "\x1b[6n" });
+        defer std.testing.allocator.free(bytes);
+        for (0..bytes.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, &api);
+            defer terminal.deinit();
+            var other = try Terminal.init(std.testing.allocator, &api);
+            defer other.deinit();
+            var replies: StatusReplyLog = .{};
+            defer replies.bytes.deinit(std.testing.allocator);
+            try terminal.attachResponseSink(.{ .context = &replies, .write = StatusReplyLog.write });
+            try terminal.feedOutput(bytes[0..split]);
+            try terminal.feedOutput(bytes[split..]);
+            try std.testing.expectEqual(.working, terminal.program_status.programStatus().state);
+            try std.testing.expectEqual(@as(?u8, 42), terminal.program_status.programStatus().progress);
+            try std.testing.expectEqual(.none, other.program_status.programStatus().state);
+            try std.testing.expectEqualStrings("\x1b]7501;?\x1b\\\x1b[1;12R", replies.bytes.items);
+            try std.testing.expect(try terminal.containsViewportText("beforeafter"));
+        }
+    }
+}
+
+test "status survives alternate screen and soft reset; user acknowledgement and RIS are independent" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.feedOutput("\x1b]7501;state=done\x07\x1b[?1049h\x1b[?1049l\x1b[!p");
+    try std.testing.expectEqual(.done, terminal.program_status.programStatus().state);
+    terminal.program_status.acknowledgeProgramStatus();
+    try std.testing.expectEqual(.none, terminal.program_status.programStatus().state);
+    try terminal.feedOutput("\x1b]7501;state=blocked:kind=auth\x07");
+    terminal.program_status.acknowledgeProgramStatus();
+    try std.testing.expectEqual(.blocked, terminal.program_status.programStatus().state);
+    try terminal.feedOutput("\x1bc");
+    try std.testing.expectEqual(.none, terminal.program_status.programStatus().state);
+}
+
+fn checkStatusFeedAllocations(allocator: std.mem.Allocator, api: *const binding.Api) !void {
+    var terminal = try Terminal.init(allocator, api);
+    defer terminal.deinit();
+    try terminal.feedOutput("\x1b]7501;state=working:progress=42\x07");
+    terminal.feedOutput("\x1b]7501;state=error\x07") catch |err| {
+        try std.testing.expectEqual(.working, terminal.program_status.programStatus().state);
+        return err;
+    };
+}
+test "status feed allocation and capability sink errors reach the real terminal caller" {
+    const api = try binding.Api.load();
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkStatusFeedAllocations, .{&api});
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var replies: TestReply = .{};
+    try terminal.attachResponseSink(.{ .context = &replies, .write = TestReply.reject });
+    try std.testing.expectError(error.TestPtyWriteFailure, terminal.feedOutput("\x1b]7501;?\x07"));
 }
 
 const paths = @import("directory.zig");
