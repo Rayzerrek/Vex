@@ -19,6 +19,7 @@ test {
     _ = application;
     _ = @import("terminal/terminal.zig");
     _ = @import("terminal/terminal_title.zig");
+    _ = @import("terminal/app_icon.zig");
     _ = @import("shell/directory.zig");
     _ = @import("shell/wsl_paths.zig");
     _ = @import("shell/wsl_launch.zig");

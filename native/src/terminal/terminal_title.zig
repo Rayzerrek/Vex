@@ -11,18 +11,26 @@ pub const ParsedTitle = struct {
 pub const TerminalTitle = struct {
     bytes: [max_title_bytes]u8 = undefined,
     len: usize = 0,
+    app_bytes: [max_app_bytes]u8 = undefined,
+    app_len: usize = 0,
     generation: u64 = 0,
     pub const max_raw_bytes = 512;
     pub const max_title_bytes = 192;
+    pub const max_app_bytes = 64;
 
     /// Borrows the current formatted display title, or an empty slice when no custom title is active.
     pub fn slice(self: *const TerminalTitle) []const u8 {
         return self.bytes[0..self.len];
     }
+    /// Borrows the application name extracted from the active OSC 0 / OSC 2 title, if any.
+    pub fn appSlice(self: *const TerminalTitle) []const u8 {
+        return self.app_bytes[0..self.app_len];
+    }
     /// Clears any custom title on RIS or when the shell restores a generic shell caption.
     pub fn reset(self: *TerminalTitle) void {
-        if (self.len != 0) {
+        if (self.len != 0 or self.app_len != 0) {
             self.len = 0;
+            self.app_len = 0;
             self.generation +%= 1;
         }
     }
@@ -46,9 +54,12 @@ pub const TerminalTitle = struct {
             next_buf[next_len] = '*';
             next_len += 1;
         }
-        if (!std.mem.eql(u8, self.slice(), next_buf[0..next_len])) {
+        const next_app = if (parsed.app_name) |app| truncateUtf8(app, max_app_bytes) else "";
+        if (!std.mem.eql(u8, self.slice(), next_buf[0..next_len]) or !std.mem.eql(u8, self.appSlice(), next_app)) {
             @memcpy(self.bytes[0..next_len], next_buf[0..next_len]);
             self.len = next_len;
+            @memcpy(self.app_bytes[0..next_app.len], next_app);
+            self.app_len = next_app.len;
             self.generation +%= 1;
         }
     }
@@ -58,6 +69,15 @@ pub const TerminalTitle = struct {
 pub fn parseTitle(raw: []const u8, sanitized_buf: *[TerminalTitle.max_raw_bytes]u8) !ParsedTitle {
     if (raw.len > TerminalTitle.max_raw_bytes or !std.unicode.utf8ValidateSlice(raw)) return error.InvalidTerminalTitle;
     return parseSanitizedTitle(sanitizeSlice(raw, sanitized_buf));
+}
+
+/// Extracts the target tool/program name from a raw process command line, stripping runner shims and flags.
+pub fn parseCommandLineApp(raw: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, truncateRedirectionAndPipes(raw), whitespace);
+    if (trimmed.len == 0) return null;
+    const cleaned = stripCommandRunners(trimmed);
+    if (cleaned.len == 0) return null;
+    return matchKnownApp(cleaned) orelse cleaned;
 }
 
 const whitespace = " \t\r\n\x0b\x0c";
@@ -666,6 +686,11 @@ test "terminal title formatter matches WPF shell, editor, agent, path, and runne
     var title: TerminalTitle = .{};
     try title.applyReport("\x07\x1b\u{200b}App.xaml.cs [+] - nvim\u{202e}");
     try std.testing.expectEqualStrings("App.xaml.cs*", title.slice());
+    try std.testing.expectEqualStrings("nvim", title.appSlice());
     try title.applyReport("Administrator: Windows PowerShell");
     try std.testing.expectEqualStrings("", title.slice());
+    try std.testing.expectEqualStrings("", title.appSlice());
+
+    try std.testing.expectEqualStrings("vitest", parseCommandLineApp("npx --yes vitest --run").?);
+    try std.testing.expectEqualStrings("pi", parseCommandLineApp("node C:\\Users\\Ziut\\AppData\\Roaming\\npm\\node_modules\\@mariozechner\\pi-coding-agent\\dist\\cli.js").?);
 }
