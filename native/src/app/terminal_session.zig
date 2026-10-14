@@ -7,6 +7,8 @@ const directory = @import("../shell/directory.zig");
 const shell = @import("../shell/shell_launch.zig");
 const app_icon = @import("../terminal/app_icon.zig");
 
+const terminal_title = @import("../terminal/terminal_title.zig");
+
 const SessionState = union(enum) { running, exited: u32 };
 /// Stable-address owner of one emulator, ConPTY process and directory; borrows the application API/hostname.
 pub const TerminalSession = struct {
@@ -21,6 +23,9 @@ pub const TerminalSession = struct {
     sync_defer_since_ms: ?i64 = null,
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
     last_icon_probe_ms: i64 = 0,
+    active_process_title: [64]u8 = undefined,
+    active_process_title_len: usize = 0,
+    has_foreground_process: bool = false,
 
     /// Allocates at the final address before registering callbacks; startup failure releases every partial owner.
     pub fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch) !*TerminalSession {
@@ -103,30 +108,89 @@ pub const TerminalSession = struct {
             try self.pty.write(report);
         }
     }
-    /// Resolves the active foreground program icon using cached PID inspection or OSC title/status fallback.
+    /// Returns the active title for tab and pane headers, falling back to the detected foreground process name when the shell has not set an app title.
+    pub fn displayTitle(self: *const TerminalSession) []const u8 {
+        if (self.active_process_title_len > 0 and self.terminal.title.appSlice().len == 0) {
+            return self.active_process_title[0..self.active_process_title_len];
+        }
+        return self.terminal.title.slice();
+    }
+    /// Resolves the active foreground program icon and process title using cached PID inspection or OSC title/status fallback.
     pub fn refreshAppIcon(self: *TerminalSession, query_process: bool) bool {
-        const previous = self.icon;
+        const previous_icon = self.icon;
+        const previous_title_len = self.active_process_title_len;
+        var previous_title_buf: [64]u8 = undefined;
+        if (previous_title_len > 0) @memcpy(previous_title_buf[0..previous_title_len], self.active_process_title[0..previous_title_len]);
+
         if (self.state != .running) {
             self.icon = app_icon.AppIcon.terminal_shell;
-            return !previous.eql(self.icon);
+            self.active_process_title_len = 0;
+            self.has_foreground_process = false;
+            return !previous_icon.eql(self.icon) or previous_title_len != 0;
         }
-        const title_app = self.terminal.title.appSlice();
-        const title_raw = self.terminal.title.slice();
-        const osc_title: ?[]const u8 = if (title_app.len > 0) title_app else if (title_raw.len > 0) title_raw else null;
-        const status_app = self.terminal.program_status.programStatus().app;
         if (query_process) {
             var exe_buf: [64]u8 = undefined;
             var cmd_buf: [512]u8 = undefined;
             const fg = self.pty.foregroundProcess(&exe_buf, &cmd_buf);
             const proc_name: ?[]const u8 = if (fg.exe.len > 0) fg.exe else null;
             const proc_cmd: ?[]const u8 = if (fg.cmd.len > 0) fg.cmd else null;
+            const resolved_proc_title = resolveForegroundProcessTitle(proc_name, proc_cmd);
+            if (resolved_proc_title) |title_slice| {
+                const copy_len = @min(title_slice.len, self.active_process_title.len);
+                @memcpy(self.active_process_title[0..copy_len], title_slice[0..copy_len]);
+                self.active_process_title_len = copy_len;
+                self.has_foreground_process = true;
+            } else {
+                if (self.has_foreground_process and self.terminal.title.appSlice().len > 0) {
+                    self.terminal.title.reset();
+                }
+                self.active_process_title_len = 0;
+                self.has_foreground_process = false;
+            }
+            const title_app = self.terminal.title.appSlice();
+            const title_raw = self.terminal.title.slice();
+            const osc_title: ?[]const u8 = if (title_app.len > 0) title_app else if (title_raw.len > 0) title_raw else null;
+            const status_app = self.terminal.program_status.programStatus().app;
             self.icon = app_icon.resolve(proc_name, proc_cmd, osc_title, status_app);
         } else {
+            const title_app = self.terminal.title.appSlice();
+            const title_raw = self.terminal.title.slice();
+            const osc_title: ?[]const u8 = if (title_app.len > 0) title_app else if (title_raw.len > 0) title_raw else null;
+            const status_app = self.terminal.program_status.programStatus().app;
             const fallback = app_icon.resolve(null, null, osc_title, status_app);
             if (!fallback.is_shell or self.icon.is_shell) {
                 self.icon = fallback;
             }
         }
-        return !previous.eql(self.icon);
+        const title_changed = self.active_process_title_len != previous_title_len or
+            !std.mem.eql(u8, previous_title_buf[0..previous_title_len], self.active_process_title[0..self.active_process_title_len]);
+        return !previous_icon.eql(self.icon) or title_changed;
     }
 };
+
+fn resolveForegroundProcessTitle(proc_name: ?[]const u8, proc_cmd: ?[]const u8) ?[]const u8 {
+    const raw_exe = proc_name orelse return null;
+    if (proc_cmd) |cmd| {
+        if (terminal_title.parseCommandLineApp(cmd)) |cmd_app| {
+            if (app_icon.resolveDirect(cmd_app)) |icon| {
+                if (!icon.is_shell) return cmd_app;
+            } else if (cmd_app.len > 0) {
+                return cmd_app;
+            }
+        }
+    }
+    const trimmed = std.mem.trim(u8, raw_exe, " \t\r\n\"'");
+    if (trimmed.len == 0) return null;
+    const stem = if (std.mem.endsWith(u8, trimmed, ".exe") or std.mem.endsWith(u8, trimmed, ".EXE") or
+        std.mem.endsWith(u8, trimmed, ".cmd") or std.mem.endsWith(u8, trimmed, ".CMD") or
+        std.mem.endsWith(u8, trimmed, ".bat") or std.mem.endsWith(u8, trimmed, ".BAT"))
+        trimmed[0 .. trimmed.len - 4]
+    else
+        trimmed;
+    if (stem.len == 0) return null;
+    if (app_icon.resolveDirect(stem)) |icon| {
+        if (icon.is_shell) return null;
+    }
+    return stem;
+}
+
