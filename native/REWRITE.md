@@ -58,8 +58,8 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache; ConPTY DCS filter parity pending |
 | Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*` | DirectWrite baseline and themed chrome; pixel fixtures, custom box/Powerline glyphs, color emoji and blink pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys/plain paste/wheel; full protocols, IME, click positioning, selection/copy/cut, bracketed paste pending |
-| Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash, absolute custom executables and explicit-distribution WSL/Linux programs; cmd/PS/Nu integration implemented; profile menu, per-pane overrides and persistence pending |
-| Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local/selected-distribution Linux OSC 7 ownership/inheritance and WSL UNC project startup implemented; cross-distribution/Windows-shell mismatches reject; project UI, default distribution and Linux process metadata pending |
+| Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash, absolute custom executables and project/default/explicit-distribution WSL/Linux programs; cmd/PS/Nu integration implemented; profile menu, per-pane overrides and persistence pending |
+| Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local/selected-distribution Linux OSC 7 ownership/inheritance and WSL UNC project startup implemented; cross-distribution/Windows-shell mismatches reject; project UI and Linux process metadata pending |
 | Settings and session persistence | `Model/AppSettings.cs`, `Session*`, `VexJsonContext.cs` | Pending; native currently does not read/write the production profile |
 | Saved layouts | `SavedTerminalLayout.cs`, `MainWindow.SavedLayouts.cs` | Pending; opening explicitly executes commands once; restore must never replay commands |
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts first; all remaining palettes/settings pending |
@@ -195,10 +195,40 @@ These are behavioral contracts, not opportunities to redesign the app.
 - 59 tests pass in Debug and ReleaseSafe; ReleaseSafe app build, workspace smoke,
   all five installed Windows built-in shells and Ubuntu WSL smoke pass. WPF files
   remain unchanged; no fresh WPF test result is implied by these native checks.
-- Explicit distribution is required for now. Default-distribution discovery,
-  custom Linux hostname recognition, prompt adapters, Linux process/icon tracking
+- Explicit distribution was required at this checkpoint; default/project-aware
+  selection is implemented below. Custom Linux hostname recognition, prompt adapters, Linux process/icon tracking
   and deliberately detached Linux process cleanup are still pending. Existing shell
   integration remains optional; no user startup file or production profile is rewritten.
+
+## Default WSL distribution checkpoint
+
+- CLI `--distribution` is optional. Automatic Windows-project WSL launches read
+  the current user's Lxss `DefaultDistribution` GUID and `DistributionName` once,
+  without an enumeration/helper process or booting a distribution to discover it.
+- WSL UNC projects choose their own distribution without consulting the registry;
+  the `system` profile/no CLI flags selects Linux there. Explicit non-system
+  Windows/custom profiles and cross-distribution mismatches fail rather than remap.
+- The application resolves automatic selection before constructing its immutable
+  launch owner. New tabs/splits keep that owned distribution; registry changes
+  cannot retarget an already-open workspace.
+- `windows/wsl_registry.zig` confines native registry handles to the IO seam.
+  Only REG_SZ with bounded, terminated UTF-16 is decoded. GUIDs validate before
+  opening subkeys, and distribution names parse into the existing domain type.
+  Missing/inaccessible/corrupt metadata produces an error; no first-distro/cmd fallback.
+- Registry fixtures create/delete unique volatile test keys outside Lxss. They
+  cover missing values/keys, invalid GUIDs, value types, lengths, NULs, surrogate
+  errors, unsafe distribution names and allocator failures, without altering WSL
+  registrations/defaults or production profiles.
+- The Lxss format is a compatibility dependency, not a guaranteed public default
+  discovery API. [Windows Terminal's distribution generator](https://github.com/microsoft/terminal/blob/main/src/cascadia/TerminalSettingsModel/WslDistroGenerator.cpp)
+  likewise reads Lxss distribution metadata. [RegQueryValueExW](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regqueryvalueexw)
+  explicitly does not guarantee string termination; native checks the raw contract.
+- Live WSL smoke adds registry-default round trip, split distribution retention,
+  and no-flag UNC project selection. 63 tests pass in Debug/ReleaseSafe, the
+  ReleaseSafe build and all three desktop suites pass, including all five installed
+  Windows built-ins and Ubuntu. Native handle counts remain unchanged across
+  registry allocation-failure reads. WPF files remain unchanged; its suites were
+  not rerun for this isolated native checkpoint. Profile menus/persistence remain pending.
 
 ## Source structure checkpoint
 

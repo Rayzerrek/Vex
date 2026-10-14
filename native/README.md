@@ -34,7 +34,9 @@ zig build run -- --shell gitbash
 zig build run -- --program 'C:\Windows\System32\cmd.exe' --arguments /d
 ```
 
-`system`/`cmd` resolve to the actual Windows system cmd. Built-ins are resolved
+`system` on a Windows project, and explicit `cmd`, resolve to the actual Windows
+system cmd. A WSL UNC project instead makes `system` choose that distribution's
+Linux login shell. Built-ins are resolved
 once using canonical locations and absolute PATH entries; missing Windows
 built-ins fall back to cmd. Custom programs must be absolute and available;
 custom arguments are an explicit raw Windows command-line fragment, not shell
@@ -61,13 +63,26 @@ The normalized environment belongs to the child launch, not global app state.
 ## WSL launches
 
 ```powershell
+zig build run -- --shell wsl
 zig build run -- --shell wsl --distribution Ubuntu
-zig build run -- --shell wsl:/bin/bash --distribution Ubuntu --arguments '-l'
+zig build run -- --shell wsl:/bin/bash --arguments '-l'
 zig build run -- --shell wsl:/usr/bin/fish --distribution Ubuntu
 ```
 
-WSL uses the actual system `wsl.exe` with an **explicit distribution** in this
-checkpoint. `wsl` starts the distribution's `$SHELL` (or `/bin/sh`) as a login
+WSL uses the actual system `wsl.exe`. An explicit `--distribution` must match a
+WSL UNC project; otherwise that project's distribution is used, or the current
+user's registered default for a Windows project. Launching from a WSL UNC
+project with no shell flags selects Linux automatically; explicit non-system
+Windows/custom shell requests still reject rather than silently remap.
+
+Default metadata is read once from `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`,
+without an enumeration/helper process, booting a distribution or changing the
+registry. The selected name is owned until all tabs/panes close. Missing,
+inaccessible or malformed metadata is an error, not a guessed first distro or
+cmd fallback; use explicit `--distribution` if default discovery is unavailable.
+This reads the existing Lxss format, not a guaranteed version-independent WSL API.
+
+`wsl` starts the distribution's `$SHELL` (or `/bin/sh`) as a login
 shell; `wsl:/absolute/program` directly executes any Linux program, without a
 shell-name whitelist, interpolated bootstrap or guessed login arguments.
 `--arguments` remains a raw Windows argv fragment and requires an explicit
@@ -75,8 +90,8 @@ program. An unavailable launcher errors; missing distributions/programs report
 WSL's failure in the pane, never fall back to cmd.
 
 Each pane builds its own `--cd`: Windows drive directories are passed unchanged
-for WSL to resolve with its mount configuration; `\\\\wsl.localhost\\DISTRO\\...`
-and `\\\\wsl$\\DISTRO\\...` preserve Linux paths. A mismatched distribution or a
+for WSL to resolve with its mount configuration; `\\wsl.localhost\DISTRO\...`
+and `\\wsl$\DISTRO\...` preserve Linux paths. A mismatched distribution or a
 WSL directory with a Windows shell is rejected. CreateProcessW starts the
 launcher in its Windows directory, not a Linux filesystem view.
 
@@ -86,8 +101,8 @@ inherit them; new tabs retain the project root. Local hosts are empty,
 is not yet recognized; remote/malformed reports preserve the previous path.
 Linux backslash filenames reject rather than undergoing a lossy conversion.
 No Linux prompt integration is injected and no user startup file is rewritten;
-existing OSC 7/133/7501 integration remains optional. Default-distribution
-selection, profile UI and Linux foreground-process tracking remain pending.
+existing OSC 7/133/7501 integration remains optional. Profile UI and Linux
+foreground-process tracking remain pending.
 
 ## Implemented workspace
 
@@ -155,6 +170,8 @@ circular dependency through the rendering/window adapter.
   reusable parsed snapshots, typed colors/styles/widths/cursor, validated UTF-8.
 - `src/windows/windows_ffi.zig`: callback-pointer conversion, opaque PTY owners,
   validated window/input seams and presentation of parsed snapshots.
+- `src/windows/wsl_registry.zig`: read-only, bounded/typed default distribution
+  discovery; registry unit fixtures use unique volatile keys outside Lxss.
 - `src/windows/windows_platform.cpp`: Win32 event loop and Direct2D/DirectWrite COM.
 - `src/windows/windows_pty.cpp`: per-session ConPTY worker/queue ownership and job objects.
 
@@ -274,8 +291,9 @@ child environment, integrated prompt state, PowerShell/Nushell command errors
 and duration, automatic OSC 7 split inheritance, and cmd bootstrapping from a
 Unicode/spaced installation directory. The workspace/status fixture uses a raw
 custom cmd to isolate explicit status reports from prompt cleanup.
-The WSL test requires its selected distribution and Bash. It exercises default
-login and an explicit Linux program at a Unicode/spaced/apostrophe path, child
+The WSL test requires a registered default, a POSIX-compatible default shell,
+and Bash in its selected distribution. It exercises registry-default selection,
+project-aware UNC selection, pinned split distribution, default login and an explicit Linux program at a Unicode/spaced/apostrophe path, child
 environment defaults/overrides, Linux OSC 7, split/new-tab directories, UNC
 project startup and Linux shell/child exit on busy pane close.
 
@@ -297,8 +315,8 @@ benchmarks**, and working set excludes GPU allocations and child processes.
 
 ## Still pending
 
-See the full ledger in [REWRITE.md](REWRITE.md): multiple projects, WSL default-distribution
-selection/Linux process metadata/prompt adapters,
+See the full ledger in [REWRITE.md](REWRITE.md): multiple projects, WSL Linux
+process metadata/prompt adapters,
 shell-profile UI/per-pane overrides, profile/session compatibility and persistence, saved layouts,
 settings/themes, palette/tab peek/overlays, divider dragging/reorder, shell icons,
 status tooltips/origin routing, selection/copy/cut,

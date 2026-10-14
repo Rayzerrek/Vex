@@ -7,6 +7,7 @@ const directory = @import("../shell/directory.zig");
 const status = @import("../terminal/program_status.zig");
 const shell = @import("../shell/shell_launch.zig");
 const TerminalSession = @import("terminal_session.zig").TerminalSession;
+const wsl_registry = @import("../windows/wsl_registry.zig");
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
 const WorkspaceApplication = struct {
@@ -31,7 +32,11 @@ const WorkspaceApplication = struct {
         errdefer allocator.free(machine_name);
         const argv = try std.process.argsAlloc(allocator);
         defer std.process.argsFree(allocator, argv);
-        const request = try shell.ShellRequest.parseArguments(if (argv.len > 0) argv[1..] else &.{});
+        const parsed_request = try shell.ShellRequest.parseArguments(if (argv.len > 0) argv[1..] else &.{});
+        var request = try parsed_request.forProjectDirectory(parsed);
+        const default_distribution = if (request == .wsl and request.wsl.distribution == .automatic) try wsl_registry.readDefaultWslDistributionAlloc(allocator) else null;
+        defer if (default_distribution) |name| allocator.free(name.bytes);
+        if (default_distribution) |name| request.wsl.distribution = .{ .named = name };
         const system_directory = try platform.systemDirectoryAlloc(allocator);
         defer allocator.free(system_directory);
         const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);

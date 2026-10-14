@@ -22,6 +22,7 @@ test {
     _ = @import("shell/wsl_paths.zig");
     _ = @import("shell/wsl_launch.zig");
     _ = @import("shell/windows_arguments.zig");
+    _ = @import("windows/wsl_registry.zig");
     _ = @import("workspace/pane_tree.zig");
     _ = @import("workspace/workspace_model.zig");
     _ = platform;
