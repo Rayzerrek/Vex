@@ -57,6 +57,7 @@ int vex_window_shell_name(const uint8_t* bytes, size_t length);
 int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPtyLaunch launch, VexPty** output);
 int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length);
 int vex_system_directory(uint8_t* bytes, size_t capacity, size_t* length);
+int vex_clipboard_write(const uint8_t* bytes, size_t length);
 void vex_pty_close(VexPty* session);
 bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);

@@ -31,11 +31,16 @@ pub const TerminalSession = struct {
         session.* = .{ .id = id, .terminal = terminal, .pty = pty, .directory = pane_directory, .machine_name = machine_name };
         try session.terminal.attachResponseSink(session.pty.responseSink());
         try session.terminal.attachDirectorySink(session);
+        try session.terminal.attachClipboardSink(session);
         return session;
     }
     /// Synchronously parses each borrowed PWD report before a later report can replace it.
     pub fn onDirectoryReport(self: *TerminalSession, bytes: []const u8) !void {
         try self.directory.applyReport(bytes, self.machine_name);
+    }
+    /// Publishes decoded write-only OSC 52 / OSC 1337 clipboard payloads to the Windows clipboard.
+    pub fn onClipboardWrite(_: *TerminalSession, text: []const u8) !void {
+        try platform.writeClipboardText(text);
     }
     /// Joins native workers before releasing the emulator, directory and stable session address.
     pub fn destroy(self: *TerminalSession, allocator: std.mem.Allocator) void {

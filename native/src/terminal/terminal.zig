@@ -62,9 +62,11 @@ pub const Terminal = struct {
     response_sink: ?ResponseSink = null,
     callback_error: ?anyerror = null,
     directory_sink: ?struct { context: *anyopaque, on_report: *const fn (*anyopaque, []const u8) anyerror!void } = null,
+    clipboard_sink: ?struct { context: *anyopaque, on_write: *const fn (*anyopaque, []const u8) anyerror!void } = null,
     const max_frame_cells = 1024 * 1024;
     const max_grapheme_bytes = 64 * 1024;
     const max_frame_text_bytes = 64 * 1024 * 1024;
+    const max_clipboard_bytes = 768 * 1024 - 4;
 
     /// Construction rolls back every successful native allocation on any later failure.
     pub fn init(allocator: std.mem.Allocator, api: *const binding.Api) !Terminal {
@@ -130,6 +132,20 @@ pub const Terminal = struct {
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         const callback: c.GhosttyTerminalPwdChangedFn = directoryChanged;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_PWD_CHANGED, @ptrCast(callback)));
+    }
+    /// Registers a stable typed clipboard owner for write-only OSC 52 and OSC 1337 Copy sequences.
+    pub fn attachClipboardSink(self: *Terminal, owner: anytype) !void {
+        const Owner = @TypeOf(owner);
+        const Adapter = struct {
+            fn write(context: *anyopaque, bytes: []const u8) !void {
+                const typed: Owner = @ptrCast(@alignCast(context));
+                try typed.onClipboardWrite(bytes);
+            }
+        };
+        self.clipboard_sink = .{ .context = owner, .on_write = Adapter.write };
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
+        const callback: c.GhosttyTerminalClipboardWriteFn = clipboardWrite;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, @ptrCast(callback)));
     }
     /// Consumes arbitrary VT bytes, including UTF-8 split across pipe reads; not a text-only input.
     pub fn feedOutput(self: *Terminal, bytes: []const u8) !void {
@@ -484,6 +500,48 @@ fn directoryChanged(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) vo
     sink.on_report(sink.context, report) catch |err| {
         self.callback_error = err;
     };
+}
+fn clipboardWrite(_: c.GhosttyTerminal, userdata: ?*anyopaque, write_ptr: ?*const c.GhosttyClipboardWrite) callconv(.c) c.GhosttyClipboardWriteResult {
+    const context = userdata orelse return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED;
+    const self: *Terminal = @ptrCast(@alignCast(context));
+    if (self.callback_error != null) return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+    const sink = self.clipboard_sink orelse return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED;
+    const write = write_ptr orelse {
+        self.callback_error = error.InvalidTerminalClipboardWrite;
+        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+    };
+    if (write.size < @sizeOf(c.GhosttyClipboardWrite) or (write.contents_len != 0 and write.contents == null)) {
+        self.callback_error = error.InvalidTerminalClipboardWrite;
+        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+    }
+    if (write.location != c.GHOSTTY_CLIPBOARD_LOCATION_STANDARD and write.location != c.GHOSTTY_CLIPBOARD_LOCATION_SELECTION) {
+        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
+    }
+    if (write.contents_len == 0) {
+        sink.on_write(sink.context, &.{}) catch |err| {
+            self.callback_error = err;
+            return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+        };
+        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
+    }
+    for (write.contents[0..write.contents_len]) |entry| {
+        if ((entry.mime.len != 0 and entry.mime.ptr == null) or (entry.data.len != 0 and entry.data.ptr == null)) {
+            self.callback_error = error.InvalidTerminalClipboardWrite;
+            return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        }
+        const mime: []const u8 = if (entry.mime.len == 0) &.{} else entry.mime.ptr[0..entry.mime.len];
+        if (!std.mem.eql(u8, mime, "text/plain") and !std.mem.startsWith(u8, mime, "text/plain;")) continue;
+        const bytes: []const u8 = if (entry.data.len == 0) &.{} else entry.data.ptr[0..entry.data.len];
+        if (bytes.len > Terminal.max_clipboard_bytes or std.mem.indexOfScalar(u8, bytes, 0) != null or !std.unicode.utf8ValidateSlice(bytes)) {
+            return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        }
+        sink.on_write(sink.context, bytes) catch |err| {
+            self.callback_error = err;
+            return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+        };
+        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
+    }
+    return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
 }
 
 fn colorRgb(color: u32) c.GhosttyColorRgb {
@@ -911,5 +969,102 @@ test "viewport scroll shortcuts move primary scrollback, yield on alternate scre
     try std.testing.expectEqualStrings("\x17", (try terminal.encodeKey(0x08, 2, &encoded)).?);
     try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKey(0x08, 0, &encoded));
 }
+
+const ClipboardLog = struct {
+    allocator: std.mem.Allocator,
+    writes: std.ArrayList([]u8) = .empty,
+    pub fn deinit(self: *ClipboardLog) void {
+        for (self.writes.items) |entry| self.allocator.free(entry);
+        self.writes.deinit(self.allocator);
+    }
+    pub fn onClipboardWrite(self: *ClipboardLog, bytes: []const u8) !void {
+        const copy = try self.allocator.dupe(u8, bytes);
+        errdefer self.allocator.free(copy);
+        try self.writes.append(self.allocator, copy);
+    }
+};
+
+fn checkClipboardAllocationFailures(allocator: std.mem.Allocator, api: *const binding.Api) !void {
+    var terminal = try Terminal.init(allocator, api);
+    defer terminal.deinit();
+    var log: ClipboardLog = .{ .allocator = allocator };
+    defer log.deinit();
+    try terminal.attachClipboardSink(&log);
+    try terminal.feedOutput("\x1b]52;c;b2s=\x07");
+    try std.testing.expectEqual(@as(usize, 1), log.writes.items.len);
+    try std.testing.expectEqualStrings("ok", log.writes.items[0]);
+}
+
+test "write-only OSC 52 and OSC 1337 Copy sequences decode Unicode across splits while ignoring reads, primary selection, invalid UTF-8 and oversized writes" {
+    const api = try binding.Api.load();
+    const copied = "Zażółć 漢 🦀 e\u{0301}\nsecond line";
+    var encoded_buf: [128]u8 = undefined;
+    const encoded = std.base64.standard.Encoder.encode(&encoded_buf, copied);
+    for ([_][]const u8{ "\x07", "\x1b\\" }) |terminator| {
+        var terminal = try Terminal.init(std.testing.allocator, &api);
+        defer terminal.deinit();
+        var log: ClipboardLog = .{ .allocator = std.testing.allocator };
+        defer log.deinit();
+        try terminal.attachClipboardSink(&log);
+        var stream: [256]u8 = undefined;
+        const payload = try std.fmt.bufPrint(&stream, "before\x1b]52;c;{s}{s}after", .{ encoded, terminator });
+        for (payload) |byte| try terminal.feedOutput(&.{byte});
+        try std.testing.expectEqual(@as(usize, 1), log.writes.items.len);
+        try std.testing.expectEqualStrings(copied, log.writes.items[0]);
+        try std.testing.expect(try terminal.containsViewportText("beforeafter"));
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, &api);
+        defer terminal.deinit();
+        var log: ClipboardLog = .{ .allocator = std.testing.allocator };
+        defer log.deinit();
+        try terminal.attachClipboardSink(&log);
+        try terminal.feedOutput("\x1b]52;c;?\x07\x1b]52;c;invalid!\x07\x1b]52;p;aGVsbG8=\x07\x1b]52;c;/w==\x07after");
+        try std.testing.expectEqual(@as(usize, 0), log.writes.items.len);
+        try std.testing.expect(try terminal.containsViewportText("after"));
+        try terminal.feedOutput("\x1b]1337;Copy=:b2s=\x07");
+        try std.testing.expectEqual(@as(usize, 1), log.writes.items.len);
+        try std.testing.expectEqualStrings("ok", log.writes.items[0]);
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, &api);
+        defer terminal.deinit();
+        var log: ClipboardLog = .{ .allocator = std.testing.allocator };
+        defer log.deinit();
+        try terminal.attachClipboardSink(&log);
+        const text = try std.testing.allocator.alloc(u8, 20_000);
+        defer std.testing.allocator.free(text);
+        @memset(text, 'x');
+        const b64_len = std.base64.standard.Encoder.calcSize(text.len);
+        const packet = try std.testing.allocator.alloc(u8, 7 + b64_len + 2);
+        defer std.testing.allocator.free(packet);
+        @memcpy(packet[0..7], "\x1b]52;c;");
+        _ = std.base64.standard.Encoder.encode(packet[7 .. 7 + b64_len], text);
+        @memcpy(packet[7 + b64_len ..], "\x1b\\");
+        var offset: usize = 0;
+        while (offset < packet.len) : (offset += 37) {
+            try terminal.feedOutput(packet[offset..@min(offset + 37, packet.len)]);
+        }
+        try std.testing.expectEqual(@as(usize, 1), log.writes.items.len);
+        try std.testing.expectEqualStrings(text, log.writes.items[0]);
+    }
+    {
+        var terminal = try Terminal.init(std.testing.allocator, &api);
+        defer terminal.deinit();
+        var log: ClipboardLog = .{ .allocator = std.testing.allocator };
+        defer log.deinit();
+        try terminal.attachClipboardSink(&log);
+        const huge = try std.testing.allocator.alloc(u8, 7 + 1024 * 1024 + 13);
+        defer std.testing.allocator.free(huge);
+        @memcpy(huge[0..7], "\x1b]52;c;");
+        @memset(huge[7 .. 7 + 1024 * 1024], 'A');
+        @memcpy(huge[7 + 1024 * 1024 ..], "\x07\x1b]52;c;b2s=\x07");
+        try terminal.feedOutput(huge);
+        try std.testing.expectEqual(@as(usize, 1), log.writes.items.len);
+        try std.testing.expectEqualStrings("ok", log.writes.items[0]);
+    }
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkClipboardAllocationFailures, .{&api});
+}
+
 
 
