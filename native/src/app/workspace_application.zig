@@ -28,7 +28,12 @@ const MouseDrag = struct {
     button: terminal.MouseButton,
 };
 
-const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, selection: SelectionDrag, mouse: MouseDrag };
+const ScrollbarDrag = struct {
+    pane_id: panes.PaneId,
+    grab_offset: f32,
+};
+
+const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, selection: SelectionDrag, mouse: MouseDrag, scrollbar: ScrollbarDrag };
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
 const WorkspaceApplication = struct {
@@ -44,6 +49,7 @@ const WorkspaceApplication = struct {
     pointer_drag: PointerDrag = .none,
     hovered_pane: ?panes.PaneId = null,
     hovered_header_action: ?panes.PaneHeaderAction = null,
+    hovered_scrollbar: ?panes.PaneId = null,
     reported_mouse_pane: ?panes.PaneId = null,
     reported_mouse_buttons: u8 = 0,
     next_token: u32 = 1,
@@ -259,9 +265,15 @@ const WorkspaceApplication = struct {
             const hovered = self.hovered_pane == placement.id;
             const hovered_action = if (hovered) self.hovered_header_action else null;
             const frame = try session.terminal.readFrame();
-            platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.terminal.title.slice(), session.terminal.program_status.programStatus());
-            defer platform.endPane();
-            try platform.drawTerminalFrame(frame, focused);
+            {
+                platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.terminal.title.slice(), session.terminal.program_status.programStatus());
+                defer platform.endPane();
+                try platform.drawTerminalFrame(frame, focused);
+            }
+            if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
+                const sb_active = self.hovered_scrollbar == placement.id or (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id);
+                platform.drawScrollbar(placement.bounds, sb, sb_active);
+            }
         }
     }
     const TabStatus = struct { summary: status.ProgramStatusSummary, attention: bool };
@@ -484,27 +496,38 @@ const WorkspaceApplication = struct {
             return;
         };
     }
-    fn updateHoverState(self: *WorkspaceApplication, can_focus: bool, x: f32, y: f32) void {
+    fn updateHoverState(self: *WorkspaceApplication, can_focus: bool, x: f32, y: f32, modifiers: u32) !void {
         var next_pane: ?panes.PaneId = null;
         var next_action: ?panes.PaneHeaderAction = null;
+        var next_scrollbar: ?panes.PaneId = null;
         if (self.pointer_drag == .none) {
             for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
                 next_pane = placement.id;
                 next_action = placement.bounds.hitHeaderAction(can_focus, x, y);
+                if (next_action == null) {
+                    if (self.findSession(placement.id)) |session| {
+                        if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
+                            if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
+                                if (sb.containsPoint(placement.bounds, x, y)) next_scrollbar = placement.id;
+                            }
+                        }
+                    }
+                }
                 break;
             };
         }
-        if (self.hovered_pane != next_pane or self.hovered_header_action != next_action) {
+        if (self.hovered_pane != next_pane or self.hovered_header_action != next_action or self.hovered_scrollbar != next_scrollbar) {
             self.hovered_pane = next_pane;
             self.hovered_header_action = next_action;
+            self.hovered_scrollbar = next_scrollbar;
             platform.invalidateWindow();
         }
     }
     fn cancelPointerDrag(self: *WorkspaceApplication) !bool {
         const model = if (self.model) |*model| model else return false;
-        const clear_preview = self.pointer_drag == .tab or self.pointer_drag == .selection;
+        const clear_preview = self.pointer_drag == .tab or self.pointer_drag == .selection or self.pointer_drag == .scrollbar;
         const changed = switch (self.pointer_drag) {
-            .none, .tab, .mouse => false,
+            .none, .tab, .mouse, .scrollbar => false,
             .selection => |sel| blk: {
                 if (self.findSession(sel.pane_id)) |session| {
                     try session.terminal.selectionRelease(sel.start_column, sel.start_row);
@@ -539,7 +562,7 @@ const WorkspaceApplication = struct {
         const can_focus = model.activeTab().tree.paneCount() > 1;
         switch (event) {
             .hover => {
-                self.updateHoverState(can_focus, x, y);
+                try self.updateHoverState(can_focus, x, y, modifiers);
                 if (self.pointer_drag == .none and (modifiers & 1) == 0) {
                     for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
                         const session = self.findSession(placement.id) orelse break;
@@ -568,10 +591,30 @@ const WorkspaceApplication = struct {
                     if (self.pointer_drag == .none) {
                         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
                             if (placement.bounds.hitHeaderAction(can_focus, x, y) != null) break;
+                            const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
+                            if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
+                                if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
+                                    if (sb.containsPoint(placement.bounds, x, y)) {
+                                        _ = model.focusPane(placement.id);
+                                        try self.clearOtherSelections(placement.id);
+                                        if (sb.containsThumb(y)) {
+                                            self.pointer_drag = .{ .scrollbar = .{
+                                                .pane_id = placement.id,
+                                                .grab_offset = y - sb.thumb_y,
+                                            } };
+                                        } else {
+                                            const page_rows: i32 = @intCast(if (session.size) |sz| sz.rows else 24);
+                                            const delta: i32 = if (y < sb.thumb_y) -page_rows else page_rows;
+                                            session.terminal.scroll(delta);
+                                        }
+                                        platform.invalidateWindow();
+                                        break;
+                                    }
+                                }
+                            }
                             if (try metrics.viewportPoint(placement.bounds, x, y, false)) |vp| {
                                 _ = model.focusPane(placement.id);
                                 try self.clearOtherSelections(placement.id);
-                                const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
                                 if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
                                     if (try session.terminal.hasSelection()) {
                                         try session.terminal.clearSelection(true);
@@ -598,7 +641,7 @@ const WorkspaceApplication = struct {
             },
             .move, .end => {
                 switch (self.pointer_drag) {
-                    .none => self.updateHoverState(can_focus, x, y),
+                    .none => try self.updateHoverState(can_focus, x, y, modifiers),
                     .divider => |*drag| if (try drag.move(&model.activeTab().tree, bounds, x, y)) try self.updateLayout(),
                     .tab => |*drag| {
                         if (event == .end) {
@@ -645,10 +688,20 @@ const WorkspaceApplication = struct {
                             }
                         }
                     },
+                    .scrollbar => |sb_drag| {
+                        if (self.findPlacement(sb_drag.pane_id)) |placement| {
+                            if (self.findSession(sb_drag.pane_id)) |session| {
+                                if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
+                                    try session.terminal.scrollToRow(sb.targetOffsetForY(y, sb_drag.grab_offset));
+                                    platform.invalidateWindow();
+                                }
+                            }
+                        }
+                    },
                 }
                 if (event == .end) {
                     self.pointer_drag = .none;
-                    self.updateHoverState(model.activeTab().tree.paneCount() > 1, x, y);
+                    try self.updateHoverState(model.activeTab().tree.paneCount() > 1, x, y, modifiers);
                     return .normal;
                 }
             },
@@ -662,6 +715,7 @@ const WorkspaceApplication = struct {
             .armed => .tab_armed,
             .dragging => .tab_dragging,
         };
+        if (self.pointer_drag == .scrollbar) return .tab_dragging;
         if (self.pointer_drag == .selection or self.pointer_drag == .mouse) return .selection;
         if (model.activeTab().is_focus_mode) return .normal;
         const drag: DividerDrag = if (self.pointer_drag == .divider) self.pointer_drag.divider else .{};

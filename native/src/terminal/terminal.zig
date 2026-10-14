@@ -81,6 +81,20 @@ pub const MouseButton = enum(c.GhosttyMouseButton) {
     back = c.GHOSTTY_MOUSE_BUTTON_EIGHT,
     forward = c.GHOSTTY_MOUSE_BUTTON_NINE,
 };
+/// Scrollback and viewport row counts for rendering and dragging the scrollbar thumb.
+pub const ScrollbarInfo = struct {
+    total: u64 = 0,
+    offset: u64 = 0,
+    len: u64 = 0,
+    /// True when scrollback rows exist above the visible viewport.
+    pub fn isVisible(self: ScrollbarInfo) bool {
+        return self.total > self.len and self.len > 0;
+    }
+    /// Total scrollable row distance from top to bottom.
+    pub fn scrollable(self: ScrollbarInfo) u64 {
+        return self.total -| self.len;
+    }
+};
 /// PTY replies are borrowed only during write; failures are returned by feedOutput.
 pub const ResponseSink = struct { context: *anyopaque, write: *const fn (*anyopaque, []const u8) anyerror!void };
 
@@ -515,9 +529,8 @@ pub const Terminal = struct {
     /// Consumes a keyboard selection ending at the live cursor and returns the number of 0x7f backspaces to send.
     pub fn consumeKeyboardSelectionBackspaces(self: *Terminal) !usize {
         if (!self.kb_selection_active or !try self.hasSelection() or try self.isAlternateScreen()) return 0;
-        var scrollbar: c.GhosttyTerminalScrollbar = .{ .total = 0, .offset = 0, .len = 0 };
-        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar));
-        if (scrollbar.offset +| scrollbar.len < scrollbar.total) return 0;
+        const sb = try self.scrollbar();
+        if (sb.offset +| sb.len < sb.total) return 0;
         const frame = try self.readFrame();
         if (frame.columns == 0 or frame.rows == 0 or !frame.cursor.visible) return 0;
         const cols_usize: usize = frame.columns;
@@ -562,6 +575,31 @@ pub const Terminal = struct {
         try check(self.api.terminal_selection_format_buf(self.handle, options, buffer.ptr, buffer.len, &written));
         if (written != buffer.len) return error.InvalidTerminalBufferLength;
         return buffer;
+    }
+    /// Queries the active screen's scrollback total, viewport offset, and visible row count.
+    pub fn scrollbar(self: *const Terminal) !ScrollbarInfo {
+        var info: c.GhosttyTerminalScrollbar = .{ .total = 0, .offset = 0, .len = 0 };
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_SCROLLBAR, &info));
+        return .{ .total = info.total, .offset = info.offset, .len = info.len };
+    }
+    /// Scrolls the viewport to an exact row offset from the top of scrollback.
+    pub fn scrollToRow(self: *Terminal, target_offset: u64) !void {
+        const info = try self.scrollbar();
+        if (!info.isVisible()) return;
+        const clamped = @min(target_offset, info.scrollable());
+        if (clamped == info.offset) return;
+        if (clamped == 0) {
+            self.scrollToTop();
+            return;
+        }
+        if (clamped >= info.scrollable()) {
+            self.scrollToBottom();
+            return;
+        }
+        const delta_i64: i64 = @as(i64, @intCast(@min(clamped, @as(u64, std.math.maxInt(i64))))) -
+            @as(i64, @intCast(@min(info.offset, @as(u64, std.math.maxInt(i64)))));
+        const clamped_delta: i32 = @intCast(std.math.clamp(delta_i64, std.math.minInt(i32), std.math.maxInt(i32)));
+        self.scroll(clamped_delta);
     }
     /// Scroll changes invalidate the cached viewport without changing the live shell cursor.
     pub fn scroll(self: *Terminal, delta: i32) void {
@@ -1752,4 +1790,30 @@ test "mouse tracking priority, partial mode reset resilience, SGR/pixel formats,
     try std.testing.expect(!try terminal.inBandResize());
 }
 
+test "scrollbar state and scrollToRow seek exact scrollback offsets" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(20, 4, 8, 16);
 
+    try std.testing.expect(!(try terminal.scrollbar()).isVisible());
+    try terminal.feedOutput("ROW_0\r\nROW_1\r\nROW_2\r\nROW_3\r\nROW_4\r\nROW_5\r\nROW_6\r\nROW_7");
+    const bottom = try terminal.scrollbar();
+    try std.testing.expect(bottom.isVisible());
+    try std.testing.expectEqual(@as(u64, 8), bottom.total);
+    try std.testing.expectEqual(@as(u64, 4), bottom.len);
+    try std.testing.expectEqual(@as(u64, 4), bottom.offset);
+
+    try terminal.scrollToRow(0);
+    try std.testing.expectEqual(@as(u64, 0), (try terminal.scrollbar()).offset);
+    try std.testing.expect(try terminal.containsViewportText("ROW_0"));
+    try std.testing.expect(!try terminal.containsViewportText("ROW_7"));
+
+    try terminal.scrollToRow(2);
+    try std.testing.expectEqual(@as(u64, 2), (try terminal.scrollbar()).offset);
+    try std.testing.expect(try terminal.containsViewportText("ROW_2"));
+
+    try terminal.scrollToRow(99);
+    try std.testing.expectEqual(@as(u64, 4), (try terminal.scrollbar()).offset);
+    try std.testing.expect(try terminal.containsViewportText("ROW_7"));
+}

@@ -675,6 +675,15 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
     target->PushAxisAlignedClip(D2D1::RectF(gridLeft, gridTop, fmaxf(gridLeft, bounds.x + bounds.width - 6), fmaxf(gridTop, bounds.y + bounds.height - 6)), D2D1_ANTIALIAS_MODE_ALIASED);
 }
 extern "C" void vex_end_pane() { target->PopAxisAlignedClip(); }
+extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active) {
+    if (!isfinite(thumb_y) || !isfinite(thumb_height) || thumb_height <= 0.0f || bounds.width < 24.0f) return;
+    const float width = active ? 10.0f : 6.0f;
+    const float right = bounds.x + bounds.width - 2.0f;
+    const float left = right - width;
+    const float radius = width * 0.5f;
+    brush->SetColor(D2D1::ColorF(0xe4e4e7, active ? 0.62f : 0.32f));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, thumb_y, right, thumb_y + thumb_height), radius, radius), brush);
+}
 extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags) {
     float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight, width = cells * cellWidth;
     rectangle(x, y, width, cellHeight, background);
