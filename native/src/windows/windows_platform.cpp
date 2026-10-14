@@ -23,6 +23,8 @@ static int platformError;
 static LARGE_INTEGER startupCounter, counterFrequency;
 static uint16_t pendingSurrogate;
 static uint64_t paintCount;
+enum class DividerCaptureState { none, dragging, cancelled };
+static DividerCaptureState dividerCaptureState = DividerCaptureState::none;
 
 HWND vex_native_window() { return window; }
 
@@ -163,6 +165,33 @@ static bool handleKey(uint32_t key) {
     if (key == 'V' && mods == 3) { pasteClipboard(); return true; }
     return callbacks.key(callbacks.context, key, mods);
 }
+static void setPointerCursor(uint32_t cursor, float y) {
+    uint16_t resource = cursor == VEX_CURSOR_RIGHT ? 32644 : cursor == VEX_CURSOR_DOWN ? 32645 : y < 74 ? 32512 : 32513;
+    SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(resource)));
+}
+extern "C" int vex_window_cancel_divider_capture() {
+    if (dividerCaptureState != DividerCaptureState::dragging) return 0;
+    // Suppress a later button-up over chrome even after capture has been stolen or deliberately released.
+    dividerCaptureState = DividerCaptureState::cancelled;
+    if (GetCapture() == window && !ReleaseCapture()) {
+        DWORD error = GetLastError();
+        return (int)(error ? error : ERROR_INVALID_HANDLE);
+    }
+    return 0;
+}
+extern "C" bool vex_window_has_divider_capture() {
+    return window && GetCapture() == window;
+}
+static void releaseDividerCapture() {
+    int error = vex_window_cancel_divider_capture();
+    if (error) { platformError = error; DestroyWindow(window); }
+}
+static void cancelDividerPointer() {
+    if (dividerCaptureState != DividerCaptureState::dragging) return;
+    callbacks.pointer(callbacks.context, VEX_POINTER_CANCEL, 0, 0);
+    // Also release if a failed application ignores further callbacks during destruction.
+    releaseDividerCapture();
+}
 static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_NCCALCSIZE: if (wparam) return 0; break;
@@ -203,12 +232,17 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_SETCURSOR:
         if (LOWORD(lparam) == HTCLIENT) {
-            POINT point; GetCursorPos(&point); ScreenToClient(hwnd, &point);
-            SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(point.y < 74 * GetDpiForWindow(hwnd) / 96.0f ? 32512 : 32513)));
+            POINT point;
+            if (!GetCursorPos(&point) || !ScreenToClient(hwnd, &point)) break;
+            float scale = GetDpiForWindow(hwnd) / 96.0f;
+            float x = point.x / scale, y = point.y / scale;
+            setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y), y);
             return TRUE;
         }
         break;
     case WM_LBUTTONDOWN: case WM_MBUTTONDOWN: {
+        cancelDividerPointer();
+        dividerCaptureState = DividerCaptureState::none;
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         if (y < 44 && x >= 140 && x < plusLeft()) {
@@ -216,12 +250,27 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             bool close = message == WM_MBUTTONDOWN || x > 140 + index * (tabWidth(drawnTabCount) + 4) + tabWidth(drawnTabCount) - 22;
             if (index < drawnTabCount) callbacks.action(callbacks.context, close ? 7 : 6, index);
         } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 32) callbacks.action(callbacks.context, 0, 0);
-        else if (y >= 44) callbacks.click(callbacks.context, x, y);
+        else if (y >= 44) {
+            uint32_t cursor = message == WM_LBUTTONDOWN ? callbacks.pointer(callbacks.context, VEX_POINTER_BEGIN, x, y) : 0;
+            if (cursor) {
+                SetFocus(hwnd);
+                dividerCaptureState = DividerCaptureState::dragging;
+                SetCapture(hwnd);
+                if (GetCapture() != hwnd) cancelDividerPointer();
+                else setPointerCursor(cursor, y);
+            } else callbacks.click(callbacks.context, x, y);
+        }
         return 0;
     }
     case WM_LBUTTONUP: {
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        if (dividerCaptureState != DividerCaptureState::none) {
+            if (dividerCaptureState == DividerCaptureState::dragging) callbacks.pointer(callbacks.context, VEX_POINTER_END, x, y);
+            releaseDividerCapture();
+            dividerCaptureState = DividerCaptureState::none;
+            return 0;
+        }
         if (y < 44 && x >= clientWidth - 120) {
             if (x >= clientWidth - 40) SendMessageW(hwnd, WM_CLOSE, 0, 0);
             else if (x >= clientWidth - 80) ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
@@ -229,6 +278,16 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     }
+    case WM_MOUSEMOVE: {
+        float scale = GetDpiForWindow(hwnd) / 96.0f;
+        float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        uint32_t event = dividerCaptureState == DividerCaptureState::dragging ? VEX_POINTER_MOVE : VEX_POINTER_HOVER;
+        setPointerCursor(callbacks.pointer(callbacks.context, event, x, y), y);
+        return 0;
+    }
+    case WM_CAPTURECHANGED: case WM_CANCELMODE:
+        cancelDividerPointer();
+        return 0;
     case WM_SIZE:
         if (wparam != SIZE_MINIMIZED && window) {
             if (target) {
@@ -240,9 +299,17 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_DPICHANGED: {
+        cancelDividerPointer();
         auto bounds = reinterpret_cast<RECT*>(lparam);
         if (target) target->SetDpi((float)HIWORD(wparam), (float)HIWORD(wparam));
-        SetWindowPos(hwnd, nullptr, bounds->left, bounds->top, bounds->right - bounds->left, bounds->bottom - bounds->top, SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!SetWindowPos(hwnd, nullptr, bounds->left, bounds->top, bounds->right - bounds->left, bounds->bottom - bounds->top, SWP_NOZORDER | SWP_NOACTIVATE)) {
+            DWORD error = GetLastError();
+            platformError = (int)(error ? error : ERROR_INVALID_WINDOW_HANDLE);
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        // A DPI transition need not change physical bounds, so WM_SIZE alone cannot refresh DIP geometry.
+        updateWindowMetrics(); InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
     case WM_ERASEBKGND: return 1;
@@ -272,8 +339,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (selftestEnabled() && wparam <= 7 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_TIMER: renderScheduledFrame(); return 0;
-    case WM_KEYDOWN: case WM_SYSKEYDOWN: return handleKey((uint32_t)wparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
-    case WM_KILLFOCUS: pendingSurrogate = 0; return 0;
+    case WM_KEYDOWN: case WM_SYSKEYDOWN:
+        if (wparam == VK_ESCAPE && dividerCaptureState == DividerCaptureState::dragging) { cancelDividerPointer(); return 1; }
+        return handleKey((uint32_t)wparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
+    case WM_KILLFOCUS: cancelDividerPointer(); pendingSurrogate = 0; return 0;
     case WM_CHAR: case WM_SYSCHAR: {
         uint16_t unit = (uint16_t)wparam;
         if (unit >= 0xd800 && unit <= 0xdbff) { pendingSurrogate = unit; return 0; }
@@ -287,8 +356,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_MOUSEWHEEL: callbacks.scroll(callbacks.context, -(GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) * 3); vex_window_invalidate(); return 0;
-    case WM_CLOSE: DestroyWindow(hwnd); return 0;
-    case WM_DESTROY: KillTimer(hwnd, 1); PostQuitMessage(0); return 0;
+    case WM_CLOSE: cancelDividerPointer(); DestroyWindow(hwnd); return 0;
+    case WM_DESTROY: cancelDividerPointer(); KillTimer(hwnd, 1); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }

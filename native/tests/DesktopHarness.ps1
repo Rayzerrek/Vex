@@ -14,6 +14,19 @@ public static class VexNativeSmoke {
     }
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
+    public static void SendDpiChangedAtCurrentBounds(IntPtr window) {
+        Rect rect;
+        uint dpi = GetDpiForWindow(window);
+        if (dpi == 0 || dpi > 65535 || !GetWindowRect(window, out rect))
+            throw new InvalidOperationException("Vex native smoke: DPI fixture metrics unavailable.");
+        IntPtr buffer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Rect)));
+        try {
+            Marshal.StructureToPtr(rect, buffer, false);
+            SendWindowMessage(window, 0x02e0, new IntPtr(dpi | (dpi << 16)), buffer);
+        } finally { Marshal.FreeHGlobal(buffer); }
+    }
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
 }
