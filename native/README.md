@@ -110,6 +110,13 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
 
 - `Ctrl+Shift+T`: new tab; **+** does the same.
 - `Ctrl+Tab` / `Ctrl+Shift+Tab`: next/previous tab; click selects a tab.
+- Drag a tab body to reorder: press selects it, movement of 6 DIPs starts
+  capture, and release commits the indicated insertion slot. The strip accepts
+  drops within an 8-DIP vertical tolerance; home/outside drops are no-ops.
+  Escape, capture/focus loss, resize/DPI and workspace actions cancel without
+  changing order. ×/middle-click do not arm a drag. Sessions, split focus,
+  directory and unread status remain attached to the same tab.
+  This checkpoint draws an insertion marker, not WPF's animated ghost/push preview.
 - `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down.
 - Click a pane to focus it. Drag a right/down divider to resize its two subtrees
   live, without changing terminal focus. Ratios stay in 0.1..0.9; interactive
@@ -117,7 +124,7 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
   disable dragging rather than overflowing. Existing split/layout geometry
   retains its 6-DIP gap; it is not the WPF splitter's final visual styling.
 - Escape, capture/focus loss, cancel mode, window/DPI resize and tab/tree changes
-  cancel a drag and restore its original ratio. Release commits; a captured or
+  cancel a divider drag and restore its original ratio. Release commits; a captured or
   cancelled release over caption buttons cannot activate them.
 - `Ctrl+Shift+W`: close a split or tab; a tab's **×** / middle-click closes it.
 - The last tab stays open, as in WPF. Closing a split focuses the first remaining
@@ -155,7 +162,11 @@ suite. The application owns sessions; pure workspace models never import the
 window adapter. Terminal ABI resolution uses its C seam directly, not a
 circular dependency through the rendering/window adapter.
 
-- `src/workspace/workspace_model.zig`: tab selection/close/focus rules, capped at 8 tabs.
+- `src/workspace/workspace_model.zig`: stable tab IDs, allocation-free reorder and
+  selection/close/focus rules, capped at 8 tabs.
+- `src/workspace/tab_strip.zig`: one DIP geometry definition for tab widths,
+  body/close/gap hit testing and insertion slots; Win32 copies its parsed projection.
+- `src/workspace/tab_drag.zig`: typed none/armed/dragging transitions and commit-on-drop.
 - `src/workspace/pane_tree.zig`: allocator-owned recursive split tree; transactional edits,
   stable IDs, ratio clamp 0.1..0.9, finite DIP geometry, 64-level depth guard.
 - `src/workspace/divider_drag.zig`: allocation-free divider hit/drag lifecycle,
@@ -267,6 +278,7 @@ zig fmt --check build.zig src
 zig build test -Doptimize=Debug
 zig build test -Doptimize=ReleaseSafe
 zig build
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeDividers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShells.ps1
@@ -315,8 +327,19 @@ flooding output. Child console dimensions must match the resized emulator.
 Its DPI evidence is limited to the monitor used by the test, not a physical
 multi-monitor DPI transition or comparative frame-time benchmark.
 
-Diagnostic probes/actions require `VEX_NATIVE_SELFTEST=1`. Synthetic messages
-are not physical keyboard/IME or accessibility tests.
+The tab fixture uses an opt-in atomic replay of press/move/drop or cancellation
+through the same Win32 window procedure and Zig handlers. It snapshots real
+capture and preview state before drop, then verifies unchanged ConPTY PIDs,
+split focus/trees, parsed output and unread status. Eight-tab moves, source close,
+DPI cancellation and captured shutdown after output reaches the viewport are covered.
+Atomic replay prevents OS-generated mouse moves from interleaving test coordinates;
+it neither moves the user's cursor nor changes production gesture handling.
+
+Diagnostic probes/actions/replay require `VEX_NATIVE_SELFTEST=1`. Synthetic
+messages are not physical mouse/keyboard/IME or accessibility tests. The separate
+multi-message divider fixture still requires a quiet interactive desktop: real
+focus/capture changes legitimately cancel its gesture. Such interference was
+observed in this session; reruns passed, not a claim of interference-proof automation.
 
 Ignored artifacts under `zig-out/verification/`:
 
@@ -326,6 +349,7 @@ Ignored artifacts under `zig-out/verification/`:
 - `shells.json`: live Windows shell transport/integration results.
 - `wsl.json`: live selected-distribution WSL results.
 - `dividers.json`: live divider capture/resize/cancellation results.
+- `tabs.json`: live atomic tab-reorder/ownership/capture results.
 
 `VEX_NATIVE_METRICS=<absolute-path>` enables local milestone logs. Timing starts
 at Zig main, before DLL initialization, not OS process creation. The test also
@@ -337,7 +361,8 @@ benchmarks**, and working set excludes GPU allocations and child processes.
 See the full ledger in [REWRITE.md](REWRITE.md): multiple projects, WSL Linux
 process metadata/prompt adapters,
 shell-profile UI/per-pane overrides, profile/session compatibility and persistence, saved layouts,
-settings/themes, palette/tab peek/overlays, tab/pane reorder, final divider styling, shell icons,
+settings/themes, palette/tab peek/overlays, pane reorder, tab drag ghost/push animations and strip scrolling,
+final divider styling, shell icons,
 status tooltips/origin routing, selection/copy/cut,
 hyperlinks/path completion, bracketed paste,
 IME/full mouse/key protocols, ConPTY DCS feed-filter parity, custom glyphs/color

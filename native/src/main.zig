@@ -25,6 +25,8 @@ test {
     _ = @import("windows/wsl_registry.zig");
     _ = @import("workspace/pane_tree.zig");
     _ = @import("workspace/divider_drag.zig");
+    _ = @import("workspace/tab_strip.zig");
+    _ = @import("workspace/tab_drag.zig");
     _ = @import("workspace/workspace_model.zig");
     _ = platform;
     _ = @import("shell/shell_launch.zig");

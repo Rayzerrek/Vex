@@ -7,21 +7,6 @@ $ErrorActionPreference = 'Stop'
 $NativeWorkingDirectory = Split-Path $PSScriptRoot -Parent
 $NativeLaunchArguments = '--program "' + $env:WINDIR + '\System32\cmd.exe" --arguments /d'
 
-function Get-NativeSurface([IntPtr]$Window) {
-    $rect = New-Object VexNativeSmoke+Rect
-    $dpi = [VexNativeSmoke]::GetDpiForWindow($Window)
-    if ($dpi -eq 0 -or ![VexNativeSmoke]::GetClientRect($Window, [ref]$rect)) { throw 'Vex native dividers: client metrics unavailable.' }
-    $scale = $dpi / 96.0
-    return [pscustomobject]@{ Width = ($rect.Right - $rect.Left) / $scale; Height = ($rect.Bottom - $rect.Top) / $scale; Scale = $scale }
-}
-function Send-NativePointer([IntPtr]$Window, [uint32]$Message, [double]$X, [double]$Y, [int]$Buttons = 0) {
-    $scale = (Get-NativeSurface $Window).Scale
-    $px = [int][Math]::Round($X * $scale)
-    $py = [int][Math]::Round($Y * $scale)
-    if ($px -lt -32768 -or $px -gt 32767 -or $py -lt -32768 -or $py -gt 32767) { throw 'Vex native dividers: pointer fixture exceeds signed Win32 coordinates.' }
-    $packed = ([long]($py -band 0xffff) * 65536) -bor ($px -band 0xffff)
-    [VexNativeSmoke]::SendWindowMessage($Window, $Message, [IntPtr]$Buttons, [IntPtr]$packed) | Out-Null
-}
 function Get-NativeRootHandleX([IntPtr]$Window) {
     return 6 + ((Get-NativeSurface $Window).Width - 18) * (Get-NativeProbe $Window 40) / 1000.0 + 3
 }
@@ -121,7 +106,8 @@ try {
     $nestedY = 44 + ($surface.Height - 56) / 2 + 3
     Start-NativeDividerDrag $window $nestedX $nestedY
     Send-NativePointer $window 0x200 $nestedX ($nestedY + 60) 1
-    if ((Get-NativeProbe $window 44) -ge $rows) { throw 'Vex native dividers: nested pane rows did not shrink during drag.' }
+    $resizedRows = Get-NativeProbe $window 44
+    if ($resizedRows -ge $rows) { throw "Vex native dividers: nested pane rows did not shrink during drag (before=$rows after=$resizedRows drag=$(Get-NativeProbe $window 41) capture=$(Get-NativeProbe $window 42))." }
     Send-NativePointer $window 0x202 $nestedX ($nestedY + 60)
     Assert-NativeDragEnded $window
     Assert-NativeProbe $window 40 $rootRatio 'nested drag does not move ancestor divider'

@@ -1,8 +1,10 @@
 const std = @import("std");
 const panes = @import("pane_tree.zig");
 
-/// A tab owns its split tree; the selected pane is always one of that tree's leaves.
-pub const WorkspaceTab = struct { tree: panes.PaneTree, active_pane: panes.PaneId };
+/// Stable tab identity derives from its first fresh pane token and survives that pane's removal.
+pub const TabId = enum(u32) { _ };
+/// A tab owns its split tree; reordering transfers this owner without recreating terminals.
+pub const WorkspaceTab = struct { id: TabId, tree: panes.PaneTree, active_pane: panes.PaneId };
 
 /// Owns one project's tabs, matching Project.MaxTabs and WPF close/focus behavior.
 pub const WorkspaceModel = struct {
@@ -30,16 +32,37 @@ pub const WorkspaceModel = struct {
     /// The caller creates the new terminal first and rolls it back if this transaction fails.
     pub fn newTab(self: *WorkspaceModel, id: panes.PaneId) !void {
         if (self.tabs.items.len >= max_tabs) return error.TabLimitReached;
-        for (self.tabs.items) |tab| if (tab.tree.containsPane(id)) return error.DuplicatePaneId;
+        const tab_id: TabId = @enumFromInt(@intFromEnum(id));
+        for (self.tabs.items) |tab| if (tab.id == tab_id or tab.tree.containsPane(id)) return error.DuplicatePaneId;
         var tree = try panes.PaneTree.init(self.allocator, id);
         errdefer tree.deinit();
-        try self.tabs.append(self.allocator, .{ .tree = tree, .active_pane = id });
+        try self.tabs.append(self.allocator, .{ .id = tab_id, .tree = tree, .active_pane = id });
         self.selected_tab = self.tabs.items.len - 1;
     }
     /// Selects a tab only if its index exists; invalid UI messages leave selection intact.
     pub fn selectTab(self: *WorkspaceModel, index: usize) bool {
         if (index >= self.tabs.items.len) return false;
         self.selected_tab = index;
+        return true;
+    }
+    /// Resolves a tab ID after array moves; no caller must retain a pointer into the tab array.
+    pub fn tabIndex(self: *const WorkspaceModel, id: TabId) ?usize {
+        for (self.tabs.items, 0..) |tab, index| if (tab.id == id) return index;
+        return null;
+    }
+    /// Moves an existing tab to a clamped final index without allocation; selection follows the same tab owner.
+    pub fn moveTab(self: *WorkspaceModel, id: TabId, destination: usize) bool {
+        const source = self.tabIndex(id) orelse return false;
+        const target = @min(destination, self.tabs.items.len - 1);
+        if (source == target) return false;
+        const moved = self.tabs.items[source];
+        if (source < target) {
+            std.mem.copyForwards(WorkspaceTab, self.tabs.items[source..target], self.tabs.items[source + 1 .. target + 1]);
+        } else {
+            std.mem.copyBackwards(WorkspaceTab, self.tabs.items[target + 1 .. source + 1], self.tabs.items[target..source]);
+        }
+        self.tabs.items[target] = moved;
+        if (self.selected_tab == source) self.selected_tab = target else if (source < self.selected_tab and self.selected_tab <= target) self.selected_tab -= 1 else if (target <= self.selected_tab and self.selected_tab < source) self.selected_tab += 1;
         return true;
     }
     /// Ctrl+Tab and Ctrl+Shift+Tab wrap, without signed modulo arithmetic.
@@ -137,4 +160,46 @@ test "duplicate cross-tab IDs and stale focus targets leave ownership and select
     _ = model.closeActiveSplit();
     try std.testing.expect(!model.focusPane(@enumFromInt(3)));
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(model.activeTab().active_pane));
+}
+
+test "tab reorder preserves every selection across left/right/clamped moves without allocating" {
+    for (0..3) |source| for (0..5) |destination| for (0..3) |selected| {
+        var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+        defer model.deinit();
+        try model.newTab(@enumFromInt(2));
+        try model.newTab(@enumFromInt(3));
+        try std.testing.expect(model.selectTab(selected));
+        const selected_id = model.activeTab().id;
+        const moving_id = model.tabs.items[source].id;
+        const root = model.tabs.items[source].tree.root;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+        model.allocator = failing.allocator();
+        const target = @min(destination, 2);
+        try std.testing.expectEqual(source != target, model.moveTab(moving_id, destination));
+        model.allocator = std.testing.allocator;
+        try std.testing.expectEqual(selected_id, model.activeTab().id);
+        try std.testing.expectEqual(moving_id, model.tabs.items[target].id);
+        try std.testing.expectEqual(root, model.tabs.items[target].tree.root);
+        try std.testing.expectEqual(@as(usize, 3), model.tabs.items.len);
+        try std.testing.expect(!model.moveTab(@enumFromInt(99), 0));
+        for (model.tabs.items, 0..) |tab, index| try std.testing.expectEqual(@as(?usize, index), model.tabIndex(tab.id));
+    };
+}
+
+test "tab identity survives removal of its first pane and close fallback follows reordered neighbors" {
+    var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+    defer model.deinit();
+    try model.splitActivePane(@enumFromInt(4), .right);
+    try std.testing.expect(model.focusPane(@enumFromInt(1)));
+    try std.testing.expectEqual(@as(?panes.PaneId, @enumFromInt(1)), model.closeActiveSplit());
+    try std.testing.expectEqual(@as(TabId, @enumFromInt(1)), model.activeTab().id);
+    try std.testing.expectError(error.DuplicatePaneId, model.newTab(@enumFromInt(1)));
+    try model.newTab(@enumFromInt(2));
+    try model.newTab(@enumFromInt(3));
+    try std.testing.expect(model.moveTab(@enumFromInt(3), 0));
+    try std.testing.expectEqual(@as(usize, 0), model.selected_tab);
+    try std.testing.expect(model.closeTab(0));
+    try std.testing.expectEqual(@as(TabId, @enumFromInt(1)), model.activeTab().id);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(4)), model.activeTab().active_pane);
+    try std.testing.expect(!model.moveTab(@enumFromInt(3), 1));
 }
