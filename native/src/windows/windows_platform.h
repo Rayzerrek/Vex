@@ -56,6 +56,7 @@ int vex_window_tab_strip(uint32_t count, float tab_width);
 int vex_draw_tab_insertion_marker(float x);
 void vex_window_error(const char* message);
 int vex_window_shell_name(const uint8_t* bytes, size_t length);
+int vex_window_project_info(const uint8_t* name, size_t name_length, const uint8_t* branch, size_t branch_length);
 /* Tokens are nonzero, never reused, and cannot be interpreted as heap pointers. */
 int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPtyLaunch launch, VexPty** output);
 int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length);

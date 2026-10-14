@@ -80,6 +80,9 @@ const WorkspaceApplication = struct {
         var launch = try shell.ShellLaunch.resolve(allocator, request, system_directory, integration_directory, &environment);
         errdefer launch.deinit();
         try platform.setShellName(launch.shellName());
+        var branch_buf: [128]u8 = undefined;
+        const branch = readGitBranch(parsed.bytes, &branch_buf);
+        try platform.setProjectInfo(projectDisplayName(parsed.bytes), branch);
         return .{ .allocator = allocator, .api = api, .project_directory = parsed, .machine_name = machine_name, .launch = launch };
     }
     fn deinit(self: *WorkspaceApplication) void {
@@ -863,6 +866,45 @@ fn isModifierKey(key: u32) bool {
         0x10, 0x11, 0x12, 0x14, 0x5B, 0x5C, 0x90, 0xA0...0xA5 => true,
         else => false,
     };
+}
+
+fn projectDisplayName(path: []const u8) []const u8 {
+    const trimmed = std.mem.trimRight(u8, path, "\\/");
+    const base = std.fs.path.basename(trimmed);
+    return if (base.len > 0 and base.len <= 64) base else "Vex";
+}
+
+fn readGitBranch(project_path: []const u8, out_buf: *[128]u8) []const u8 {
+    var current = std.mem.trimRight(u8, project_path, "\\/");
+    for (0..16) |_| {
+        if (current.len == 0) break;
+        var path_buf: [1024]u8 = undefined;
+        if (std.fmt.bufPrint(&path_buf, "{s}\\.git\\HEAD", .{current})) |head_path| {
+            if (std.fs.openFileAbsolute(head_path, .{})) |file| {
+                defer file.close();
+                var raw: [256]u8 = undefined;
+                if (file.readAll(&raw)) |read_len| {
+                    const line = std.mem.trim(u8, raw[0..read_len], " \t\r\n");
+                    const prefix = "ref: refs/heads/";
+                    const branch = if (std.mem.startsWith(u8, line, prefix))
+                        line[prefix.len..]
+                    else if (line.len >= 7)
+                        line[0..7]
+                    else
+                        "";
+                    if (branch.len > 0 and branch.len <= out_buf.len and std.unicode.utf8ValidateSlice(branch)) {
+                        @memcpy(out_buf[0..branch.len], branch);
+                        return out_buf[0..branch.len];
+                    }
+                } else |_| {}
+                return "";
+            } else |_| {}
+        } else |_| break;
+        const parent = std.fs.path.dirname(current) orelse break;
+        if (std.mem.eql(u8, parent, current)) break;
+        current = parent;
+    }
+    return "";
 }
 
 /// Retains the stable application/API owner until the window loop returns; teardown joins all session workers.
