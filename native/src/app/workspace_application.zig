@@ -12,7 +12,7 @@ const DividerDrag = @import("../workspace/divider_drag.zig").DividerDrag;
 const TabDrag = @import("../workspace/tab_drag.zig").TabDrag;
 const tab_strip = @import("../workspace/tab_strip.zig");
 
-const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag };
+const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, selection: panes.PaneId };
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
 const WorkspaceApplication = struct {
@@ -76,6 +76,17 @@ const WorkspaceApplication = struct {
     fn findSession(self: *WorkspaceApplication, id: panes.PaneId) ?*TerminalSession {
         for (self.sessions.items) |session| if (session.id == id) return session;
         return null;
+    }
+    fn findPlacement(self: *WorkspaceApplication, id: panes.PaneId) ?panes.PanePlacement {
+        for (self.placements.items) |placement| if (placement.id == id) return placement;
+        return null;
+    }
+    fn clearOtherSelections(self: *WorkspaceApplication, keep: panes.PaneId) !void {
+        for (self.sessions.items) |session| {
+            if (session.id != keep and try session.terminal.hasSelection()) {
+                try session.terminal.clearSelection(true);
+            }
+        }
     }
     fn activeSession(self: *WorkspaceApplication) ?*TerminalSession {
         const model = if (self.model) |*model| model else return null;
@@ -199,27 +210,62 @@ const WorkspaceApplication = struct {
     }
     pub fn onKey(self: *WorkspaceApplication, key: u32, modifiers: u32) bool {
         if (self.health == .failed) return true;
+        if (isModifierKey(key)) return false;
         if (platform.workspaceShortcut(key, modifiers)) |action| {
             self.onAction(action, 0);
             return true;
         }
         const session = self.activeSession() orelse return false;
-        const scrolled = session.terminal.scrollViewportShortcut(key, modifiers) catch |err| {
+        return self.handleSessionKey(session, key, modifiers) catch |err| {
             self.fail(err);
             return true;
         };
-        if (scrolled) {
+    }
+    fn handleSessionKey(self: *WorkspaceApplication, session: *TerminalSession, key: u32, modifiers: u32) !bool {
+        if (try session.terminal.scrollViewportShortcut(key, modifiers)) {
             platform.invalidateWindow();
             return true;
         }
-        if (session.state == .exited) return true;
-        var buffer: [256]u8 = undefined;
-        const encoded = session.terminal.encodeKey(key, modifiers, &buffer) catch |err| {
-            self.fail(err);
+        if (modifiers == 3 and key == 'C') {
+            if (try session.copySelectionToClipboard(self.allocator)) {
+                try session.terminal.clearSelection(true);
+                platform.invalidateWindow();
+            }
             return true;
-        };
+        }
+        if (modifiers == 2 and key == 'C' and try session.terminal.hasSelection()) {
+            _ = try session.copySelectionToClipboard(self.allocator);
+            try session.terminal.clearSelection(true);
+            platform.invalidateWindow();
+            return true;
+        }
+        if (modifiers == 3 and key == 'X') {
+            if (try session.terminal.hasSelection()) {
+                _ = try session.copySelectionToClipboard(self.allocator);
+                if (!try session.deleteKeyboardSelection()) try session.terminal.clearSelection(true);
+                platform.invalidateWindow();
+            }
+            return true;
+        }
+        if (session.state == .exited) return true;
+        if (key == 0x08 and (modifiers == 0 or modifiers == 1)) {
+            if (try session.deleteKeyboardSelection()) {
+                platform.invalidateWindow();
+                return true;
+            }
+        }
+        if (try session.terminal.extendKeyboardSelection(key, modifiers)) {
+            platform.invalidateWindow();
+            return true;
+        }
+        var buffer: [256]u8 = undefined;
+        const encoded = try session.terminal.encodeKey(key, modifiers, &buffer);
         if (encoded) |bytes| {
-            session.writeUserInput(bytes) catch |err| self.fail(err);
+            if (try session.terminal.hasSelection()) {
+                try session.terminal.clearSelection(true);
+                platform.invalidateWindow();
+            }
+            try session.writeUserInput(bytes);
             return true;
         }
         return false;
@@ -227,12 +273,36 @@ const WorkspaceApplication = struct {
     pub fn onText(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
         const session = self.activeSession() orelse return;
-        if (session.state == .running) session.writeUserInput(bytes) catch |err| self.fail(err);
+        if (session.state == .running) {
+            if (session.terminal.hasSelection() catch |err| {
+                self.fail(err);
+                return;
+            }) {
+                session.terminal.clearSelection(true) catch |err| {
+                    self.fail(err);
+                    return;
+                };
+                platform.invalidateWindow();
+            }
+            session.writeUserInput(bytes) catch |err| self.fail(err);
+        }
     }
     pub fn onPaste(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
         const session = self.activeSession() orelse return;
-        if (session.state == .running) session.paste(self.allocator, bytes) catch |err| self.fail(err);
+        if (session.state == .running) {
+            if (session.terminal.hasSelection() catch |err| {
+                self.fail(err);
+                return;
+            }) {
+                session.terminal.clearSelection(true) catch |err| {
+                    self.fail(err);
+                    return;
+                };
+                platform.invalidateWindow();
+            }
+            session.paste(self.allocator, bytes) catch |err| self.fail(err);
+        }
     }
     pub fn onScroll(self: *WorkspaceApplication, delta: i32) void {
         if (self.health == .failed) return;
@@ -251,6 +321,7 @@ const WorkspaceApplication = struct {
                 switch (header_action) {
                     .focus_toggle => {
                         _ = model.focusPane(placement.id);
+                        try self.clearOtherSelections(placement.id);
                         if (model.toggleFocusMode()) try self.updateLayout() else platform.invalidateWindow();
                     },
                     .split_right, .split_down => {
@@ -273,6 +344,7 @@ const WorkspaceApplication = struct {
                 return;
             }
             _ = model.focusPane(placement.id);
+            try self.clearOtherSelections(placement.id);
             platform.invalidateWindow();
             return;
         };
@@ -295,9 +367,15 @@ const WorkspaceApplication = struct {
     }
     fn cancelPointerDrag(self: *WorkspaceApplication) !bool {
         const model = if (self.model) |*model| model else return false;
-        const clear_preview = self.pointer_drag == .tab;
+        const clear_preview = self.pointer_drag == .tab or self.pointer_drag == .selection;
         const changed = switch (self.pointer_drag) {
             .none, .tab => false,
+            .selection => |pane_id| blk: {
+                if (self.findSession(pane_id)) |session| {
+                    try session.terminal.selectionRelease(0, 0);
+                }
+                break :blk false;
+            },
             .divider => |*drag| try drag.cancel(&model.activeTab().tree),
         };
         self.pointer_drag = .none;
@@ -327,9 +405,25 @@ const WorkspaceApplication = struct {
                     try self.applyAction(.select_tab, @intCast(hit.index));
                     var drag: TabDrag = .none;
                     if (try drag.begin(model, layout, model.activeTab().id, point)) self.pointer_drag = .{ .tab = drag };
-                } else if (!model.activeTab().is_focus_mode) {
-                    var drag: DividerDrag = .{};
-                    if (try drag.begin(&model.activeTab().tree, bounds, x, y)) self.pointer_drag = .{ .divider = drag };
+                } else {
+                    if (!model.activeTab().is_focus_mode) {
+                        var drag: DividerDrag = .{};
+                        if (try drag.begin(&model.activeTab().tree, bounds, x, y)) self.pointer_drag = .{ .divider = drag };
+                    }
+                    if (self.pointer_drag == .none) {
+                        for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
+                            if (placement.bounds.hitHeaderAction(can_focus, x, y) != null) break;
+                            if (try metrics.viewportPoint(placement.bounds, x, y, false)) |vp| {
+                                _ = model.focusPane(placement.id);
+                                try self.clearOtherSelections(placement.id);
+                                const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
+                                _ = try session.terminal.selectionPress(vp.column, vp.row, vp.x_px, vp.y_px);
+                                self.pointer_drag = .{ .selection = placement.id };
+                                platform.invalidateWindow();
+                            }
+                            break;
+                        };
+                    }
                 }
             },
             .move, .end => {
@@ -341,6 +435,20 @@ const WorkspaceApplication = struct {
                             _ = try drag.finish(model, layout, point);
                             platform.invalidateWindow();
                         } else if (try drag.move(model, layout, point)) platform.invalidateWindow();
+                    },
+                    .selection => |pane_id| {
+                        if (self.findPlacement(pane_id)) |placement| {
+                            if (self.findSession(pane_id)) |session| {
+                                if (try metrics.viewportPoint(placement.bounds, x, y, true)) |vp| {
+                                    if (event == .end) {
+                                        try session.terminal.selectionRelease(vp.column, vp.row);
+                                    } else {
+                                        try session.terminal.selectionDrag(vp.column, vp.row, vp.x_px, vp.y_px);
+                                    }
+                                    platform.invalidateWindow();
+                                }
+                            }
+                        }
                     },
                 }
                 if (event == .end) {
@@ -359,6 +467,7 @@ const WorkspaceApplication = struct {
             .armed => .tab_armed,
             .dragging => .tab_dragging,
         };
+        if (self.pointer_drag == .selection) return .selection;
         if (model.activeTab().is_focus_mode) return .normal;
         const drag: DividerDrag = if (self.pointer_drag == .divider) self.pointer_drag.divider else .{};
         const axis = try drag.cursorAxis(&model.activeTab().tree, bounds, x, y) orelse return .normal;
@@ -498,6 +607,13 @@ const WorkspaceApplication = struct {
 
 fn workspaceBounds(metrics: platform.WindowMetrics) panes.PaneRect {
     return .{ .x = 6, .y = 44, .width = @max(0, metrics.width - 12), .height = @max(0, metrics.height - 50) };
+}
+
+fn isModifierKey(key: u32) bool {
+    return switch (key) {
+        0x10, 0x11, 0x12, 0x14, 0x5B, 0x5C, 0x90, 0xA0...0xA5 => true,
+        else => false,
+    };
 }
 
 /// Retains the stable application/API owner until the window loop returns; teardown joins all session workers.
