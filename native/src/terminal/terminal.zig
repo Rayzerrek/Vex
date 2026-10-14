@@ -24,7 +24,7 @@ pub const TerminalCursor = struct {
     column: u16 = 0,
     row: u16 = 0,
     visible: bool = false,
-    shape: enum(u32) { bar = 0, block = 1, underline = 2, hollow = 3 } = .block,
+    shape: enum(u32) { bar = 0, block = 1, underline = 2, hollow = 3 } = .bar,
 };
 /// A terminal owns this reusable snapshot; consumers must not retain slices across updates.
 pub const TerminalFrame = struct {
@@ -180,11 +180,16 @@ pub const Terminal = struct {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
         self.frame_valid = false;
     }
-    /// Encode navigation/function keys with the terminal's currently negotiated modes.
+    /// Encode navigation/function keys with the terminal's currently negotiated ConPTY-compatible modes.
     pub fn encodeKey(self: *Terminal, virtual_key: u32, mods: u32, output: []u8) !?[]const u8 {
         const key = physicalTerminalKey(virtual_key) orelse return null;
         if (mods > 7) return error.InvalidKeyModifiers;
         self.api.key_encoder_setopt_from_terminal(self.key_encoder, self.handle);
+        // ConPTY's input parser cannot carry Kitty CSI-u or modifyOtherKeys state-2 sequences.
+        const kitty_flags: c.GhosttyKittyKeyFlags = c.GHOSTTY_KITTY_KEY_DISABLED;
+        const modify_other_keys = false;
+        self.api.key_encoder_setopt(self.key_encoder, c.GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &kitty_flags);
+        self.api.key_encoder_setopt(self.key_encoder, c.GHOSTTY_KEY_ENCODER_OPT_MODIFY_OTHER_KEYS_STATE_2, &modify_other_keys);
         self.api.key_event_set_action(self.key_event, c.GHOSTTY_KEY_ACTION_PRESS);
         self.api.key_event_set_key(self.key_event, key);
         self.api.key_event_set_mods(self.key_event, @intCast(mods));
@@ -334,10 +339,19 @@ pub const Terminal = struct {
         return .{ .foreground = packedRgb(foreground), .background = packedRgb(background), .bold = style.bold, .italic = style.italic, .underline = style.underline != 0, .strikethrough = style.strikethrough, .invisible = style.invisible };
     }
     fn applyDefaultPalette(self: *Terminal) !void {
+        const cursor_style: c.GhosttyTerminalCursorStyle = c.GHOSTTY_TERMINAL_CURSOR_STYLE_BAR;
+        const cursor_blink = true;
+        // ConPTY maintains no scrollback buffer and leaves newly grown rows blank on resize.
+        const pull_scrollback = false;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_STYLE, &cursor_style));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK, &cursor_blink));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_RESIZE_PULL_SCROLLBACK, &pull_scrollback));
         const foreground = colorRgb(0xe4e4e7);
         const background = colorRgb(0x282c34);
+        const cursor = colorRgb(0xe4e4e7);
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground));
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &cursor));
         var palette: [256]c.GhosttyColorRgb = undefined;
         const ansi = [_]u32{ 0x282c34, 0xff5a5a, 0x5af05a, 0xf0d25a, 0x5a5aff, 0xf05af0, 0x5af0f0, 0xe4e4e7, 0x3d4354, 0xff8c8c, 0x8cff8c, 0xffe68c, 0x8c8cff, 0xff8cff, 0x8cffff, 0xffffff };
         for (ansi, 0..) |color, index| palette[index] = colorRgb(color);
@@ -703,4 +717,59 @@ test "OSC palette updates invalidate cached resolved colors" {
     const after = try terminal.readFrame();
     try std.testing.expectEqual(@as(u32, 0x00ff00), after.cells.items[0].style.foreground);
     try std.testing.expect(after.generation > generation);
+}
+
+test "ConPTY-stripped DCS payloads never reach the real DLL grid while intact XTGETTCAP replies and ordinary text survive" {
+    const api = try binding.Api.load();
+    const stream = "+q4D73\x1b[H+q5463;524742;73657472676266;73657472676262\x1b[H$qm\x1b[K\x1bP+q5463\x1b\\visible xx+qCD12yy cost $q? maybe";
+    for (0..stream.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, &api);
+        defer terminal.deinit();
+        var replies: StatusReplyLog = .{};
+        defer replies.bytes.deinit(std.testing.allocator);
+        try terminal.attachResponseSink(.{ .context = &replies, .write = StatusReplyLog.write });
+        try terminal.feedOutput(stream[0..split]);
+        try terminal.feedOutput(stream[split..]);
+        try std.testing.expect(!try terminal.containsViewportText("+q4D73"));
+        try std.testing.expect(!try terminal.containsViewportText("+q5463"));
+        try std.testing.expect(!try terminal.containsViewportText("$qm"));
+        try std.testing.expect(try terminal.containsViewportText("visible xx+qCD12yy cost $q? maybe"));
+        try std.testing.expect(replies.bytes.items.len > 0);
+    }
+}
+
+test "growing rows on resize does not pull scrollback into the active ConPTY screen" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(5, 3, 8, 16);
+    try terminal.feedOutput("1\r\n2\r\n3\r\n4\r\n5");
+    try terminal.resize(5, 5, 8, 16);
+    const frame = try terminal.readFrame();
+    const expected = [_][]const u8{ "3", "4", "5", "", "" };
+    for (expected, 0..) |want, row| {
+        const first = frame.cellText(frame.cells.items[row * frame.columns]);
+        try std.testing.expectEqualStrings(want, first);
+    }
+}
+
+test "default cursor is bar, DECSCUSR updates and resets shape, and encodeKey stays ConPTY-compatible under Kitty/modifyOtherKeys" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var replies: StatusReplyLog = .{};
+    defer replies.bytes.deinit(std.testing.allocator);
+    try terminal.attachResponseSink(.{ .context = &replies, .write = StatusReplyLog.write });
+    try std.testing.expectEqual(.bar, (try terminal.readFrame()).cursor.shape);
+    try terminal.feedOutput("\x1b[2 q");
+    try std.testing.expectEqual(.block, (try terminal.readFrame()).cursor.shape);
+    try terminal.feedOutput("\x1b[4 q");
+    try std.testing.expectEqual(.underline, (try terminal.readFrame()).cursor.shape);
+    try terminal.feedOutput("\x1b[0 q");
+    try std.testing.expectEqual(.bar, (try terminal.readFrame()).cursor.shape);
+    try terminal.feedOutput("\x1b[>1u\x1b[>4;2m\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?1u", replies.bytes.items);
+    var encoded: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("\x1b[A", (try terminal.encodeKey(0x26, 0, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[1;2A", (try terminal.encodeKey(0x26, 1, &encoded)).?);
 }

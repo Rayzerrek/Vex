@@ -1226,6 +1226,18 @@ typedef enum GHOSTTY_ENUM_TYPED {
    * Input type: GhosttyString*
    */
   GHOSTTY_TERMINAL_OPT_TERMINFO_NAME = 37,
+
+  /**
+   * Enable or disable pulling scrollback lines into the active screen when
+   * growing terminal rows during resize.
+   *
+   * ConPTY maintains no scrollback buffer and leaves newly grown rows blank,
+   * so Windows embedders disable scrollback pull to stay synchronized with
+   * ConPTY cursor positioning.
+   *
+   * Input type: bool*
+   */
+  GHOSTTY_TERMINAL_OPT_RESIZE_PULL_SCROLLBACK = 38,
   GHOSTTY_TERMINAL_OPT_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttyTerminalOption;
 
