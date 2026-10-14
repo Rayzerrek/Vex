@@ -180,6 +180,47 @@ pub const Terminal = struct {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
         self.frame_valid = false;
     }
+    /// Scrolls the viewport to the oldest scrollback row and invalidates the cached snapshot.
+    pub fn scrollToTop(self: *Terminal) void {
+        self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_TOP, .value = .{ .delta = 0 } });
+        self.frame_valid = false;
+    }
+    /// Scrolls the viewport back to the live bottom screen and invalidates the cached snapshot.
+    pub fn scrollToBottom(self: *Terminal) void {
+        self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_BOTTOM, .value = .{ .delta = 0 } });
+        self.frame_valid = false;
+    }
+    /// True while the alternate screen buffer (?1049h / ?1047h / ?47h) is active.
+    pub fn isAlternateScreen(self: *const Terminal) !bool {
+        var screen: c.GhosttyTerminalScreen = c.GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen));
+        return switch (screen) {
+            c.GHOSTTY_TERMINAL_SCREEN_PRIMARY => false,
+            c.GHOSTTY_TERMINAL_SCREEN_ALTERNATE => true,
+            else => error.InvalidTerminalScreen,
+        };
+    }
+    /// Handles primary-screen viewport scroll chords (Ctrl+Home/End, Shift+PageUp/PageDown); yields on the alternate screen.
+    pub fn scrollViewportShortcut(self: *Terminal, virtual_key: u32, mods: u32) !bool {
+        if (try self.isAlternateScreen()) return false;
+        if (mods == 2 and virtual_key == 0x24) {
+            self.scrollToTop();
+            return true;
+        }
+        if (mods == 2 and virtual_key == 0x23) {
+            self.scrollToBottom();
+            return true;
+        }
+        if (mods == 1 and (virtual_key == 0x21 or virtual_key == 0x22)) {
+            var rows: u16 = 0;
+            try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_ROWS, &rows));
+            if (rows == 0) return error.InvalidTerminalRowCount;
+            const delta: i32 = @intCast(rows);
+            self.scroll(if (virtual_key == 0x21) -delta else delta);
+            return true;
+        }
+        return false;
+    }
     /// Queries a DEC private mode from the emulator without caching stale host state.
     pub fn decMode(self: *const Terminal, mode: u15) !bool {
         var config: c.GhosttyTerminalModeConfig = .{ .mode = c.ghostty_mode_new(mode, false), .value = false };
@@ -223,8 +264,13 @@ pub const Terminal = struct {
     }
     /// Encode navigation/function keys with the terminal's currently negotiated ConPTY-compatible modes.
     pub fn encodeKey(self: *Terminal, virtual_key: u32, mods: u32, output: []u8) !?[]const u8 {
-        const key = physicalTerminalKey(virtual_key) orelse return null;
         if (mods > 7) return error.InvalidKeyModifiers;
+        if (virtual_key == 0x08 and mods == 2) {
+            if (output.len == 0) return error.InvalidTerminalBufferLength;
+            output[0] = 0x17;
+            return output[0..1];
+        }
+        const key = physicalTerminalKey(virtual_key) orelse return null;
         self.api.key_encoder_setopt_from_terminal(self.key_encoder, self.handle);
         // ConPTY's input parser cannot carry Kitty CSI-u or modifyOtherKeys state-2 sequences.
         const kitty_flags: c.GhosttyKittyKeyFlags = c.GHOSTTY_KITTY_KEY_DISABLED;
@@ -841,4 +887,29 @@ test "encodePasteAlloc normalizes newlines, tracks DEC 2004 across screens/reset
     try std.testing.expect(!try terminal.bracketedPaste());
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkPasteAllocationFailures, .{&api});
 }
+
+test "viewport scroll shortcuts move primary scrollback, yield on alternate screen, and encode Ctrl+Backspace" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(10, 2, 8, 16);
+    try terminal.feedOutput("ROW_TOP\r\nROW_MID1\r\nROW_MID2\r\nROW_BOT1\r\nROW_BOT2");
+    try std.testing.expect(try terminal.containsViewportText("ROW_BOT2"));
+    try std.testing.expect(try terminal.scrollViewportShortcut(0x21, 1));
+    try std.testing.expect(try terminal.containsViewportText("ROW_MID1"));
+    try std.testing.expect(try terminal.scrollViewportShortcut(0x24, 2));
+    try std.testing.expect(try terminal.containsViewportText("ROW_TOP"));
+    try std.testing.expect(try terminal.scrollViewportShortcut(0x22, 1));
+    try std.testing.expect(try terminal.containsViewportText("ROW_MID2"));
+    try std.testing.expect(try terminal.scrollViewportShortcut(0x23, 2));
+    try std.testing.expect(try terminal.containsViewportText("ROW_BOT2"));
+    try terminal.feedOutput("\x1b[?1049h");
+    try std.testing.expect(try terminal.isAlternateScreen());
+    try std.testing.expect(!try terminal.scrollViewportShortcut(0x24, 2));
+    try std.testing.expect(!try terminal.scrollViewportShortcut(0x21, 1));
+    var encoded: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("\x17", (try terminal.encodeKey(0x08, 2, &encoded)).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKey(0x08, 0, &encoded));
+}
+
 

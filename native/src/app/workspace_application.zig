@@ -185,6 +185,14 @@ const WorkspaceApplication = struct {
             return true;
         }
         const session = self.activeSession() orelse return false;
+        const scrolled = session.terminal.scrollViewportShortcut(key, modifiers) catch |err| {
+            self.fail(err);
+            return true;
+        };
+        if (scrolled) {
+            platform.invalidateWindow();
+            return true;
+        }
         if (session.state == .exited) return true;
         var buffer: [256]u8 = undefined;
         const encoded = session.terminal.encodeKey(key, modifiers, &buffer) catch |err| {
