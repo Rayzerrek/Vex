@@ -118,7 +118,8 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
   directory and unread status remain attached to the same tab.
   This checkpoint draws an insertion marker, not WPF's animated ghost/push preview.
 - `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down (also exits focus/zoom mode if active so the new split is visible).
-- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs and pane headers render sanitized OSC 0/2 terminal titles with fallback labels and background attention indicators.
+- Custom Windows DWM titlebar chrome (`#181A1F` top bar, DWM dark mode, rounded corners, border color, and bundled `app.ico`), left project pill with Lucide Folder glyph, project folder name, and live `.git/HEAD` branch name, hoverable `+` new-tab button, and native Windows Minimize / Maximize-Restore / Close (`#E81123` hover) caption buttons.
+- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge) and pane headers render a `14×14` favicon resolved from a 73-entry Lucide + SimpleIcons vector catalog (`app_icon.zig`) using zero-allocation cached-PID ConPTY foreground process inspection (`vex_pty_foreground_process`), OSC 0/2 titles, and OSC 7501 `app` metadata, backed by a per-DPI Direct2D GPU `ID2D1Bitmap` cache.
 - Click a pane to focus it. Drag a right/down divider to resize its two subtrees
   live, without changing terminal focus. Ratios stay in 0.1..0.9; interactive
   dragging also keeps each neighbor at least 100 DIPs. Too-small containers
@@ -189,6 +190,7 @@ circular dependency through the rendering/window adapter.
 - `src/terminal/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
   BEL (`\x07`) attention, acknowledgement and bounded text parsing.
 - `src/terminal/terminal_title.zig`: bounded OSC 0/2 terminal title sanitization and fallback formatting.
+- `src/terminal/app_icon.zig`: 73-entry curated Lucide + SimpleIcons vector icon catalog, process/command-line/OSC title resolution, dark-color contrast lifting, and deterministic fallback monograms.
 - `src/terminal/terminal_feed.zig`: bounded status and ConPTY-stripped DCS (`+q` XTGETTCAP / `$qm` DECRQSS) interception; unrelated VT is
   forwarded unchanged and plain chunks bypass copying.
 - `src/terminal/api.zig`: checked symbol resolution and structured terminal API errors.
