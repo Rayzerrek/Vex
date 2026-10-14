@@ -134,7 +134,10 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
   directory; splits inherit the focused pane's last valid local OSC 7 directory,
   otherwise its starting directory (matching WPF, not a guessed prompt). Navigation
   and function keys use Ghostty's encoder (`Ctrl+Backspace` emits `0x17`); character input is UTF-8.
-- Mouse selection (cell click-drag, word double-click, line triple-click, captured outside-pane drag clamping) and keyboard selection (`Shift+Left/Right/Home/End`, `Ctrl+Shift+Left/Right/Home/End`) highlight selected cells; `Ctrl+C` (when a selection is active) / `Ctrl+Shift+C` copy, `Ctrl+Shift+X` cuts, and `Backspace` deletes a selection anchored at the live cursor.
+- Mouse selection (cell click-drag, word double-click, line triple-click, captured outside-pane drag clamping, copy-on-select) and keyboard selection (`Shift+Left/Right/Home/End`, `Ctrl+Shift+Left/Right/Home/End`) highlight selected cells; `Ctrl+C` (when a selection is active) / `Ctrl+Shift+C` copy, `Ctrl+Shift+X` cuts, and `Backspace` deletes a selection anchored at the live cursor.
+- TUI mouse reporting (`DEC 1000` normal, `DEC 1002` button-event, `DEC 1003` any-event, and `DEC 1006` SGR / `DEC 1016` SGR-pixels / UTF-8 / urxvt encodings) forwards left/middle/right button presses, releases, motion, and wheel scroll to the PTY when active; holding `Shift` overrides TUI mouse capture to select text, scroll the viewport, or right-click paste. Right-click pastes clipboard text when mouse tracking is inactive or `Shift` is held.
+- Interactive scrollback scrollbar overlay per pane renders a proportional thumb when scrollback history is present, expands on hover/drag, supports thumb dragging and track page-up/page-down clicks, and yields right-edge clicks to TUI mouse tracking unless `Shift` is held.
+- `DEC 2048` in-band resize notifications (`\x1b[48;rows;cols;height_px;width_pxt`) are sent on resize when enabled, and `DEC 2026` synchronized output batches frame invalidation with a 100 ms starvation cap.
 - Mouse wheel and primary-screen scroll shortcuts (`Shift+PageUp/PageDown`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+Home/End`) scroll the focused viewport; `Ctrl+Shift+V` and `Shift+Insert` paste text with newline normalization and DEC 2004 bracketed paste; write-only OSC 52 / OSC 1337 Copy sequences update the system clipboard.
 - Window resizing, caption controls and per-monitor DPI handling use Win32.
 
@@ -189,8 +192,8 @@ circular dependency through the rendering/window adapter.
 - `src/terminal/terminal_feed.zig`: bounded status and ConPTY-stripped DCS (`+q` XTGETTCAP / `$qm` DECRQSS) interception; unrelated VT is
   forwarded unchanged and plain chunks bypass copying.
 - `src/terminal/api.zig`: checked symbol resolution and structured terminal API errors.
-- `src/terminal/terminal.zig`: one emulator/iterator/key encoder/selection gesture per pane,
-  reusable parsed snapshots, typed colors/styles/widths/cursor, mouse and keyboard selection/copy/cut, ConPTY resize/cursor/key-encoder parity, bracketed paste encoding, write-only OSC 52/1337 clipboard and OSC 0/2 title callbacks, validated UTF-8.
+- `src/terminal/terminal.zig`: one emulator/iterator/key encoder/mouse encoder/selection gesture per pane,
+  reusable parsed snapshots, typed colors/styles/widths/cursor, mouse and keyboard selection/copy/cut, TUI mouse protocol encoding, scrollback scrollbar state and row seeking, ConPTY resize/cursor/key-encoder parity, DEC 2048/2026 modes, bracketed paste encoding, write-only OSC 52/1337 clipboard and OSC 0/2 title callbacks, validated UTF-8.
 - `src/windows/windows_ffi.zig`: callback-pointer conversion, opaque PTY owners,
   validated window/input seams and presentation of parsed snapshots.
 - `src/windows/wsl_registry.zig`: read-only, bounded/typed default distribution
@@ -368,7 +371,7 @@ settings/themes, palette/tab peek/overlays, pane reorder, tab drag ghost/push an
 final divider styling, shell icons,
 status tooltips/origin routing,
 hyperlinks/path completion,
-IME/full mouse/key protocols, custom glyphs/color
+IME/click-to-move-cursor/extended key protocols, custom glyphs/color
 emoji, true block cursor/blink, accessibility and packaging. Automatic close on
 process exit and running-program close confirmation are also not yet migrated.
 Native currently does not read or overwrite the production WPF profile.
