@@ -306,4 +306,3 @@ test "pane header action hit testing aligns with right-anchored button slots and
     const narrow: PaneRect = .{ .x = 0, .y = 0, .width = 179, .height = 300 };
     try std.testing.expectEqual(@as(?PaneHeaderAction, null), narrow.hitHeaderAction(true, 165, 14));
 }
-

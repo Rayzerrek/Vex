@@ -63,18 +63,16 @@ pub fn parseTitle(raw: []const u8, sanitized_buf: *[TerminalTitle.max_raw_bytes]
 const whitespace = " \t\r\n\x0b\x0c";
 const separators = [_][]const u8{ " - ", " : ", " | ", ": ", "| " };
 const shell_prefixes = [_][]const u8{
-    "pwsh",               "powershell",     "cmd",     "bash", "zsh",     "fish", "sh", "nu",
-    "nushell",            "wsl",            "wslhost", "conhost",
-    "Windows PowerShell", "Command Prompt",
+    "pwsh",    "powershell", "cmd",     "bash",    "zsh",                "fish",           "sh", "nu",
+    "nushell", "wsl",        "wslhost", "conhost", "Windows PowerShell", "Command Prompt",
 };
 const known_apps = [_][]const u8{
-    "nvim",    "neovim",      "vim",        "vi",         "nano",      "emacs",   "hx",     "helix",  "micro",   "kak",    "amp",    "lapce", "code",   "cursor", "zed",
-    "claude",  "claude-code", "codex",      "gemini",     "agy",       "antigravity",       "opencode",          "open-code",          "oc",    "pi",     "aider",  "goose", "qwen",
-    "git",     "lazygit",     "tig",        "gh",         "ssh",       "mosh",    "docker", "kubectl",           "k9s",
-    "htop",    "btop",        "btm",        "top",        "glances",   "tmux",    "zellij", "screen",
-    "yazi",    "lf",          "ranger",     "nnn",        "mc",        "broot",   "less",   "more",   "bat",     "man",
-    "cargo",   "rustc",       "go",         "dotnet",     "make",      "cmake",   "just",   "pytest", "jest",    "vitest",
-    "psql",    "sqlite3",     "mysql",      "redis-cli",  "mongosh",   "ollama",  "llm",    "mods",   "glow",    "fzf",    "rg",
+    "nvim",   "neovim",      "vim",    "vi",     "nano",   "emacs",       "hx",       "helix",     "micro",     "kak",     "amp",    "lapce",   "code", "cursor", "zed",
+    "claude", "claude-code", "codex",  "gemini", "agy",    "antigravity", "opencode", "open-code", "oc",        "pi",      "aider",  "goose",   "qwen", "git",    "lazygit",
+    "tig",    "gh",          "ssh",    "mosh",   "docker", "kubectl",     "k9s",      "htop",      "btop",      "btm",     "top",    "glances", "tmux", "zellij", "screen",
+    "yazi",   "lf",          "ranger", "nnn",    "mc",     "broot",       "less",     "more",      "bat",       "man",     "cargo",  "rustc",   "go",   "dotnet", "make",
+    "cmake",  "just",        "pytest", "jest",   "vitest", "psql",        "sqlite3",  "mysql",     "redis-cli", "mongosh", "ollama", "llm",     "mods", "glow",   "fzf",
+    "rg",
 };
 const runner_prefixes = [_][]const u8{
     "bun", "bunx", "npx", "pnpm", "pnpx", "npm", "yarn", "deno", "node", "python", "python3", "py", "sudo",
