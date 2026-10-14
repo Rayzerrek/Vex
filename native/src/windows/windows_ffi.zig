@@ -5,6 +5,7 @@ const directory = @import("../shell/directory.zig");
 const status = @import("../terminal/program_status.zig");
 const shell = @import("../shell/shell_launch.zig");
 const tab_strip = @import("../workspace/tab_strip.zig");
+const app_icon = @import("../terminal/app_icon.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
 pub const c = @cImport({
@@ -386,8 +387,27 @@ pub fn showFailure(err: anyerror) void {
     c.vex_window_error(message);
 }
 /// Tab index/count come from the bounded workspace model; empty title falls back to the shell display name.
-pub fn drawTab(index: usize, count: usize, active: bool, title: []const u8, summary: status.ProgramStatusSummary, attention: bool) void {
-    c.vex_draw_tab(@intCast(index), @intCast(count), active, if (title.len == 0) null else title.ptr, title.len, nativeStatusBadge(summary), attention);
+pub fn drawTab(index: usize, count: usize, active: bool, title: []const u8, icons: []const app_icon.AppIcon, summary: status.ProgramStatusSummary, attention: bool) void {
+    var native_icons: [8]c.VexAppIcon = undefined;
+    const icon_count: usize = @min(icons.len, native_icons.len);
+    for (icons[0..icon_count], 0..) |icon, idx| {
+        native_icons[idx] = nativeAppIcon(icon);
+    }
+    const icons_ptr: [*c]const c.VexAppIcon = if (icon_count == 0) null else &native_icons;
+    c.vex_draw_tab(@intCast(index), @intCast(count), active, if (title.len == 0) null else title.ptr, title.len, icons_ptr, icon_count, nativeStatusBadge(summary), attention);
+}
+fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
+    var badge = [4]u8{ 0, 0, 0, 0 };
+    const len: usize = @min(@as(usize, icon.badge_len), 2);
+    @memcpy(badge[0..len], icon.badge_text[0..len]);
+    return .{
+        .kind = @intFromEnum(icon.kind),
+        .glyph = @intFromEnum(icon.glyph),
+        .badge_len = @intCast(len),
+        .reserved = 0,
+        .color_rgb = icon.color_rgb,
+        .badge = badge,
+    };
 }
 fn nativeStatusBadge(summary: status.ProgramStatusSummary) c.VexProgramStatus {
     return .{ .state = @intFromEnum(summary.state), .kind = if (summary.kind) |kind| switch (kind) {
@@ -402,9 +422,9 @@ pub fn statusBadgeKey(summary: status.ProgramStatusSummary) u32 {
     return badge.state | (badge.kind << 8) | (@as(u32, @intCast(badge.progress + 1)) << 16);
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
-pub fn beginPane(bounds: panes.PaneRect, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, summary: status.ProgramStatusSummary) void {
+pub fn beginPane(bounds: panes.PaneRect, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary) void {
     const action_code: u8 = if (hovered_action) |action| @intFromEnum(action) else 0;
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeStatusBadge(summary));
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeStatusBadge(summary));
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {

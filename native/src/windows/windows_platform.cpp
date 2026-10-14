@@ -17,6 +17,14 @@ static IDWriteTextFormat* terminalFonts[4];
 static IDWriteTextFormat* chromeFont;
 static IDWriteTextFormat* chromeBoldFont;
 static IDWriteTextFormat* badgeFont;
+static ID2D1StrokeStyle* roundStrokeStyle;
+struct IconCacheEntry {
+    uint64_t key;
+    ID2D1Bitmap* bitmap;
+};
+static IconCacheEntry iconCache[64];
+static size_t iconCacheCount;
+static size_t iconCacheClock;
 static float cellWidth, cellHeight, clientWidth, clientHeight, gridLeft, gridTop;
 static uint32_t tabStripCount = 1;
 static float tabWidthDip = 160;
@@ -41,6 +49,14 @@ HWND vex_native_window() { return window; }
 
 template<class T> static void releaseCom(T*& object) {
     if (object) { object->Release(); object = nullptr; }
+}
+static void clearIconCache() {
+    for (size_t i = 0; i < iconCacheCount; i++) {
+        releaseCom(iconCache[i].bitmap);
+        iconCache[i].key = 0;
+    }
+    iconCacheCount = 0;
+    iconCacheClock = 0;
 }
 static D2D1_COLOR_F rgb(uint32_t color) {
     return D2D1::ColorF((color >> 16) / 255.0f, ((color >> 8) & 255) / 255.0f, (color & 255) / 255.0f);
@@ -227,7 +243,7 @@ static void drawWindow() {
     drawCaptionButtons();
     result = target->EndDraw();
     if (result == D2DERR_RECREATE_TARGET) {
-        releaseCom(brush); releaseCom(target); InvalidateRect(window, nullptr, FALSE);
+        clearIconCache(); releaseCom(brush); releaseCom(target); InvalidateRect(window, nullptr, FALSE);
     } else if (FAILED(result)) { platformError = (int)result; DestroyWindow(window); }
     else if (!firstFrame) { firstFrame = true; startupMilestone("first frame"); }
 }
@@ -510,7 +526,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam != SIZE_MINIMIZED && window) {
             if (target) {
                 HRESULT result = target->Resize(D2D1::SizeU(LOWORD(lparam), HIWORD(lparam)));
-                if (result == D2DERR_RECREATE_TARGET) { releaseCom(brush); releaseCom(target); }
+                if (result == D2DERR_RECREATE_TARGET) { clearIconCache(); releaseCom(brush); releaseCom(target); }
                 else if (FAILED(result)) { platformError = (int)result; DestroyWindow(hwnd); return 0; }
             }
             updateWindowMetrics(); InvalidateRect(hwnd, nullptr, FALSE);
@@ -518,6 +534,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     case WM_DPICHANGED: {
         cancelPointerGesture();
+        clearIconCache();
         auto bounds = reinterpret_cast<RECT*>(lparam);
         if (target) target->SetDpi((float)HIWORD(wparam), (float)HIWORD(wparam));
         if (!SetWindowPos(hwnd, nullptr, bounds->left, bounds->top, bounds->right - bounds->left, bounds->bottom - bounds->top, SWP_NOZORDER | SWP_NOACTIVATE)) {
@@ -638,7 +655,11 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     HRESULT result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &drawingFactory);
     if (FAILED(result)) return (int)result;
-    result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&textFactory);
+    D2D1_STROKE_STYLE_PROPERTIES strokeProps = D2D1::StrokeStyleProperties(
+        D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
+        D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_SOLID, 0.0f);
+    result = drawingFactory->CreateStrokeStyle(strokeProps, nullptr, 0, &roundStrokeStyle);
+    if (SUCCEEDED(result)) result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&textFactory);
     const auto configureChromeFormat = [](IDWriteTextFormat* fmt) -> HRESULT {
         HRESULT hr = fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         if (FAILED(hr)) return hr;
@@ -714,31 +735,526 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     } else platformError = (int)result;
     if (iconBig) DestroyIcon(iconBig);
     if (iconSmall) DestroyIcon(iconSmall);
+    clearIconCache();
     releaseCom(brush); releaseCom(target);
     releaseCom(chromeFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
     for (auto& font : terminalFonts) releaseCom(font);
+    releaseCom(roundStrokeStyle);
     releaseCom(textFactory); releaseCom(drawingFactory);
     return platformError;
 }
+
+static uint64_t computeIconCacheKey(VexAppIcon icon, uint32_t sizeCode) {
+    uint64_t badgeWord = ((uint64_t)icon.badge[0] << 8) | (uint64_t)icon.badge[1];
+    return ((uint64_t)(icon.color_rgb & 0xffffffu)) |
+           ((uint64_t)icon.glyph << 24) |
+           ((uint64_t)(icon.kind & 0xfu) << 32) |
+           ((uint64_t)(icon.badge_len & 0xfu) << 36) |
+           ((uint64_t)(sizeCode & 0xffu) << 40) |
+           (badgeWord << 48);
+}
+
+static void drawAppIconContent(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, VexAppIcon icon, float ox, float oy, float sizeDip) {
+    const float s = sizeDip / 24.0f;
+    const auto pt = [&](float px, float py) -> D2D1_POINT_2F {
+        return D2D1::Point2F(ox + px * s, oy + py * s);
+    };
+    const auto rc = [&](float x1, float y1, float x2, float y2) -> D2D1_RECT_F {
+        return D2D1::RectF(ox + x1 * s, oy + y1 * s, ox + x2 * s, oy + y2 * s);
+    };
+    const auto rrc = [&](float x1, float y1, float x2, float y2, float rx) -> D2D1_ROUNDED_RECT {
+        return D2D1::RoundedRect(rc(x1, y1, x2, y2), rx * s, rx * s);
+    };
+    const float sw = fmaxf(1.25f, 2.1f * s);
+    const auto line = [&](float x1, float y1, float x2, float y2) {
+        rt->DrawLine(pt(x1, y1), pt(x2, y2), b, sw, roundStrokeStyle);
+    };
+    const auto thinLine = [&](float x1, float y1, float x2, float y2) {
+        rt->DrawLine(pt(x1, y1), pt(x2, y2), b, sw * 0.78f, roundStrokeStyle);
+    };
+    const auto circle = [&](float cx, float cy, float r) {
+        rt->DrawEllipse(D2D1::Ellipse(pt(cx, cy), r * s, r * s), b, sw, roundStrokeStyle);
+    };
+    const auto fillCircle = [&](float cx, float cy, float r) {
+        rt->FillEllipse(D2D1::Ellipse(pt(cx, cy), r * s, r * s), b);
+    };
+    const auto box = [&](float x1, float y1, float x2, float y2, float rx) {
+        rt->DrawRoundedRectangle(rrc(x1, y1, x2, y2, rx), b, sw, roundStrokeStyle);
+    };
+    const auto fillBox = [&](float x1, float y1, float x2, float y2, float rx) {
+        rt->FillRoundedRectangle(rrc(x1, y1, x2, y2, rx), b);
+    };
+
+    if (icon.kind == 2 && icon.badge_len > 0 && badgeFont) {
+        b->SetColor(rgb(icon.color_rgb ? icon.color_rgb : 0x5c6bc0));
+        fillBox(1.5f, 1.5f, 22.5f, 22.5f, 5.0f);
+        wchar_t wide[5] = {};
+        uint8_t count = icon.badge_len > 2 ? 2 : icon.badge_len;
+        for (uint8_t i = 0; i < count; i++) wide[i] = (wchar_t)icon.badge[i];
+        b->SetColor(rgb(0xffffff));
+        const float textLeft = count == 1 ? ox + sizeDip * 0.27f : ox + sizeDip * 0.12f;
+        rt->DrawText(wide, count, badgeFont, D2D1::RectF(textLeft, oy + sizeDip * 0.05f, ox + sizeDip, oy + sizeDip), b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        return;
+    }
+
+    b->SetColor(rgb(icon.color_rgb ? icon.color_rgb : 0x8f9197));
+    switch (icon.glyph) {
+    case 2: // powershell
+        box(2.5f, 3.5f, 21.5f, 20.5f, 3.0f);
+        line(6.5f, 8.0f, 11.5f, 12.0f);
+        line(11.5f, 12.0f, 6.5f, 16.0f);
+        line(12.5f, 16.0f, 17.5f, 16.0f);
+        break;
+    case 3: // code_brackets (< / >)
+        line(8.0f, 7.0f, 3.5f, 12.0f);
+        line(3.5f, 12.0f, 8.0f, 17.0f);
+        line(16.0f, 7.0f, 20.5f, 12.0f);
+        line(20.5f, 12.0f, 16.0f, 17.0f);
+        thinLine(13.5f, 5.5f, 10.5f, 18.5f);
+        break;
+    case 4: // neovim
+        line(5.5f, 19.5f, 5.5f, 4.5f);
+        line(5.5f, 4.5f, 18.5f, 19.5f);
+        line(18.5f, 19.5f, 18.5f, 4.5f);
+        break;
+    case 5: // vim
+        line(4.5f, 5.5f, 12.0f, 19.5f);
+        line(12.0f, 19.5f, 19.5f, 5.5f);
+        line(4.5f, 5.5f, 9.0f, 5.5f);
+        line(15.0f, 5.5f, 19.5f, 5.5f);
+        break;
+    case 6: // git_branch (Lucide git-branch)
+        line(6.5f, 5.0f, 6.5f, 19.0f);
+        circle(6.5f, 6.0f, 2.3f);
+        circle(6.5f, 18.0f, 2.3f);
+        circle(17.5f, 8.0f, 2.3f);
+        line(6.5f, 14.0f, 14.5f, 14.0f);
+        line(14.5f, 14.0f, 17.5f, 10.3f);
+        break;
+    case 7: // github
+        circle(12.0f, 12.5f, 7.5f);
+        line(7.0f, 6.5f, 5.5f, 3.5f);
+        line(5.5f, 3.5f, 9.5f, 5.5f);
+        line(17.0f, 6.5f, 18.5f, 3.5f);
+        line(18.5f, 3.5f, 14.5f, 5.5f);
+        break;
+    case 8: // docker
+        fillBox(5.0f, 9.0f, 8.2f, 12.2f, 0.6f);
+        fillBox(9.2f, 9.0f, 12.4f, 12.2f, 0.6f);
+        fillBox(13.4f, 9.0f, 16.6f, 12.2f, 0.6f);
+        fillBox(9.2f, 5.0f, 12.4f, 8.2f, 0.6f);
+        line(3.5f, 14.0f, 20.5f, 14.0f);
+        line(4.5f, 14.0f, 6.5f, 18.5f);
+        line(6.5f, 18.5f, 17.0f, 18.5f);
+        line(17.0f, 18.5f, 20.5f, 14.0f);
+        break;
+    case 9: // kubernetes
+        circle(12.0f, 12.0f, 8.0f);
+        fillCircle(12.0f, 12.0f, 2.2f);
+        thinLine(12.0f, 2.5f, 12.0f, 21.5f);
+        thinLine(2.5f, 12.0f, 21.5f, 12.0f);
+        thinLine(5.3f, 5.3f, 18.7f, 18.7f);
+        thinLine(18.7f, 5.3f, 5.3f, 18.7f);
+        break;
+    case 10: // nodejs (hexagon)
+        line(12.0f, 3.0f, 20.0f, 7.5f);
+        line(20.0f, 7.5f, 20.0f, 16.5f);
+        line(20.0f, 16.5f, 12.0f, 21.0f);
+        line(12.0f, 21.0f, 4.0f, 16.5f);
+        line(4.0f, 16.5f, 4.0f, 7.5f);
+        line(4.0f, 7.5f, 12.0f, 3.0f);
+        thinLine(12.0f, 7.5f, 12.0f, 16.5f);
+        break;
+    case 11: // npm_box
+        box(3.5f, 3.5f, 20.5f, 20.5f, 2.0f);
+        line(8.0f, 16.5f, 8.0f, 8.5f);
+        line(8.0f, 8.5f, 15.5f, 8.5f);
+        line(15.5f, 8.5f, 15.5f, 16.5f);
+        line(12.0f, 11.5f, 12.0f, 16.5f);
+        break;
+    case 12: // pnpm_cubes
+        fillBox(3.5f, 3.5f, 11.0f, 11.0f, 1.5f);
+        fillBox(13.0f, 3.5f, 20.5f, 11.0f, 1.5f);
+        fillBox(3.5f, 13.0f, 11.0f, 20.5f, 1.5f);
+        box(13.5f, 13.5f, 20.0f, 20.0f, 1.5f);
+        break;
+    case 13: // bun
+        circle(12.0f, 13.0f, 7.5f);
+        line(9.5f, 5.5f, 12.0f, 8.0f);
+        line(14.5f, 5.5f, 12.0f, 8.0f);
+        fillCircle(9.5f, 13.0f, 1.2f);
+        fillCircle(14.5f, 13.0f, 1.2f);
+        break;
+    case 14: // deno
+        circle(12.0f, 12.0f, 8.5f);
+        fillCircle(10.0f, 9.5f, 1.3f);
+        line(13.0f, 9.0f, 16.5f, 17.5f);
+        break;
+    case 15: // python
+        box(7.0f, 3.5f, 16.5f, 12.0f, 3.0f);
+        box(7.5f, 12.0f, 17.0f, 20.5f, 3.0f);
+        box(3.5f, 7.5f, 12.0f, 16.0f, 3.0f);
+        box(12.0f, 8.0f, 20.5f, 16.5f, 3.0f);
+        break;
+    case 16: // rust_gear
+        circle(12.0f, 12.0f, 6.8f);
+        circle(12.0f, 12.0f, 2.8f);
+        line(12.0f, 2.5f, 12.0f, 5.0f);
+        line(12.0f, 19.0f, 12.0f, 21.5f);
+        line(2.5f, 12.0f, 5.0f, 12.0f);
+        line(19.0f, 12.0f, 21.5f, 12.0f);
+        line(5.3f, 5.3f, 7.0f, 7.0f);
+        line(17.0f, 17.0f, 18.7f, 18.7f);
+        line(18.7f, 5.3f, 17.0f, 7.0f);
+        line(7.0f, 17.0f, 5.3f, 18.7f);
+        break;
+    case 17: // go_gopher
+        box(4.5f, 5.5f, 19.5f, 19.5f, 6.0f);
+        circle(9.5f, 10.5f, 2.0f);
+        circle(14.5f, 10.5f, 2.0f);
+        line(10.5f, 15.0f, 13.5f, 15.0f);
+        break;
+    case 18: // zig_bolt
+        line(4.5f, 6.0f, 19.5f, 6.0f);
+        line(19.5f, 6.0f, 4.5f, 18.0f);
+        line(4.5f, 18.0f, 19.5f, 18.0f);
+        line(13.5f, 3.5f, 10.5f, 20.5f);
+        break;
+    case 19: // dotnet
+        fillCircle(5.0f, 17.5f, 1.8f);
+        line(9.0f, 18.0f, 9.0f, 6.5f);
+        line(9.0f, 6.5f, 16.5f, 18.0f);
+        line(16.5f, 18.0f, 16.5f, 6.5f);
+        line(20.0f, 6.5f, 20.0f, 18.0f);
+        break;
+    case 20: // java_cup
+        box(5.0f, 10.0f, 16.0f, 19.0f, 3.0f);
+        line(16.0f, 11.5f, 19.5f, 11.5f);
+        line(19.5f, 11.5f, 19.5f, 16.0f);
+        line(19.5f, 16.0f, 16.0f, 16.0f);
+        thinLine(8.5f, 4.5f, 8.5f, 8.0f);
+        thinLine(12.5f, 3.5f, 12.5f, 8.0f);
+        break;
+    case 21: // c_lang
+        line(17.5f, 7.0f, 10.0f, 5.0f);
+        line(10.0f, 5.0f, 5.5f, 9.5f);
+        line(5.5f, 9.5f, 5.5f, 14.5f);
+        line(5.5f, 14.5f, 10.0f, 19.0f);
+        line(10.0f, 19.0f, 17.5f, 17.0f);
+        break;
+    case 22: // cpp_lang
+        line(13.0f, 6.5f, 7.5f, 5.5f);
+        line(7.5f, 5.5f, 4.0f, 9.5f);
+        line(4.0f, 9.5f, 4.0f, 14.5f);
+        line(4.0f, 14.5f, 7.5f, 18.5f);
+        line(7.5f, 18.5f, 13.0f, 17.5f);
+        thinLine(13.5f, 12.0f, 17.5f, 12.0f);
+        thinLine(15.5f, 10.0f, 15.5f, 14.0f);
+        thinLine(18.5f, 12.0f, 22.0f, 12.0f);
+        thinLine(20.25f, 10.0f, 20.25f, 14.0f);
+        break;
+    case 23: // ai_sparkle (Claude / Gemini / Aider / Ollama)
+        line(12.0f, 2.5f, 12.0f, 21.5f);
+        line(2.5f, 12.0f, 21.5f, 12.0f);
+        line(5.5f, 5.5f, 18.5f, 18.5f);
+        line(18.5f, 5.5f, 5.5f, 18.5f);
+        fillCircle(12.0f, 12.0f, 2.5f);
+        break;
+    case 24: // openai_knot
+        circle(12.0f, 12.0f, 7.8f);
+        circle(12.0f, 12.0f, 3.4f);
+        thinLine(12.0f, 4.2f, 18.5f, 8.0f);
+        thinLine(18.5f, 8.0f, 18.5f, 16.0f);
+        thinLine(18.5f, 16.0f, 12.0f, 19.8f);
+        thinLine(12.0f, 19.8f, 5.5f, 16.0f);
+        thinLine(5.5f, 16.0f, 5.5f, 8.0f);
+        thinLine(5.5f, 8.0f, 12.0f, 4.2f);
+        break;
+    case 25: // copilot
+        box(4.0f, 8.5f, 20.0f, 17.5f, 4.0f);
+        circle(9.0f, 13.0f, 1.8f);
+        circle(15.0f, 13.0f, 1.8f);
+        line(7.0f, 8.5f, 9.5f, 5.0f);
+        line(17.0f, 8.5f, 14.5f, 5.0f);
+        line(9.5f, 5.0f, 14.5f, 5.0f);
+        break;
+    case 26: // cursor_arrow
+        line(5.5f, 4.0f, 19.5f, 11.5f);
+        line(19.5f, 11.5f, 12.5f, 13.5f);
+        line(12.5f, 13.5f, 9.5f, 20.5f);
+        line(9.5f, 20.5f, 5.5f, 4.0f);
+        break;
+    case 27: // activity_pulse (Lucide activity: btop / htop)
+        line(2.5f, 12.0f, 6.5f, 12.0f);
+        line(6.5f, 12.0f, 9.5f, 4.0f);
+        line(9.5f, 4.0f, 14.5f, 20.0f);
+        line(14.5f, 20.0f, 17.5f, 12.0f);
+        line(17.5f, 12.0f, 21.5f, 12.0f);
+        break;
+    case 28: // database (Lucide database)
+        box(4.5f, 4.0f, 19.5f, 20.0f, 4.0f);
+        line(4.5f, 9.5f, 19.5f, 9.5f);
+        line(4.5f, 14.8f, 19.5f, 14.8f);
+        break;
+    case 29: // globe (Lucide globe: curl / wget / httpie)
+        circle(12.0f, 12.0f, 8.5f);
+        thinLine(3.5f, 12.0f, 20.5f, 12.0f);
+        thinLine(12.0f, 3.5f, 12.0f, 20.5f);
+        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 4.2f * s, 8.5f * s), b, sw * 0.8f, roundStrokeStyle);
+        break;
+    case 30: // shield_key (Lucide shield: ssh / gpg)
+        line(12.0f, 3.0f, 19.5f, 6.0f);
+        line(19.5f, 6.0f, 19.5f, 12.5f);
+        line(19.5f, 12.5f, 12.0f, 21.0f);
+        line(12.0f, 21.0f, 4.5f, 12.5f);
+        line(4.5f, 12.5f, 4.5f, 6.0f);
+        line(4.5f, 6.0f, 12.0f, 3.0f);
+        circle(12.0f, 11.0f, 2.0f);
+        line(12.0f, 13.0f, 12.0f, 16.5f);
+        break;
+    case 31: // package_box (Lucide package: winget / scoop / brew)
+        line(12.0f, 2.8f, 20.0f, 7.2f);
+        line(20.0f, 7.2f, 20.0f, 16.8f);
+        line(20.0f, 16.8f, 12.0f, 21.2f);
+        line(12.0f, 21.2f, 4.0f, 16.8f);
+        line(4.0f, 16.8f, 4.0f, 7.2f);
+        line(4.0f, 7.2f, 12.0f, 2.8f);
+        thinLine(4.0f, 7.2f, 12.0f, 11.8f);
+        thinLine(20.0f, 7.2f, 12.0f, 11.8f);
+        thinLine(12.0f, 11.8f, 12.0f, 21.2f);
+        break;
+    case 32: // cloud (Lucide cloud: aws / gcloud / az / flyctl / vercel)
+        box(4.0f, 10.5f, 20.0f, 19.0f, 4.2f);
+        circle(10.5f, 10.0f, 4.2f);
+        circle(15.2f, 11.5f, 3.2f);
+        break;
+    case 33: // layers (Lucide layers: terraform / ansible / helm)
+        line(12.0f, 3.5f, 20.5f, 8.0f);
+        line(20.5f, 8.0f, 12.0f, 12.5f);
+        line(12.0f, 12.5f, 3.5f, 8.0f);
+        line(3.5f, 8.0f, 12.0f, 3.5f);
+        line(3.5f, 12.5f, 12.0f, 17.0f);
+        line(12.0f, 17.0f, 20.5f, 12.5f);
+        line(3.5f, 16.5f, 12.0f, 21.0f);
+        line(12.0f, 21.0f, 20.5f, 16.5f);
+        break;
+    case 34: // ubuntu_circle
+        circle(12.0f, 12.0f, 5.5f);
+        fillCircle(12.0f, 3.8f, 2.1f);
+        fillCircle(5.0f, 16.2f, 2.1f);
+        fillCircle(19.0f, 16.2f, 2.1f);
+        break;
+    case 35: // arch_peak
+        line(12.0f, 3.0f, 4.0f, 20.0f);
+        line(12.0f, 3.0f, 20.0f, 20.0f);
+        line(4.0f, 20.0f, 9.0f, 17.5f);
+        line(20.0f, 20.0f, 15.0f, 17.5f);
+        circle(12.0f, 16.5f, 2.8f);
+        break;
+    case 36: // debian_swirl
+        circle(12.0f, 11.5f, 6.5f);
+        line(12.0f, 18.0f, 16.5f, 20.5f);
+        break;
+    case 37: // linux_penguin
+        circle(12.0f, 7.5f, 3.8f);
+        box(7.0f, 10.5f, 17.0f, 20.5f, 4.5f);
+        line(7.0f, 12.0f, 4.0f, 16.5f);
+        line(17.0f, 12.0f, 20.0f, 16.5f);
+        break;
+    case 38: // apple
+        circle(10.0f, 13.5f, 5.5f);
+        circle(14.0f, 13.5f, 5.5f);
+        line(12.0f, 7.5f, 15.0f, 3.5f);
+        break;
+    case 39: // android
+        box(5.0f, 9.0f, 19.0f, 19.5f, 5.0f);
+        line(8.0f, 9.0f, 5.5f, 4.5f);
+        line(16.0f, 9.0f, 18.5f, 4.5f);
+        fillCircle(9.5f, 13.5f, 1.3f);
+        fillCircle(14.5f, 13.5f, 1.3f);
+        break;
+    case 40: // vite_bolt
+        line(4.5f, 5.0f, 12.0f, 20.5f);
+        line(19.5f, 5.0f, 12.0f, 20.5f);
+        line(13.5f, 4.0f, 10.0f, 11.5f);
+        line(10.0f, 11.5f, 14.5f, 11.5f);
+        line(14.5f, 11.5f, 11.0f, 18.0f);
+        break;
+    case 41: // next_n
+        circle(12.0f, 12.0f, 8.5f);
+        line(8.5f, 16.0f, 8.5f, 8.0f);
+        line(8.5f, 8.0f, 16.5f, 18.0f);
+        line(15.5f, 8.0f, 15.5f, 13.5f);
+        break;
+    case 42: // react_atom
+        fillCircle(12.0f, 12.0f, 2.2f);
+        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 9.0f * s, 3.8f * s), b, sw * 0.85f, roundStrokeStyle);
+        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 3.8f * s, 9.0f * s), b, sw * 0.85f, roundStrokeStyle);
+        break;
+    case 43: // vue_v
+        line(3.5f, 5.0f, 12.0f, 20.0f);
+        line(20.5f, 5.0f, 12.0f, 20.0f);
+        line(8.0f, 5.0f, 12.0f, 12.5f);
+        line(16.0f, 5.0f, 12.0f, 12.5f);
+        break;
+    case 44: // svelte_s
+        box(6.5f, 3.5f, 18.5f, 12.5f, 4.0f);
+        box(5.5f, 11.5f, 17.5f, 20.5f, 4.0f);
+        break;
+    case 45: // angular_shield
+        line(12.0f, 3.0f, 20.0f, 6.0f);
+        line(20.0f, 6.0f, 18.0f, 16.5f);
+        line(18.0f, 16.5f, 12.0f, 21.0f);
+        line(12.0f, 21.0f, 6.0f, 16.5f);
+        line(6.0f, 16.5f, 4.0f, 6.0f);
+        line(4.0f, 6.0f, 12.0f, 3.0f);
+        line(12.0f, 7.5f, 8.5f, 16.0f);
+        line(12.0f, 7.5f, 15.5f, 16.0f);
+        thinLine(9.5f, 13.5f, 14.5f, 13.5f);
+        break;
+    case 46: // tailwind_wave
+        line(4.0f, 10.5f, 8.5f, 6.5f);
+        line(8.5f, 6.5f, 14.0f, 10.5f);
+        line(14.0f, 10.5f, 19.5f, 6.5f);
+        line(4.5f, 17.0f, 9.0f, 13.0f);
+        line(9.0f, 13.0f, 14.5f, 17.0f);
+        line(14.5f, 17.0f, 20.0f, 13.0f);
+        break;
+    case 47: // lua_orbit
+        circle(11.0f, 13.0f, 6.5f);
+        fillCircle(13.5f, 10.5f, 1.8f);
+        fillCircle(18.5f, 5.5f, 2.2f);
+        break;
+    case 48: // ruby_gem
+        line(7.0f, 4.5f, 17.0f, 4.5f);
+        line(17.0f, 4.5f, 21.0f, 9.5f);
+        line(21.0f, 9.5f, 12.0f, 20.0f);
+        line(12.0f, 20.0f, 3.0f, 9.5f);
+        line(3.0f, 9.5f, 7.0f, 4.5f);
+        thinLine(3.0f, 9.5f, 21.0f, 9.5f);
+        break;
+    case 49: // php_oval
+        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 9.5f * s, 6.0f * s), b, sw, roundStrokeStyle);
+        line(9.0f, 9.5f, 7.5f, 14.5f);
+        line(12.5f, 9.5f, 11.0f, 14.5f);
+        line(16.0f, 9.5f, 14.5f, 14.5f);
+        break;
+    case 50: // elixir_drop
+        line(12.0f, 3.0f, 18.0f, 13.0f);
+        line(12.0f, 3.0f, 6.0f, 13.0f);
+        circle(12.0f, 14.8f, 6.0f);
+        break;
+    case 51: // search_lens (Lucide search: rg / fd / fzf / grep)
+        circle(10.5f, 10.5f, 6.2f);
+        line(15.2f, 15.2f, 20.5f, 20.5f);
+        break;
+    case 52: // wrench_tool (Lucide wrench: make / cmake / ninja / just)
+        circle(15.5f, 8.5f, 4.5f);
+        line(12.2f, 11.8f, 4.5f, 19.5f);
+        line(4.5f, 19.5f, 7.0f, 20.5f);
+        break;
+    case 53: // folder_tree (Lucide folder: yazi / ranger / lf)
+        box(3.0f, 6.5f, 21.0f, 19.5f, 2.5f);
+        line(3.0f, 6.5f, 9.5f, 6.5f);
+        line(9.5f, 6.5f, 11.5f, 9.0f);
+        line(11.5f, 9.0f, 21.0f, 9.0f);
+        break;
+    case 54: // layout_grid (Lucide layout-grid: tmux / zellij)
+        box(3.5f, 3.5f, 10.5f, 10.5f, 1.8f);
+        box(13.5f, 3.5f, 20.5f, 10.5f, 1.8f);
+        box(3.5f, 13.5f, 10.5f, 20.5f, 1.8f);
+        box(13.5f, 13.5f, 20.5f, 20.5f, 1.8f);
+        break;
+    case 55: // film_media (Lucide play: ffmpeg / mpv / yt-dlp)
+        box(3.0f, 4.0f, 21.0f, 20.0f, 3.0f);
+        line(9.5f, 8.0f, 16.5f, 12.0f);
+        line(16.5f, 12.0f, 9.5f, 16.0f);
+        line(9.5f, 16.0f, 9.5f, 8.0f);
+        break;
+    default: // 1: terminal_prompt (>_ Lucide terminal)
+        line(4.5f, 7.0f, 10.5f, 12.0f);
+        line(10.5f, 12.0f, 4.5f, 17.0f);
+        line(12.0f, 17.0f, 19.5f, 17.0f);
+        break;
+    }
+}
+
+static void drawCachedAppIcon(VexAppIcon icon, float x, float y, float sizeDip) {
+    if (!target || !brush) return;
+    const uint32_t sizeCode = (uint32_t)lroundf(sizeDip);
+    const uint64_t key = computeIconCacheKey(icon, sizeCode);
+    for (size_t i = 0; i < iconCacheCount; i++) {
+        if (iconCache[i].key == key && iconCache[i].bitmap) {
+            target->DrawBitmap(iconCache[i].bitmap, D2D1::RectF(x, y, x + sizeDip, y + sizeDip), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            return;
+        }
+    }
+    ID2D1BitmapRenderTarget* bmpTarget = nullptr;
+    if (SUCCEEDED(target->CreateCompatibleRenderTarget(D2D1::SizeF(sizeDip, sizeDip), &bmpTarget)) && bmpTarget) {
+        ID2D1SolidColorBrush* bmpBrush = nullptr;
+        ID2D1Bitmap* bitmap = nullptr;
+        if (SUCCEEDED(bmpTarget->CreateSolidColorBrush(rgb(icon.color_rgb ? icon.color_rgb : 0x8f9197), &bmpBrush)) && bmpBrush) {
+            bmpTarget->BeginDraw();
+            bmpTarget->Clear(D2D1::ColorF(0, 0.0f));
+            drawAppIconContent(bmpTarget, bmpBrush, icon, 0.0f, 0.0f, sizeDip);
+            if (SUCCEEDED(bmpTarget->EndDraw())) {
+                bmpTarget->GetBitmap(&bitmap);
+            }
+        }
+        releaseCom(bmpBrush);
+        releaseCom(bmpTarget);
+        if (bitmap) {
+            size_t slot = 0;
+            if (iconCacheCount < 64) {
+                slot = iconCacheCount++;
+            } else {
+                slot = iconCacheClock;
+                iconCacheClock = (iconCacheClock + 1) % 64;
+                releaseCom(iconCache[slot].bitmap);
+            }
+            iconCache[slot].key = key;
+            iconCache[slot].bitmap = bitmap;
+            target->DrawBitmap(bitmap, D2D1::RectF(x, y, x + sizeDip, y + sizeDip), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            return;
+        }
+    }
+    drawAppIconContent(target, brush, icon, x, y, sizeDip);
+}
+
 static void drawProgramStatus(VexProgramStatus status, float x, float y, float width, bool iconOnly) {
     if (status.state < 2 || status.state > 5) return;
     const wchar_t* icon = L"\x25CC";
     const wchar_t* text = L"Working";
     uint32_t color = 0x8f9197;
+    uint32_t pillFill = 0x1f222a;
+    uint32_t pillBorder = 0x323642;
     switch (status.state) {
-        case 3: icon = L"\x2713"; text = L"Done"; color = 0x87d9b7; break;
+        case 3:
+            icon = L"\x2713"; text = L"Done"; color = 0x87d9b7;
+            pillFill = 0x162925; pillBorder = 0x264a40;
+            break;
         case 4:
             icon = status.kind == 1 ? L"\x25C7" : status.kind == 3 ? L"\x21AA" : L"?";
             text = status.kind == 1 ? L"Needs permission" : status.kind == 3 ? L"Needs sign-in" : L"Needs input";
-            color = 0xf2cd83; break;
-        case 5: icon = L"!"; text = L"Error"; color = 0xeb8b97; break;
+            color = 0xf2cd83;
+            pillFill = 0x2b261c; pillBorder = 0x4d4128;
+            break;
+        case 5:
+            icon = L"!"; text = L"Error"; color = 0xeb8b97;
+            pillFill = 0x2b1c21; pillBorder = 0x4d2b34;
+            break;
     }
     if (iconOnly) { label(icon, x, y, width, color); return; }
     wchar_t caption[64];
     if (status.progress >= 0 && status.progress <= 100 && (status.state == 2 || status.state == 4))
         swprintf(caption, 64, L"%ls %ls %d%%", icon, text, status.progress);
     else swprintf(caption, 64, L"%ls %ls", icon, text);
-    label(caption, x, y, width, color);
+    const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(x, y + 1.0f, x + width, y + 19.0f), 4.0f, 4.0f);
+    brush->SetColor(rgb(pillFill));
+    target->FillRoundedRectangle(pill, brush);
+    brush->SetColor(rgb(pillBorder));
+    target->DrawRoundedRectangle(pill, brush, 1.0f);
+    labelWithFont(badgeFont, caption, x + 6.0f, y + 2.5f, fmaxf(0.0f, width - 10.0f), color);
 }
 static wchar_t shellName[64] = L"Command Prompt";
 static void labelUtf8OrDefault(const uint8_t* bytes, size_t length, float x, float y, float width, uint32_t color) {
@@ -777,7 +1293,7 @@ extern "C" int vex_window_project_info(const uint8_t* name, size_t name_length, 
     }
     return 0;
 }
-extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, const uint8_t* title, size_t title_length, VexProgramStatus status, bool attention) {
+extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention) {
     if (count != tabStripCount || index >= count) return;
     float width = tabWidthDip, x = 140 + index * (width + 4);
     const bool isHovered = (int)index == hoveredTabIndex;
@@ -790,17 +1306,51 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, const 
         brush->SetColor(rgb(0x1f2229));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 7, x + width, 37), 5, 5), brush);
     }
-    bool hasStatus = status.state >= 2 && status.state <= 5;
-    float inset = hasStatus ? 30 : 10;
-    if (hasStatus) drawProgramStatus(status, x + 8, 12, fmaxf(0, width - 30), true);
-    if (width >= 95) labelUtf8OrDefault(title, title_length, x + inset, 12, fmaxf(0, width - inset - 24), active ? 0xe4e4e7 : 0x8f9197);
-    else if (!hasStatus) {
-        wchar_t number[12]; swprintf(number, 12, L"%u", index + 1);
-        label(number, x + 8, 12, fmaxf(0, width - 22), active ? 0xe4e4e7 : 0x8f9197);
+    float inset = 8.0f;
+    if (width >= 68.0f && icons && icon_count > 0) {
+        const size_t maxVisible = width >= 120.0f ? 3 : 1;
+        const size_t visible = icon_count > maxVisible ? maxVisible : icon_count;
+        const uint32_t tabBg = active ? 0x25213d : (isHovered ? 0x1f2229 : 0x181a1f);
+        for (size_t i = 0; i < visible; i++) {
+            const float tx = x + 7.0f + (float)i * 10.0f;
+            const float ty = 13.0f;
+            if (i > 0) {
+                brush->SetColor(rgb(tabBg));
+                target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(tx - 1.0f, ty - 1.0f, tx + 19.0f, ty + 19.0f), 4.5f, 4.5f), brush);
+            }
+            brush->SetColor(rgb(0x20232b));
+            target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(tx, ty, tx + 18.0f, ty + 18.0f), 4.0f, 4.0f), brush);
+            brush->SetColor(rgb(0x2e323d));
+            target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(tx + 0.5f, ty + 0.5f, tx + 17.5f, ty + 17.5f), 3.5f, 3.5f), brush, 1.0f);
+            drawCachedAppIcon(icons[i], tx + 3.0f, ty + 3.0f, 12.0f);
+        }
+        inset = 7.0f + 18.0f + (float)(visible - 1) * 10.0f + 5.0f;
+        if (icon_count > visible && width >= 132.0f) {
+            const float bx = x + inset - 2.0f;
+            const float by = 14.0f;
+            brush->SetColor(rgb(0x2a2e39));
+            target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + 18.0f, by + 16.0f), 3.5f, 3.5f), brush);
+            wchar_t plusText[8];
+            swprintf(plusText, 8, L"+%u", (unsigned)(icon_count - visible));
+            labelWithFont(badgeFont, plusText, bx + 2.5f, by + 1.0f, 16.0f, 0x9da1aa);
+            inset += 20.0f;
+        }
     }
-    if (!active && attention && status.state != 3 && status.state != 4 && status.state != 5) {
+    bool hasStatus = status.state >= 2 && status.state <= 5;
+    float rightReserve = 24.0f;
+    if (hasStatus && width >= 88.0f) {
+        drawProgramStatus(status, x + width - 36.0f, 13.0f, 14.0f, true);
+        rightReserve = 38.0f;
+    } else if (!active && attention) {
         brush->SetColor(rgb(0xf2cd83));
-        target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + width - 28, 22), 2.5f, 2.5f), brush);
+        target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + width - 28.0f, 22.0f), 2.5f, 2.5f), brush);
+        rightReserve = 34.0f;
+    }
+    if (width >= 95.0f) {
+        labelUtf8OrDefault(title, title_length, x + inset, 13.0f, fmaxf(0.0f, width - inset - rightReserve), active ? 0xe4e4e7 : 0x8f9197);
+    } else if (width < 68.0f) {
+        wchar_t number[12]; swprintf(number, 12, L"%u", index + 1);
+        label(number, x + 8.0f, 13.0f, fmaxf(0.0f, width - 22.0f), active ? 0xe4e4e7 : 0x8f9197);
     }
     const float closeX = x + width - 21.0f, closeY = 14.0f;
     const bool closeHot = isHovered && hoveredTabClose;
@@ -865,7 +1415,7 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
         target->DrawLine(D2D1::Point2F(cx + 3.5f, cy - 3.5f), D2D1::Point2F(cx - 3.5f, cy + 3.5f), brush, 1.2f);
     }
 }
-extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexProgramStatus status) {
+extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status) {
     rectangle(bounds.x, bounds.y, bounds.width, bounds.height, 0x282c34);
     if (bounds.height >= 28.0f) {
         rectangle(bounds.x + 1.0f, bounds.y + 1.0f, fmaxf(0, bounds.width - 2.0f), 26.0f, 0x21252b);
@@ -876,17 +1426,20 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
     drawPaneHeaderActions(bounds, focused, hovered, can_focus, zoomed, hovered_action);
     const float actionsWidth = (bounds.width >= 180.0f && bounds.height >= 28.0f) ? (can_focus ? 94.0f : 72.0f) : 0.0f;
     const float remainingWidth = fmaxf(0, bounds.width - actionsWidth);
-    const float statusWidth = status.state >= 2 && status.state <= 5 ? fminf(remainingWidth < 260 ? 20 : 190, fmaxf(0, remainingWidth - 20)) : 0;
+    const float statusWidth = status.state >= 2 && status.state <= 5 ? fminf(remainingWidth < 260 ? 20 : 124, fmaxf(0, remainingWidth - 20)) : 0;
     if (statusWidth > 0) drawProgramStatus(status, bounds.x + remainingWidth - statusWidth - 8, bounds.y + 4, statusWidth, remainingWidth < 260);
     float titleInset = 10.0f;
     if (bounds.width >= 90.0f && bounds.height >= 28.0f) {
-        brush->SetColor(rgb(focused ? 0x8286f5 : 0x6c7079));
-        target->DrawLine(D2D1::Point2F(bounds.x + 10.0f, bounds.y + 11.0f), D2D1::Point2F(bounds.x + 13.5f, bounds.y + 14.0f), brush, 1.2f);
-        target->DrawLine(D2D1::Point2F(bounds.x + 13.5f, bounds.y + 14.0f), D2D1::Point2F(bounds.x + 10.0f, bounds.y + 17.0f), brush, 1.2f);
-        target->DrawLine(D2D1::Point2F(bounds.x + 15.0f, bounds.y + 17.0f), D2D1::Point2F(bounds.x + 19.0f, bounds.y + 17.0f), brush, 1.2f);
-        titleInset = 24.0f;
+        VexAppIcon headerIcon = icon;
+        if (headerIcon.kind == 0) {
+            headerIcon.kind = 1;
+            headerIcon.glyph = 1;
+            headerIcon.color_rgb = focused ? 0x8286f5 : 0x6c7079;
+        }
+        drawCachedAppIcon(headerIcon, bounds.x + 8.0f, bounds.y + 7.0f, 14.0f);
+        titleInset = 26.0f;
     }
-    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4, fmaxf(0, remainingWidth - statusWidth - titleInset - 8), focused ? 0xe4e4e7 : 0x8f9197);
+    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 5.0f, fmaxf(0, remainingWidth - statusWidth - titleInset - 8), focused ? 0xe4e4e7 : 0x8f9197);
     gridLeft = bounds.x + 6; gridTop = bounds.y + 30;
     target->PushAxisAlignedClip(D2D1::RectF(gridLeft, gridTop, fmaxf(gridLeft, bounds.x + bounds.width - 6), fmaxf(gridTop, bounds.y + bounds.height - 6)), D2D1_ANTIALIAS_MODE_ALIASED);
 }

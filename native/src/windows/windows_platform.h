@@ -11,6 +11,8 @@ typedef struct VexPty VexPty;
 typedef struct { float x, y, width, height; } VexPaneRect;
 /* State: none/idle/working/done/blocked/error. Kind: none/permission/question/auth. */
 typedef struct { uint32_t state, kind; int32_t progress; } VexProgramStatus;
+/* Kind: 0 = shell (> _), 1 = vector glyph, 2 = letter badge. */
+typedef struct { uint8_t kind, glyph, badge_len, reserved; uint32_t color_rgb; uint8_t badge[4]; } VexAppIcon;
 /* Borrowed UTF-16 strings exclude sentinel lengths; environment includes its final double NUL. */
 typedef struct {
     const uint16_t* program; size_t program_length;
@@ -71,8 +73,8 @@ int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_c
 bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length);
 void vex_pty_ack_output(uint32_t token);
 bool vex_pty_exists(uint32_t token);
-void vex_draw_tab(uint32_t index, uint32_t count, bool active, const uint8_t* title, size_t title_length, VexProgramStatus status, bool attention);
-void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexProgramStatus status);
+void vex_draw_tab(uint32_t index, uint32_t count, bool active, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention);
+void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status);
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);

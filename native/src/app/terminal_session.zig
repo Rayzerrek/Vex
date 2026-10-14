@@ -19,7 +19,7 @@ pub const TerminalSession = struct {
     state: SessionState = .running,
     needs_attention: bool = false,
     sync_defer_since_ms: ?i64 = null,
-    icon: app_icon.AppIcon = app_icon.AppIcon.terminal,
+    icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
     last_icon_probe_ms: i64 = 0,
 
     /// Allocates at the final address before registering callbacks; startup failure releases every partial owner.
@@ -55,6 +55,7 @@ pub const TerminalSession = struct {
     }
     /// User input acknowledges completed results; emulator replies deliberately bypass this path.
     pub fn writeUserInput(self: *TerminalSession, bytes: []const u8) !void {
+        self.last_icon_probe_ms = 0;
         const previous = platform.statusBadgeKey(self.terminal.program_status.programStatus());
         self.terminal.program_status.acknowledgeProgramStatus();
         if (previous != platform.statusBadgeKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
@@ -102,22 +103,30 @@ pub const TerminalSession = struct {
             try self.pty.write(report);
         }
     }
-    /// Resolves the active foreground program icon using cached PID inspection or OSC title fallback.
+    /// Resolves the active foreground program icon using cached PID inspection or OSC title/status fallback.
     pub fn refreshAppIcon(self: *TerminalSession, query_process: bool) bool {
         const previous = self.icon;
         if (self.state != .running) {
-            self.icon = app_icon.AppIcon.terminal;
-            return !std.meta.eql(previous, self.icon);
+            self.icon = app_icon.AppIcon.terminal_shell;
+            return !previous.eql(self.icon);
         }
         const title_app = self.terminal.title.appSlice();
+        const title_raw = self.terminal.title.slice();
+        const osc_title: ?[]const u8 = if (title_app.len > 0) title_app else if (title_raw.len > 0) title_raw else null;
+        const status_app = self.terminal.program_status.programStatus().app;
         if (query_process) {
             var exe_buf: [64]u8 = undefined;
             var cmd_buf: [512]u8 = undefined;
             const fg = self.pty.foregroundProcess(&exe_buf, &cmd_buf);
-            self.icon = app_icon.resolve(fg.exe, fg.cmd, title_app);
-        } else if (app_icon.fromTitle(title_app)) |resolved| {
-            self.icon = resolved;
+            const proc_name: ?[]const u8 = if (fg.exe.len > 0) fg.exe else null;
+            const proc_cmd: ?[]const u8 = if (fg.cmd.len > 0) fg.cmd else null;
+            self.icon = app_icon.resolve(proc_name, proc_cmd, osc_title, status_app);
+        } else {
+            const fallback = app_icon.resolve(null, null, osc_title, status_app);
+            if (!fallback.is_shell or self.icon.is_shell) {
+                self.icon = fallback;
+            }
         }
-        return !std.meta.eql(previous, self.icon);
+        return !previous.eql(self.icon);
     }
 };
