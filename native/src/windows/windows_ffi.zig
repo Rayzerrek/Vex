@@ -68,6 +68,59 @@ pub const WindowMetrics = struct {
 };
 /// ConPTY-compatible grid dimensions and physical cell metrics.
 pub const TerminalSize = struct { columns: u16, rows: u16, cell_width_px: u32, cell_height_px: u32 };
+/// Computed DIP geometry for a pane's vertical scrollback overlay thumb and track.
+pub const ScrollbarGeometry = struct {
+    track_top: f32,
+    track_height: f32,
+    thumb_y: f32,
+    thumb_height: f32,
+    travel: f32,
+    scrollable: u64,
+
+    pub const hit_width: f32 = 16.0;
+
+    /// Returns null when the pane has no scrollback or its viewport track is too short.
+    pub fn compute(bounds: panes.PaneRect, info: terminal.ScrollbarInfo) ?ScrollbarGeometry {
+        if (!info.isVisible()) return null;
+        const track_top = bounds.y + 30.0;
+        const track_height = bounds.height - 36.0;
+        if (!std.math.isFinite(track_top) or !std.math.isFinite(track_height) or track_height < 12.0 or bounds.width < 24.0) return null;
+        const total_f: f32 = @floatFromInt(@max(1, info.total));
+        const len_f: f32 = @floatFromInt(info.len);
+        const min_thumb = @min(24.0, track_height);
+        const thumb_height = std.math.clamp(track_height * (len_f / total_f), min_thumb, track_height);
+        const travel = @max(0.0, track_height - thumb_height);
+        const scrollable = info.scrollable();
+        const offset_f: f32 = @floatFromInt(@min(info.offset, scrollable));
+        const scrollable_f: f32 = @floatFromInt(@max(1, scrollable));
+        const thumb_y = track_top + travel * (offset_f / scrollable_f);
+        return .{
+            .track_top = track_top,
+            .track_height = track_height,
+            .thumb_y = thumb_y,
+            .thumb_height = thumb_height,
+            .travel = travel,
+            .scrollable = scrollable,
+        };
+    }
+    /// True when (x, y) is inside the right-edge scrollbar hit strip.
+    pub fn containsPoint(self: ScrollbarGeometry, bounds: panes.PaneRect, x: f32, y: f32) bool {
+        const hit_left = @max(bounds.x, bounds.x + bounds.width - hit_width);
+        return x >= hit_left and x < bounds.x + bounds.width and y >= self.track_top and y < self.track_top + self.track_height;
+    }
+    /// True when y falls on the draggable thumb rather than the track above/below it.
+    pub fn containsThumb(self: ScrollbarGeometry, y: f32) bool {
+        return y >= self.thumb_y and y <= self.thumb_y + self.thumb_height;
+    }
+    /// Maps a dragged pointer Y and initial grab offset to a target scrollback row offset.
+    pub fn targetOffsetForY(self: ScrollbarGeometry, y: f32, grab_offset: f32) u64 {
+        if (self.travel <= 0.0 or self.scrollable == 0) return 0;
+        const desired = std.math.clamp(y - self.track_top - grab_offset, 0.0, self.travel);
+        const ratio: f64 = @as(f64, desired) / @as(f64, self.travel);
+        const target_f = @round(ratio * @as(f64, @floatFromInt(self.scrollable)));
+        return @intFromFloat(std.math.clamp(target_f, 0.0, @as(f64, @floatFromInt(self.scrollable))));
+    }
+};
 
 /// Uniquely owns a native PTY session; deinit joins both workers before freeing their buffers.
 pub const PtyOwner = struct {
@@ -339,6 +392,10 @@ pub fn beginPane(bounds: panes.PaneRect, focused: bool, hovered: bool, can_focus
 pub fn endPane() void {
     c.vex_end_pane();
 }
+/// Draws the rounded scrollback thumb overlay along the right edge of a pane.
+pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active: bool) void {
+    c.vex_draw_scrollbar(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, geometry.thumb_y, geometry.thumb_height, active);
+}
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
 pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !void {
     for (0..frame.rows) |row| {
@@ -429,4 +486,25 @@ test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid 
     const clamped = (try metrics.viewportPoint(bounds, -50, 900, true)).?;
     try std.testing.expectEqual(@as(u16, 0), clamped.column);
     try std.testing.expectEqual(@as(u16, 11), clamped.row);
+}
+
+test "ScrollbarGeometry computes thumb travel, right-edge hit zone, and drag target offsets" {
+    const bounds: panes.PaneRect = .{ .x = 10, .y = 40, .width = 300, .height = 236 };
+    // Not visible when total <= len.
+    try std.testing.expectEqual(@as(?ScrollbarGeometry, null), ScrollbarGeometry.compute(bounds, .{ .total = 24, .offset = 0, .len = 24 }));
+    // Track height = 236 - 36 = 200, track_top = 70. With total=100, len=25: thumb_height = 50, travel = 150, scrollable = 75.
+    const mid = ScrollbarGeometry.compute(bounds, .{ .total = 100, .offset = 25, .len = 25 }).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 70.0), mid.track_top, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 200.0), mid.track_height, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 50.0), mid.thumb_height, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 150.0), mid.travel, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 120.0), mid.thumb_y, 0.01);
+    try std.testing.expect(mid.containsPoint(bounds, 305.0, 130.0));
+    try std.testing.expect(!mid.containsPoint(bounds, 280.0, 130.0));
+    try std.testing.expect(mid.containsThumb(130.0));
+    try std.testing.expect(!mid.containsThumb(90.0));
+    // Dragging with grab_offset=10.0 to y=80.0 -> desired=0 -> offset 0; to y=230.0 -> desired=150 -> offset 75.
+    try std.testing.expectEqual(@as(u64, 0), mid.targetOffsetForY(80.0, 10.0));
+    try std.testing.expectEqual(@as(u64, 38), mid.targetOffsetForY(155.0, 10.0));
+    try std.testing.expectEqual(@as(u64, 75), mid.targetOffsetForY(230.0, 10.0));
 }

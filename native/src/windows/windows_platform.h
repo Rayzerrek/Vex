@@ -72,6 +72,7 @@ bool vex_pty_exists(uint32_t token);
 void vex_draw_tab(uint32_t index, uint32_t count, bool active, const uint8_t* title, size_t title_length, VexProgramStatus status, bool attention);
 void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexProgramStatus status);
 void vex_end_pane(void);
+void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);
 void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color);
 /* Loads only the DLL beside the executable, never a library from PATH/CWD. */
