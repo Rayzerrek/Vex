@@ -13,6 +13,32 @@ typedef struct { float x, y, width, height; } VexPaneRect;
 typedef struct { uint32_t state, kind; int32_t progress; } VexProgramStatus;
 /* Kind: 0 = shell (> _), 1 = vector glyph, 2 = letter badge. */
 typedef struct { uint8_t kind, glyph, badge_len, reserved; uint32_t color_rgb; uint8_t badge[4]; } VexAppIcon;
+/* Theme-derived window, tab strip, and pane chrome palette. */
+typedef struct {
+    uint32_t window_bg, titlebar_bg, border, pane_bg, pane_header_bg;
+    uint32_t active_tab_bg, active_tab_border, inactive_tab_hover_bg;
+    uint32_t text_primary, text_muted, accent, git_branch;
+    bool is_dark;
+} VexChromePalette;
+typedef struct {
+    const uint8_t* name; size_t name_length;
+    const uint8_t* subtitle; size_t subtitle_length;
+    uint32_t bg_rgb, fg_rgb, accent_rgb;
+    uint32_t swatches[5];
+    bool is_dark, active, selected, hovered;
+} VexThemeCard;
+typedef struct {
+    const uint8_t* title; size_t title_length;
+    const uint8_t* shortcut; size_t shortcut_length;
+    bool selected, hovered;
+} VexCommandItem;
+typedef struct {
+    const uint8_t* title; size_t title_length;
+    uint32_t index, pane_count;
+    VexAppIcon icon;
+    VexProgramStatus status;
+    bool active, selected, hovered;
+} VexTabPeekCard;
 /* Borrowed UTF-16 strings exclude sentinel lengths; environment includes its final double NUL. */
 typedef struct {
     const uint16_t* program; size_t program_length;
@@ -50,6 +76,7 @@ void vex_window_invalidate(void);
 void vex_window_defer_synchronized(void);
 void vex_window_close(void);
 void vex_window_paste_clipboard(void);
+void vex_window_set_chrome_palette(VexChromePalette palette);
 uint64_t vex_window_paint_count(void);
 /* Window thread only; releasing capture may synchronously deliver WM_CAPTURECHANGED. */
 int vex_window_cancel_pointer_capture(void);
@@ -80,6 +107,9 @@ void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_foc
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active);
 void vex_draw_split_preview(VexPaneRect bounds);
+void vex_draw_theme_picker(bool dark_mode, const VexThemeCard* cards, size_t card_count);
+void vex_draw_command_palette(const uint8_t* query, size_t query_length, const VexCommandItem* items, size_t item_count);
+void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t card_count);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);
 void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color);
 /* Loads only the DLL beside the executable, never a library from PATH/CWD. */

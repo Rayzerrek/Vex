@@ -6,13 +6,14 @@ const status = @import("../terminal/program_status.zig");
 const shell = @import("../shell/shell_launch.zig");
 const tab_strip = @import("../workspace/tab_strip.zig");
 const app_icon = @import("../terminal/app_icon.zig");
+const terminal_theme = @import("../workspace/terminal_theme.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
 pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -190,6 +191,9 @@ pub fn workspaceShortcut(key: u32, modifiers: u32) ?WorkspaceAction {
         'R' => .split_right,
         'D' => .split_down,
         'W' => .close_active,
+        'P' => .command_palette,
+        'M' => .theme_picker,
+        0x20 => .tab_peek,
         9 => .previous_tab,
         else => null,
     };
@@ -406,7 +410,7 @@ pub fn drawTab(index: usize, count: usize, active: bool, editing: bool, title: [
     const icons_ptr: [*c]const c.VexAppIcon = if (icon_count == 0) null else &native_icons;
     c.vex_draw_tab(@intCast(index), @intCast(count), active, editing, if (title.len == 0) null else title.ptr, title.len, icons_ptr, icon_count, nativeStatusBadge(summary), attention);
 }
-fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
+pub fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
     var badge = [4]u8{ 0, 0, 0, 0 };
     const len: usize = @min(@as(usize, icon.badge_len), 2);
     @memcpy(badge[0..len], icon.badge_text[0..len]);
@@ -419,7 +423,7 @@ fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
         .badge = badge,
     };
 }
-fn nativeStatusBadge(summary: status.ProgramStatusSummary) c.VexProgramStatus {
+pub fn nativeStatusBadge(summary: status.ProgramStatusSummary) c.VexProgramStatus {
     return .{ .state = @intFromEnum(summary.state), .kind = if (summary.kind) |kind| switch (kind) {
         .permission => 1,
         .question => 2,
@@ -430,6 +434,38 @@ fn nativeStatusBadge(summary: status.ProgramStatusSummary) c.VexProgramStatus {
 pub fn statusBadgeKey(summary: status.ProgramStatusSummary) u32 {
     const badge = nativeStatusBadge(summary);
     return badge.state | (badge.kind << 8) | (@as(u32, @intCast(badge.progress + 1)) << 16);
+}
+/// Updates the Direct2D window chrome palette to match the active dark or light theme.
+pub fn setChromePalette(palette: terminal_theme.ChromePalette) void {
+    c.vex_window_set_chrome_palette(.{
+        .window_bg = palette.window_bg,
+        .titlebar_bg = palette.titlebar_bg,
+        .border = palette.border,
+        .pane_bg = palette.pane_bg,
+        .pane_header_bg = palette.pane_header_bg,
+        .active_tab_bg = palette.active_tab_bg,
+        .active_tab_border = palette.active_tab_border,
+        .inactive_tab_hover_bg = palette.inactive_tab_hover_bg,
+        .text_primary = palette.text_primary,
+        .text_muted = palette.text_muted,
+        .accent = palette.accent,
+        .git_branch = palette.git_branch,
+        .is_dark = palette.is_dark,
+    });
+}
+/// Draws the Theme Studio modal overlay with live Dark/Light mode toggle and theme cards.
+pub fn drawThemePicker(dark_mode: bool, cards: []const c.VexThemeCard) void {
+    if (cards.len == 0) return;
+    c.vex_draw_theme_picker(dark_mode, cards.ptr, cards.len);
+}
+/// Draws the Command Palette modal overlay with search query and filtered command items.
+pub fn drawCommandPalette(query: []const u8, items: []const c.VexCommandItem) void {
+    c.vex_draw_command_palette(if (query.len == 0) null else query.ptr, query.len, if (items.len == 0) null else items.ptr, items.len);
+}
+/// Draws the Tab Peek modal overview grid.
+pub fn drawTabPeek(cards: []const c.VexTabPeekCard) void {
+    if (cards.len == 0) return;
+    c.vex_draw_tab_peek(cards.ptr, cards.len);
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
 pub fn beginPane(bounds: panes.PaneRect, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary) void {
@@ -449,13 +485,13 @@ pub fn drawSplitPreview(bounds: panes.PaneRect) void {
     c.vex_draw_split_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height });
 }
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
-pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, hovered_link: ?HoveredLinkSpan) !void {
+pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
     const cursor = frame.cursor;
     const cursor_visible = focused and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
     const block_cursor = cursor_visible and cursor.shape == .block;
-    var cached_fg: u32 = 0xe4e4e7;
-    var cached_bg: u32 = 0x282c34;
-    var cached_corrected_fg: u32 = 0xe4e4e7;
+    var cached_fg: u32 = theme.foreground;
+    var cached_bg: u32 = theme.background;
+    var cached_corrected_fg: u32 = theme.foreground;
 
     for (0..frame.rows) |row| {
         const cells = frame.cells.items[row * frame.columns ..][0..frame.columns];
@@ -464,7 +500,7 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, ho
         var run_cells: usize = 0;
         var buffer: [4096]u8 = undefined;
         var length: usize = 0;
-        var style: terminal.TextStyle = .{ .foreground = 0xe4e4e7, .background = 0x282c34 };
+        var style: terminal.TextStyle = .{ .foreground = theme.foreground, .background = theme.background };
         for (cells, 0..) |cell, column| {
             if (cell.width == .tail) continue;
             const text = frame.cellText(cell);
@@ -475,13 +511,13 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, ho
                 cell_style.underline = true;
             }
             if (is_block_cursor_cell) {
-                cell_style.background = 0xe4e4e7;
-                cell_style.foreground = 0x282c34;
+                cell_style.background = theme.cursor;
+                cell_style.foreground = theme.background;
             } else if (cell.selected) {
-                cell_style.background = 0x3b4261;
-                cell_style.foreground = 0xffffff;
+                cell_style.background = theme.selection_background;
+                cell_style.foreground = if (theme.is_dark) 0xffffff else 0x111318;
             } else if (in_link) {
-                cell_style.foreground = 0x61afef;
+                cell_style.foreground = theme.accent;
             } else if (!cell_style.invisible and !isBlockGraphic(text)) {
                 if (cell_style.foreground != cached_fg or cell_style.background != cached_bg) {
                     cached_fg = cell_style.foreground;
@@ -492,7 +528,7 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, ho
             }
             const ascii = cell.width == .narrow and (text.len == 0 or (text.len == 1 and text[0] >= 32 and text[0] <= 126));
             if (!ascii or !std.meta.eql(style, cell_style) or length == buffer.len) {
-                try drawRun(start, row, run_cells, buffer[0..length], style);
+                try drawRun(start, row, run_cells, buffer[0..length], style, theme.background);
                 run_cells = 0;
                 length = 0;
                 start = column;
@@ -500,7 +536,7 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, ho
             }
             if (!ascii) {
                 const width: usize = if (cell.width == .wide) 2 else 1;
-                try drawRun(column, row, width, text, cell_style);
+                try drawRun(column, row, width, text, cell_style, theme.background);
                 start = column + width;
             } else {
                 buffer[length] = if (text.len == 0) ' ' else text[0];
@@ -508,10 +544,10 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, ho
                 run_cells += 1;
             }
         }
-        try drawRun(start, row, run_cells, buffer[0..length], style);
+        try drawRun(start, row, run_cells, buffer[0..length], style, theme.background);
     }
     if (cursor_visible and cursor.shape != .block) {
-        c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), 0xe4e4e7);
+        c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), theme.cursor);
     }
 }
 
@@ -600,9 +636,9 @@ fn oklabToSrgb(l_val: f32, a_val: f32, b_val: f32) u32 {
     return (linearChannelToSrgb(r) << 16) | (linearChannelToSrgb(g) << 8) | linearChannelToSrgb(b);
 }
 
-fn drawRun(column: usize, row: usize, cells: usize, text: []const u8, style: terminal.TextStyle) !void {
+fn drawRun(column: usize, row: usize, cells: usize, text: []const u8, style: terminal.TextStyle, default_bg: u32) !void {
     if (cells == 0) return;
-    if (style.background == 0x282c34 and !style.underline and !style.strikethrough) {
+    if (style.background == default_bg and !style.underline and !style.strikethrough) {
         if (std.mem.indexOfNonePos(u8, text, 0, " ") == null) return;
     }
     const flags = @as(u32, @intFromBool(style.bold)) | (@as(u32, @intFromBool(style.italic)) << 1) |
@@ -615,9 +651,12 @@ test "workspace shortcuts exactly match implemented WPF chords without stealing 
     try std.testing.expectEqual(@as(?WorkspaceAction, .split_right), workspaceShortcut('R', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .split_down), workspaceShortcut('D', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .close_active), workspaceShortcut('W', 3));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .command_palette), workspaceShortcut('P', 3));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .theme_picker), workspaceShortcut('M', 3));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .tab_peek), workspaceShortcut(0x20, 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .next_tab), workspaceShortcut(9, 2));
     try std.testing.expectEqual(@as(?WorkspaceAction, .previous_tab), workspaceShortcut(9, 3));
-    for ([_]u32{ 'T', 'R', 'D', 'W', 'C', 'S' }) |key| try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, 2));
+    for ([_]u32{ 'T', 'R', 'D', 'W', 'C', 'S', 'P', 'M' }) |key| try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, 2));
     try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut('T', 7));
 }
 
