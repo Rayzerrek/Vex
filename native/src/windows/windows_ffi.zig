@@ -16,7 +16,9 @@ pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
-pub const PointerResponse = enum(u32) { normal = c.VEX_POINTER_NORMAL, right = c.VEX_POINTER_RIGHT, down = c.VEX_POINTER_DOWN, tab_armed = c.VEX_POINTER_TAB_ARMED, tab_dragging = c.VEX_POINTER_TAB_DRAGGING, selection = c.VEX_POINTER_SELECTION };
+pub const PointerResponse = enum(u32) { normal = c.VEX_POINTER_NORMAL, right = c.VEX_POINTER_RIGHT, down = c.VEX_POINTER_DOWN, tab_armed = c.VEX_POINTER_TAB_ARMED, tab_dragging = c.VEX_POINTER_TAB_DRAGGING, selection = c.VEX_POINTER_SELECTION, link = c.VEX_POINTER_LINK };
+/// Span of cells within a single viewport row highlighted as a clickable URL.
+pub const HoveredLinkSpan = struct { row: u16, start_col: u16, end_col: u16 };
 /// Viewport cell coordinate and physical surface position relative to a pane's terminal grid.
 pub const ViewportPoint = struct { column: u16, row: u16, x_px: f64, y_px: f64 };
 /// Window sizes/font metrics are in DIPs; only cell pixel metrics multiply by scale.
@@ -363,6 +365,11 @@ pub fn writeClipboardText(text: []const u8) !void {
 pub fn pasteClipboard() void {
     c.vex_window_paste_clipboard();
 }
+/// Opens a validated http(s):// or file:// URL via the system browser.
+pub fn openUrl(url: []const u8) !void {
+    if (url.len == 0 or std.mem.indexOfScalar(u8, url, 0) != null or !std.unicode.utf8ValidateSlice(url)) return error.InvalidUrl;
+    if (c.vex_open_url(url.ptr, url.len) != 0) return error.OpenUrlFailed;
+}
 /// Startup timestamps begin before terminal/DLL initialization, not OS process creation.
 pub fn beginStartup() void {
     c.vex_startup_begin();
@@ -438,7 +445,7 @@ pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active
     c.vex_draw_scrollbar(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, geometry.thumb_y, geometry.thumb_height, active);
 }
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
-pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !void {
+pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, hovered_link: ?HoveredLinkSpan) !void {
     const cursor = frame.cursor;
     const cursor_visible = focused and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
     const block_cursor = cursor_visible and cursor.shape == .block;
@@ -448,6 +455,7 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !v
 
     for (0..frame.rows) |row| {
         const cells = frame.cells.items[row * frame.columns ..][0..frame.columns];
+        const row_link = if (hovered_link) |hl| (if (hl.row == row) hl else null) else null;
         var start: usize = 0;
         var run_cells: usize = 0;
         var buffer: [4096]u8 = undefined;
@@ -457,13 +465,19 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !v
             if (cell.width == .tail) continue;
             const text = frame.cellText(cell);
             const is_block_cursor_cell = block_cursor and row == cursor.row and column == cursor.column;
+            const in_link = if (row_link) |hl| (column >= hl.start_col and column <= hl.end_col) else false;
             var cell_style = cell.style;
+            if (in_link) {
+                cell_style.underline = true;
+            }
             if (is_block_cursor_cell) {
                 cell_style.background = 0xe4e4e7;
                 cell_style.foreground = 0x282c34;
             } else if (cell.selected) {
                 cell_style.background = 0x3b4261;
                 cell_style.foreground = 0xffffff;
+            } else if (in_link) {
+                cell_style.foreground = 0x61afef;
             } else if (!cell_style.invisible and !isBlockGraphic(text)) {
                 if (cell_style.foreground != cached_fg or cell_style.background != cached_bg) {
                     cached_fg = cell_style.foreground;

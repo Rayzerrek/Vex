@@ -22,7 +22,7 @@ typedef struct {
 } VexPtyLaunch;
 /* Pointer event/cursor values are shared with the checked Zig adapter. */
 typedef enum { VEX_POINTER_HOVER = 0, VEX_POINTER_BEGIN = 1, VEX_POINTER_MOVE = 2, VEX_POINTER_END = 3, VEX_POINTER_CANCEL = 4 } VexPointerEvent;
-typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN = 2, VEX_POINTER_TAB_ARMED = 3, VEX_POINTER_TAB_DRAGGING = 4, VEX_POINTER_SELECTION = 5 } VexPointerResponse;
+typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN = 2, VEX_POINTER_TAB_ARMED = 3, VEX_POINTER_TAB_DRAGGING = 4, VEX_POINTER_SELECTION = 5, VEX_POINTER_LINK = 6 } VexPointerResponse;
 /* All callbacks run on the window thread. Context and borrowed bytes must remain live. */
 typedef struct {
     void* context;
@@ -65,6 +65,7 @@ int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPtyLaunch l
 int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length);
 int vex_system_directory(uint8_t* bytes, size_t capacity, size_t* length);
 int vex_clipboard_write(const uint8_t* bytes, size_t length);
+int vex_open_url(const uint8_t* bytes, size_t length);
 void vex_pty_close(VexPty* session);
 bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);
