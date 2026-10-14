@@ -36,6 +36,28 @@ function Send-NativeText([IntPtr]$Window, [string]$Text) {
         [VexNativeSmoke]::SendWindowMessage($Window, 0x102, [IntPtr][int]$unit, [IntPtr]::Zero) | Out-Null
     }
 }
+function Get-NativeSurface([IntPtr]$Window) {
+    $rect = New-Object VexNativeSmoke+Rect
+    $dpi = [VexNativeSmoke]::GetDpiForWindow($Window)
+    if ($dpi -eq 0 -or ![VexNativeSmoke]::GetClientRect($Window, [ref]$rect)) { throw 'Vex native smoke: client metrics unavailable.' }
+    $scale = $dpi / 96.0
+    return [pscustomobject]@{ Width = ($rect.Right - $rect.Left) / $scale; Height = ($rect.Bottom - $rect.Top) / $scale; Scale = $scale }
+}
+function Get-NativePointerLParam([IntPtr]$Window, [double]$X, [double]$Y) {
+    $scale = (Get-NativeSurface $Window).Scale
+    $px = [int][Math]::Round($X * $scale)
+    $py = [int][Math]::Round($Y * $scale)
+    if ($px -lt -32768 -or $px -gt 32767 -or $py -lt -32768 -or $py -gt 32767) { throw 'Vex native smoke: pointer fixture exceeds signed Win32 coordinates.' }
+    $packed = ([long]($py -band 0xffff) * 65536) -bor ($px -band 0xffff)
+    return [IntPtr]$packed
+}
+function Send-NativePointer([IntPtr]$Window, [uint32]$Message, [double]$X, [double]$Y, [int]$Buttons = 0) {
+    [VexNativeSmoke]::SendWindowMessage($Window, $Message, [IntPtr]$Buttons, (Get-NativePointerLParam $Window $X $Y)) | Out-Null
+}
+function Invoke-NativeTabGesture([IntPtr]$Window, [ValidateRange(0,7)][int]$Source, [double]$X, [double]$Y = 20, [ValidateRange(0,8)][int]$Operation = 0) {
+    $raw = [VexNativeSmoke]::SendWindowMessage($Window, 0x8006, [IntPtr](($Operation -shl 8) -bor $Source), (Get-NativePointerLParam $Window $X $Y)).ToInt64()
+    return [pscustomobject]@{ Pressed = $raw -band 3; CapturedPress = ($raw -band 4) -ne 0; Moved = ($raw -shr 3) -band 3; CapturedMove = ($raw -band 32) -ne 0; Destination = ($raw -shr 8) -band 15; SourceIdBeforeDrop = $raw -shr 32 }
+}
 function Send-NativeStatus([IntPtr]$Window, [string]$Body, [int]$DelayMs = 0) {
     $command = '@"' + $env:WINDIR + '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "'
     $command += "Start-Sleep -Milliseconds $DelayMs;[Console]::Write([char]27 + ']7501;$Body' + [char]7)" + '"'

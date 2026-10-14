@@ -51,7 +51,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 
 | Area | Reference | Native milestone / remaining evidence |
 | --- | --- | --- |
-| Project -> tabs -> split tree, active leaf | `Model/Project.cs`, `WorkspaceTab.cs`, `PaneNode.cs` | First milestone: one project, up to 8 tabs, recursive splits, focus, close; multiple projects and drag/reorder still pending |
+| Project -> tabs -> split tree, active leaf | `Model/Project.cs`, `WorkspaceTab.cs`, `PaneNode.cs` | One project, up to 8 tabs, recursive splits, focus, close and captured tab reorder; multiple projects, pane moves and tab ghost/push/scroll preview still pending |
 | Split orientation/ratio | `SplitPaneView.xaml.cs` | Right/down at 0.5; ratio clamping 0.1..0.9; live captured divider dragging, 100-DIP interactive minimum and rollback implemented; final divider styling/physical multi-monitor DPI evidence pending; split directories use the last valid local OSC 7 report, otherwise the pane's launch directory |
 | Workspace shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
 | Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; auto-close/close confirmations and further cancellation/Win32 failure injection pending |
@@ -262,6 +262,45 @@ These are behavioral contracts, not opportunities to redesign the app.
 - 67 tests pass in Debug/ReleaseSafe; ReleaseSafe build and all four desktop
   scripts pass, including all five installed Windows built-ins and Ubuntu WSL.
   WPF files/profile remain untouched; its suites were not rerun for this checkpoint.
+
+## Tab reorder checkpoint
+
+- `workspace_model.zig` assigns stable tab IDs from fresh first-pane tokens;
+  closing that first pane does not change tab identity. `moveTab` transfers tree
+  owners within the existing array without allocation or session recreation.
+  Selection follows the same tab; close fallback follows the reordered neighbors.
+- `tab_strip.zig` owns bounded DIP geometry and filtered insertion slots. The
+  window copies parsed count/width before input/paint rather than using a stale
+  count from the last frame. Gap/close hit regions do not arm tab drags.
+- `tab_drag.zig` models none/armed/dragging. Press selects; Manhattan movement
+  of 6 DIPs starts capture, ±8 DIPs bounds vertical drop tolerance, and home or
+  outside drops do not move. No preview mutates the collection. Removed IDs clear
+  instead of targeting another owner. Reorder does not acknowledge unread results.
+- The application models divider/tab gestures as an exclusive union. Win32
+  owns armed/captured/cancelled input and consumes Escape; source close, workspace
+  actions, resize/DPI, focus/capture loss and cancel mode clear state before any
+  node/array mutation. Repaint follows clearing state, including synchronous frames.
+- An insertion marker is implemented. Animated ghost/push, strip scrolling,
+  rename, physical mouse/cross-monitor DPI and full visual evidence remain pending.
+- Five additional co-located fixtures cover strip boundaries, threshold/drop
+  lifecycle, malformed input/stale IDs, every selected/source/destination
+  combination for a three-tab model, owner retention and close fallback.
+- `Test-NativeTabs.ps1` uses a bounded `VEX_NATIVE_SELFTEST`-only atomic Win32
+  replay through production handlers, not mocks or a separate domain shortcut.
+  Real capture/preview ownership is sampled before release. It verifies live
+  PTY identity, split focus/tree and parsed viewport retention, unread status,
+  both move directions, cancellation, source close, eight tabs and captured
+  shutdown after flooding output has reached the viewport.
+- Synthetic multi-message replay can race OS-generated moves or real desktop
+  focus/capture changes. This was observed in the divider fixture; atomic tab
+  replay avoids interleaving without cursor manipulation or production exceptions.
+  Divider reruns pass but its quiet-desktop requirement remains explicit. One
+  WSL default-distribution marker attempt also timed out; its full rerun passed,
+  without claiming a proven cause or universally stable desktop automation.
+- 72 tests pass in Debug/ReleaseSafe; ReleaseSafe build and all five desktop
+  scripts pass. Atomic tab smoke additionally passes three successive runs.
+  Windows built-ins and Ubuntu WSL remain covered. WPF files/profile are unchanged;
+  its suites were not rerun. These checks do not establish visual/performance parity.
 
 ## Source structure checkpoint
 

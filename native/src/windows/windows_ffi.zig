@@ -4,6 +4,7 @@ const terminal = @import("../terminal/terminal.zig");
 const directory = @import("../shell/directory.zig");
 const status = @import("../terminal/program_status.zig");
 const shell = @import("../shell/shell_launch.zig");
+const tab_strip = @import("../workspace/tab_strip.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
 pub const c = @cImport({
@@ -13,8 +14,8 @@ pub const c = @cImport({
 pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
-/// Resize cursor direction is returned to Win32, which owns the actual mouse capture.
-pub const PointerCursor = enum(u32) { normal = c.VEX_CURSOR_NORMAL, right = c.VEX_CURSOR_RIGHT, down = c.VEX_CURSOR_DOWN };
+/// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab drags request immediate capture.
+pub const PointerResponse = enum(u32) { normal = c.VEX_POINTER_NORMAL, right = c.VEX_POINTER_RIGHT, down = c.VEX_POINTER_DOWN, tab_armed = c.VEX_POINTER_TAB_ARMED, tab_dragging = c.VEX_POINTER_TAB_DRAGGING };
 /// Window sizes/font metrics are in DIPs; only cell pixel metrics multiply by scale.
 pub const WindowMetrics = struct {
     width: f32,
@@ -185,13 +186,21 @@ pub fn runWindow(owner: anytype) !void {
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
-/// Releases only this window's divider capture; capture-change callbacks may reenter the application.
-pub fn cancelDividerCapture() !void {
-    if (c.vex_window_cancel_divider_capture() != 0) return error.DividerCaptureReleaseFailed;
+/// Clears an armed gesture or releases only this window's capture; capture-change callbacks may reenter the application.
+pub fn cancelPointerCapture() !void {
+    if (c.vex_window_cancel_pointer_capture() != 0) return error.PointerCaptureReleaseFailed;
 }
 /// Diagnostic capture check runs on the window thread, not a test thread's unrelated capture state.
-pub fn hasDividerCapture() bool {
-    return c.vex_window_has_divider_capture();
+pub fn hasPointerCapture() bool {
+    return c.vex_window_has_pointer_capture();
+}
+/// Publishes parsed tab-strip geometry before paint or hit testing; the bridge copies scalars, not model pointers.
+pub fn setTabStripLayout(layout: tab_strip.TabStripLayout) !void {
+    if (c.vex_window_tab_strip(@intCast(layout.count), layout.tab_width) != 0) return error.InvalidTabStripGeometry;
+}
+/// Draws a finite DIP insertion marker only during the current frame.
+pub fn drawTabInsertionMarker(x: f32) !void {
+    if (c.vex_draw_tab_insertion_marker(x) != 0) return error.TabMarkerRenderingFailed;
 }
 
 /// Returns the actual local machine name, not a spoofable environment variable; caller owns the UTF-8 copy.

@@ -9,6 +9,10 @@ const shell = @import("../shell/shell_launch.zig");
 const TerminalSession = @import("terminal_session.zig").TerminalSession;
 const wsl_registry = @import("../windows/wsl_registry.zig");
 const DividerDrag = @import("../workspace/divider_drag.zig").DividerDrag;
+const TabDrag = @import("../workspace/tab_drag.zig").TabDrag;
+const tab_strip = @import("../workspace/tab_strip.zig");
+
+const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag };
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
 const WorkspaceApplication = struct {
@@ -21,7 +25,7 @@ const WorkspaceApplication = struct {
     model: ?workspace.WorkspaceModel = null,
     placements: std.ArrayList(panes.PanePlacement) = .empty,
     metrics: ?platform.WindowMetrics = null,
-    divider_drag: DividerDrag = .{},
+    pointer_drag: PointerDrag = .none,
     next_token: u32 = 1,
     health: union(enum) { running, failed: anyerror } = .running,
 
@@ -99,6 +103,7 @@ const WorkspaceApplication = struct {
     fn updateLayout(self: *WorkspaceApplication) !void {
         const model = if (self.model) |*model| model else return;
         const metrics = self.metrics orelse return;
+        try platform.setTabStripLayout(try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len));
         try model.activeTab().tree.layout(self.allocator, &self.placements, workspaceBounds(metrics));
         for (self.placements.items) |placement| {
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
@@ -108,7 +113,7 @@ const WorkspaceApplication = struct {
     }
     pub fn onResize(self: *WorkspaceApplication, metrics: platform.WindowMetrics) void {
         if (self.health == .failed) return;
-        _ = self.cancelDividerDrag() catch |err| {
+        _ = self.cancelPointerDrag() catch |err| {
             self.fail(err);
             return;
         };
@@ -144,6 +149,10 @@ const WorkspaceApplication = struct {
         for (model.tabs.items, 0..) |tab, index| {
             const presentation = try self.tabProgramStatus(tab.tree.root);
             platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, presentation.summary, presentation.attention);
+        }
+        if (self.pointer_drag == .tab) {
+            const metrics = self.metrics orelse return;
+            if (try self.pointer_drag.tab.markerX(model, try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len))) |x| try platform.drawTabInsertionMarker(x);
         }
         for (self.placements.items) |placement| {
             if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
@@ -207,40 +216,72 @@ const WorkspaceApplication = struct {
             return;
         };
     }
-    fn cancelDividerDrag(self: *WorkspaceApplication) !bool {
+    fn cancelPointerDrag(self: *WorkspaceApplication) !bool {
         const model = if (self.model) |*model| model else return false;
-        const changed = try self.divider_drag.cancel(&model.activeTab().tree);
-        try platform.cancelDividerCapture();
+        const clear_preview = self.pointer_drag == .tab;
+        const changed = switch (self.pointer_drag) {
+            .none, .tab => false,
+            .divider => |*drag| try drag.cancel(&model.activeTab().tree),
+        };
+        self.pointer_drag = .none;
+        try platform.cancelPointerCapture();
+        if (clear_preview) platform.invalidateWindow();
         return changed;
     }
-    pub fn onPointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) platform.PointerCursor {
+    pub fn onPointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) platform.PointerResponse {
         if (self.health == .failed) return .normal;
         return self.handlePointer(event, x, y) catch |err| {
             self.fail(err);
             return .normal;
         };
     }
-    fn handlePointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) !platform.PointerCursor {
+    fn handlePointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) !platform.PointerResponse {
         const model = if (self.model) |*model| model else return .normal;
         const metrics = self.metrics orelse return .normal;
-        const tree = &model.activeTab().tree;
+        const layout = try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len);
+        const point: tab_strip.TabPointer = .{ .x = x, .y = y };
         const bounds = workspaceBounds(metrics);
         switch (event) {
             .hover => {},
-            .begin => if (!try self.divider_drag.begin(tree, bounds, x, y)) return .normal,
+            .begin => {
+                if (try layout.hitTab(point)) |hit| {
+                    if (hit.part == .close) return .normal;
+                    try self.applyAction(.select_tab, @intCast(hit.index));
+                    var drag: TabDrag = .none;
+                    if (try drag.begin(model, layout, model.activeTab().id, point)) self.pointer_drag = .{ .tab = drag };
+                } else {
+                    var drag: DividerDrag = .{};
+                    if (try drag.begin(&model.activeTab().tree, bounds, x, y)) self.pointer_drag = .{ .divider = drag };
+                }
+            },
             .move, .end => {
-                if (try self.divider_drag.move(tree, bounds, x, y)) try self.updateLayout();
+                switch (self.pointer_drag) {
+                    .none => {},
+                    .divider => |*drag| if (try drag.move(&model.activeTab().tree, bounds, x, y)) try self.updateLayout(),
+                    .tab => |*drag| {
+                        if (event == .end) {
+                            _ = try drag.finish(model, layout, point);
+                            platform.invalidateWindow();
+                        } else if (try drag.move(model, layout, point)) platform.invalidateWindow();
+                    },
+                }
                 if (event == .end) {
-                    self.divider_drag.finish();
+                    self.pointer_drag = .none;
                     return .normal;
                 }
             },
             .cancel => {
-                if (try self.cancelDividerDrag()) try self.updateLayout();
+                if (try self.cancelPointerDrag()) try self.updateLayout();
                 return .normal;
             },
         }
-        const axis = try self.divider_drag.cursorAxis(tree, bounds, x, y) orelse return .normal;
+        if (self.pointer_drag == .tab) return switch (self.pointer_drag.tab) {
+            .none => .normal,
+            .armed => .tab_armed,
+            .dragging => .tab_dragging,
+        };
+        const drag: DividerDrag = if (self.pointer_drag == .divider) self.pointer_drag.divider else .{};
+        const axis = try drag.cursorAxis(&model.activeTab().tree, bounds, x, y) orelse return .normal;
         return switch (axis) {
             .right => .right,
             .down => .down,
@@ -251,7 +292,7 @@ const WorkspaceApplication = struct {
         self.applyAction(action, index) catch |err| self.fail(err);
     }
     fn applyAction(self: *WorkspaceApplication, action: platform.WorkspaceAction, index: u32) !void {
-        if (try self.cancelDividerDrag()) try self.updateLayout();
+        if (try self.cancelPointerDrag()) try self.updateLayout();
         const model = if (self.model) |*model| model else return;
         switch (action) {
             .new_tab => {
@@ -313,8 +354,22 @@ const WorkspaceApplication = struct {
                 .leaf => 0,
                 .split => |split| @intFromFloat(@round(split.ratio * 1000)),
             },
-            41 => return @intFromBool(self.divider_drag.active != null),
-            42 => return @intFromBool(platform.hasDividerCapture()),
+            41 => return @intFromBool(self.pointer_drag == .divider and self.pointer_drag.divider.active != null),
+            42 => return @intFromBool(platform.hasPointerCapture()),
+            45 => return if (self.pointer_drag == .tab) switch (self.pointer_drag.tab) {
+                .none => 0,
+                .armed => 1,
+                .dragging => 2,
+            } else 0,
+            46 => return @intFromEnum(model.activeTab().id),
+            47 => return model.selected_tab,
+            48 => {
+                const metrics = self.metrics orelse return 0;
+                const layout = tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len) catch return 0;
+                return @intFromFloat(@round(layout.tab_width * 1000));
+            },
+            49 => return if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) if (self.pointer_drag.tab.dragging.destination) |index| index + 1 else 0 else 0,
+            60...67 => return if (query - 60 < model.tabs.items.len) @intFromEnum(model.tabs.items[query - 60].id) else 0,
             43 => return if (self.activeSession()) |session| if (session.size) |size| size.columns else 0 else 0,
             44 => return if (self.activeSession()) |session| if (session.size) |size| size.rows else 0 else 0,
             39 => {

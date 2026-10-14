@@ -20,7 +20,7 @@ typedef struct {
 } VexPtyLaunch;
 /* Pointer event/cursor values are shared with the checked Zig adapter. */
 typedef enum { VEX_POINTER_HOVER = 0, VEX_POINTER_BEGIN = 1, VEX_POINTER_MOVE = 2, VEX_POINTER_END = 3, VEX_POINTER_CANCEL = 4 } VexPointerEvent;
-typedef enum { VEX_CURSOR_NORMAL = 0, VEX_CURSOR_RIGHT = 1, VEX_CURSOR_DOWN = 2 } VexPointerCursor;
+typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN = 2, VEX_POINTER_TAB_ARMED = 3, VEX_POINTER_TAB_DRAGGING = 4 } VexPointerResponse;
 /* All callbacks run on the window thread. Context and borrowed bytes must remain live. */
 typedef struct {
     void* context;
@@ -32,7 +32,7 @@ typedef struct {
     void (*text)(void*, const uint8_t*, size_t);
     void (*scroll)(void*, int32_t);
     void (*click)(void*, float, float);
-    /* Event: hover/begin/move/end/cancel. DIP coordinates. Result: normal/right/down cursor. */
+    /* Event: hover/begin/move/end/cancel. DIP coordinates. Result: cursor/armed-tab/captured-tab response. */
     uint32_t (*pointer)(void*, uint32_t, float, float);
     void (*action)(void*, uint32_t, uint32_t);
     void (*exited)(void*, uint32_t, uint32_t);
@@ -45,8 +45,11 @@ void vex_window_invalidate(void);
 void vex_window_close(void);
 uint64_t vex_window_paint_count(void);
 /* Window thread only; releasing capture may synchronously deliver WM_CAPTURECHANGED. */
-int vex_window_cancel_divider_capture(void);
-bool vex_window_has_divider_capture(void);
+int vex_window_cancel_pointer_capture(void);
+bool vex_window_has_pointer_capture(void);
+/* Parsed strip geometry comes from Zig, so paint/input never use a stale painted tab count. */
+int vex_window_tab_strip(uint32_t count, float tab_width);
+int vex_draw_tab_insertion_marker(float x);
 void vex_window_error(const char* message);
 int vex_window_shell_name(const uint8_t* bytes, size_t length);
 /* Tokens are nonzero, never reused, and cannot be interpreted as heap pointers. */

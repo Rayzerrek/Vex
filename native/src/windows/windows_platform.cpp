@@ -16,15 +16,16 @@ static ID2D1SolidColorBrush* brush;
 static IDWriteTextFormat* terminalFonts[4];
 static IDWriteTextFormat* chromeFont;
 static float cellWidth, cellHeight, clientWidth, clientHeight, gridLeft, gridTop;
-static uint32_t drawnTabCount = 1;
+static uint32_t tabStripCount = 1;
+static float tabWidthDip = 160;
 static bool frameScheduled, firstOutput, firstFrame;
 static ULONGLONG frameDeadline;
 static int platformError;
 static LARGE_INTEGER startupCounter, counterFrequency;
 static uint16_t pendingSurrogate;
 static uint64_t paintCount;
-enum class DividerCaptureState { none, dragging, cancelled };
-static DividerCaptureState dividerCaptureState = DividerCaptureState::none;
+enum class PointerCaptureState { none, armed, dragging, cancelled };
+static PointerCaptureState pointerCaptureState = PointerCaptureState::none;
 
 HWND vex_native_window() { return window; }
 
@@ -42,8 +43,17 @@ static void label(const wchar_t* text, float x, float y, float width, uint32_t c
     brush->SetColor(rgb(color));
     target->DrawText(text, (UINT32)wcslen(text), chromeFont, D2D1::RectF(x, y, x + width, y + 24), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
-static float tabWidth(uint32_t count) { return fminf(160, fmaxf(24, (clientWidth - 140 - 120 - 38) / count - 4)); }
-static float plusLeft() { return 140 + drawnTabCount * (tabWidth(drawnTabCount) + 4); }
+static float plusLeft() { return 140 + tabStripCount * (tabWidthDip + 4); }
+extern "C" int vex_window_tab_strip(uint32_t count, float tab_width) {
+    if (!count || count > 8 || !isfinite(tab_width) || tab_width < 24 || tab_width > 160) return ERROR_INVALID_PARAMETER;
+    tabStripCount = count; tabWidthDip = tab_width;
+    return 0;
+}
+extern "C" int vex_draw_tab_insertion_marker(float x) {
+    if (!target || !brush || !isfinite(x) || x < 140 || x > plusLeft()) return ERROR_INVALID_PARAMETER;
+    rectangle(x - 1, 7, 2, 30, 0x9b3bb9);
+    return 0;
+}
 
 static void startupMilestone(const char* milestone) {
     LARGE_INTEGER now; QueryPerformanceCounter(&now);
@@ -110,7 +120,7 @@ static void drawWindow() {
     label(L"Vex", 38, 12, 85, 0xe4e4e7);
     rectangle(128, 12, 1, 20, 0x60636a);
     callbacks.paint(callbacks.context);
-    label(L"+", plusLeft() + 8, 12, 24, drawnTabCount < 8 ? 0xe4e4e7 : 0x60636a);
+    label(L"+", plusLeft() + 8, 12, 24, tabStripCount < 8 ? 0xe4e4e7 : 0x60636a);
     label(L"\x2014", clientWidth - 112, 12, 24, 0xe4e4e7);
     label(IsZoomed(window) ? L"\x2750" : L"\x25A1", clientWidth - 72, 12, 24, 0xe4e4e7);
     label(L"\x00D7", clientWidth - 32, 12, 24, 0xe4e4e7);
@@ -165,32 +175,47 @@ static bool handleKey(uint32_t key) {
     if (key == 'V' && mods == 3) { pasteClipboard(); return true; }
     return callbacks.key(callbacks.context, key, mods);
 }
-static void setPointerCursor(uint32_t cursor, float y) {
-    uint16_t resource = cursor == VEX_CURSOR_RIGHT ? 32644 : cursor == VEX_CURSOR_DOWN ? 32645 : y < 74 ? 32512 : 32513;
+static void setPointerCursor(uint32_t response, float y) {
+    uint16_t resource = response == VEX_POINTER_RIGHT ? 32644 : response == VEX_POINTER_DOWN ? 32645 :
+        response == VEX_POINTER_TAB_ARMED || response == VEX_POINTER_TAB_DRAGGING || y < 74 ? 32512 : 32513;
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(resource)));
 }
-extern "C" int vex_window_cancel_divider_capture() {
-    if (dividerCaptureState != DividerCaptureState::dragging) return 0;
+extern "C" int vex_window_cancel_pointer_capture() {
+    if (pointerCaptureState == PointerCaptureState::none || pointerCaptureState == PointerCaptureState::cancelled) return 0;
+    bool captured = pointerCaptureState == PointerCaptureState::dragging;
     // Suppress a later button-up over chrome even after capture has been stolen or deliberately released.
-    dividerCaptureState = DividerCaptureState::cancelled;
-    if (GetCapture() == window && !ReleaseCapture()) {
+    pointerCaptureState = PointerCaptureState::cancelled;
+    if (captured && GetCapture() == window && !ReleaseCapture()) {
         DWORD error = GetLastError();
         return (int)(error ? error : ERROR_INVALID_HANDLE);
     }
     return 0;
 }
-extern "C" bool vex_window_has_divider_capture() {
+extern "C" bool vex_window_has_pointer_capture() {
     return window && GetCapture() == window;
 }
-static void releaseDividerCapture() {
-    int error = vex_window_cancel_divider_capture();
+static void releasePointerCapture() {
+    int error = vex_window_cancel_pointer_capture();
     if (error) { platformError = error; DestroyWindow(window); }
 }
-static void cancelDividerPointer() {
-    if (dividerCaptureState != DividerCaptureState::dragging) return;
+static void cancelPointerGesture() {
+    if (pointerCaptureState == PointerCaptureState::none || pointerCaptureState == PointerCaptureState::cancelled) return;
     callbacks.pointer(callbacks.context, VEX_POINTER_CANCEL, 0, 0);
     // Also release if a failed application ignores further callbacks during destruction.
-    releaseDividerCapture();
+    releasePointerCapture();
+}
+static void capturePointerGesture(HWND hwnd) {
+    pointerCaptureState = PointerCaptureState::dragging;
+    SetCapture(hwnd);
+    if (GetCapture() != hwnd) cancelPointerGesture();
+}
+static void beginPointerGesture(HWND hwnd, float x, float y) {
+    uint32_t response = callbacks.pointer(callbacks.context, VEX_POINTER_BEGIN, x, y);
+    if (response == VEX_POINTER_NORMAL) return;
+    SetFocus(hwnd);
+    if (response == VEX_POINTER_TAB_ARMED) pointerCaptureState = PointerCaptureState::armed;
+    else capturePointerGesture(hwnd);
+    setPointerCursor(response, y);
 }
 static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
@@ -241,34 +266,31 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         break;
     case WM_LBUTTONDOWN: case WM_MBUTTONDOWN: {
-        cancelDividerPointer();
-        dividerCaptureState = DividerCaptureState::none;
+        cancelPointerGesture();
+        pointerCaptureState = PointerCaptureState::none;
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         if (y < 44 && x >= 140 && x < plusLeft()) {
-            uint32_t index = (uint32_t)((x - 140) / (tabWidth(drawnTabCount) + 4));
-            bool close = message == WM_MBUTTONDOWN || x > 140 + index * (tabWidth(drawnTabCount) + 4) + tabWidth(drawnTabCount) - 22;
-            if (index < drawnTabCount) callbacks.action(callbacks.context, close ? 7 : 6, index);
+            uint32_t index = (uint32_t)((x - 140) / (tabWidthDip + 4));
+            float local = x - 140 - index * (tabWidthDip + 4);
+            if (index >= tabStripCount || local >= tabWidthDip) return 0;
+            bool close = message == WM_MBUTTONDOWN || local > tabWidthDip - 22;
+            if (close) callbacks.action(callbacks.context, 7, index);
+            else beginPointerGesture(hwnd, x, y);
         } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 32) callbacks.action(callbacks.context, 0, 0);
         else if (y >= 44) {
-            uint32_t cursor = message == WM_LBUTTONDOWN ? callbacks.pointer(callbacks.context, VEX_POINTER_BEGIN, x, y) : 0;
-            if (cursor) {
-                SetFocus(hwnd);
-                dividerCaptureState = DividerCaptureState::dragging;
-                SetCapture(hwnd);
-                if (GetCapture() != hwnd) cancelDividerPointer();
-                else setPointerCursor(cursor, y);
-            } else callbacks.click(callbacks.context, x, y);
+            if (message == WM_LBUTTONDOWN) beginPointerGesture(hwnd, x, y);
+            if (pointerCaptureState == PointerCaptureState::none) callbacks.click(callbacks.context, x, y);
         }
         return 0;
     }
     case WM_LBUTTONUP: {
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
-        if (dividerCaptureState != DividerCaptureState::none) {
-            if (dividerCaptureState == DividerCaptureState::dragging) callbacks.pointer(callbacks.context, VEX_POINTER_END, x, y);
-            releaseDividerCapture();
-            dividerCaptureState = DividerCaptureState::none;
+        if (pointerCaptureState != PointerCaptureState::none) {
+            if (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging) callbacks.pointer(callbacks.context, VEX_POINTER_END, x, y);
+            releasePointerCapture();
+            pointerCaptureState = PointerCaptureState::none;
             return 0;
         }
         if (y < 44 && x >= clientWidth - 120) {
@@ -281,12 +303,16 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_MOUSEMOVE: {
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
-        uint32_t event = dividerCaptureState == DividerCaptureState::dragging ? VEX_POINTER_MOVE : VEX_POINTER_HOVER;
-        setPointerCursor(callbacks.pointer(callbacks.context, event, x, y), y);
+        if (pointerCaptureState == PointerCaptureState::armed && !(wparam & MK_LBUTTON)) cancelPointerGesture();
+        uint32_t event = pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging ? VEX_POINTER_MOVE : VEX_POINTER_HOVER;
+        uint32_t response = callbacks.pointer(callbacks.context, event, x, y);
+        if (pointerCaptureState == PointerCaptureState::armed && response == VEX_POINTER_TAB_DRAGGING) capturePointerGesture(hwnd);
+        else if (response == VEX_POINTER_NORMAL) cancelPointerGesture();
+        setPointerCursor(response, y);
         return 0;
     }
     case WM_CAPTURECHANGED: case WM_CANCELMODE:
-        cancelDividerPointer();
+        cancelPointerGesture();
         return 0;
     case WM_SIZE:
         if (wparam != SIZE_MINIMIZED && window) {
@@ -299,7 +325,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_DPICHANGED: {
-        cancelDividerPointer();
+        cancelPointerGesture();
         auto bounds = reinterpret_cast<RECT*>(lparam);
         if (target) target->SetDpi((float)HIWORD(wparam), (float)HIWORD(wparam));
         if (!SetWindowPos(hwnd, nullptr, bounds->left, bounds->top, bounds->right - bounds->left, bounds->bottom - bounds->top, SWP_NOZORDER | SWP_NOACTIVATE)) {
@@ -338,11 +364,44 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_APP + 5:
         if (selftestEnabled() && wparam <= 7 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
+    case WM_APP + 6: {
+        uint32_t source = (uint32_t)(wparam & 0xff), operation = (uint32_t)(wparam >> 8);
+        if (!selftestEnabled() || wparam > 0x8ff || operation > 8 || source >= tabStripCount) return 0;
+        float scale = GetDpiForWindow(hwnd) / 96.0f;
+        float startX = (140 + source * (tabWidthDip + 4) + fminf(40, (tabWidthDip - 22) / 2)) * scale;
+        if (!isfinite(startX) || startX < 0 || startX > 32767 || !isfinite(scale) || scale <= 0 || 20 * scale > 32767) return 0;
+        // Replay one gesture in this callback so OS-generated moves cannot interleave with capture snapshots.
+        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM((uint16_t)lroundf(startX), (uint16_t)lroundf(20 * scale)));
+        uint64_t pressed = callbacks.probe(callbacks.context, 45), capturedPress = vex_window_has_pointer_capture();
+        SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, lparam);
+        uint64_t result = (callbacks.probe(callbacks.context, 60 + source) << 32) |
+            pressed | (capturedPress << 2) | (callbacks.probe(callbacks.context, 45) << 3) |
+            ((uint64_t)vex_window_has_pointer_capture() << 5) | (callbacks.probe(callbacks.context, 49) << 8);
+        switch (operation) {
+            case 1: SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0); break;
+            case 2: SendMessageW(hwnd, WM_CAPTURECHANGED, 0, 0); break;
+            case 3: SendMessageW(hwnd, WM_CANCELMODE, 0, 0); break;
+            case 4: SendMessageW(hwnd, WM_KILLFOCUS, 0, 0); break;
+            case 5: {
+                RECT bounds;
+                if (!GetWindowRect(hwnd, &bounds)) { platformError = ERROR_INVALID_WINDOW_HANDLE; DestroyWindow(hwnd); return 0; }
+                UINT dpi = GetDpiForWindow(hwnd);
+                SendMessageW(hwnd, WM_DPICHANGED, MAKELONG(dpi, dpi), (LPARAM)&bounds);
+                break;
+            }
+            case 6: callbacks.action(callbacks.context, 7, source); break;
+            case 7: SendMessageW(hwnd, WM_CLOSE, 0, 0); return (LRESULT)result;
+            case 8: callbacks.action(callbacks.context, 4, 0); break;
+        }
+        LPARAM release = operation ? MAKELPARAM((uint16_t)lroundf((clientWidth - 20) * scale), (uint16_t)lroundf(20 * scale)) : lparam;
+        SendMessageW(hwnd, WM_LBUTTONUP, 0, release);
+        return (LRESULT)result;
+    }
     case WM_TIMER: renderScheduledFrame(); return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN:
-        if (wparam == VK_ESCAPE && dividerCaptureState == DividerCaptureState::dragging) { cancelDividerPointer(); return 1; }
+        if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
         return handleKey((uint32_t)wparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
-    case WM_KILLFOCUS: cancelDividerPointer(); pendingSurrogate = 0; return 0;
+    case WM_KILLFOCUS: cancelPointerGesture(); pendingSurrogate = 0; return 0;
     case WM_CHAR: case WM_SYSCHAR: {
         uint16_t unit = (uint16_t)wparam;
         if (unit >= 0xd800 && unit <= 0xdbff) { pendingSurrogate = unit; return 0; }
@@ -356,8 +415,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_MOUSEWHEEL: callbacks.scroll(callbacks.context, -(GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) * 3); vex_window_invalidate(); return 0;
-    case WM_CLOSE: cancelDividerPointer(); DestroyWindow(hwnd); return 0;
-    case WM_DESTROY: cancelDividerPointer(); KillTimer(hwnd, 1); PostQuitMessage(0); return 0;
+    case WM_CLOSE: cancelPointerGesture(); DestroyWindow(hwnd); return 0;
+    case WM_DESTROY: cancelPointerGesture(); KillTimer(hwnd, 1); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
@@ -459,9 +518,8 @@ extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
     return 0;
 }
 extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexProgramStatus status, bool attention) {
-    if (!count || count > 8 || index >= count) return;
-    drawnTabCount = count;
-    float width = tabWidth(count), x = 140 + index * (width + 4);
+    if (count != tabStripCount || index >= count) return;
+    float width = tabWidthDip, x = 140 + index * (width + 4);
     if (active) {
         brush->SetColor(rgb(0x25213d));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 7, x + width, 37), 5, 5), brush);
