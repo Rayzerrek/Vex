@@ -51,6 +51,13 @@ pub const TerminalSession = struct {
         if (previous != platform.statusBadgeKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
         try self.pty.write(bytes);
     }
+    /// Normalizes clipboard newlines and applies bracketed paste when the active shell/TUI requested DEC 2004.
+    pub fn paste(self: *TerminalSession, allocator: std.mem.Allocator, text: []const u8) !void {
+        if (text.len == 0) return;
+        const encoded = try self.terminal.encodePasteAlloc(allocator, text);
+        defer allocator.free(encoded);
+        try self.writeUserInput(encoded);
+    }
     /// Avoids redundant ConPTY/emulator resizes; exited sessions retain a resizable terminal viewport.
     pub fn resize(self: *TerminalSession, size: platform.TerminalSize) !void {
         if (self.size) |previous| if (std.meta.eql(previous, size)) return;

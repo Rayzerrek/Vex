@@ -30,6 +30,7 @@ typedef struct {
     void (*paint)(void*);
     bool (*key)(void*, uint32_t, uint32_t);
     void (*text)(void*, const uint8_t*, size_t);
+    void (*paste)(void*, const uint8_t*, size_t);
     void (*scroll)(void*, int32_t);
     void (*click)(void*, float, float);
     /* Event: hover/begin/move/end/cancel. DIP coordinates. Result: cursor/armed-tab/captured-tab response. */

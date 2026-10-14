@@ -148,6 +148,19 @@ pub fn runWindow(owner: anytype) !void {
             }
             app.onText(input);
         }
+        fn paste(context: ?*anyopaque, bytes: [*c]const u8, length: usize) callconv(.c) void {
+            const app = recover(context) orelse return;
+            if (length > 1024 * 1024 or (length != 0 and bytes == null)) {
+                app.fail(error.InvalidPasteInput);
+                return;
+            }
+            const input: []const u8 = if (length == 0) &.{} else bytes[0..length];
+            if (!std.unicode.utf8ValidateSlice(input)) {
+                app.fail(error.InvalidPasteUtf8);
+                return;
+            }
+            app.onPaste(input);
+        }
         fn scroll(context: ?*anyopaque, delta: i32) callconv(.c) void {
             if (recover(context)) |app| app.onScroll(delta);
         }
@@ -182,7 +195,7 @@ pub fn runWindow(owner: anytype) !void {
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .scroll = Adapter.scroll, .click = Adapter.click, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .probe = Adapter.probe });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .probe = Adapter.probe });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 

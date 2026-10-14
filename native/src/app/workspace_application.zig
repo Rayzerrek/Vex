@@ -202,6 +202,11 @@ const WorkspaceApplication = struct {
         const session = self.activeSession() orelse return;
         if (session.state == .running) session.writeUserInput(bytes) catch |err| self.fail(err);
     }
+    pub fn onPaste(self: *WorkspaceApplication, bytes: []const u8) void {
+        if (self.health == .failed) return;
+        const session = self.activeSession() orelse return;
+        if (session.state == .running) session.paste(self.allocator, bytes) catch |err| self.fail(err);
+    }
     pub fn onScroll(self: *WorkspaceApplication, delta: i32) void {
         if (self.health == .failed) return;
         const session = self.activeSession() orelse return;
