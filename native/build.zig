@@ -7,12 +7,12 @@ pub fn build(b: *std.Build) void {
         std.debug.print("error: Vex native requires Debug or ReleaseSafe; runtime safety may not be disabled\n", .{});
         std.process.exit(1);
     }
-    const module = b.createModule(.{ .root_source_file = b.path("src/terminal_app.zig"), .target = target, .optimize = optimize });
-    module.addIncludePath(b.path("src"));
+    const module = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize });
+    module.addIncludePath(b.path("src/windows"));
     module.addIncludePath(b.path("vendor/include"));
     const native_flags = &.{ "-std=c++20", "-fno-exceptions", "-fno-rtti", "-Wall", "-Wextra", "-Werror" };
-    module.addCSourceFile(.{ .file = b.path("src/windows_platform.cpp"), .flags = native_flags });
-    module.addCSourceFile(.{ .file = b.path("src/windows_pty.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/windows_platform.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/windows_pty.cpp"), .flags = native_flags });
     module.link_libc = true;
     for ([_][]const u8{ "user32", "kernel32", "d2d1", "dwrite", "dwmapi", "ole32", "uuid" }) |lib| module.linkSystemLibrary(lib, .{});
     const exe = b.addExecutable(.{ .name = "vex-native", .root_module = module });
@@ -20,8 +20,8 @@ pub fn build(b: *std.Build) void {
     const dll = b.addInstallFileWithDir(b.path("../Vendor/libghostty/ghostty-vt.dll"), .bin, "ghostty-vt.dll");
     b.installArtifact(exe);
     b.getInstallStep().dependOn(&dll.step);
-    const cmd_integration = b.addInstallFileWithDir(b.path("src/shell_integration/Vex.cmd"), .bin, "ShellIntegration/Vex.cmd");
-    const nu_integration = b.addInstallFileWithDir(b.path("src/shell_integration/Vex.nu"), .bin, "ShellIntegration/Vex.nu");
+    const cmd_integration = b.addInstallFileWithDir(b.path("src/shell/integration/Vex.cmd"), .bin, "ShellIntegration/Vex.cmd");
+    const nu_integration = b.addInstallFileWithDir(b.path("src/shell/integration/Vex.nu"), .bin, "ShellIntegration/Vex.nu");
     b.getInstallStep().dependOn(&cmd_integration.step);
     b.getInstallStep().dependOn(&nu_integration.step);
     const run = b.addSystemCommand(&.{b.getInstallPath(.bin, "vex-native.exe")});

@@ -1,9 +1,9 @@
 const std = @import("std");
-const panes = @import("pane_tree.zig");
-const terminal = @import("terminal.zig");
-const directory = @import("directory.zig");
-const status = @import("program_status.zig");
-const shell = @import("shell_launch.zig");
+const panes = @import("../workspace/pane_tree.zig");
+const terminal = @import("../terminal/terminal.zig");
+const directory = @import("../shell/directory.zig");
+const status = @import("../terminal/program_status.zig");
+const shell = @import("../shell/shell_launch.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
 pub const c = @cImport({

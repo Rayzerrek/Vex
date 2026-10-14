@@ -638,7 +638,7 @@ test "status feed allocation and capability sink errors reach the real terminal 
     try std.testing.expectError(error.TestPtyWriteFailure, terminal.feedOutput("\x1b]7501;?\x07"));
 }
 
-const paths = @import("directory.zig");
+const paths = @import("../shell/directory.zig");
 const TestDirectoryOwner = struct {
     directory: paths.PaneDirectory,
     pub fn onDirectoryReport(self: *@This(), report: []const u8) !void {

@@ -1,60 +1,12 @@
 const std = @import("std");
-const binding = @import("api.zig");
-const core = @import("terminal.zig");
-const platform = @import("windows_ffi.zig");
-const panes = @import("pane_tree.zig");
-const workspace = @import("workspace_model.zig");
-const directory = @import("directory.zig");
-const status = @import("program_status.zig");
-const shell = @import("shell_launch.zig");
-
-const SessionState = union(enum) { running, exited: u32 };
-const TerminalSession = struct {
-    id: panes.PaneId,
-    terminal: core.Terminal,
-    pty: platform.PtyOwner,
-    directory: directory.PaneDirectory,
-    machine_name: []const u8,
-    size: ?platform.TerminalSize = null,
-    state: SessionState = .running,
-    needs_attention: bool = false,
-
-    fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch) !*TerminalSession {
-        const session = try allocator.create(TerminalSession);
-        errdefer allocator.destroy(session);
-        var pane_directory = try directory.PaneDirectory.init(allocator, path);
-        errdefer pane_directory.deinit();
-        var terminal = try core.Terminal.init(allocator, api);
-        errdefer terminal.deinit();
-        var pty = try platform.PtyOwner.init(allocator, id, pane_directory.current(), launch);
-        errdefer pty.deinit();
-        session.* = .{ .id = id, .terminal = terminal, .pty = pty, .directory = pane_directory, .machine_name = machine_name };
-        try session.terminal.attachResponseSink(session.pty.responseSink());
-        try session.terminal.attachDirectorySink(session);
-        return session;
-    }
-    pub fn onDirectoryReport(self: *TerminalSession, bytes: []const u8) !void {
-        try self.directory.applyReport(bytes, self.machine_name);
-    }
-    fn destroy(self: *TerminalSession, allocator: std.mem.Allocator) void {
-        self.pty.deinit();
-        self.terminal.deinit();
-        self.directory.deinit();
-        allocator.destroy(self);
-    }
-    fn writeUserInput(self: *TerminalSession, bytes: []const u8) !void {
-        const previous = platform.statusBadgeKey(self.terminal.program_status.programStatus());
-        self.terminal.program_status.acknowledgeProgramStatus();
-        if (previous != platform.statusBadgeKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
-        try self.pty.write(bytes);
-    }
-    fn resize(self: *TerminalSession, size: platform.TerminalSize) !void {
-        if (self.size) |previous| if (std.meta.eql(previous, size)) return;
-        if (self.state == .running) try self.pty.resize(size);
-        try self.terminal.resize(size.columns, size.rows, size.cell_width_px, size.cell_height_px);
-        self.size = size;
-    }
-};
+const binding = @import("../terminal/api.zig");
+const platform = @import("../windows/windows_ffi.zig");
+const panes = @import("../workspace/pane_tree.zig");
+const workspace = @import("../workspace/workspace_model.zig");
+const directory = @import("../shell/directory.zig");
+const status = @import("../terminal/program_status.zig");
+const shell = @import("../shell/shell_launch.zig");
+const TerminalSession = @import("terminal_session.zig").TerminalSession;
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
 const WorkspaceApplication = struct {
@@ -354,19 +306,8 @@ const WorkspaceApplication = struct {
     }
 };
 
-/// Main keeps the allocator/API/app owners alive until all window callbacks and pipe workers stop.
-pub fn main() void {
-    platform.beginStartup();
-    var allocator = std.heap.DebugAllocator(.{}){};
-    defer {
-        if (allocator.deinit() == .leak) platform.showFailure(error.NativeAllocationLeak);
-    }
-    runApplication(allocator.allocator()) catch |err| {
-        platform.showFailure(err);
-        std.process.exit(1);
-    };
-}
-fn runApplication(allocator: std.mem.Allocator) !void {
+/// Retains the stable application/API owner until the window loop returns; teardown joins all session workers.
+pub fn runApplication(allocator: std.mem.Allocator) !void {
     var app = try WorkspaceApplication.init(allocator);
     defer app.deinit();
     platform.runWindow(&app) catch |err| {
@@ -374,13 +315,4 @@ fn runApplication(allocator: std.mem.Allocator) !void {
         return err;
     };
     if (app.health == .failed) return app.health.failed;
-}
-
-test {
-    _ = @import("terminal.zig");
-    _ = @import("directory.zig");
-    _ = @import("pane_tree.zig");
-    _ = @import("workspace_model.zig");
-    _ = @import("windows_ffi.zig");
-    _ = @import("shell_launch.zig");
 }
