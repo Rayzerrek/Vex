@@ -1,24 +1,82 @@
 const std = @import("std");
 
-/// Bounded OSC 7501/133/9;4 interception; all unrelated VT bytes are forwarded unchanged.
-/// State survives pipe reads. CSI/DCS/APC/SOS/PM payloads cannot masquerade as status reports.
+/// Bounded OSC 7501/133/9;4 interception and ConPTY-stripped DCS query filtering; unrelated VT bytes pass unchanged.
+/// State survives pipe reads. CSI/DCS/APC/SOS/PM payloads cannot masquerade as status reports or bare queries.
 pub const TerminalFeedFilter = struct {
-    state: enum { normal, escape, csi, string, string_escape, osc, osc_escape, passthrough_osc, passthrough_osc_escape, drop_osc, drop_osc_escape } = .normal,
+    state: enum {
+        normal,
+        escape,
+        csi,
+        string,
+        string_escape,
+        osc,
+        osc_escape,
+        passthrough_osc,
+        passthrough_osc_escape,
+        drop_osc,
+        drop_osc_escape,
+        plus_seen,
+        plus_query,
+        dollar_seen,
+        dollar_q,
+    } = .normal,
     osc: [4096]u8 = undefined,
     osc_len: usize = 0,
+    plus_query: [256]u8 = undefined,
+    plus_len: usize = 0,
 
     /// Owner callbacks execute in byte order; PTY replies and reset/status changes cannot overtake VT output.
     pub fn feedTerminalOutput(self: *TerminalFeedFilter, owner: anytype, bytes: []const u8) !void {
-        if (self.state == .normal and std.mem.indexOfScalar(u8, bytes, 0x1b) == null) {
+        if (self.state == .normal and !needsSlowPath(bytes)) {
             if (bytes.len != 0) try owner.writeTerminalOutput(bytes);
             return;
         }
         var writer = OutputBatch(@TypeOf(owner)){ .owner = owner };
         for (bytes) |byte| {
             switch (self.state) {
-                .normal => if (byte == 0x1b) {
-                    self.state = .escape;
-                } else try writer.append(byte),
+                .normal => try self.stepNormal(&writer, byte),
+                .plus_seen => if (byte == 'q') {
+                    self.plus_len = 0;
+                    self.state = .plus_query;
+                } else {
+                    try writer.append('+');
+                    self.state = .normal;
+                    try self.stepNormal(&writer, byte);
+                },
+                .plus_query => if (isQueryByte(byte)) {
+                    if (self.plus_len < self.plus_query.len) {
+                        self.plus_query[self.plus_len] = byte;
+                        self.plus_len += 1;
+                    } else {
+                        try writer.appendSlice("+q");
+                        try writer.appendSlice(self.plus_query[0..self.plus_len]);
+                        try writer.append(byte);
+                        self.plus_len = 0;
+                        self.state = .normal;
+                    }
+                } else {
+                    if (!isStrippedXtgettcap(self.plus_query[0..self.plus_len])) {
+                        try writer.appendSlice("+q");
+                        try writer.appendSlice(self.plus_query[0..self.plus_len]);
+                    }
+                    self.plus_len = 0;
+                    self.state = .normal;
+                    try self.stepNormal(&writer, byte);
+                },
+                .dollar_seen => if (byte == 'q') {
+                    self.state = .dollar_q;
+                } else {
+                    try writer.append('$');
+                    self.state = .normal;
+                    try self.stepNormal(&writer, byte);
+                },
+                .dollar_q => if (byte == 'm') {
+                    self.state = .normal;
+                } else {
+                    try writer.appendSlice("$q");
+                    self.state = .normal;
+                    try self.stepNormal(&writer, byte);
+                },
                 .escape => {
                     if (byte == ']') {
                         self.osc_len = 0;
@@ -92,6 +150,14 @@ pub const TerminalFeedFilter = struct {
         }
         try writer.flush();
     }
+    fn stepNormal(self: *TerminalFeedFilter, writer: anytype, byte: u8) !void {
+        switch (byte) {
+            0x1b => self.state = .escape,
+            '+' => self.state = .plus_seen,
+            '$' => self.state = .dollar_seen,
+            else => try writer.append(byte),
+        }
+    }
     fn appendOsc(self: *TerminalFeedFilter, writer: anytype, byte: u8) !void {
         if (self.osc_len < self.osc.len) {
             self.osc[self.osc_len] = byte;
@@ -134,6 +200,48 @@ pub const TerminalFeedFilter = struct {
         }
     }
 };
+const stripped_xtgettcap_caps = [_][]const u8{
+    "5463",
+    "524742",
+    "4D73",
+    "536D756C78",
+    "53796E63",
+    "73657472676266",
+    "73657472676262",
+    "536574756C63",
+    "544E",
+    "436F",
+};
+fn needsSlowPath(bytes: []const u8) bool {
+    if (bytes.len == 0) return false;
+    if (bytes[bytes.len - 1] == '+' or bytes[bytes.len - 1] == '$') return true;
+    for (bytes, 0..) |byte, index| {
+        if (byte == 0x1b) return true;
+        if ((byte == '+' or byte == '$') and index + 1 < bytes.len and bytes[index + 1] == 'q') return true;
+    }
+    return false;
+}
+fn isQueryByte(byte: u8) bool {
+    return std.ascii.isHex(byte) or byte == ';';
+}
+fn isStrippedXtgettcap(payload: []const u8) bool {
+    if (payload.len == 0) return false;
+    var start: usize = 0;
+    for (0..payload.len + 1) |index| {
+        if (index == payload.len or payload[index] == ';') {
+            const token = payload[start..index];
+            if (token.len == 0 or !isKnownXtgettcapToken(token)) return false;
+            start = index + 1;
+        }
+    }
+    return true;
+}
+fn isKnownXtgettcapToken(token: []const u8) bool {
+    for (stripped_xtgettcap_caps) |cap| {
+        if (std.ascii.eqlIgnoreCase(token, cap)) return true;
+    }
+    return false;
+}
 fn isPromptMarker(osc: []const u8) bool {
     var digits: usize = 0;
     while (digits < osc.len and std.ascii.isDigit(osc[digits])) : (digits += 1) {}
@@ -265,4 +373,44 @@ test "oversized status drops through repeated ESC terminators without swallowing
         try std.testing.expectEqualStrings("ok", owner.output.items);
         try std.testing.expectEqual(@as(usize, 0), owner.reports);
     }
+}
+test "ConPTY-stripped XTGETTCAP and DECRQSS payloads are removed across every chunk boundary while intact DCS passes through" {
+    const bytes = "head+q4D73\x1b[Hmid+q5463;524742;73657472676266;73657472676262\x1b[H$qm\x1b[K\x1bP+q5463\x1b\\\x1bP$qm\x1b\\tail";
+    const expected = "head\x1b[Hmid\x1b[H\x1b[K\x1bP+q5463\x1b\\\x1bP$qm\x1b\\tail";
+    for (0..bytes.len + 1) |split| {
+        var owner: TestFeedOwner = .{};
+        defer owner.output.deinit(std.testing.allocator);
+        var filter: TerminalFeedFilter = .{};
+        try filter.feedTerminalOutput(&owner, bytes[0..split]);
+        try filter.feedTerminalOutput(&owner, bytes[split..]);
+        try std.testing.expectEqualStrings(expected, owner.output.items);
+    }
+}
+test "ordinary plus, dollar, unknown +q capabilities and oversized +q runs fail open across every split" {
+    for ([_][]const u8{
+        "a+b=c",
+        "C++ rocks\n",
+        "echo $query $q1 $env:x\n",
+        "cost $100 and $5\n",
+        "xx+qCD12yy",
+        "what+q is this",
+        "cost $q? maybe",
+    }) |text| {
+        for (0..text.len + 1) |split| {
+            var owner: TestFeedOwner = .{};
+            defer owner.output.deinit(std.testing.allocator);
+            var filter: TerminalFeedFilter = .{};
+            try filter.feedTerminalOutput(&owner, text[0..split]);
+            try filter.feedTerminalOutput(&owner, text[split..]);
+            try std.testing.expectEqualStrings(text, owner.output.items);
+        }
+    }
+    const long_hex = [_]u8{'A'} ** 260;
+    const oversized = try std.mem.concat(std.testing.allocator, u8, &.{ "+q", &long_hex, "!" });
+    defer std.testing.allocator.free(oversized);
+    var owner: TestFeedOwner = .{};
+    defer owner.output.deinit(std.testing.allocator);
+    var filter: TerminalFeedFilter = .{};
+    try filter.feedTerminalOutput(&owner, oversized);
+    try std.testing.expectEqualStrings(oversized, owner.output.items);
 }
