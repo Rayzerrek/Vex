@@ -40,6 +40,7 @@ typedef struct {
     uint32_t (*pointer)(void*, uint32_t, float, float, uint32_t);
     void (*action)(void*, uint32_t, uint32_t);
     void (*exited)(void*, uint32_t, uint32_t);
+    void (*tick)(void*);
     uint64_t (*probe)(void*, uint32_t);
 } VexWindowCallbacks;
 /* Zero is success; nonzero values are Win32/HRESULT error codes. */

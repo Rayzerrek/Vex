@@ -190,29 +190,31 @@ static void drawCaptionButtons() {
     // Minimize button (button 1)
     {
         const float left = baseLeft;
-        if (pressedCaptionButton == 1 || hoveredCaptionButton == 1) {
+        const bool hot = pressedCaptionButton == 1 || hoveredCaptionButton == 1;
+        if (hot) {
             rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 1 ? 0x353944 : 0x262932);
         }
         const float cx = left + 20.0f, cy = 21.5f;
-        brush->SetColor(rgb(0xe4e4e7));
-        target->DrawLine(D2D1::Point2F(cx - 5.0f, cy), D2D1::Point2F(cx + 5.0f, cy), brush, 1.0f);
+        brush->SetColor(rgb(hot ? 0xe4e4e7 : 0x8f9197));
+        target->DrawLine(D2D1::Point2F(cx - 5.0f, cy), D2D1::Point2F(cx + 5.0f, cy), brush, 1.3f, roundStrokeStyle);
     }
     // Maximize / Restore button (button 2)
     {
         const float left = baseLeft + 40.0f;
-        if (pressedCaptionButton == 2 || hoveredCaptionButton == 2) {
+        const bool hot = pressedCaptionButton == 2 || hoveredCaptionButton == 2;
+        if (hot) {
             rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 2 ? 0x353944 : 0x262932);
         }
         const float cx = left + 20.0f, cy = 21.5f;
-        brush->SetColor(rgb(0xe4e4e7));
+        brush->SetColor(rgb(hot ? 0xe4e4e7 : 0x8f9197));
         if (IsZoomed(window)) {
-            target->DrawRectangle(D2D1::RectF(cx - 4.5f, cy - 2.5f, cx + 2.5f, cy + 4.5f), brush, 1.0f);
-            target->DrawLine(D2D1::Point2F(cx - 2.5f, cy - 2.5f), D2D1::Point2F(cx - 2.5f, cy - 4.5f), brush, 1.0f);
-            target->DrawLine(D2D1::Point2F(cx - 2.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.0f);
-            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy + 2.5f), brush, 1.0f);
-            target->DrawLine(D2D1::Point2F(cx + 2.5f, cy + 2.5f), D2D1::Point2F(cx + 4.5f, cy + 2.5f), brush, 1.0f);
+            target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 5.0f, cy - 2.0f, cx + 2.2f, cy + 5.0f), 1.6f, 1.6f), brush, 1.25f, roundStrokeStyle);
+            target->DrawLine(D2D1::Point2F(cx - 2.2f, cy - 2.0f), D2D1::Point2F(cx - 2.2f, cy - 4.8f), brush, 1.25f, roundStrokeStyle);
+            target->DrawLine(D2D1::Point2F(cx - 2.2f, cy - 4.8f), D2D1::Point2F(cx + 4.8f, cy - 4.8f), brush, 1.25f, roundStrokeStyle);
+            target->DrawLine(D2D1::Point2F(cx + 4.8f, cy - 4.8f), D2D1::Point2F(cx + 4.8f, cy + 2.2f), brush, 1.25f, roundStrokeStyle);
+            target->DrawLine(D2D1::Point2F(cx + 2.2f, cy + 2.2f), D2D1::Point2F(cx + 4.8f, cy + 2.2f), brush, 1.25f, roundStrokeStyle);
         } else {
-            target->DrawRectangle(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), brush, 1.0f);
+            target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.8f, cy - 4.8f, cx + 4.8f, cy + 4.8f), 1.8f, 1.8f), brush, 1.25f, roundStrokeStyle);
         }
     }
     // Close button (button 3)
@@ -223,9 +225,9 @@ static void drawCaptionButtons() {
             rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 3 ? 0xf1707a : 0xe81123);
         }
         const float cx = left + 20.0f, cy = 21.5f;
-        brush->SetColor(rgb(hot ? 0xffffff : 0xe4e4e7));
-        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy + 4.5f), brush, 1.15f);
-        target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.15f);
+        brush->SetColor(rgb(hot ? 0xffffff : 0x8f9197));
+        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy + 4.5f), brush, 1.35f, roundStrokeStyle);
+        target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.35f, roundStrokeStyle);
     }
 }
 
@@ -369,13 +371,27 @@ static void updateTopChromeHover(float x, float y) {
 }
 static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
-    case WM_NCCALCSIZE: if (wparam) return 0; break;
+    case WM_NCCALCSIZE: {
+        if (wparam && IsZoomed(hwnd)) {
+            auto params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
+            UINT dpi = GetDpiForWindow(hwnd);
+            int frame = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+            params->rgrc[0].left += frame;
+            params->rgrc[0].top += frame;
+            params->rgrc[0].right -= frame;
+            params->rgrc[0].bottom -= frame;
+        }
+        return 0;
+    }
+    case WM_NCACTIVATE:
+        return DefWindowProcW(hwnd, message, wparam, -1);
     case WM_NCHITTEST: {
-        LRESULT hit = DefWindowProcW(hwnd, message, wparam, lparam);
-        if (hit != HTCLIENT) return hit;
         POINT point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
         ScreenToClient(hwnd, &point);
         RECT bounds; GetClientRect(hwnd, &bounds);
+        if (point.x < 0 || point.y < 0 || point.x >= bounds.right || point.y >= bounds.bottom) {
+            return DefWindowProcW(hwnd, message, wparam, lparam);
+        }
         int edge = (int)(6 * GetDpiForWindow(hwnd) / 96.0f);
         if (!IsZoomed(hwnd)) {
             bool left = point.x < edge, right = point.x >= bounds.right - edge;
@@ -606,7 +622,13 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         SendMessageW(hwnd, WM_LBUTTONUP, 0, release);
         return (LRESULT)result;
     }
-    case WM_TIMER: renderScheduledFrame(); return 0;
+    case WM_TIMER:
+        if (wparam == 2) {
+            if (callbacks.tick) callbacks.tick(callbacks.context);
+        } else {
+            renderScheduledFrame();
+        }
+        return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN:
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
         return handleKey((uint32_t)wparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
@@ -631,7 +653,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_CLOSE: cancelPointerGesture(); DestroyWindow(hwnd); return 0;
-    case WM_DESTROY: cancelPointerGesture(); KillTimer(hwnd, 1); PostQuitMessage(0); return 0;
+    case WM_DESTROY: cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
@@ -714,11 +736,13 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
             else {
                 if (iconBig) SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconBig));
                 if (iconSmall) SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
-                MARGINS margins = { 0, 0, 1, 0 };
+                MARGINS margins = { 1, 1, 1, 1 };
                 DwmExtendFrameIntoClientArea(window, &margins);
                 BOOL dark = TRUE; DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
                 DWORD corner = 2; DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
-                COLORREF border = 0x0039312D; DwmSetWindowAttribute(window, 34, &border, sizeof(border));
+                COLORREF border = 0xFFFFFFFE; DwmSetWindowAttribute(window, 34, &border, sizeof(border));
+                SetWindowPos(window, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                SetTimer(window, 2, 250, nullptr);
                 SetEnvironmentVariableW(L"TERM", L"xterm-256color"); SetEnvironmentVariableW(L"COLORTERM", L"truecolor");
                 updateWindowMetrics();
                 ShowWindow(window, SW_SHOW); UpdateWindow(window);

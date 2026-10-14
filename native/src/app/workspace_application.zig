@@ -254,6 +254,20 @@ const WorkspaceApplication = struct {
         }
         return true;
     }
+    pub fn onTick(self: *WorkspaceApplication) void {
+        if (self.health == .failed) return;
+        const now = std.time.milliTimestamp();
+        var any_changed = false;
+        for (self.placements.items) |placement| {
+            if (self.findSession(placement.id)) |session| {
+                if (now - session.last_icon_probe_ms >= 200) {
+                    session.last_icon_probe_ms = now;
+                    if (session.refreshAppIcon(true)) any_changed = true;
+                }
+            }
+        }
+        if (any_changed) platform.invalidateWindow();
+    }
     pub fn onPaint(self: *WorkspaceApplication) void {
         if (self.health == .failed) return;
         self.paintWorkspace() catch |err| self.fail(err);
@@ -266,7 +280,7 @@ const WorkspaceApplication = struct {
             var tab_icons: [8]app_icon.AppIcon = undefined;
             var icon_count: usize = 0;
             try self.collectTabIcons(tab.tree.root, &tab_icons, &icon_count);
-            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, active_session.terminal.title.slice(), tab_icons[0..icon_count], presentation.summary, presentation.attention);
+            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, active_session.displayTitle(), tab_icons[0..icon_count], presentation.summary, presentation.attention);
         }
         if (self.pointer_drag == .tab) {
             const metrics = self.metrics orelse return;
@@ -282,7 +296,7 @@ const WorkspaceApplication = struct {
             const hovered_action = if (hovered) self.hovered_header_action else null;
             const frame = try session.terminal.readFrame();
             {
-                platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.terminal.title.slice(), session.icon, session.terminal.program_status.programStatus());
+                platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.displayTitle(), session.icon, session.terminal.program_status.programStatus());
                 defer platform.endPane();
                 try platform.drawTerminalFrame(frame, focused);
             }

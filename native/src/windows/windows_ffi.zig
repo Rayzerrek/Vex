@@ -298,12 +298,15 @@ pub fn runWindow(owner: anytype) !void {
         fn exited(context: ?*anyopaque, token: u32, code: u32) callconv(.c) void {
             if (token != 0) if (recover(context)) |app| app.onExited(@enumFromInt(token), code);
         }
+        fn tick(context: ?*anyopaque) callconv(.c) void {
+            if (recover(context)) |app| app.onTick();
+        }
         fn probe(context: ?*anyopaque, query: u32) callconv(.c) u64 {
             const app = recover(context) orelse return 0;
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .probe = Adapter.probe });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .probe = Adapter.probe });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
