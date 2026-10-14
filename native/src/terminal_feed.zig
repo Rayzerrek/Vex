@@ -1,6 +1,6 @@
 const std = @import("std");
 
-/// Bounded OSC 7501 interception; all unrelated VT bytes are forwarded unchanged.
+/// Bounded OSC 7501/133/9;4 interception; all unrelated VT bytes are forwarded unchanged.
 /// State survives pipe reads. CSI/DCS/APC/SOS/PM payloads cannot masquerade as status reports.
 pub const TerminalFeedFilter = struct {
     state: enum { normal, escape, csi, string, string_escape, osc, osc_escape, passthrough_osc, passthrough_osc_escape, drop_osc, drop_osc_escape } = .normal,
@@ -98,7 +98,7 @@ pub const TerminalFeedFilter = struct {
             self.osc_len += 1;
             return;
         }
-        if (std.mem.startsWith(u8, &self.osc, "7501;")) {
+        if (std.mem.startsWith(u8, &self.osc, "7501;") or isPromptMarker(&self.osc) or std.mem.startsWith(u8, &self.osc, "9;4;")) {
             self.state = .drop_osc;
         } else {
             try writer.appendSlice("\x1b]");
@@ -120,6 +120,13 @@ pub const TerminalFeedFilter = struct {
             if (osc.len + 2 + terminator.len > 4096) return;
             try writer.flush();
             try owner.onProgramStatusOsc(osc[5..]);
+        } else if (isPromptMarker(osc)) {
+            // ConPTY prompt redraws must not let libghostty mutate the terminal grid for OSC 133.
+            try writer.flush();
+            if (std.mem.startsWith(u8, osc, "133;")) try owner.onShellMarkerOsc(osc[4..]);
+        } else if (std.mem.startsWith(u8, osc, "9;4;")) {
+            try writer.flush();
+            owner.onProgressOsc(osc[4..]);
         } else {
             try writer.appendSlice("\x1b]");
             try writer.appendSlice(osc);
@@ -127,6 +134,11 @@ pub const TerminalFeedFilter = struct {
         }
     }
 };
+fn isPromptMarker(osc: []const u8) bool {
+    var digits: usize = 0;
+    while (digits < osc.len and std.ascii.isDigit(osc[digits])) : (digits += 1) {}
+    return (std.fmt.parseInt(u32, osc[0..digits], 10) catch return false) == 133;
+}
 fn OutputBatch(comptime Owner: type) type {
     return struct {
         owner: Owner,
@@ -185,11 +197,19 @@ const TestFeedOwner = struct {
     output: std.ArrayList(u8) = .empty,
     reports: usize = 0,
     resets: usize = 0,
+    shell_markers: usize = 0,
+    progress_reports: usize = 0,
     pub fn writeTerminalOutput(self: *@This(), bytes: []const u8) !void {
         try self.output.appendSlice(std.testing.allocator, bytes);
     }
     pub fn onProgramStatusOsc(self: *@This(), _: []const u8) !void {
         self.reports += 1;
+    }
+    pub fn onShellMarkerOsc(self: *@This(), _: []const u8) !void {
+        self.shell_markers += 1;
+    }
+    pub fn onProgressOsc(self: *@This(), _: []const u8) void {
+        self.progress_reports += 1;
     }
     pub fn onTerminalReset(self: *@This()) void {
         self.resets += 1;
@@ -205,6 +225,19 @@ test "unrelated OSC/CSI and opaque strings pass unchanged at every chunk boundar
         try filter.feedTerminalOutput(&owner, bytes[split..]);
         try std.testing.expectEqualStrings(bytes, owner.output.items);
         try std.testing.expectEqual(@as(usize, 0), owner.reports);
+    }
+}
+test "OSC 133 and legacy progress are consumed without stripping OSC 1337 at every boundary" {
+    const bytes = "before\x1b]133;A\x07\x1b]133;C\x1b\\\x1b]9;4;1;30\x07\x1b]1337;CurrentDir=C:/test\x07after";
+    for (0..bytes.len + 1) |split| {
+        var owner: TestFeedOwner = .{};
+        defer owner.output.deinit(std.testing.allocator);
+        var filter: TerminalFeedFilter = .{};
+        try filter.feedTerminalOutput(&owner, bytes[0..split]);
+        try filter.feedTerminalOutput(&owner, bytes[split..]);
+        try std.testing.expectEqualStrings("before\x1b]1337;CurrentDir=C:/test\x07after", owner.output.items);
+        try std.testing.expectEqual(@as(usize, 2), owner.shell_markers);
+        try std.testing.expectEqual(@as(usize, 1), owner.progress_reports);
     }
 }
 test "status is stripped across every chunk boundary and reset is not confused with soft reset" {

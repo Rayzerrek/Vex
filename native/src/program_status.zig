@@ -63,12 +63,24 @@ const StatusRecord = struct {
     unread: bool = true,
 };
 const StatusReport = union(enum) { clear: RecordId, replace: StatusRecord };
+const ShellFallback = union(enum) {
+    none,
+    idle,
+    working: ?u8,
+    done,
+    blocked: ?u8,
+    failed_progress: ?u8,
+    failed_command: StatusField(64),
+};
 
 /// Owns at most 256 OSC 7501 records, ordered by last update. Never copy a live tracker.
 pub const ProgramStatusTracker = struct {
     allocator: std.mem.Allocator,
     records: std.ArrayList(*StatusRecord) = .empty,
     attention_pending: bool = false,
+    has_program_status: bool = false,
+    shell_started_ns: ?u64 = null,
+    shell_status: ShellFallback = .none,
     pub const max_records = 256;
 
     /// Releases every record and the bounded pointer list.
@@ -114,6 +126,68 @@ pub const ProgramStatusTracker = struct {
                 self.attention_pending = self.attention_pending or attention;
             },
         }
+        self.has_program_status = true;
+    }
+    /// OSC 133 lifecycle uses monotonic nanoseconds, supplied by the terminal rather than a wall clock.
+    pub fn applyShellMarker(self: *ProgramStatusTracker, body: []const u8, now_ns: u64) !void {
+        if (body.len == 0 or (body.len > 1 and body[1] != ';')) return;
+        switch (body[0]) {
+            'A' => {
+                self.removeRunningRecords();
+                try self.completeShellCommand(0, now_ns);
+                switch (self.shell_status) {
+                    .done, .failed_progress, .failed_command => {},
+                    else => self.shell_status = .idle,
+                }
+            },
+            'C' => {
+                self.shell_started_ns = now_ns;
+                self.shell_status = .{ .working = null };
+            },
+            'D' => {
+                const code = if (body.len > 2) std.fmt.parseInt(i32, std.mem.trim(u8, body[2..], " \t\r\n\x0b\x0c"), 10) catch 0 else 0;
+                try self.completeShellCommand(code, now_ns);
+                self.attention_pending = self.attention_pending or self.shellStatusSummary().state.needsAttention();
+            },
+            else => {},
+        }
+    }
+    /// OSC 9;4 is ignored after a valid explicit OSC 7501 report, including clear, until RIS.
+    pub fn applyProgressReport(self: *ProgramStatusTracker, body: []const u8) void {
+        if (self.has_program_status) return;
+        const separator = std.mem.indexOfScalar(u8, body, ';');
+        const state = if (separator) |index| body[0..index] else body;
+        const progress = if (separator) |index| parseStatusPercentage(body[index + 1 ..]) else null;
+        if (state.len != 1) return;
+        self.shell_status = switch (state[0]) {
+            '0' => .none,
+            '1' => .{ .working = progress },
+            '2' => .{ .failed_progress = progress },
+            '3' => .{ .working = null },
+            '4' => .{ .blocked = progress },
+            else => return,
+        };
+        self.attention_pending = self.attention_pending or self.shellStatusSummary().state.needsAttention();
+    }
+    fn shellStatusSummary(self: *const ProgramStatusTracker) ProgramStatusSummary {
+        return switch (self.shell_status) {
+            .none => .{},
+            .idle => .{ .state = .idle },
+            .done => .{ .state = .done },
+            .working => |progress| .{ .state = .working, .progress = progress },
+            .blocked => |progress| .{ .state = .blocked, .progress = progress },
+            .failed_progress => |progress| .{ .state = .failed, .progress = progress },
+            .failed_command => |*message| .{ .state = .failed, .message = message.slice() },
+        };
+    }
+    fn completeShellCommand(self: *ProgramStatusTracker, code: i32, now_ns: u64) !void {
+        const started = self.shell_started_ns orelse return;
+        if (code != 0) {
+            var message: StatusField(64) = .{};
+            message.len = (try std.fmt.bufPrint(&message.bytes, "Exited with code {d}", .{code})).len;
+            self.shell_status = .{ .failed_command = message };
+        } else self.shell_status = if (now_ns -| started >= 2 * std.time.ns_per_s) .done else .idle;
+        self.shell_started_ns = null;
     }
     /// Chooses highest priority, then most recent update; child records inherit the nearest ancestor app.
     pub fn programStatus(self: *const ProgramStatusTracker) ProgramStatusSummary {
@@ -124,7 +198,7 @@ pub const ProgramStatusTracker = struct {
                 if (record.state.displayPriority() >= current.state.displayPriority()) selected = record;
             } else selected = record;
         }
-        const record = selected orelse return .{};
+        const record = selected orelse return self.shellStatusSummary();
         var app: ?[]const u8 = if (record.app) |*field| field.slice() else null;
         var id = record.id.slice();
         while (app == null and id.len != 0) {
@@ -141,6 +215,10 @@ pub const ProgramStatusTracker = struct {
         for (self.records.items) |record| if (record.state == .done or record.state == .failed) {
             record.unread = false;
         };
+        switch (self.shell_status) {
+            .done, .failed_command, .failed_progress => self.shell_status = .none,
+            else => {},
+        }
     }
     /// Latches attention across reports in one pipe/UI batch, including a subsequent clear.
     pub fn takeAttention(self: *ProgramStatusTracker) bool {
@@ -150,6 +228,14 @@ pub const ProgramStatusTracker = struct {
     }
     /// Process exit removes running/blocked/idle records but retains unread results.
     pub fn onProgramExited(self: *ProgramStatusTracker) void {
+        self.removeRunningRecords();
+        self.shell_started_ns = null;
+        switch (self.shell_status) {
+            .done, .failed_command, .failed_progress => {},
+            else => self.shell_status = .none,
+        }
+    }
+    fn removeRunningRecords(self: *ProgramStatusTracker) void {
         var index: usize = 0;
         while (index < self.records.items.len) {
             const record = self.records.items[index];
@@ -163,6 +249,9 @@ pub const ProgramStatusTracker = struct {
         for (self.records.items) |record| self.allocator.destroy(record);
         self.records.clearRetainingCapacity();
         self.attention_pending = false;
+        self.has_program_status = false;
+        self.shell_started_ns = null;
+        self.shell_status = .none;
     }
 };
 
@@ -382,6 +471,79 @@ test "OOM at record cap preserves both an eviction candidate and a replacement t
     try std.testing.expectError(error.OutOfMemory, tracker.applyProgramStatus("state=working:id=oldest"));
     try std.testing.expectEqual(@as(usize, 256), tracker.records.items.len);
     try std.testing.expectEqual(.blocked, tracker.programStatus().state);
+}
+
+test "OSC 133 short/long commands, failure and repeated prompt markers match WPF" {
+    var tracker: ProgramStatusTracker = .{ .allocator = std.testing.allocator };
+    defer tracker.deinit();
+    try tracker.applyShellMarker("A", 0);
+    try std.testing.expectEqual(.idle, tracker.programStatus().state);
+    try tracker.applyShellMarker("C;ignored=field", 10);
+    try std.testing.expectEqual(.working, tracker.programStatus().state);
+    try tracker.applyShellMarker("D;0", 20);
+    try std.testing.expectEqual(.idle, tracker.programStatus().state);
+    try std.testing.expect(!tracker.takeAttention());
+    try tracker.applyShellMarker("C", 0);
+    try tracker.applyShellMarker("D;0", 2 * std.time.ns_per_s);
+    try tracker.applyShellMarker("A", 3 * std.time.ns_per_s);
+    try std.testing.expectEqual(.done, tracker.programStatus().state);
+    try std.testing.expect(tracker.takeAttention());
+    tracker.acknowledgeProgramStatus();
+    try tracker.applyShellMarker("C", 0);
+    try tracker.applyShellMarker("D;-2147483648", 1);
+    try tracker.applyShellMarker("A", 2);
+    try std.testing.expectEqual(.failed, tracker.programStatus().state);
+    try std.testing.expectEqualStrings("Exited with code -2147483648", tracker.programStatus().message orelse return error.MissingShellError);
+    tracker.onProgramExited();
+    try std.testing.expectEqual(.failed, tracker.programStatus().state);
+    tracker.acknowledgeProgramStatus();
+    try std.testing.expectEqual(.none, tracker.programStatus().state);
+}
+
+test "prompt removes running records but retains unread results across screen/process changes" {
+    var tracker: ProgramStatusTracker = .{ .allocator = std.testing.allocator };
+    defer tracker.deinit();
+    try tracker.applyProgramStatus("state=done:id=finished");
+    try tracker.applyProgramStatus("state=blocked:id=pending");
+    try tracker.applyShellMarker("A", 0);
+    try std.testing.expectEqual(.done, tracker.programStatus().state);
+    tracker.onProgramExited();
+    try std.testing.expectEqual(.done, tracker.programStatus().state);
+    tracker.acknowledgeProgramStatus();
+    try std.testing.expectEqual(.none, tracker.programStatus().state);
+    try tracker.applyShellMarker("C", 0);
+    try tracker.applyShellMarker("A", std.time.ns_per_s);
+    try std.testing.expectEqual(.idle, tracker.programStatus().state);
+    try tracker.applyShellMarker("D;7", 2 * std.time.ns_per_s);
+    try std.testing.expectEqual(.idle, tracker.programStatus().state);
+}
+
+test "OSC 9;4 progress stops at the first valid explicit report, even a clear, until reset" {
+    var tracker: ProgramStatusTracker = .{ .allocator = std.testing.allocator };
+    defer tracker.deinit();
+    tracker.applyProgressReport("1;30");
+    try std.testing.expectEqual(@as(?u8, 30), tracker.programStatus().progress);
+    try tracker.applyProgramStatus("state=invalid");
+    tracker.applyProgressReport("4;50");
+    try std.testing.expectEqual(.blocked, tracker.programStatus().state);
+    tracker.acknowledgeProgramStatus();
+    try std.testing.expectEqual(.blocked, tracker.programStatus().state);
+    try tracker.applyProgramStatus("state=blocked:kind=auth");
+    tracker.applyProgressReport("1;90");
+    try std.testing.expectEqual(@as(?ProgramStatusKind, .auth), tracker.programStatus().kind);
+    tracker.resetProgramStatus();
+    tracker.applyProgressReport("1;90");
+    try std.testing.expectEqual(@as(?u8, 90), tracker.programStatus().progress);
+    tracker.applyProgressReport("3;50");
+    try std.testing.expect(tracker.programStatus().progress == null);
+    tracker.applyProgressReport("2;101");
+    try std.testing.expectEqual(.failed, tracker.programStatus().state);
+    try std.testing.expect(tracker.programStatus().progress == null);
+    tracker.applyProgressReport("0");
+    try std.testing.expectEqual(.none, tracker.programStatus().state);
+    try tracker.applyProgramStatus("state=clear");
+    tracker.applyProgressReport("1;70");
+    try std.testing.expectEqual(.none, tracker.programStatus().state);
 }
 
 fn checkStatusAllocations(allocator: std.mem.Allocator) !void {

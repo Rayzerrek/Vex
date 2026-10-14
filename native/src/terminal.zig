@@ -58,6 +58,7 @@ pub const Terminal = struct {
     frame_valid: bool = false,
     feed_filter: feed.TerminalFeedFilter = .{},
     program_status: status.ProgramStatusTracker,
+    status_clock: std.time.Timer,
     response_sink: ?ResponseSink = null,
     callback_error: ?anyerror = null,
     directory_sink: ?struct { context: *anyopaque, on_report: *const fn (*anyopaque, []const u8) anyerror!void } = null,
@@ -91,7 +92,7 @@ pub const Terminal = struct {
         try check(api.ghostty_key_event_new(null, &event));
         const key_event = event orelse return error.TerminalNullHandle;
         errdefer api.ghostty_key_event_free(key_event);
-        var owner: Terminal = .{ .allocator = allocator, .api = api, .handle = handle, .render_state = render_state, .row_iterator = row_iterator, .row_cells = row_cells, .key_encoder = key_encoder, .key_event = key_event, .program_status = .{ .allocator = allocator } };
+        var owner: Terminal = .{ .allocator = allocator, .api = api, .handle = handle, .render_state = render_state, .row_iterator = row_iterator, .row_cells = row_cells, .key_encoder = key_encoder, .key_event = key_event, .program_status = .{ .allocator = allocator }, .status_clock = try std.time.Timer.start() };
         try owner.applyDefaultPalette();
         return owner;
     }
@@ -146,6 +147,14 @@ pub const Terminal = struct {
             const sink = self.response_sink orelse return error.MissingResponseSink;
             try sink.write(sink.context, "\x1b]7501;?\x1b\\");
         } else try self.program_status.applyProgramStatus(body);
+    }
+    /// Shell command duration uses a monotonic per-terminal clock, not wall-clock timestamps.
+    pub fn onShellMarkerOsc(self: *Terminal, body: []const u8) !void {
+        try self.program_status.applyShellMarker(body, self.status_clock.read());
+    }
+    /// Legacy progress is a fallback until this pane receives explicit program status.
+    pub fn onProgressOsc(self: *Terminal, body: []const u8) void {
+        self.program_status.applyProgressReport(body);
     }
     /// RIS resets status after the emulator; screen switches/soft resets deliberately do not.
     pub fn onTerminalReset(self: *Terminal) void {
@@ -545,6 +554,22 @@ test "OSC 7 borrowed directory reports survive every UTF-8/terminator chunk boun
             try std.testing.expectEqualStrings(report, try terminal.reportedDirectory());
         }
     }
+}
+
+test "shell markers preserve the actual DLL prompt grid and legacy fallback cannot overwrite explicit status" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    const bytes = "prompt> \x1b]133;A\x07\x1b]133;C\x07\x1b]133;D;7\x07\x1b]133;A\x07";
+    for (bytes) |byte| try terminal.feedOutput(&.{byte});
+    try std.testing.expect(try terminal.containsViewportText("prompt> "));
+    try std.testing.expectEqual(@as(u16, 8), (try terminal.readFrame()).cursor.column);
+    try std.testing.expectEqual(.failed, terminal.program_status.programStatus().state);
+    terminal.program_status.acknowledgeProgramStatus();
+    try terminal.feedOutput("\x1b]9;4;1;30\x07");
+    try std.testing.expectEqual(@as(?u8, 30), terminal.program_status.programStatus().progress);
+    try terminal.feedOutput("\x1b]7501;state=blocked:kind=auth\x07\x1b]9;4;1;90\x07");
+    try std.testing.expectEqual(@as(?status.ProgramStatusKind, .auth), terminal.program_status.programStatus().kind);
 }
 
 const StatusReplyLog = struct {
