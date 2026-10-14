@@ -245,4 +245,3 @@ test "focus mode requires multiple panes and unzooms when splitting or closing t
     try std.testing.expect(!model.activeTab().is_focus_mode);
     try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(1)), model.activeTab().active_pane);
 }
-
