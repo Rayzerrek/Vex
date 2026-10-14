@@ -264,9 +264,9 @@ pub fn showFailure(err: anyerror) void {
     const message = std.fmt.bufPrintZ(&buffer, "Vex native rewrite failed: {s}", .{@errorName(err)}) catch "Vex native rewrite failed";
     c.vex_window_error(message);
 }
-/// Tab index/count come from the bounded workspace model, not external strings.
-pub fn drawTab(index: usize, count: usize, active: bool, summary: status.ProgramStatusSummary, attention: bool) void {
-    c.vex_draw_tab(@intCast(index), @intCast(count), active, nativeStatusBadge(summary), attention);
+/// Tab index/count come from the bounded workspace model; empty title falls back to the shell display name.
+pub fn drawTab(index: usize, count: usize, active: bool, title: []const u8, summary: status.ProgramStatusSummary, attention: bool) void {
+    c.vex_draw_tab(@intCast(index), @intCast(count), active, if (title.len == 0) null else title.ptr, title.len, nativeStatusBadge(summary), attention);
 }
 fn nativeStatusBadge(summary: status.ProgramStatusSummary) c.VexProgramStatus {
     return .{ .state = @intFromEnum(summary.state), .kind = if (summary.kind) |kind| switch (kind) {
@@ -281,8 +281,8 @@ pub fn statusBadgeKey(summary: status.ProgramStatusSummary) u32 {
     return badge.state | (badge.kind << 8) | (@as(u32, @intCast(badge.progress + 1)) << 16);
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
-pub fn beginPane(bounds: panes.PaneRect, focused: bool, summary: status.ProgramStatusSummary) void {
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, nativeStatusBadge(summary));
+pub fn beginPane(bounds: panes.PaneRect, focused: bool, title: []const u8, summary: status.ProgramStatusSummary) void {
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, if (title.len == 0) null else title.ptr, title.len, nativeStatusBadge(summary));
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {
