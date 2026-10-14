@@ -52,7 +52,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Area | Reference | Native milestone / remaining evidence |
 | --- | --- | --- |
 | Project -> tabs -> split tree, active leaf | `Model/Project.cs`, `WorkspaceTab.cs`, `PaneNode.cs` | First milestone: one project, up to 8 tabs, recursive splits, focus, close; multiple projects and drag/reorder still pending |
-| Split orientation/ratio | `SplitPaneView.xaml.cs` | Right/down at 0.5; ratio clamping 0.1..0.9 in model; interactive dividers pending; split directories use the last valid local OSC 7 report, otherwise the pane's launch directory |
+| Split orientation/ratio | `SplitPaneView.xaml.cs` | Right/down at 0.5; ratio clamping 0.1..0.9; live captured divider dragging, 100-DIP interactive minimum and rollback implemented; final divider styling/physical multi-monitor DPI evidence pending; split directories use the last valid local OSC 7 report, otherwise the pane's launch directory |
 | Workspace shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
 | Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; auto-close/close confirmations and further cancellation/Win32 failure injection pending |
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache; ConPTY DCS filter parity pending |
@@ -229,6 +229,39 @@ These are behavioral contracts, not opportunities to redesign the app.
   Windows built-ins and Ubuntu. Native handle counts remain unchanged across
   registry allocation-failure reads. WPF files remain unchanged; its suites were
   not rerun for this isolated native checkpoint. Profile menus/persistence remain pending.
+
+## Interactive divider checkpoint
+
+- `workspace/pane_tree.zig` shares the DIP partition between leaf placement and
+  divider hit testing. Divider IDs derive from the application's non-reused
+  fresh pane tokens; no drag retains pointers to mutable/promoted tree nodes.
+- `workspace/divider_drag.zig` owns allocation-free begin/move/commit/cancel
+  transitions. The initial grab offset prevents a jump; each move resolves the
+  target's current container. Removed targets clear rather than retarget the drag.
+- Interactive ratios satisfy both 0.1..0.9 and 100-DIP neighboring subtree
+  minimums. A container that cannot fit two minimums disables dragging. This
+  preserves existing tiny layouts rather than introducing WPF's grid overflow;
+  recursive descendant minimum aggregation and final 1-DIP splitter styling
+  remain separate parity work. The current 6-DIP gap is unchanged.
+- Win32 owns capture/cursors and sends checked event tags/finite DIP coordinates
+  through the adapter. ReleaseCapture failures propagate; actual capture is
+  probed on the window thread, not inferred from the Zig state or a test thread.
+- Release commits live emulator/ConPTY sizes without changing pane focus. Escape
+  is consumed, not translated into terminal input. Capture/focus loss, cancel
+  mode, window/DPI resize and tab/tree changes restore the initial ratio before
+  applying new geometry or freeing nodes. Cancelled/captured releases cannot
+  activate window caption buttons.
+- Four co-located unit fixtures cover geometry boundaries, both axes, nested
+  containers, grab offset, clamps, commit/rollback, removed/promoted IDs, invalid
+  floats and undersized handles. Existing tree OOM tests cover the updated nodes.
+- `tests/Test-NativeDividers.ps1` exercises real window-thread capture and live
+  sessions, child console/emulator dimension agreement, focus, outside-window
+  limits, cancellation, tab/close mutations, resize and shutdown while dragging
+  under flooding output. Messages are synthetic and DPI-scaled; physical mouse,
+  cross-monitor DPI and matched responsiveness/visual evidence remain pending.
+- 67 tests pass in Debug/ReleaseSafe; ReleaseSafe build and all four desktop
+  scripts pass, including all five installed Windows built-ins and Ubuntu WSL.
+  WPF files/profile remain untouched; its suites were not rerun for this checkpoint.
 
 ## Source structure checkpoint
 

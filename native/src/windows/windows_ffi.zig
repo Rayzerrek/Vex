@@ -11,6 +11,10 @@ pub const c = @cImport({
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
 pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7 };
+/// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
+pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
+/// Resize cursor direction is returned to Win32, which owns the actual mouse capture.
+pub const PointerCursor = enum(u32) { normal = c.VEX_CURSOR_NORMAL, right = c.VEX_CURSOR_RIGHT, down = c.VEX_CURSOR_DOWN };
 /// Window sizes/font metrics are in DIPs; only cell pixel metrics multiply by scale.
 pub const WindowMetrics = struct {
     width: f32,
@@ -149,6 +153,18 @@ pub fn runWindow(owner: anytype) !void {
         fn click(context: ?*anyopaque, x: f32, y: f32) callconv(.c) void {
             if (std.math.isFinite(x) and std.math.isFinite(y)) if (recover(context)) |app| app.onClick(x, y);
         }
+        fn pointerInput(context: ?*anyopaque, value: u32, x: f32, y: f32) callconv(.c) u32 {
+            const app = recover(context) orelse return 0;
+            const event = std.meta.intToEnum(PointerEvent, value) catch {
+                app.fail(error.InvalidPointerEvent);
+                return 0;
+            };
+            if (!std.math.isFinite(x) or !std.math.isFinite(y)) {
+                app.fail(error.InvalidDividerPoint);
+                return 0;
+            }
+            return @intFromEnum(app.onPointer(event, x, y));
+        }
         fn action(context: ?*anyopaque, value: u32, index: u32) callconv(.c) void {
             const app = recover(context) orelse return;
             const parsed = std.meta.intToEnum(WorkspaceAction, value) catch {
@@ -165,8 +181,17 @@ pub fn runWindow(owner: anytype) !void {
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .scroll = Adapter.scroll, .click = Adapter.click, .action = Adapter.action, .exited = Adapter.exited, .probe = Adapter.probe });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .scroll = Adapter.scroll, .click = Adapter.click, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .probe = Adapter.probe });
     if (code != 0) return error.WindowsPlatformFailed;
+}
+
+/// Releases only this window's divider capture; capture-change callbacks may reenter the application.
+pub fn cancelDividerCapture() !void {
+    if (c.vex_window_cancel_divider_capture() != 0) return error.DividerCaptureReleaseFailed;
+}
+/// Diagnostic capture check runs on the window thread, not a test thread's unrelated capture state.
+pub fn hasDividerCapture() bool {
+    return c.vex_window_has_divider_capture();
 }
 
 /// Returns the actual local machine name, not a spoofable environment variable; caller owns the UTF-8 copy.

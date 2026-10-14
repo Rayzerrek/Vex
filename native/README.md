@@ -111,7 +111,14 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
 - `Ctrl+Shift+T`: new tab; **+** does the same.
 - `Ctrl+Tab` / `Ctrl+Shift+Tab`: next/previous tab; click selects a tab.
 - `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down.
-- Click a pane to focus it.
+- Click a pane to focus it. Drag a right/down divider to resize its two subtrees
+  live, without changing terminal focus. Ratios stay in 0.1..0.9; interactive
+  dragging also keeps each neighbor at least 100 DIPs. Too-small containers
+  disable dragging rather than overflowing. Existing split/layout geometry
+  retains its 6-DIP gap; it is not the WPF splitter's final visual styling.
+- Escape, capture/focus loss, cancel mode, window/DPI resize and tab/tree changes
+  cancel a drag and restore its original ratio. Release commits; a captured or
+  cancelled release over caption buttons cannot activate them.
 - `Ctrl+Shift+W`: close a split or tab; a tab's **×** / middle-click closes it.
 - The last tab stays open, as in WPF. Closing a split focuses the first remaining
   leaf. Closing an active tab selects the left neighbor, or right for tab zero.
@@ -151,6 +158,8 @@ circular dependency through the rendering/window adapter.
 - `src/workspace/workspace_model.zig`: tab selection/close/focus rules, capped at 8 tabs.
 - `src/workspace/pane_tree.zig`: allocator-owned recursive split tree; transactional edits,
   stable IDs, ratio clamp 0.1..0.9, finite DIP geometry, 64-level depth guard.
+- `src/workspace/divider_drag.zig`: allocation-free divider hit/drag lifecycle,
+  grab offset, minimum-size limits and rollback using stable divider IDs.
 - `src/main.zig`: allocator/error boundary and explicit root test imports.
 - `src/app/workspace_application.zig`: main-thread workspace orchestration.
 - `src/app/terminal_session.zig`: stable per-pane ownership and teardown.
@@ -258,6 +267,7 @@ zig fmt --check build.zig src
 zig build test -Doptimize=Debug
 zig build test -Doptimize=ReleaseSafe
 zig build
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeDividers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShells.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWsl.ps1 -Distribution Ubuntu
@@ -297,6 +307,14 @@ project-aware UNC selection, pinned split distribution, default login and an exp
 environment defaults/overrides, Linux OSC 7, split/new-tab directories, UNC
 project startup and Linux shell/child exit on busy pane close.
 
+The divider fixture sends DPI-scaled Win32 pointer messages to live right/down
+and nested panes. It checks actual window-thread capture, unchanged focus,
+100-DIP/ratio limits outside the window, commit and rollback, cancelled release
+on chrome, tab/close mutations, window resize, and captured shutdown during
+flooding output. Child console dimensions must match the resized emulator.
+Its DPI evidence is limited to the monitor used by the test, not a physical
+multi-monitor DPI transition or comparative frame-time benchmark.
+
 Diagnostic probes/actions require `VEX_NATIVE_SELFTEST=1`. Synthetic messages
 are not physical keyboard/IME or accessibility tests.
 
@@ -307,6 +325,7 @@ Ignored artifacts under `zig-out/verification/`:
 - `result.json`, `startup.txt`: smoke verification/measurements.
 - `shells.json`: live Windows shell transport/integration results.
 - `wsl.json`: live selected-distribution WSL results.
+- `dividers.json`: live divider capture/resize/cancellation results.
 
 `VEX_NATIVE_METRICS=<absolute-path>` enables local milestone logs. Timing starts
 at Zig main, before DLL initialization, not OS process creation. The test also
@@ -318,7 +337,7 @@ benchmarks**, and working set excludes GPU allocations and child processes.
 See the full ledger in [REWRITE.md](REWRITE.md): multiple projects, WSL Linux
 process metadata/prompt adapters,
 shell-profile UI/per-pane overrides, profile/session compatibility and persistence, saved layouts,
-settings/themes, palette/tab peek/overlays, divider dragging/reorder, shell icons,
+settings/themes, palette/tab peek/overlays, tab/pane reorder, final divider styling, shell icons,
 status tooltips/origin routing, selection/copy/cut,
 hyperlinks/path completion, bracketed paste,
 IME/full mouse/key protocols, ConPTY DCS feed-filter parity, custom glyphs/color

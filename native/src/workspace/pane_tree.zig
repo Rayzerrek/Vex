@@ -4,6 +4,8 @@ const std = @import("std");
 pub const PaneId = enum(u32) { _ };
 /// Matches WPF Horizontal (right) and Vertical (down) split orientation.
 pub const SplitAxis = enum { right, down };
+/// Divider identity derives from the fresh pane ID that created it; the application must never reuse IDs.
+pub const DividerId = enum(u32) { _ };
 /// Pane bounds use device-independent pixels, never physical screen coordinates.
 pub const PaneRect = struct {
     x: f32,
@@ -22,9 +24,13 @@ pub const PaneRect = struct {
 /// Layout result holds a stable identity rather than a pointer into a mutable tree.
 pub const PanePlacement = struct { id: PaneId, bounds: PaneRect };
 
+/// Divider geometry uses the same DIP partition as leaf layout; no borrowed node pointer escapes hit testing.
+pub const DividerPlacement = struct { id: DividerId, axis: SplitAxis, container: PaneRect, handle: PaneRect, ratio: f32 };
+
+const PaneSplit = struct { id: DividerId, axis: SplitAxis, ratio: f32, first: *PaneNode, second: *PaneNode };
 const PaneNode = union(enum) {
     leaf: PaneId,
-    split: struct { axis: SplitAxis, ratio: f32, first: *PaneNode, second: *PaneNode },
+    split: PaneSplit,
 };
 
 /// Owns all split nodes. Copying this owner requires transferring, not duplicating, ownership.
@@ -70,7 +76,7 @@ pub const PaneTree = struct {
         const second = try self.allocator.create(PaneNode);
         first.* = found.node.*;
         second.* = .{ .leaf = fresh };
-        found.node.* = .{ .split = .{ .axis = axis, .ratio = 0.5, .first = first, .second = second } };
+        found.node.* = .{ .split = .{ .id = @enumFromInt(@intFromEnum(fresh)), .axis = axis, .ratio = 0.5, .first = first, .second = second } };
     }
     /// Preserves the final leaf; removing a split promotes its surviving sibling.
     pub fn closePane(self: *PaneTree, id: PaneId) bool {
@@ -84,6 +90,26 @@ pub const PaneTree = struct {
             .split => |*split| split.ratio = std.math.clamp(ratio, 0.1, 0.9),
             .leaf => return error.PaneNotFound,
         }
+    }
+    /// Returns the divider under a finite DIP point, excluding right/bottom edges as in pane hit testing.
+    pub fn dividerAtPoint(self: *const PaneTree, bounds: PaneRect, x: f32, y: f32) !?DividerPlacement {
+        try bounds.validate();
+        if (!std.math.isFinite(x) or !std.math.isFinite(y)) return error.InvalidDividerPoint;
+        return findDividerPlacement(self.root, bounds, .{ .point = .{ .x = x, .y = y } });
+    }
+    /// Resolves a stable divider ID against current geometry; removed IDs never become node pointers.
+    pub fn dividerPlacement(self: *const PaneTree, bounds: PaneRect, id: DividerId) !?DividerPlacement {
+        try bounds.validate();
+        return findDividerPlacement(self.root, bounds, .{ .id = id });
+    }
+    /// Changes one live divider without allocation; stale IDs return false, and ratios retain the 0.1..0.9 contract.
+    pub fn setDividerRatio(self: *PaneTree, id: DividerId, ratio: f32) !bool {
+        if (!std.math.isFinite(ratio)) return error.InvalidSplitRatio;
+        const split = findDividerNode(self.root, id) orelse return false;
+        const value = std.math.clamp(ratio, 0.1, 0.9);
+        if (split.ratio == value) return false;
+        split.ratio = value;
+        return true;
     }
     /// Reuses the caller's placement capacity; bounds must already be in DIPs.
     pub fn layout(self: *const PaneTree, allocator: std.mem.Allocator, placements: *std.ArrayList(PanePlacement), bounds: PaneRect) !void {
@@ -138,30 +164,61 @@ fn removeLeaf(allocator: std.mem.Allocator, node: *PaneNode, id: PaneId) bool {
         },
     }
 }
+const SplitGeometry = struct { first: PaneRect, second: PaneRect, divider: PaneRect };
+fn splitGeometry(bounds: PaneRect, axis: SplitAxis, ratio: f32) SplitGeometry {
+    var first = bounds;
+    var second = bounds;
+    var divider = bounds;
+    switch (axis) {
+        .right => {
+            const gap = @min(PaneTree.divider_width, bounds.width);
+            const available = bounds.width - gap;
+            first.width = available * ratio;
+            divider.x += first.width;
+            divider.width = gap;
+            second.x = divider.x + gap;
+            second.width = available - first.width;
+        },
+        .down => {
+            const gap = @min(PaneTree.divider_width, bounds.height);
+            const available = bounds.height - gap;
+            first.height = available * ratio;
+            divider.y += first.height;
+            divider.height = gap;
+            second.y = divider.y + gap;
+            second.height = available - first.height;
+        },
+    }
+    return .{ .first = first, .second = second, .divider = divider };
+}
+const DividerSearch = union(enum) { id: DividerId, point: struct { x: f32, y: f32 } };
+fn findDividerPlacement(node: *const PaneNode, bounds: PaneRect, search: DividerSearch) ?DividerPlacement {
+    switch (node.*) {
+        .leaf => return null,
+        .split => |split| {
+            const geometry = splitGeometry(bounds, split.axis, split.ratio);
+            const matches = switch (search) {
+                .id => |id| split.id == id,
+                .point => |point| geometry.divider.contains(point.x, point.y),
+            };
+            if (matches) return .{ .id = split.id, .axis = split.axis, .container = bounds, .handle = geometry.divider, .ratio = split.ratio };
+            return findDividerPlacement(split.first, geometry.first, search) orelse findDividerPlacement(split.second, geometry.second, search);
+        },
+    }
+}
+fn findDividerNode(node: *PaneNode, id: DividerId) ?*PaneSplit {
+    return switch (node.*) {
+        .leaf => null,
+        .split => |*split| if (split.id == id) split else findDividerNode(split.first, id) orelse findDividerNode(split.second, id),
+    };
+}
 fn appendPlacement(node: *const PaneNode, placements: *std.ArrayList(PanePlacement), bounds: PaneRect) void {
     switch (node.*) {
         .leaf => |id| placements.appendAssumeCapacity(.{ .id = id, .bounds = bounds }),
         .split => |split| {
-            var first = bounds;
-            var second = bounds;
-            switch (split.axis) {
-                .right => {
-                    const gap = @min(PaneTree.divider_width, bounds.width);
-                    const available = bounds.width - gap;
-                    first.width = available * split.ratio;
-                    second.x += first.width + gap;
-                    second.width = available - first.width;
-                },
-                .down => {
-                    const gap = @min(PaneTree.divider_width, bounds.height);
-                    const available = bounds.height - gap;
-                    first.height = available * split.ratio;
-                    second.y += first.height + gap;
-                    second.height = available - first.height;
-                },
-            }
-            appendPlacement(split.first, placements, first);
-            appendPlacement(split.second, placements, second);
+            const geometry = splitGeometry(bounds, split.axis, split.ratio);
+            appendPlacement(split.first, placements, geometry.first);
+            appendPlacement(split.second, placements, geometry.second);
         },
     }
 }

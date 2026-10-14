@@ -8,6 +8,7 @@ const status = @import("../terminal/program_status.zig");
 const shell = @import("../shell/shell_launch.zig");
 const TerminalSession = @import("terminal_session.zig").TerminalSession;
 const wsl_registry = @import("../windows/wsl_registry.zig");
+const DividerDrag = @import("../workspace/divider_drag.zig").DividerDrag;
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
 const WorkspaceApplication = struct {
@@ -20,6 +21,7 @@ const WorkspaceApplication = struct {
     model: ?workspace.WorkspaceModel = null,
     placements: std.ArrayList(panes.PanePlacement) = .empty,
     metrics: ?platform.WindowMetrics = null,
+    divider_drag: DividerDrag = .{},
     next_token: u32 = 1,
     health: union(enum) { running, failed: anyerror } = .running,
 
@@ -97,12 +99,7 @@ const WorkspaceApplication = struct {
     fn updateLayout(self: *WorkspaceApplication) !void {
         const model = if (self.model) |*model| model else return;
         const metrics = self.metrics orelse return;
-        try model.activeTab().tree.layout(self.allocator, &self.placements, .{
-            .x = 6,
-            .y = 44,
-            .width = @max(0, metrics.width - 12),
-            .height = @max(0, metrics.height - 50),
-        });
+        try model.activeTab().tree.layout(self.allocator, &self.placements, workspaceBounds(metrics));
         for (self.placements.items) |placement| {
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             try session.resize(try metrics.terminalSize(placement.bounds));
@@ -111,6 +108,10 @@ const WorkspaceApplication = struct {
     }
     pub fn onResize(self: *WorkspaceApplication, metrics: platform.WindowMetrics) void {
         if (self.health == .failed) return;
+        _ = self.cancelDividerDrag() catch |err| {
+            self.fail(err);
+            return;
+        };
         self.metrics = metrics;
         if (self.model == null) self.initializeWorkspace() catch |err| {
             self.fail(err);
@@ -206,11 +207,51 @@ const WorkspaceApplication = struct {
             return;
         };
     }
+    fn cancelDividerDrag(self: *WorkspaceApplication) !bool {
+        const model = if (self.model) |*model| model else return false;
+        const changed = try self.divider_drag.cancel(&model.activeTab().tree);
+        try platform.cancelDividerCapture();
+        return changed;
+    }
+    pub fn onPointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) platform.PointerCursor {
+        if (self.health == .failed) return .normal;
+        return self.handlePointer(event, x, y) catch |err| {
+            self.fail(err);
+            return .normal;
+        };
+    }
+    fn handlePointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32) !platform.PointerCursor {
+        const model = if (self.model) |*model| model else return .normal;
+        const metrics = self.metrics orelse return .normal;
+        const tree = &model.activeTab().tree;
+        const bounds = workspaceBounds(metrics);
+        switch (event) {
+            .hover => {},
+            .begin => if (!try self.divider_drag.begin(tree, bounds, x, y)) return .normal,
+            .move, .end => {
+                if (try self.divider_drag.move(tree, bounds, x, y)) try self.updateLayout();
+                if (event == .end) {
+                    self.divider_drag.finish();
+                    return .normal;
+                }
+            },
+            .cancel => {
+                if (try self.cancelDividerDrag()) try self.updateLayout();
+                return .normal;
+            },
+        }
+        const axis = try self.divider_drag.cursorAxis(tree, bounds, x, y) orelse return .normal;
+        return switch (axis) {
+            .right => .right,
+            .down => .down,
+        };
+    }
     pub fn onAction(self: *WorkspaceApplication, action: platform.WorkspaceAction, index: u32) void {
         if (self.health == .failed) return;
         self.applyAction(action, index) catch |err| self.fail(err);
     }
     fn applyAction(self: *WorkspaceApplication, action: platform.WorkspaceAction, index: u32) !void {
+        if (try self.cancelDividerDrag()) try self.updateLayout();
         const model = if (self.model) |*model| model else return;
         switch (action) {
             .new_tab => {
@@ -268,6 +309,14 @@ const WorkspaceApplication = struct {
             14 => return if (self.activeSession()) |session| session.pty.processId() else 0,
             20 => return platform.paintCount(),
             34 => return @intFromEnum(self.launch.kind),
+            40 => return switch (model.activeTab().tree.root.*) {
+                .leaf => 0,
+                .split => |split| @intFromFloat(@round(split.ratio * 1000)),
+            },
+            41 => return @intFromBool(self.divider_drag.active != null),
+            42 => return @intFromBool(platform.hasDividerCapture()),
+            43 => return if (self.activeSession()) |session| if (session.size) |size| size.columns else 0 else 0,
+            44 => return if (self.activeSession()) |session| if (session.size) |size| size.rows else 0 else 0,
             39 => {
                 const session = self.activeSession() orelse return 0;
                 const reported = session.directory.reported orelse return 0;
@@ -310,6 +359,10 @@ const WorkspaceApplication = struct {
         return @intFromBool(found);
     }
 };
+
+fn workspaceBounds(metrics: platform.WindowMetrics) panes.PaneRect {
+    return .{ .x = 6, .y = 44, .width = @max(0, metrics.width - 12), .height = @max(0, metrics.height - 50) };
+}
 
 /// Retains the stable application/API owner until the window loop returns; teardown joins all session workers.
 pub fn runApplication(allocator: std.mem.Allocator) !void {
