@@ -1,5 +1,7 @@
 #include "windows_platform.h"
 #include <windows.h>
+#include <tlhelp32.h>
+#include <winternl.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,6 +19,12 @@ struct VexPty {
     uint8_t outputBuffer[65536];
     DWORD outputLength;
     volatile LONG stopping, outputPending;
+    DWORD fgPid;
+    uint64_t fgCreateTime;
+    uint8_t fgExe[64];
+    size_t fgExeLen;
+    uint8_t fgCmd[512];
+    size_t fgCmdLen;
 };
 
 // Only the window thread edits this registry; workers carry their own stable owner.
@@ -236,3 +244,188 @@ extern "C" void vex_pty_ack_output(uint32_t token) {
 }
 extern "C" bool vex_pty_exists(uint32_t token) { return findSession(token) != nullptr; }
 extern "C" uint32_t vex_pty_process_id(VexPty* session) { return session && session->process ? GetProcessId(session->process) : 0; }
+
+static void extractLowerStem(const wchar_t* path, wchar_t (&stem)[64]) {
+    const wchar_t* start = path;
+    for (const wchar_t* p = path; *p; ++p) {
+        if (*p == L'\\' || *p == L'/') start = p + 1;
+    }
+    size_t len = 0;
+    while (start[len] && len < 63) {
+        wchar_t c = start[len];
+        stem[len] = (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c;
+        ++len;
+    }
+    stem[len] = 0;
+    if (len > 4 && (wcscmp(stem + len - 4, L".exe") == 0 || wcscmp(stem + len - 4, L".cmd") == 0 ||
+                    wcscmp(stem + len - 4, L".bat") == 0 || wcscmp(stem + len - 4, L".com") == 0)) {
+        stem[len - 4] = 0;
+    }
+}
+
+static bool matchStem(const wchar_t* stem, const wchar_t* const* list, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        if (wcscmp(stem, list[i]) == 0) return true;
+    }
+    return false;
+}
+
+static bool isIgnoredHelper(const wchar_t* stem) {
+    static const wchar_t* const list[] = { L"conhost", L"openconsole", L"wslhost", L"wslrelay", L"wslservice" };
+    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
+}
+
+static bool isShellStem(const wchar_t* stem) {
+    static const wchar_t* const list[] = {
+        L"pwsh", L"powershell", L"cmd", L"bash", L"zsh", L"fish", L"nu",
+        L"elvish", L"sh", L"dash", L"ash", L"ksh", L"tcsh", L"csh", L"wsl"
+    };
+    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
+}
+
+static bool isTerminalHostStem(const wchar_t* stem) {
+    static const wchar_t* const list[] = { L"nvim", L"vim", L"vi", L"hx", L"helix", L"nano", L"micro", L"emacs", L"kak" };
+    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
+}
+
+static bool needsCommandLineRead(const wchar_t* stem) {
+    static const wchar_t* const list[] = {
+        L"node", L"bun", L"deno", L"python", L"python3", L"py", L"ruby", L"perl",
+        L"java", L"javaw", L"dotnet", L"wsl", L"npx", L"pnpm", L"yarn", L"uv", L"uvx", L"pipx"
+    };
+    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
+}
+
+typedef NTSTATUS(NTAPI* NtQueryInformationProcessFn)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
+static NtQueryInformationProcessFn ntQueryInfoProcess;
+
+static size_t readProcessCommandLineUtf8(HANDLE process, uint8_t* out, size_t cap) {
+    if (!process || !out || !cap) return 0;
+    if (!ntQueryInfoProcess) {
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        if (ntdll) ntQueryInfoProcess = reinterpret_cast<NtQueryInformationProcessFn>(reinterpret_cast<void*>(GetProcAddress(ntdll, "NtQueryInformationProcess")));
+    }
+    if (!ntQueryInfoProcess) return 0;
+    PROCESS_BASIC_INFORMATION pbi = {};
+    ULONG retLen = 0;
+    if (ntQueryInfoProcess(process, ProcessBasicInformation, &pbi, sizeof(pbi), &retLen) < 0 || !pbi.PebBaseAddress) return 0;
+    PEB peb = {};
+    SIZE_T bytesRead = 0;
+    if (!ReadProcessMemory(process, pbi.PebBaseAddress, &peb, sizeof(peb), &bytesRead) || !peb.ProcessParameters) return 0;
+    RTL_USER_PROCESS_PARAMETERS params = {};
+    if (!ReadProcessMemory(process, peb.ProcessParameters, &params, sizeof(params), &bytesRead)) return 0;
+    if (!params.CommandLine.Buffer || params.CommandLine.Length < sizeof(wchar_t)) return 0;
+    size_t wcharCount = params.CommandLine.Length / sizeof(wchar_t);
+    if (wcharCount > 1024) wcharCount = 1024;
+    wchar_t wideBuf[1024];
+    if (!ReadProcessMemory(process, params.CommandLine.Buffer, wideBuf, wcharCount * sizeof(wchar_t), &bytesRead)) return 0;
+    int utf8Len = WideCharToMultiByte(CP_UTF8, 0, wideBuf, static_cast<int>(wcharCount), reinterpret_cast<char*>(out), static_cast<int>(cap), nullptr, nullptr);
+    return utf8Len > 0 ? static_cast<size_t>(utf8Len) : 0;
+}
+
+extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length) {
+    if (!session || !exe_bytes || !exe_length || !cmd_bytes || !cmd_length || !exe_capacity || !cmd_capacity) return ERROR_INVALID_PARAMETER;
+    *exe_length = 0;
+    *cmd_length = 0;
+    if (!session->process || InterlockedCompareExchange(&session->stopping, 0, 0)) return 0;
+    DWORD rootPid = GetProcessId(session->process);
+    if (!rootPid) return 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    struct ProcNode {
+        DWORD pid;
+        DWORD ppid;
+        wchar_t exe[64];
+        wchar_t stem[64];
+    };
+    ProcNode nodes[512];
+    size_t nodeCount = 0;
+    PROCESSENTRY32W pe = {};
+    pe.dwSize = sizeof(pe);
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (nodeCount < 512) {
+                nodes[nodeCount].pid = pe.th32ProcessID;
+                nodes[nodeCount].ppid = pe.th32ParentProcessID;
+                wcsncpy_s(nodes[nodeCount].exe, pe.szExeFile, _TRUNCATE);
+                extractLowerStem(nodes[nodeCount].exe, nodes[nodeCount].stem);
+                ++nodeCount;
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+
+    DWORD currentPid = rootPid;
+    DWORD chosenPid = 0;
+    const wchar_t* chosenExe = nullptr;
+    const wchar_t* chosenStem = nullptr;
+    for (int depth = 0; depth < 16; ++depth) {
+        DWORD nextPid = 0;
+        const wchar_t* nextExe = nullptr;
+        const wchar_t* nextStem = nullptr;
+        for (size_t i = 0; i < nodeCount; ++i) {
+            if (nodes[i].ppid != currentPid || nodes[i].pid == currentPid) continue;
+            if (isIgnoredHelper(nodes[i].stem)) continue;
+            nextPid = nodes[i].pid;
+            nextExe = nodes[i].exe;
+            nextStem = nodes[i].stem;
+        }
+        if (!nextPid) break;
+        if (!isShellStem(nextStem) || wcscmp(nextStem, L"wsl") == 0) {
+            chosenPid = nextPid;
+            chosenExe = nextExe;
+            chosenStem = nextStem;
+        }
+        if (isTerminalHostStem(nextStem)) break;
+        currentPid = nextPid;
+    }
+
+    if (!chosenPid || !chosenExe || !chosenStem) {
+        session->fgPid = 0;
+        session->fgCreateTime = 0;
+        session->fgExeLen = 0;
+        session->fgCmdLen = 0;
+        return 0;
+    }
+
+    uint64_t createTime = 0;
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, chosenPid);
+    bool canReadVm = proc != nullptr;
+    if (!proc) proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, chosenPid);
+    if (proc) {
+        FILETIME ftCreate = {}, ftExit = {}, ftKernel = {}, ftUser = {};
+        if (GetProcessTimes(proc, &ftCreate, &ftExit, &ftKernel, &ftUser)) {
+            createTime = (static_cast<uint64_t>(ftCreate.dwHighDateTime) << 32) | ftCreate.dwLowDateTime;
+        }
+    }
+
+    // Fast path: if PID and creation timestamp match cached state, skip PEB/memory reads entirely.
+    if (chosenPid == session->fgPid && createTime != 0 && createTime == session->fgCreateTime) {
+        if (proc) CloseHandle(proc);
+        size_t eLen = session->fgExeLen < exe_capacity ? session->fgExeLen : exe_capacity;
+        size_t cLen = session->fgCmdLen < cmd_capacity ? session->fgCmdLen : cmd_capacity;
+        if (eLen) memcpy(exe_bytes, session->fgExe, eLen);
+        if (cLen) memcpy(cmd_bytes, session->fgCmd, cLen);
+        *exe_length = eLen;
+        *cmd_length = cLen;
+        return 0;
+    }
+
+    int exeUtf8 = WideCharToMultiByte(CP_UTF8, 0, chosenExe, -1, reinterpret_cast<char*>(session->fgExe), sizeof(session->fgExe), nullptr, nullptr);
+    session->fgExeLen = exeUtf8 > 1 ? static_cast<size_t>(exeUtf8 - 1) : 0;
+    session->fgCmdLen = (canReadVm && needsCommandLineRead(chosenStem))
+        ? readProcessCommandLineUtf8(proc, session->fgCmd, sizeof(session->fgCmd))
+        : 0;
+    session->fgPid = chosenPid;
+    session->fgCreateTime = createTime;
+    if (proc) CloseHandle(proc);
+
+    size_t eLen = session->fgExeLen < exe_capacity ? session->fgExeLen : exe_capacity;
+    size_t cLen = session->fgCmdLen < cmd_capacity ? session->fgCmdLen : cmd_capacity;
+    if (eLen) memcpy(exe_bytes, session->fgExe, eLen);
+    if (cLen) memcpy(cmd_bytes, session->fgCmd, cLen);
+    *exe_length = eLen;
+    *cmd_length = cLen;
+    return 0;
+}
+

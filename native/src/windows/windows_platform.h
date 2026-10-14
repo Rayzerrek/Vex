@@ -65,6 +65,7 @@ void vex_pty_close(VexPty* session);
 bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);
 uint32_t vex_pty_process_id(VexPty* session);
+int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length);
 /* Private window/pipe bridge: borrowing succeeds once per posted block. */
 bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length);
 void vex_pty_ack_output(uint32_t token);

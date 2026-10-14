@@ -92,7 +92,7 @@ const known_apps = [_][]const u8{
     "tig",    "gh",          "ssh",    "mosh",   "docker", "kubectl",     "k9s",      "htop",      "btop",      "btm",     "top",    "glances", "tmux", "zellij", "screen",
     "yazi",   "lf",          "ranger", "nnn",    "mc",     "broot",       "less",     "more",      "bat",       "man",     "cargo",  "rustc",   "go",   "dotnet", "make",
     "cmake",  "just",        "pytest", "jest",   "vitest", "psql",        "sqlite3",  "mysql",     "redis-cli", "mongosh", "ollama", "llm",     "mods", "glow",   "fzf",
-    "rg",
+    "rg",     "zig",         "uv",     "lua",    "luajit",
 };
 const runner_prefixes = [_][]const u8{
     "bun", "bunx", "npx", "pnpm", "pnpx", "npm", "yarn", "deno", "node", "python", "python3", "py", "sudo",

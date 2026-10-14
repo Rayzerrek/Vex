@@ -158,6 +158,18 @@ pub const PtyOwner = struct {
     pub fn processId(self: *const PtyOwner) u32 {
         return c.vex_pty_process_id(self.handle);
     }
+    /// Queries the cached deepest non-shell child executable and wrapper command line without heap allocation.
+    pub fn foregroundProcess(self: *const PtyOwner, exe_buf: []u8, cmd_buf: []u8) struct { exe: []const u8, cmd: []const u8 } {
+        if (exe_buf.len == 0 or cmd_buf.len == 0) return .{ .exe = &.{}, .cmd = &.{} };
+        var exe_len: usize = 0;
+        var cmd_len: usize = 0;
+        if (c.vex_pty_foreground_process(self.handle, exe_buf.ptr, exe_buf.len, &exe_len, cmd_buf.ptr, cmd_buf.len, &cmd_len) != 0) {
+            return .{ .exe = &.{}, .cmd = &.{} };
+        }
+        const safe_exe = if (exe_len <= exe_buf.len and std.unicode.utf8ValidateSlice(exe_buf[0..exe_len])) exe_buf[0..exe_len] else &.{};
+        const safe_cmd = if (cmd_len <= cmd_buf.len and std.unicode.utf8ValidateSlice(cmd_buf[0..cmd_len])) cmd_buf[0..cmd_len] else &.{};
+        return .{ .exe = safe_exe, .cmd = safe_cmd };
+    }
     /// The reply context is the native handle, not a pointer into a movable Zig array.
     pub fn responseSink(self: *const PtyOwner) terminal.ResponseSink {
         return .{ .context = self.handle, .write = writeReply };

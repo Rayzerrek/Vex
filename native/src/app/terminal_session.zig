@@ -5,6 +5,7 @@ const platform = @import("../windows/windows_ffi.zig");
 const panes = @import("../workspace/pane_tree.zig");
 const directory = @import("../shell/directory.zig");
 const shell = @import("../shell/shell_launch.zig");
+const app_icon = @import("../terminal/app_icon.zig");
 
 const SessionState = union(enum) { running, exited: u32 };
 /// Stable-address owner of one emulator, ConPTY process and directory; borrows the application API/hostname.
@@ -18,6 +19,8 @@ pub const TerminalSession = struct {
     state: SessionState = .running,
     needs_attention: bool = false,
     sync_defer_since_ms: ?i64 = null,
+    icon: app_icon.AppIcon = app_icon.AppIcon.terminal,
+    last_icon_probe_ms: i64 = 0,
 
     /// Allocates at the final address before registering callbacks; startup failure releases every partial owner.
     pub fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch) !*TerminalSession {
@@ -98,5 +101,23 @@ pub const TerminalSession = struct {
             const report = try std.fmt.bufPrint(&buffer, "\x1b[48;{d};{d};{d};{d}t", .{ size.rows, size.columns, height_px, width_px });
             try self.pty.write(report);
         }
+    }
+    /// Resolves the active foreground program icon using cached PID inspection or OSC title fallback.
+    pub fn refreshAppIcon(self: *TerminalSession, query_process: bool) bool {
+        const previous = self.icon;
+        if (self.state != .running) {
+            self.icon = app_icon.AppIcon.terminal;
+            return !std.meta.eql(previous, self.icon);
+        }
+        const title_app = self.terminal.title.appSlice();
+        if (query_process) {
+            var exe_buf: [64]u8 = undefined;
+            var cmd_buf: [512]u8 = undefined;
+            const fg = self.pty.foregroundProcess(&exe_buf, &cmd_buf);
+            self.icon = app_icon.resolve(fg.exe, fg.cmd, title_app);
+        } else if (app_icon.fromTitle(title_app)) |resolved| {
+            self.icon = resolved;
+        }
+        return !std.meta.eql(previous, self.icon);
     }
 };
