@@ -5,6 +5,7 @@ const platform = @import("windows_ffi.zig");
 const panes = @import("pane_tree.zig");
 const workspace = @import("workspace_model.zig");
 const directory = @import("directory.zig");
+const status = @import("program_status.zig");
 
 const SessionState = union(enum) { running, exited: u32 };
 const TerminalSession = struct {
@@ -15,6 +16,7 @@ const TerminalSession = struct {
     machine_name: []const u8,
     size: ?platform.TerminalSize = null,
     state: SessionState = .running,
+    needs_attention: bool = false,
 
     fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8) !*TerminalSession {
         const session = try allocator.create(TerminalSession);
@@ -38,6 +40,12 @@ const TerminalSession = struct {
         self.terminal.deinit();
         self.directory.deinit();
         allocator.destroy(self);
+    }
+    fn writeUserInput(self: *TerminalSession, bytes: []const u8) !void {
+        const previous = platform.statusBadgeKey(self.terminal.program_status.programStatus());
+        self.terminal.program_status.acknowledgeProgramStatus();
+        if (previous != platform.statusBadgeKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
+        try self.pty.write(bytes);
     }
     fn resize(self: *TerminalSession, size: platform.TerminalSize) !void {
         if (self.size) |previous| if (std.meta.eql(previous, size)) return;
@@ -139,12 +147,17 @@ const WorkspaceApplication = struct {
         if (self.health == .failed) return false;
         // A queued event from a removed pane cannot target another pane, even after many opens/closes.
         const session = self.findSession(id) orelse return false;
+        const previous = platform.statusBadgeKey(session.terminal.program_status.programStatus());
+        const previous_attention = session.needs_attention;
         session.terminal.feedOutput(bytes) catch |err| {
             self.fail(err);
             return false;
         };
         const model = if (self.model) |*model| model else return false;
-        return model.activeTab().tree.containsPane(id);
+        const visible = model.activeTab().tree.containsPane(id);
+        const attention = session.terminal.program_status.takeAttention();
+        session.needs_attention = !visible and (session.needs_attention or attention);
+        return visible or previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
     }
     pub fn onPaint(self: *WorkspaceApplication) void {
         if (self.health == .failed) return;
@@ -152,16 +165,33 @@ const WorkspaceApplication = struct {
     }
     fn paintWorkspace(self: *WorkspaceApplication) !void {
         const model = if (self.model) |*model| model else return;
-        for (0..model.tabs.items.len) |index| platform.drawTab(index, model.tabs.items.len, index == model.selected_tab);
+        for (model.tabs.items, 0..) |tab, index| {
+            const presentation = try self.tabProgramStatus(tab.tree.root);
+            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, presentation.summary, presentation.attention);
+        }
         for (self.placements.items) |placement| {
             if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             const focused = model.activeTab().active_pane == placement.id;
             const frame = try session.terminal.readFrame();
-            platform.beginPane(placement.bounds, focused);
+            platform.beginPane(placement.bounds, focused, session.terminal.program_status.programStatus());
             defer platform.endPane();
             try platform.drawTerminalFrame(frame, focused);
         }
+    }
+    const TabStatus = struct { summary: status.ProgramStatusSummary, attention: bool };
+    fn tabProgramStatus(self: *WorkspaceApplication, node: anytype) anyerror!TabStatus {
+        return switch (node.*) {
+            .leaf => |id| blk: {
+                const session = self.findSession(id) orelse return error.MissingPaneSession;
+                break :blk .{ .summary = session.terminal.program_status.programStatus(), .attention = session.needs_attention };
+            },
+            .split => |split| blk: {
+                const first = try self.tabProgramStatus(split.first);
+                const second = try self.tabProgramStatus(split.second);
+                break :blk .{ .summary = if (second.summary.state.displayPriority() > first.summary.state.displayPriority()) second.summary else first.summary, .attention = first.attention or second.attention };
+            },
+        };
     }
     pub fn onKey(self: *WorkspaceApplication, key: u32, modifiers: u32) bool {
         if (self.health == .failed) return true;
@@ -177,7 +207,7 @@ const WorkspaceApplication = struct {
             return true;
         };
         if (encoded) |bytes| {
-            session.pty.write(bytes) catch |err| self.fail(err);
+            session.writeUserInput(bytes) catch |err| self.fail(err);
             return true;
         }
         return false;
@@ -185,7 +215,7 @@ const WorkspaceApplication = struct {
     pub fn onText(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
         const session = self.activeSession() orelse return;
-        if (session.state == .running) session.pty.write(bytes) catch |err| self.fail(err);
+        if (session.state == .running) session.writeUserInput(bytes) catch |err| self.fail(err);
     }
     pub fn onScroll(self: *WorkspaceApplication, delta: i32) void {
         if (self.health == .failed) return;
@@ -230,6 +260,9 @@ const WorkspaceApplication = struct {
             },
             .close_tab => try self.closeTab(index),
         }
+        for (self.sessions.items) |session| {
+            if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
+        }
         try self.updateLayout();
     }
     fn closeTab(self: *WorkspaceApplication, index: usize) !void {
@@ -245,6 +278,7 @@ const WorkspaceApplication = struct {
         if (self.health == .failed) return;
         const session = self.findSession(id) orelse return;
         session.state = .{ .exited = code };
+        session.terminal.program_status.onProgramExited();
         // Automatic exit-close and agent/dirty confirmation need additional parity fixtures.
         platform.invalidateWindow();
     }
@@ -258,6 +292,16 @@ const WorkspaceApplication = struct {
             13 => return self.sessions.items.len,
             14 => return if (self.activeSession()) |session| session.pty.processId() else 0,
             20 => return platform.paintCount(),
+            31 => return if (self.activeSession()) |session| @intFromEnum(session.terminal.program_status.programStatus().state) else 0,
+            32 => return @intFromEnum((self.tabProgramStatus(model.activeTab().tree.root) catch return 0).summary.state),
+            33 => {
+                var selected: status.ProgramStatusState = .none;
+                for (model.tabs.items) |tab| {
+                    const candidate = (self.tabProgramStatus(tab.tree.root) catch return 0).summary.state;
+                    if (candidate.displayPriority() > selected.displayPriority()) selected = candidate;
+                }
+                return @intFromEnum(selected);
+            },
             else => {},
         }
         const marker = switch (query) {

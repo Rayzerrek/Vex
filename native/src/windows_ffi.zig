@@ -2,6 +2,7 @@ const std = @import("std");
 const panes = @import("pane_tree.zig");
 const terminal = @import("terminal.zig");
 const directory = @import("directory.zig");
+const status = @import("program_status.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
 pub const c = @cImport({
@@ -187,12 +188,24 @@ pub fn showFailure(err: anyerror) void {
     c.vex_window_error(message);
 }
 /// Tab index/count come from the bounded workspace model, not external strings.
-pub fn drawTab(index: usize, count: usize, active: bool) void {
-    c.vex_draw_tab(@intCast(index), @intCast(count), active);
+pub fn drawTab(index: usize, count: usize, active: bool, summary: status.ProgramStatusSummary, attention: bool) void {
+    c.vex_draw_tab(@intCast(index), @intCast(count), active, nativeStatusBadge(summary), attention);
+}
+fn nativeStatusBadge(summary: status.ProgramStatusSummary) c.VexProgramStatus {
+    return .{ .state = @intFromEnum(summary.state), .kind = if (summary.kind) |kind| switch (kind) {
+        .permission => 1,
+        .question => 2,
+        .auth => 3,
+    } else 0, .progress = if (summary.progress) |progress| progress else -1 };
+}
+/// Only visible badge fields affect hidden-output repaint scheduling; metadata remains owned by the tracker.
+pub fn statusBadgeKey(summary: status.ProgramStatusSummary) u32 {
+    const badge = nativeStatusBadge(summary);
+    return badge.state | (badge.kind << 8) | (@as(u32, @intCast(badge.progress + 1)) << 16);
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
-pub fn beginPane(bounds: panes.PaneRect, focused: bool) void {
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused);
+pub fn beginPane(bounds: panes.PaneRect, focused: bool, summary: status.ProgramStatusSummary) void {
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, nativeStatusBadge(summary));
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {

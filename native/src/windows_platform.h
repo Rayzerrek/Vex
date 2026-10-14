@@ -9,10 +9,12 @@ extern "C" {
 /* An opaque, uniquely owned session; close consumes it after joining its workers. */
 typedef struct VexPty VexPty;
 typedef struct { float x, y, width, height; } VexPaneRect;
+/* State: none/idle/working/done/blocked/error. Kind: none/permission/question/auth. */
+typedef struct { uint32_t state, kind; int32_t progress; } VexProgramStatus;
 /* All callbacks run on the window thread. Context and borrowed bytes must remain live. */
 typedef struct {
     void* context;
-    /* Output returns whether a visible pane needs painting; hidden output still parses. */
+    /* Output requests a frame for visible output or changed background tab status. */
     bool (*output)(void*, uint32_t, const uint8_t*, size_t);
     void (*resize)(void*, float, float, float, float, float);
     void (*paint)(void*);
@@ -42,8 +44,8 @@ uint32_t vex_pty_process_id(VexPty* session);
 bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length);
 void vex_pty_ack_output(uint32_t token);
 bool vex_pty_exists(uint32_t token);
-void vex_draw_tab(uint32_t index, uint32_t count, bool active);
-void vex_begin_pane(VexPaneRect bounds, bool focused);
+void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexProgramStatus status, bool attention);
+void vex_begin_pane(VexPaneRect bounds, bool focused, VexProgramStatus status);
 void vex_end_pane(void);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);
 void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color);

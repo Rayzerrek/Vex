@@ -28,6 +28,11 @@ function Send-NativeText([IntPtr]$Window, [string]$Text) {
         [VexNativeSmoke]::SendWindowMessage($Window, 0x102, [IntPtr][int]$unit, [IntPtr]::Zero) | Out-Null
     }
 }
+function Send-NativeStatus([IntPtr]$Window, [string]$Body, [int]$DelayMs = 0) {
+    $command = '@"' + $env:WINDIR + '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "'
+    $command += "Start-Sleep -Milliseconds $DelayMs;[Console]::Write([char]27 + ']7501;$Body' + [char]7)" + '"'
+    Send-NativeText $Window ($command + "`r")
+}
 function Get-NativeProbe([IntPtr]$Window, [int]$Query) {
     return [VexNativeSmoke]::SendWindowMessage($Window, 0x8002, [IntPtr]$Query, [IntPtr]::Zero).ToInt64()
 }
@@ -147,6 +152,37 @@ try {
     Invoke-NativeAction $window 3
     Assert-NativeProbe $window 13 1 'directory-owning pane resources are freed on close'
 
+    Send-NativeStatus $window 'state=working:app=build:progress=42'
+    Assert-NativeProbe $window 31 2 'OSC 7501 crosses the real ConPTY stream'
+    Invoke-NativeAction $window 1
+    Assert-NativeProbe $window 31 0 'new pane does not inherit program status'
+    Send-NativeStatus $window 'state=error:msg=RmFpbGVk'
+    Assert-NativeProbe $window 31 5 'independent pane error status'
+    Assert-NativeProbe $window 32 5 'tab aggregates the highest-priority pane status'
+    Send-NativeText $window ('@rem acknowledge result' + "`r")
+    Assert-NativeProbe $window 31 0 'user input acknowledges completed error results'
+    Assert-NativeProbe $window 32 2 'acknowledgement exposes the sibling working status'
+    Send-NativeStatus $window 'state=blocked:kind=permission'
+    Assert-NativeProbe $window 31 4 'blocked permission state'
+    Send-NativeText $window ('@rem blocked is not a completed result' + "`r")
+    Assert-NativeProbe $window 31 4 'user input cannot dismiss a blocked record'
+    Save-NativeScreenshot $window (Join-Path $OutputDirectory 'native-status.png')
+    Invoke-NativeAction $window 3
+    Send-NativeStatus $window 'state=clear'
+    Assert-NativeProbe $window 31 0 'closing a status-owning pane leaves its sibling independent'
+    Invoke-NativeAction $window 0
+    Send-NativeStatus $window 'state=error' 2000
+    Invoke-NativeAction $window 5
+    Start-Sleep -Milliseconds 300
+    $beforeStatusPaints = Get-NativeProbe $window 20
+    Assert-NativeProbe $window 33 5 'background program status updates while its tab is hidden'
+    Assert-NativeProbe $window 31 0 'background status cannot overwrite the focused pane'
+    Start-Sleep -Milliseconds 100
+    if ((Get-NativeProbe $window 20) -le $beforeStatusPaints) { throw 'Vex native smoke: hidden status did not repaint the tab indicator.' }
+    Invoke-NativeAction $window 4
+    Assert-NativeProbe $window 31 5 'selecting a tab does not acknowledge its error result'
+    Invoke-NativeAction $window 3
+
     Send-NativeText $window ('@set VEX_TAB=VEX_NATIVE_TAB_' + "`r" + '@echo %VEX_TAB%A' + "`r")
     Assert-NativeProbe $window 4 1 'first tab marker'
     Invoke-NativeAction $window 0
@@ -215,7 +251,7 @@ try {
     Close-NativeInstance $process $window
     [pscustomobject]@{
         Result = 'PASS'
-        Checks = @('ConPTY round trip/resize', '2,000-line output', 'nested right/down splits', 'click focus', 'isolated pane/tab output', 'stale output token rejection', 'background parsing', 'Unicode OSC 7 split directory', 'new-tab project directory', 'close/focus fallback', '8-tab limit', 'process-tree teardown', 'resize under active output', 'flooding-tab close', 'active-output shutdown')
+        Checks = @('ConPTY round trip/resize', '2,000-line output', 'nested right/down splits', 'click focus', 'isolated pane/tab output', 'stale output token rejection', 'background parsing', 'Unicode OSC 7 split directory', 'new-tab project directory', 'OSC 7501 transport/priority/acknowledgement', 'hidden-tab status indicator repaint', 'close/focus fallback', '8-tab limit', 'process-tree teardown', 'resize under active output', 'flooding-tab close', 'active-output shutdown')
         WindowReadyMs = [Math]::Round($windowReadyMs, 2)
         SinglePaneWorkingSetBytes = $singlePaneMemory
         ThreePaneWorkingSetBytes = $threePaneMemory
