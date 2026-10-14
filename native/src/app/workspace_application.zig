@@ -13,6 +13,14 @@ const DividerDrag = @import("../workspace/divider_drag.zig").DividerDrag;
 const TabDrag = @import("../workspace/tab_drag.zig").TabDrag;
 const tab_strip = @import("../workspace/tab_strip.zig");
 const app_icon = @import("../terminal/app_icon.zig");
+const url_detector = @import("../terminal/url_detector.zig");
+
+const HoveredLink = struct {
+    pane_id: panes.PaneId,
+    row: u16,
+    start_col: u16,
+    end_col: u16,
+};
 
 const SelectionDrag = struct {
     pane_id: panes.PaneId,
@@ -51,6 +59,7 @@ const WorkspaceApplication = struct {
     hovered_pane: ?panes.PaneId = null,
     hovered_header_action: ?panes.PaneHeaderAction = null,
     hovered_scrollbar: ?panes.PaneId = null,
+    hovered_link: ?HoveredLink = null,
     reported_mouse_pane: ?panes.PaneId = null,
     reported_mouse_buttons: u8 = 0,
     next_token: u32 = 1,
@@ -158,6 +167,9 @@ const WorkspaceApplication = struct {
         if (self.reported_mouse_pane == id) {
             self.reported_mouse_pane = null;
             self.reported_mouse_buttons = 0;
+        }
+        if (self.hovered_link) |hl| {
+            if (hl.pane_id == id) self.hovered_link = null;
         }
         for (self.sessions.items, 0..) |session, index| if (session.id == id) {
             _ = self.sessions.swapRemove(index);
@@ -280,6 +292,10 @@ const WorkspaceApplication = struct {
             var tab_icons: [8]app_icon.AppIcon = undefined;
             var icon_count: usize = 0;
             try self.collectTabIcons(tab.tree.root, &tab_icons, &icon_count);
+            if (icon_count == 0) {
+                tab_icons[0] = active_session.icon;
+                icon_count = 1;
+            }
             platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, active_session.displayTitle(), tab_icons[0..icon_count], presentation.summary, presentation.attention);
         }
         if (self.pointer_drag == .tab) {
@@ -295,10 +311,11 @@ const WorkspaceApplication = struct {
             const hovered = self.hovered_pane == placement.id;
             const hovered_action = if (hovered) self.hovered_header_action else null;
             const frame = try session.terminal.readFrame();
+            const pane_link: ?platform.HoveredLinkSpan = if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null;
             {
                 platform.beginPane(placement.bounds, focused, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.displayTitle(), session.icon, session.terminal.program_status.programStatus());
                 defer platform.endPane();
-                try platform.drawTerminalFrame(frame, focused);
+                try platform.drawTerminalFrame(frame, focused, pane_link);
             }
             if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
                 const sb_active = self.hovered_scrollbar == placement.id or (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id);
@@ -310,6 +327,7 @@ const WorkspaceApplication = struct {
         switch (node.*) {
             .leaf => |id| {
                 const session = self.findSession(id) orelse return error.MissingPaneSession;
+                if (session.icon.is_shell) return;
                 for (out[0..count.*]) |existing| {
                     if (existing.eql(session.icon)) return;
                 }
@@ -548,6 +566,7 @@ const WorkspaceApplication = struct {
         var next_pane: ?panes.PaneId = null;
         var next_action: ?panes.PaneHeaderAction = null;
         var next_scrollbar: ?panes.PaneId = null;
+        var next_link: ?HoveredLink = null;
         if (self.pointer_drag == .none) {
             for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
                 next_pane = placement.id;
@@ -559,15 +578,32 @@ const WorkspaceApplication = struct {
                                 if (sb.containsPoint(placement.bounds, x, y)) next_scrollbar = placement.id;
                             }
                         }
+                        if (next_scrollbar == null) {
+                            if (self.metrics) |metrics| {
+                                if (try metrics.viewportPoint(placement.bounds, x, y, false)) |vp| {
+                                    const frame = try session.terminal.readFrame();
+                                    if (url_detector.findLinkInFrameRow(frame, vp.row, vp.column, null)) |match| {
+                                        next_link = .{
+                                            .pane_id = placement.id,
+                                            .row = vp.row,
+                                            .start_col = match.start_col,
+                                            .end_col = match.end_col,
+                                        };
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 break;
             };
         }
-        if (self.hovered_pane != next_pane or self.hovered_header_action != next_action or self.hovered_scrollbar != next_scrollbar) {
+        const link_changed = !std.meta.eql(self.hovered_link, next_link);
+        if (self.hovered_pane != next_pane or self.hovered_header_action != next_action or self.hovered_scrollbar != next_scrollbar or link_changed) {
             self.hovered_pane = next_pane;
             self.hovered_header_action = next_action;
             self.hovered_scrollbar = next_scrollbar;
+            self.hovered_link = next_link;
             platform.invalidateWindow();
         }
     }
@@ -661,6 +697,19 @@ const WorkspaceApplication = struct {
                                 }
                             }
                             if (try metrics.viewportPoint(placement.bounds, x, y, false)) |vp| {
+                                if ((modifiers & 2) != 0) {
+                                    const frame = try session.terminal.readFrame();
+                                    var url_buf: [2048]u8 = undefined;
+                                    if (url_detector.findLinkInFrameRow(frame, vp.row, vp.column, &url_buf)) |match| {
+                                        if (match.url_len > 0) {
+                                            _ = model.focusPane(placement.id);
+                                            try self.clearOtherSelections(placement.id);
+                                            platform.openUrl(url_buf[0..match.url_len]) catch {};
+                                            platform.invalidateWindow();
+                                            break;
+                                        }
+                                    }
+                                }
                                 _ = model.focusPane(placement.id);
                                 try self.clearOtherSelections(placement.id);
                                 if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
@@ -765,6 +814,7 @@ const WorkspaceApplication = struct {
         };
         if (self.pointer_drag == .scrollbar) return .tab_dragging;
         if (self.pointer_drag == .selection or self.pointer_drag == .mouse) return .selection;
+        if (event == .hover and self.pointer_drag == .none and self.hovered_link != null) return .link;
         if (model.activeTab().is_focus_mode) return .normal;
         const drag: DividerDrag = if (self.pointer_drag == .divider) self.pointer_drag.divider else .{};
         const axis = try drag.cursorAxis(&model.activeTab().tree, bounds, x, y) orelse return .normal;
@@ -822,8 +872,16 @@ const WorkspaceApplication = struct {
         const session = self.findSession(id) orelse return;
         session.state = .{ .exited = code };
         session.terminal.program_status.onProgramExited();
+        var banner_buf: [96]u8 = undefined;
+        if (std.fmt.bufPrint(&banner_buf, "\r\n\x1b[2m[process exited with code {d}]\x1b[m\r\n", .{code})) |banner| {
+            session.terminal.feedOutput(banner) catch {};
+        } else |_| {}
+        if (self.model) |*model| {
+            if (!model.activeTab().tree.containsPane(id)) {
+                session.needs_attention = true;
+            }
+        }
         _ = session.refreshAppIcon(false);
-        // Automatic exit-close and agent/dirty confirmation need additional parity fixtures.
         platform.invalidateWindow();
     }
     pub fn onProbe(self: *WorkspaceApplication, query: u32) u64 {

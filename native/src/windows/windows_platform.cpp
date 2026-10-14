@@ -1,6 +1,7 @@
 #include "windows_platform.h"
 #include <windows.h>
 #include <windowsx.h>
+#include <shellapi.h>
 #include <d2d1.h>
 #include <dwrite.h>
 #include <dwmapi.h>
@@ -303,9 +304,20 @@ static bool handleKey(uint32_t key) {
 }
 static void setPointerCursor(uint32_t response, float y) {
     uint16_t resource = response == VEX_POINTER_RIGHT ? 32644 : response == VEX_POINTER_DOWN ? 32645 :
+        response == VEX_POINTER_LINK ? 32649 :
         response == VEX_POINTER_SELECTION ? 32513 :
         response == VEX_POINTER_TAB_ARMED || response == VEX_POINTER_TAB_DRAGGING || y < 74 ? 32512 : 32513;
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(resource)));
+}
+static void refreshHoverCursor(HWND hwnd) {
+    if (pointerCaptureState != PointerCaptureState::none) return;
+    POINT point;
+    if (!GetCursorPos(&point) || !ScreenToClient(hwnd, &point)) return;
+    RECT bounds;
+    if (!GetClientRect(hwnd, &bounds) || point.x < 0 || point.y < 0 || point.x >= bounds.right || point.y >= bounds.bottom) return;
+    float scale = GetDpiForWindow(hwnd) / 96.0f;
+    float x = point.x / scale, y = point.y / scale;
+    setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y, currentModifiers()), y);
 }
 extern "C" int vex_window_cancel_pointer_capture() {
     if (pointerCaptureState == PointerCaptureState::none || pointerCaptureState == PointerCaptureState::cancelled) return 0;
@@ -522,7 +534,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         uint32_t event = pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging ? VEX_POINTER_MOVE : VEX_POINTER_HOVER;
         uint32_t response = callbacks.pointer(callbacks.context, event, x, y, currentModifiers());
         if (pointerCaptureState == PointerCaptureState::armed && response == VEX_POINTER_TAB_DRAGGING) capturePointerGesture(hwnd);
-        else if (response == VEX_POINTER_NORMAL) cancelPointerGesture();
+        else if (response == VEX_POINTER_NORMAL || response == VEX_POINTER_LINK) cancelPointerGesture();
         updateTopChromeHover(x, y);
         setPointerCursor(response, y);
         return 0;
@@ -634,7 +646,11 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN:
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
+        if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
         return handleKey((uint32_t)wparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
+    case WM_KEYUP: case WM_SYSKEYUP:
+        if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
+        return DefWindowProcW(hwnd, message, wparam, lparam);
     case WM_KILLFOCUS: cancelPointerGesture(); pendingSurrogate = 0; return 0;
     case WM_CHAR: case WM_SYSCHAR: {
         uint16_t unit = (uint16_t)wparam;
@@ -1833,6 +1849,19 @@ extern "C" int vex_clipboard_write(const uint8_t* bytes, size_t length) {
     if (!EmptyClipboard() || !SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
     CloseClipboard();
     return 0;
+}
+extern "C" int vex_open_url(const uint8_t* bytes, size_t length) {
+    if (!bytes || !length || length > 2048 || memchr(bytes, 0, length)) return ERROR_INVALID_PARAMETER;
+    wchar_t wide[2049];
+    int units = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(bytes), (int)length, wide, 2048);
+    if (units <= 0) return (int)GetLastError();
+    wide[units] = 0;
+    if (_wcsnicmp(wide, L"https://", 8) != 0 && _wcsnicmp(wide, L"http://", 7) != 0 && _wcsnicmp(wide, L"file://", 7) != 0) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    if (selftestEnabled()) return 0;
+    HINSTANCE result = ShellExecuteW(IsWindow(window) ? window : nullptr, L"open", wide, nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32 ? 0 : ERROR_OPEN_FAILED;
 }
 extern "C" void* vex_terminal_symbol(const char* name) {
     static HMODULE library;
