@@ -237,6 +237,11 @@ pub fn systemDirectoryAlloc(allocator: std.mem.Allocator) ![]u8 {
     _ = try directory.DirectoryPath.parse(buffer[0..length]);
     return allocator.dupe(u8, buffer[0..length]);
 }
+/// Publishes validated UTF-8 text to the system clipboard; transient lock contention is ignored by the bridge.
+pub fn writeClipboardText(text: []const u8) !void {
+    if (text.len == 0 or std.mem.indexOfScalar(u8, text, 0) != null or !std.unicode.utf8ValidateSlice(text)) return error.InvalidClipboardText;
+    if (c.vex_clipboard_write(text.ptr, text.len) != 0) return error.ClipboardWriteFailed;
+}
 /// Startup timestamps begin before terminal/DLL initialization, not OS process creation.
 pub fn beginStartup() void {
     c.vex_startup_begin();

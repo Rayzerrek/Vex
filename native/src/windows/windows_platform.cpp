@@ -598,6 +598,23 @@ extern "C" int vex_system_directory(uint8_t* bytes, size_t capacity, size_t* len
     *length = (size_t)count;
     return 0;
 }
+extern "C" int vex_clipboard_write(const uint8_t* bytes, size_t length) {
+    if (!bytes || !length || length > 768 * 1024 - 4) return ERROR_INVALID_PARAMETER;
+    int units = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)bytes, (int)length, nullptr, 0);
+    if (units <= 0) return (int)GetLastError();
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, ((size_t)units + 1) * sizeof(wchar_t));
+    if (!memory) return ERROR_OUTOFMEMORY;
+    auto wide = static_cast<wchar_t*>(GlobalLock(memory));
+    if (!wide) { DWORD error = GetLastError(); GlobalFree(memory); return (int)(error ? error : ERROR_OUTOFMEMORY); }
+    int written = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)bytes, (int)length, wide, units);
+    wide[units] = 0;
+    GlobalUnlock(memory);
+    if (written != units) { GlobalFree(memory); return ERROR_NO_UNICODE_TRANSLATION; }
+    if (!OpenClipboard(IsWindow(window) ? window : nullptr)) { GlobalFree(memory); return 0; }
+    if (!EmptyClipboard() || !SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
+    CloseClipboard();
+    return 0;
+}
 extern "C" void* vex_terminal_symbol(const char* name) {
     static HMODULE library;
     if (!library) {
