@@ -42,7 +42,22 @@ const ScrollbarDrag = struct {
     grab_offset: f32,
 };
 
-const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, selection: SelectionDrag, mouse: MouseDrag, scrollbar: ScrollbarDrag };
+const PaneDrag = struct {
+    pane_id: panes.PaneId,
+    start_x: f32,
+    start_y: f32,
+    dragging: bool = false,
+    zone: panes.DropZone = .none,
+};
+
+const TabRename = struct {
+    tab_id: workspace.TabId,
+    buf: [64]u8 = undefined,
+    len: u8 = 0,
+    select_all: bool = true,
+};
+
+const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, pane: PaneDrag, selection: SelectionDrag, mouse: MouseDrag, scrollbar: ScrollbarDrag };
 
 // This application owns sessions at stable addresses; tab/tree nodes only contain IDs.
 const WorkspaceApplication = struct {
@@ -56,6 +71,7 @@ const WorkspaceApplication = struct {
     placements: std.ArrayList(panes.PanePlacement) = .empty,
     metrics: ?platform.WindowMetrics = null,
     pointer_drag: PointerDrag = .none,
+    editing_tab: ?TabRename = null,
     hovered_pane: ?panes.PaneId = null,
     hovered_header_action: ?panes.PaneHeaderAction = null,
     hovered_scrollbar: ?panes.PaneId = null,
@@ -117,6 +133,36 @@ const WorkspaceApplication = struct {
     fn findPlacement(self: *WorkspaceApplication, id: panes.PaneId) ?panes.PanePlacement {
         for (self.placements.items) |placement| if (placement.id == id) return placement;
         return null;
+    }
+    fn beginTabRename(self: *WorkspaceApplication, index: usize) void {
+        self.commitTabRename();
+        const model = if (self.model) |*model| model else return;
+        if (index >= model.tabs.items.len) return;
+        _ = model.selectTab(index);
+        const tab = model.tabs.items[index];
+        const active_session = self.findSession(tab.active_pane) orelse return;
+        const initial = tab.customTitle() orelse active_session.displayTitle();
+        var edit: TabRename = .{ .tab_id = tab.id, .select_all = true };
+        const n = @min(initial.len, edit.buf.len);
+        @memcpy(edit.buf[0..n], initial[0..n]);
+        edit.len = @intCast(n);
+        self.editing_tab = edit;
+        platform.invalidateWindow();
+    }
+    fn commitTabRename(self: *WorkspaceApplication) void {
+        const edit = self.editing_tab orelse return;
+        self.editing_tab = null;
+        const model = if (self.model) |*model| model else return;
+        if (model.tabIndex(edit.tab_id)) |idx| {
+            model.tabs.items[idx].setCustomTitle(edit.buf[0..edit.len]);
+        }
+        platform.invalidateWindow();
+    }
+    fn cancelTabRename(self: *WorkspaceApplication) void {
+        if (self.editing_tab != null) {
+            self.editing_tab = null;
+            platform.invalidateWindow();
+        }
     }
     fn clearOtherSelections(self: *WorkspaceApplication, keep: panes.PaneId) !void {
         for (self.sessions.items) |session| {
@@ -296,7 +342,9 @@ const WorkspaceApplication = struct {
                 tab_icons[0] = active_session.icon;
                 icon_count = 1;
             }
-            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, active_session.displayTitle(), tab_icons[0..icon_count], presentation.summary, presentation.attention);
+            const is_editing = if (self.editing_tab) |edit| edit.tab_id == tab.id else false;
+            const tab_title = if (is_editing) self.editing_tab.?.buf[0..self.editing_tab.?.len] else (tab.customTitle() orelse active_session.displayTitle());
+            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, is_editing, tab_title, tab_icons[0..icon_count], presentation.summary, presentation.attention);
         }
         if (self.pointer_drag == .tab) {
             const metrics = self.metrics orelse return;
@@ -320,6 +368,13 @@ const WorkspaceApplication = struct {
             if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
                 const sb_active = self.hovered_scrollbar == placement.id or (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id);
                 platform.drawScrollbar(placement.bounds, sb, sb_active);
+            }
+        }
+        if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging and self.pointer_drag.pane.zone != .none) {
+            if (self.findPlacement(self.pointer_drag.pane.pane_id)) |placement| {
+                if (placement.bounds.splitPreviewRect(self.pointer_drag.pane.zone)) |preview| {
+                    platform.drawSplitPreview(preview);
+                }
             }
         }
     }
@@ -359,6 +414,39 @@ const WorkspaceApplication = struct {
     pub fn onKey(self: *WorkspaceApplication, key: u32, modifiers: u32) bool {
         if (self.health == .failed) return true;
         if (isModifierKey(key)) return false;
+        if (self.editing_tab) |*edit| {
+            if (platform.workspaceShortcut(key, modifiers)) |action| {
+                self.commitTabRename();
+                self.onAction(action, 0);
+                return true;
+            }
+            if (key == 0x0D) {
+                self.commitTabRename();
+                return true;
+            }
+            if (key == 0x1B) {
+                self.cancelTabRename();
+                return true;
+            }
+            if (key == 0x08 or key == 0x2E) {
+                if (edit.select_all or (modifiers & 2) != 0) {
+                    edit.len = 0;
+                    edit.select_all = false;
+                } else if (edit.len > 0) {
+                    var idx: u8 = edit.len - 1;
+                    while (idx > 0 and (edit.buf[idx] & 0xC0) == 0x80) : (idx -= 1) {}
+                    edit.len = idx;
+                }
+                platform.invalidateWindow();
+                return true;
+            }
+            if ((modifiers & 6) == 0 and key >= 0x20 and !(key >= 0x21 and key <= 0x28) and !(key >= 0x70 and key <= 0x87)) {
+                return false;
+            }
+            edit.select_all = false;
+            platform.invalidateWindow();
+            return true;
+        }
         if (platform.workspaceShortcut(key, modifiers)) |action| {
             self.onAction(action, 0);
             return true;
@@ -374,7 +462,7 @@ const WorkspaceApplication = struct {
             platform.invalidateWindow();
             return true;
         }
-        if (modifiers == 3 and key == 'C') {
+        if ((modifiers == 3 and key == 'C') or (modifiers == 2 and key == 0x2D)) {
             if (try session.copySelectionToClipboard(self.allocator)) {
                 try session.terminal.clearSelection(true);
                 platform.invalidateWindow();
@@ -420,6 +508,19 @@ const WorkspaceApplication = struct {
     }
     pub fn onText(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
+        if (self.editing_tab) |*edit| {
+            if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
+            if (edit.select_all) {
+                edit.len = 0;
+                edit.select_all = false;
+            }
+            if (@as(usize, edit.len) + bytes.len <= edit.buf.len) {
+                @memcpy(edit.buf[edit.len .. edit.len + bytes.len], bytes);
+                edit.len += @intCast(bytes.len);
+                platform.invalidateWindow();
+            }
+            return;
+        }
         const session = self.activeSession() orelse return;
         if (session.state == .running) {
             if (session.terminal.hasSelection() catch |err| {
@@ -437,6 +538,21 @@ const WorkspaceApplication = struct {
     }
     pub fn onPaste(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
+        if (self.editing_tab) |*edit| {
+            const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
+            if (trimmed.len > 0) {
+                if (edit.select_all) {
+                    edit.len = 0;
+                    edit.select_all = false;
+                }
+                const space = edit.buf.len - edit.len;
+                const n = @min(trimmed.len, space);
+                @memcpy(edit.buf[edit.len .. edit.len + n], trimmed[0..n]);
+                edit.len += @intCast(n);
+                platform.invalidateWindow();
+            }
+            return;
+        }
         const session = self.activeSession() orelse return;
         if (session.state == .running) {
             if (session.terminal.hasSelection() catch |err| {
@@ -491,6 +607,7 @@ const WorkspaceApplication = struct {
         const can_focus = model.activeTab().tree.paneCount() > 1;
         const bit: u8 = if (button == .middle) 2 else if (button == .right) 4 else 1;
         if (pressed) {
+            self.commitTabRename();
             for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
                 if (placement.bounds.hitHeaderAction(can_focus, x, y) != null) return;
                 const vp = (try metrics.viewportPoint(placement.bounds, x, y, false)) orelse return;
@@ -609,9 +726,9 @@ const WorkspaceApplication = struct {
     }
     fn cancelPointerDrag(self: *WorkspaceApplication) !bool {
         const model = if (self.model) |*model| model else return false;
-        const clear_preview = self.pointer_drag == .tab or self.pointer_drag == .selection or self.pointer_drag == .scrollbar;
+        const clear_preview = self.pointer_drag == .tab or self.pointer_drag == .pane or self.pointer_drag == .selection or self.pointer_drag == .scrollbar;
         const changed = switch (self.pointer_drag) {
-            .none, .tab, .mouse, .scrollbar => false,
+            .none, .tab, .pane, .mouse, .scrollbar => false,
             .selection => |sel| blk: {
                 if (self.findSession(sel.pane_id)) |session| {
                     try session.terminal.selectionRelease(sel.start_column, sel.start_row);
@@ -663,11 +780,20 @@ const WorkspaceApplication = struct {
             },
             .begin => {
                 if (try layout.hitTab(point)) |hit| {
-                    if (hit.part == .close) return .normal;
+                    if (hit.part == .close) {
+                        self.commitTabRename();
+                        return .normal;
+                    }
+                    if (self.editing_tab) |edit| {
+                        if (edit.tab_id != model.tabs.items[hit.index].id) {
+                            self.commitTabRename();
+                        }
+                    }
                     try self.applyAction(.select_tab, @intCast(hit.index));
                     var drag: TabDrag = .none;
                     if (try drag.begin(model, layout, model.activeTab().id, point)) self.pointer_drag = .{ .tab = drag };
                 } else {
+                    self.commitTabRename();
                     if (!model.activeTab().is_focus_mode) {
                         var drag: DividerDrag = .{};
                         if (try drag.begin(&model.activeTab().tree, bounds, x, y)) self.pointer_drag = .{ .divider = drag };
@@ -675,6 +801,17 @@ const WorkspaceApplication = struct {
                     if (self.pointer_drag == .none) {
                         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
                             if (placement.bounds.hitHeaderAction(can_focus, x, y) != null) break;
+                            if (placement.bounds.isHeaderDragArea(can_focus, x, y)) {
+                                _ = model.focusPane(placement.id);
+                                try self.clearOtherSelections(placement.id);
+                                self.pointer_drag = .{ .pane = .{
+                                    .pane_id = placement.id,
+                                    .start_x = x,
+                                    .start_y = y,
+                                } };
+                                platform.invalidateWindow();
+                                break;
+                            }
                             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
                             if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
                                 if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
@@ -746,6 +883,31 @@ const WorkspaceApplication = struct {
                             platform.invalidateWindow();
                         } else if (try drag.move(model, layout, point)) platform.invalidateWindow();
                     },
+                    .pane => |*pdrag| {
+                        if (!pdrag.dragging and (@abs(x - pdrag.start_x) + @abs(y - pdrag.start_y)) >= 8.0) {
+                            pdrag.dragging = true;
+                        }
+                        if (pdrag.dragging) {
+                            const next_zone: panes.DropZone = if (self.findPlacement(pdrag.pane_id)) |pl| pl.bounds.dropZoneAt(x, y) else .none;
+                            if (event == .end) {
+                                const zone = next_zone;
+                                pdrag.zone = .none;
+                                if (zone != .none) {
+                                    const target_session = self.findSession(pdrag.pane_id) orelse return error.MissingPaneSession;
+                                    const session = try self.addSession(target_session.directory.current());
+                                    errdefer self.removeSession(session.id);
+                                    const axis: panes.SplitAxis = if (zone == .left or zone == .right) .right else .down;
+                                    try model.splitPane(pdrag.pane_id, session.id, axis);
+                                    try self.updateLayout();
+                                } else {
+                                    platform.invalidateWindow();
+                                }
+                            } else if (pdrag.zone != next_zone) {
+                                pdrag.zone = next_zone;
+                                platform.invalidateWindow();
+                            }
+                        }
+                    },
                     .selection => |*sel| {
                         if (self.findPlacement(sel.pane_id)) |placement| {
                             if (self.findSession(sel.pane_id)) |session| {
@@ -812,6 +974,7 @@ const WorkspaceApplication = struct {
             .armed => .tab_armed,
             .dragging => .tab_dragging,
         };
+        if (self.pointer_drag == .pane) return if (self.pointer_drag.pane.dragging) .tab_dragging else .tab_armed;
         if (self.pointer_drag == .scrollbar) return .tab_dragging;
         if (self.pointer_drag == .selection or self.pointer_drag == .mouse) return .selection;
         if (event == .hover and self.pointer_drag == .none and self.hovered_link != null) return .link;
@@ -829,7 +992,18 @@ const WorkspaceApplication = struct {
     }
     fn applyAction(self: *WorkspaceApplication, action: platform.WorkspaceAction, index: u32) !void {
         if (try self.cancelPointerDrag()) try self.updateLayout();
+        if (action == .rename_tab) {
+            self.beginTabRename(index);
+            return;
+        }
         const model = if (self.model) |*model| model else return;
+        if (action != .select_tab) {
+            self.commitTabRename();
+        } else if (self.editing_tab) |edit| {
+            if (index >= model.tabs.items.len or edit.tab_id != model.tabs.items[index].id) {
+                self.commitTabRename();
+            }
+        }
         switch (action) {
             .new_tab => {
                 if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) return;
@@ -852,6 +1026,7 @@ const WorkspaceApplication = struct {
                 if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
+            .rename_tab => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;

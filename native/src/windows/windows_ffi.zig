@@ -12,7 +12,7 @@ pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -397,14 +397,14 @@ pub fn showFailure(err: anyerror) void {
     c.vex_window_error(message);
 }
 /// Tab index/count come from the bounded workspace model; empty title falls back to the shell display name.
-pub fn drawTab(index: usize, count: usize, active: bool, title: []const u8, icons: []const app_icon.AppIcon, summary: status.ProgramStatusSummary, attention: bool) void {
+pub fn drawTab(index: usize, count: usize, active: bool, editing: bool, title: []const u8, icons: []const app_icon.AppIcon, summary: status.ProgramStatusSummary, attention: bool) void {
     var native_icons: [8]c.VexAppIcon = undefined;
     const icon_count: usize = @min(icons.len, native_icons.len);
     for (icons[0..icon_count], 0..) |icon, idx| {
         native_icons[idx] = nativeAppIcon(icon);
     }
     const icons_ptr: [*c]const c.VexAppIcon = if (icon_count == 0) null else &native_icons;
-    c.vex_draw_tab(@intCast(index), @intCast(count), active, if (title.len == 0) null else title.ptr, title.len, icons_ptr, icon_count, nativeStatusBadge(summary), attention);
+    c.vex_draw_tab(@intCast(index), @intCast(count), active, editing, if (title.len == 0) null else title.ptr, title.len, icons_ptr, icon_count, nativeStatusBadge(summary), attention);
 }
 fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
     var badge = [4]u8{ 0, 0, 0, 0 };
@@ -443,6 +443,10 @@ pub fn endPane() void {
 /// Draws the rounded scrollback thumb overlay along the right edge of a pane.
 pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active: bool) void {
     c.vex_draw_scrollbar(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, geometry.thumb_y, geometry.thumb_height, active);
+}
+/// Draws the translucent split preview overlay for an active pane header drag-to-split gesture.
+pub fn drawSplitPreview(bounds: panes.PaneRect) void {
+    c.vex_draw_split_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height });
 }
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
 pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, hovered_link: ?HoveredLinkSpan) !void {
