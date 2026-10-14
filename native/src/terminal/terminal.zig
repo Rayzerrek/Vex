@@ -20,7 +20,7 @@ pub const TextStyle = struct {
     invisible: bool = false,
 };
 /// Text offsets borrow the owning frame's UTF-8 buffer, valid until the next dirty snapshot.
-pub const TerminalCell = struct { width: CellWidth, style: TextStyle, text_start: usize, text_length: usize };
+pub const TerminalCell = struct { width: CellWidth, style: TextStyle, text_start: usize, text_length: usize, selected: bool = false };
 /// Cursor position is in viewport cells; hidden cursors have no drawable position.
 pub const TerminalCursor = struct {
     column: u16 = 0,
@@ -52,8 +52,14 @@ pub const Terminal = struct {
     render_state: std.meta.Child(c.GhosttyRenderState),
     row_iterator: std.meta.Child(c.GhosttyRenderStateRowIterator),
     row_cells: std.meta.Child(c.GhosttyRenderStateRowCells),
+    selection_gesture: std.meta.Child(c.GhosttySelectionGesture),
+    press_event: std.meta.Child(c.GhosttySelectionGestureEvent),
+    drag_event: std.meta.Child(c.GhosttySelectionGestureEvent),
+    release_event: std.meta.Child(c.GhosttySelectionGestureEvent),
     key_encoder: std.meta.Child(c.GhosttyKeyEncoder),
     key_event: std.meta.Child(c.GhosttyKeyEvent),
+    cell_width_px: u32 = 9,
+    cell_height_px: u32 = 17,
     frame: TerminalFrame = .{},
     grapheme: std.ArrayList(u8) = .empty,
     search_row: std.ArrayList(u8) = .empty,
@@ -89,6 +95,22 @@ pub const Terminal = struct {
         try check(api.render_state_row_cells_new(null, &cells));
         const row_cells = cells orelse return error.TerminalNullHandle;
         errdefer api.render_state_row_cells_free(row_cells);
+        var gesture: c.GhosttySelectionGesture = null;
+        try check(api.selection_gesture_new(null, &gesture));
+        const selection_gesture = gesture orelse return error.TerminalNullHandle;
+        errdefer api.selection_gesture_free(selection_gesture, handle);
+        var press: c.GhosttySelectionGestureEvent = null;
+        try check(api.selection_gesture_event_new(null, &press, c.GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS));
+        const press_event = press orelse return error.TerminalNullHandle;
+        errdefer api.selection_gesture_event_free(press_event);
+        var drag: c.GhosttySelectionGestureEvent = null;
+        try check(api.selection_gesture_event_new(null, &drag, c.GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG));
+        const drag_event = drag orelse return error.TerminalNullHandle;
+        errdefer api.selection_gesture_event_free(drag_event);
+        var release: c.GhosttySelectionGestureEvent = null;
+        try check(api.selection_gesture_event_new(null, &release, c.GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE));
+        const release_event = release orelse return error.TerminalNullHandle;
+        errdefer api.selection_gesture_event_free(release_event);
         var encoder: c.GhosttyKeyEncoder = null;
         try check(api.key_encoder_new(null, &encoder));
         const key_encoder = encoder orelse return error.TerminalNullHandle;
@@ -97,7 +119,22 @@ pub const Terminal = struct {
         try check(api.key_event_new(null, &event));
         const key_event = event orelse return error.TerminalNullHandle;
         errdefer api.key_event_free(key_event);
-        var owner: Terminal = .{ .allocator = allocator, .api = api, .handle = handle, .render_state = render_state, .row_iterator = row_iterator, .row_cells = row_cells, .key_encoder = key_encoder, .key_event = key_event, .program_status = .{ .allocator = allocator }, .status_clock = try std.time.Timer.start() };
+        var owner: Terminal = .{
+            .allocator = allocator,
+            .api = api,
+            .handle = handle,
+            .render_state = render_state,
+            .row_iterator = row_iterator,
+            .row_cells = row_cells,
+            .selection_gesture = selection_gesture,
+            .press_event = press_event,
+            .drag_event = drag_event,
+            .release_event = release_event,
+            .key_encoder = key_encoder,
+            .key_event = key_event,
+            .program_status = .{ .allocator = allocator },
+            .status_clock = try std.time.Timer.start(),
+        };
         try owner.applyDefaultPalette();
         return owner;
     }
@@ -105,6 +142,10 @@ pub const Terminal = struct {
     pub fn deinit(self: *Terminal) void {
         self.api.key_event_free(self.key_event);
         self.api.key_encoder_free(self.key_encoder);
+        self.api.selection_gesture_event_free(self.release_event);
+        self.api.selection_gesture_event_free(self.drag_event);
+        self.api.selection_gesture_event_free(self.press_event);
+        self.api.selection_gesture_free(self.selection_gesture, self.handle);
         self.api.render_state_row_cells_free(self.row_cells);
         self.api.render_state_row_iterator_free(self.row_iterator);
         self.api.render_state_free(self.render_state);
@@ -201,8 +242,168 @@ pub const Terminal = struct {
         if (self.callback_error) |err| return err;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         try check(self.api.terminal_resize(self.handle, columns, rows, width_px, height_px));
+        self.cell_width_px = width_px;
+        self.cell_height_px = height_px;
         self.frame_valid = false;
         if (self.callback_error) |err| return err;
+    }
+    /// True when the active screen has a live selection range.
+    pub fn hasSelection(self: *const Terminal) !bool {
+        var selection = emptySelection();
+        const result = self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_SELECTION, &selection);
+        if (result == c.GHOSTTY_NO_VALUE) return false;
+        try check(result);
+        return true;
+    }
+    /// Clears the active screen selection and optionally resets multi-click gesture history.
+    pub fn clearSelection(self: *Terminal, reset_gesture: bool) !void {
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_SELECTION, null));
+        if (reset_gesture) self.api.selection_gesture_reset(self.selection_gesture, self.handle);
+        self.frame_valid = false;
+    }
+    /// Starts or advances a pointer selection gesture, returning the click count (1=cell, 2=word, 3=line, 0=out of bounds).
+    pub fn selectionPress(self: *Terminal, column: u16, row: u16, x_px: f64, y_px: f64) !u8 {
+        var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
+        grid_ref.size = @sizeOf(c.GhosttyGridRef);
+        const point: c.GhosttyPoint = .{
+            .tag = c.GHOSTTY_POINT_TAG_VIEWPORT,
+            .value = .{ .coordinate = .{ .x = column, .y = row } },
+        };
+        const ref_result = self.api.terminal_grid_ref(self.handle, point, &grid_ref);
+        if (ref_result == c.GHOSTTY_INVALID_VALUE or ref_result == c.GHOSTTY_NO_VALUE) return 0;
+        try check(ref_result);
+        const now_ns: u64 = self.status_clock.read() +| 1_000_000_000;
+        const position: c.GhosttySurfacePosition = .{ .x = x_px, .y = y_px };
+        try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, &grid_ref));
+        try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_TIME_NS, &now_ns));
+        try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION, &position));
+        var snapshot = emptySelection();
+        const event_result = self.api.selection_gesture_event(self.selection_gesture, self.handle, self.press_event, &snapshot);
+        if (event_result == c.GHOSTTY_SUCCESS) {
+            try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_SELECTION, &snapshot));
+            self.frame_valid = false;
+        } else if (event_result != c.GHOSTTY_NO_VALUE) {
+            try check(event_result);
+        }
+        var click_count: u8 = 0;
+        try check(self.api.selection_gesture_get(self.selection_gesture, self.handle, c.GHOSTTY_SELECTION_GESTURE_DATA_CLICK_COUNT, &click_count));
+        return click_count;
+    }
+    /// Updates an active pointer selection gesture during mouse drag.
+    pub fn selectionDrag(self: *Terminal, column: u16, row: u16, x_px: f64, y_px: f64) !void {
+        var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
+        grid_ref.size = @sizeOf(c.GhosttyGridRef);
+        const point: c.GhosttyPoint = .{
+            .tag = c.GHOSTTY_POINT_TAG_VIEWPORT,
+            .value = .{ .coordinate = .{ .x = column, .y = row } },
+        };
+        const ref_result = self.api.terminal_grid_ref(self.handle, point, &grid_ref);
+        if (ref_result == c.GHOSTTY_INVALID_VALUE or ref_result == c.GHOSTTY_NO_VALUE) return;
+        try check(ref_result);
+        var columns: u16 = 0;
+        var rows: u16 = 0;
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_COLS, &columns));
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_ROWS, &rows));
+        const geometry: c.GhosttySelectionGestureGeometry = .{
+            .columns = @max(1, @as(u32, columns)),
+            .cell_width = @max(1, self.cell_width_px),
+            .padding_left = 0,
+            .screen_height = @max(1, @as(u32, rows) * @max(1, self.cell_height_px)),
+        };
+        const position: c.GhosttySurfacePosition = .{ .x = x_px, .y = y_px };
+        try check(self.api.selection_gesture_event_set(self.drag_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, &grid_ref));
+        try check(self.api.selection_gesture_event_set(self.drag_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY, &geometry));
+        try check(self.api.selection_gesture_event_set(self.drag_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION, &position));
+        var snapshot = emptySelection();
+        const event_result = self.api.selection_gesture_event(self.selection_gesture, self.handle, self.drag_event, &snapshot);
+        if (event_result == c.GHOSTTY_SUCCESS) {
+            try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_SELECTION, &snapshot));
+            self.frame_valid = false;
+        } else if (event_result != c.GHOSTTY_NO_VALUE) {
+            try check(event_result);
+        }
+    }
+    /// Completes the active pointer selection gesture on mouse button release.
+    pub fn selectionRelease(self: *Terminal, column: u16, row: u16) !void {
+        var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
+        grid_ref.size = @sizeOf(c.GhosttyGridRef);
+        const point: c.GhosttyPoint = .{
+            .tag = c.GHOSTTY_POINT_TAG_VIEWPORT,
+            .value = .{ .coordinate = .{ .x = column, .y = row } },
+        };
+        if (self.api.terminal_grid_ref(self.handle, point, &grid_ref) == c.GHOSTTY_SUCCESS) {
+            try check(self.api.selection_gesture_event_set(self.release_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, &grid_ref));
+        } else {
+            try check(self.api.selection_gesture_event_set(self.release_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, null));
+        }
+        var snapshot = emptySelection();
+        const event_result = self.api.selection_gesture_event(self.selection_gesture, self.handle, self.release_event, &snapshot);
+        if (event_result != c.GHOSTTY_SUCCESS and event_result != c.GHOSTTY_NO_VALUE) {
+            try check(event_result);
+        }
+    }
+    /// Sets keyboard selection between half-open viewport caret boundaries without reusing mouse multi-click state.
+    pub fn setKeyboardSelection(self: *Terminal, anchor_col: u16, anchor_row: u16, focus_col: u16, focus_row: u16) !void {
+        try self.clearSelection(true);
+        var columns: u16 = 0;
+        var rows: u16 = 0;
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_COLS, &columns));
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_ROWS, &rows));
+        if (columns == 0 or rows == 0) return;
+        const cols_u32: u32 = columns;
+        const clamped_anchor_col: u32 = @min(@as(u32, anchor_col), cols_u32);
+        const clamped_focus_col: u32 = @min(@as(u32, focus_col), cols_u32);
+        const clamped_anchor_row: u32 = @min(@as(u32, anchor_row), @as(u32, rows - 1));
+        const clamped_focus_row: u32 = @min(@as(u32, focus_row), @as(u32, rows - 1));
+        var start: u32 = clamped_anchor_row * cols_u32 + clamped_anchor_col;
+        var end: u32 = clamped_focus_row * cols_u32 + clamped_focus_col;
+        if (start == end) return;
+        if (start > end) std.mem.swap(u32, &start, &end);
+        // Ghostty selects inclusive cells; keyboard carets delimit a half-open range.
+        end -= 1;
+        const start_col: u16 = @intCast(start % cols_u32);
+        const start_row: u16 = @intCast(start / cols_u32);
+        const end_col: u16 = @intCast(end % cols_u32);
+        const end_row: u16 = @intCast(end / cols_u32);
+        const cell_w: f64 = @floatFromInt(@max(1, self.cell_width_px));
+        const cell_h: f64 = @floatFromInt(@max(1, self.cell_height_px));
+        _ = try self.selectionPress(
+            start_col,
+            start_row,
+            (@as(f64, @floatFromInt(start_col)) + 0.2) * cell_w,
+            (@as(f64, @floatFromInt(start_row)) + 0.5) * cell_h,
+        );
+        try self.selectionDrag(
+            end_col,
+            end_row,
+            (@as(f64, @floatFromInt(end_col)) + 0.8) * cell_w,
+            (@as(f64, @floatFromInt(end_row)) + 0.5) * cell_h,
+        );
+        try self.selectionRelease(end_col, end_row);
+    }
+    /// Formats the active selection as UTF-8 plain text with soft-wrap unwrapping; returns null when no selection is active.
+    pub fn selectedTextAlloc(self: *const Terminal, allocator: std.mem.Allocator, trim: bool) !?[]u8 {
+        const options: c.GhosttyTerminalSelectionFormatOptions = .{
+            .size = @sizeOf(c.GhosttyTerminalSelectionFormatOptions),
+            .emit = c.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+            .unwrap = true,
+            .trim = trim,
+            .selection = null,
+        };
+        var required: usize = 0;
+        const probe = self.api.terminal_selection_format_buf(self.handle, options, null, 0, &required);
+        if (probe == c.GHOSTTY_NO_VALUE) return null;
+        if (probe != c.GHOSTTY_OUT_OF_SPACE and probe != c.GHOSTTY_SUCCESS) {
+            try check(probe);
+        }
+        if (required > max_frame_text_bytes) return error.TerminalFrameTextLimit;
+        const buffer = try allocator.alloc(u8, required);
+        errdefer allocator.free(buffer);
+        if (required == 0) return buffer;
+        var written: usize = 0;
+        try check(self.api.terminal_selection_format_buf(self.handle, options, buffer.ptr, buffer.len, &written));
+        if (written != buffer.len) return error.InvalidTerminalBufferLength;
+        return buffer;
     }
     /// Scroll changes invalidate the cached viewport without changing the live shell cursor.
     pub fn scroll(self: *Terminal, delta: i32) void {
@@ -341,12 +542,23 @@ pub const Terminal = struct {
         var row: usize = 0;
         while (self.api.render_state_row_iterator_next(self.row_iterator)) : (row += 1) {
             if (row >= rows) return error.InvalidTerminalRowCount;
+            var row_selection: c.GhosttyRenderStateRowSelection = .{
+                .size = @sizeOf(c.GhosttyRenderStateRowSelection),
+                .start_x = 0,
+                .end_x = 0,
+            };
+            const selection_result = self.api.render_state_row_get(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION, &row_selection);
+            const has_row_selection = if (selection_result == c.GHOSTTY_NO_VALUE) false else blk: {
+                try check(selection_result);
+                break :blk true;
+            };
             var cells: c.GhosttyRenderStateRowCells = self.row_cells;
             try check(self.api.render_state_row_get(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, @ptrCast(&cells)));
             var column: usize = 0;
             while (self.api.render_state_row_cells_next(self.row_cells)) : (column += 1) {
                 if (column >= columns) return error.InvalidTerminalColumnCount;
-                const cell = try self.readCell(foreground, background);
+                var cell = try self.readCell(foreground, background);
+                cell.selected = has_row_selection and column >= row_selection.start_x and column <= row_selection.end_x;
                 self.frame.cells.appendAssumeCapacity(cell);
             }
             if (column != columns) return error.InvalidTerminalColumnCount;
@@ -455,6 +667,16 @@ pub const Terminal = struct {
         return .{ .foreground = packedRgb(foreground), .background = packedRgb(background), .bold = style.bold, .italic = style.italic, .underline = style.underline != 0, .strikethrough = style.strikethrough, .invisible = style.invisible };
     }
     fn applyDefaultPalette(self: *Terminal) !void {
+        const behaviors: c.GhosttySelectionGestureBehaviors = .{
+            .single_click = c.GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL,
+            .double_click = c.GHOSTTY_SELECTION_GESTURE_BEHAVIOR_WORD,
+            .triple_click = c.GHOSTTY_SELECTION_GESTURE_BEHAVIOR_LINE,
+        };
+        const repeat_interval_ns: u64 = 500_000_000;
+        const repeat_distance: f64 = 8.0;
+        try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_BEHAVIORS, &behaviors));
+        try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_INTERVAL_NS, &repeat_interval_ns));
+        try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_DISTANCE, &repeat_distance));
         const cursor_style: c.GhosttyTerminalCursorStyle = c.GHOSTTY_TERMINAL_CURSOR_STYLE_BAR;
         const cursor_blink = true;
         // ConPTY maintains no scrollback buffer and leaves newly grown rows blank on resize.
@@ -578,6 +800,13 @@ fn clipboardWrite(_: c.GhosttyTerminal, userdata: ?*anyopaque, write_ptr: ?*cons
     return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
 }
 
+fn emptySelection() c.GhosttySelection {
+    var selection = std.mem.zeroes(c.GhosttySelection);
+    selection.size = @sizeOf(c.GhosttySelection);
+    selection.start.size = @sizeOf(c.GhosttyGridRef);
+    selection.end.size = @sizeOf(c.GhosttyGridRef);
+    return selection;
+}
 fn colorRgb(color: u32) c.GhosttyColorRgb {
     return .{ .r = @truncate(color >> 16), .g = @truncate(color >> 8), .b = @truncate(color) };
 }
@@ -1129,3 +1358,58 @@ test "OSC 0 and OSC 2 update sanitized terminal title and reset on shell prefix 
     try terminal.feedOutput("\x1bc");
     try std.testing.expectEqualStrings("", terminal.title.slice());
 }
+
+fn checkSelectionAllocationFailures(allocator: std.mem.Allocator, api: *const binding.Api) !void {
+    var terminal = try Terminal.init(allocator, api);
+    defer terminal.deinit();
+    try terminal.resize(10, 4, 8, 16);
+    try terminal.feedOutput("hello_world\r\nsecond");
+    try terminal.setKeyboardSelection(0, 0, 5, 0);
+    const selected = (try terminal.selectedTextAlloc(allocator, true)) orelse return error.MissingSelectedText;
+    defer allocator.free(selected);
+    try std.testing.expectEqualStrings("hello", selected);
+}
+
+test "selection gestures, keyboard selection, cell highlight flags and soft-wrap unwrapping match Ghostty" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(8, 4, 8, 16);
+    try terminal.feedOutput("abcdefghij\r\nword_two rest");
+    try std.testing.expect(!try terminal.hasSelection());
+    try std.testing.expectEqual(@as(?[]u8, null), try terminal.selectedTextAlloc(std.testing.allocator, true));
+
+    // Soft-wrapped line selection (row 0..1) unwraps without inserting an artificial newline.
+    try terminal.setKeyboardSelection(0, 0, 2, 1);
+    try std.testing.expect(try terminal.hasSelection());
+    const unwrapped = (try terminal.selectedTextAlloc(std.testing.allocator, true)).?;
+    defer std.testing.allocator.free(unwrapped);
+    try std.testing.expectEqualStrings("abcdefghij", unwrapped);
+    const frame = try terminal.readFrame();
+    try std.testing.expect(frame.cells.items[0].selected);
+    try std.testing.expect(frame.cells.items[7].selected);
+    try std.testing.expect(frame.cells.items[8].selected);
+    try std.testing.expect(frame.cells.items[9].selected);
+    try std.testing.expect(!frame.cells.items[10].selected);
+
+    // Double-click on "word_two" on row 2 selects the whole word.
+    try terminal.clearSelection(true);
+    try std.testing.expect(!try terminal.hasSelection());
+    try std.testing.expectEqual(@as(u8, 1), try terminal.selectionPress(1, 2, 12.0, 40.0));
+    try terminal.selectionRelease(1, 2);
+    try std.testing.expectEqual(@as(u8, 2), try terminal.selectionPress(1, 2, 12.0, 40.0));
+    try terminal.selectionRelease(1, 2);
+    const word = (try terminal.selectedTextAlloc(std.testing.allocator, true)).?;
+    defer std.testing.allocator.free(word);
+    try std.testing.expectEqualStrings("word_two", word);
+
+    // Triple-click on row 2 selects the entire logical line (including soft-wrapped continuation on row 3).
+    try std.testing.expectEqual(@as(u8, 3), try terminal.selectionPress(1, 2, 12.0, 40.0));
+    try terminal.selectionRelease(1, 2);
+    const line = (try terminal.selectedTextAlloc(std.testing.allocator, true)).?;
+    defer std.testing.allocator.free(line);
+    try std.testing.expectEqualStrings("word_two rest", line);
+
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkSelectionAllocationFailures, .{&api});
+}
+
