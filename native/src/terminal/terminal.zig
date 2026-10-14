@@ -69,41 +69,41 @@ pub const Terminal = struct {
     /// Construction rolls back every successful native allocation on any later failure.
     pub fn init(allocator: std.mem.Allocator, api: *const binding.Api) !Terminal {
         var terminal: c.GhosttyTerminal = null;
-        try check(api.ghostty_terminal_new(null, &terminal, 80, 24));
+        try check(api.terminal_new(null, &terminal, 80, 24));
         const handle = terminal orelse return error.TerminalNullHandle;
-        errdefer api.ghostty_terminal_free(handle);
+        errdefer api.terminal_free(handle);
         var render: c.GhosttyRenderState = null;
-        try check(api.ghostty_render_state_new(null, &render));
+        try check(api.render_state_new(null, &render));
         const render_state = render orelse return error.TerminalNullHandle;
-        errdefer api.ghostty_render_state_free(render_state);
+        errdefer api.render_state_free(render_state);
         var iterator: c.GhosttyRenderStateRowIterator = null;
-        try check(api.ghostty_render_state_row_iterator_new(null, &iterator));
+        try check(api.render_state_row_iterator_new(null, &iterator));
         const row_iterator = iterator orelse return error.TerminalNullHandle;
-        errdefer api.ghostty_render_state_row_iterator_free(row_iterator);
+        errdefer api.render_state_row_iterator_free(row_iterator);
         var cells: c.GhosttyRenderStateRowCells = null;
-        try check(api.ghostty_render_state_row_cells_new(null, &cells));
+        try check(api.render_state_row_cells_new(null, &cells));
         const row_cells = cells orelse return error.TerminalNullHandle;
-        errdefer api.ghostty_render_state_row_cells_free(row_cells);
+        errdefer api.render_state_row_cells_free(row_cells);
         var encoder: c.GhosttyKeyEncoder = null;
-        try check(api.ghostty_key_encoder_new(null, &encoder));
+        try check(api.key_encoder_new(null, &encoder));
         const key_encoder = encoder orelse return error.TerminalNullHandle;
-        errdefer api.ghostty_key_encoder_free(key_encoder);
+        errdefer api.key_encoder_free(key_encoder);
         var event: c.GhosttyKeyEvent = null;
-        try check(api.ghostty_key_event_new(null, &event));
+        try check(api.key_event_new(null, &event));
         const key_event = event orelse return error.TerminalNullHandle;
-        errdefer api.ghostty_key_event_free(key_event);
+        errdefer api.key_event_free(key_event);
         var owner: Terminal = .{ .allocator = allocator, .api = api, .handle = handle, .render_state = render_state, .row_iterator = row_iterator, .row_cells = row_cells, .key_encoder = key_encoder, .key_event = key_event, .program_status = .{ .allocator = allocator }, .status_clock = try std.time.Timer.start() };
         try owner.applyDefaultPalette();
         return owner;
     }
     /// Consumes this owner after all output callbacks have stopped; no worker owns these handles.
     pub fn deinit(self: *Terminal) void {
-        self.api.ghostty_key_event_free(self.key_event);
-        self.api.ghostty_key_encoder_free(self.key_encoder);
-        self.api.ghostty_render_state_row_cells_free(self.row_cells);
-        self.api.ghostty_render_state_row_iterator_free(self.row_iterator);
-        self.api.ghostty_render_state_free(self.render_state);
-        self.api.ghostty_terminal_free(self.handle);
+        self.api.key_event_free(self.key_event);
+        self.api.key_encoder_free(self.key_encoder);
+        self.api.render_state_row_cells_free(self.row_cells);
+        self.api.render_state_row_iterator_free(self.row_iterator);
+        self.api.render_state_free(self.render_state);
+        self.api.terminal_free(self.handle);
         self.frame.cells.deinit(self.allocator);
         self.frame.utf8.deinit(self.allocator);
         self.grapheme.deinit(self.allocator);
@@ -113,9 +113,9 @@ pub const Terminal = struct {
     /// Call only after placing the owner at its final stable address; callbacks borrow self.
     pub fn attachResponseSink(self: *Terminal, sink: ResponseSink) !void {
         self.response_sink = sink;
-        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         const callback: c.GhosttyTerminalWritePtyFn = terminalResponse;
-        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_WRITE_PTY, @ptrCast(callback)));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_WRITE_PTY, @ptrCast(callback)));
     }
     /// Registers a stable typed directory owner; each report is parsed before a later report can overwrite it.
     pub fn attachDirectorySink(self: *Terminal, owner: anytype) !void {
@@ -127,9 +127,9 @@ pub const Terminal = struct {
             }
         };
         self.directory_sink = .{ .context = owner, .on_report = Adapter.write };
-        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         const callback: c.GhosttyTerminalPwdChangedFn = directoryChanged;
-        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_PWD_CHANGED, @ptrCast(callback)));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_PWD_CHANGED, @ptrCast(callback)));
     }
     /// Consumes arbitrary VT bytes, including UTF-8 split across pipe reads; not a text-only input.
     pub fn feedOutput(self: *Terminal, bytes: []const u8) !void {
@@ -138,7 +138,7 @@ pub const Terminal = struct {
     }
     /// Internal feed-filter seam; every native callback failure reaches the caller before later reports.
     pub fn writeTerminalOutput(self: *Terminal, bytes: []const u8) !void {
-        self.api.ghostty_terminal_vt_write(self.handle, bytes.ptr, bytes.len);
+        self.api.terminal_vt_write(self.handle, bytes.ptr, bytes.len);
         if (self.callback_error) |err| return err;
     }
     /// Capability replies use this pane's PTY sink, never the currently focused terminal.
@@ -163,7 +163,7 @@ pub const Terminal = struct {
     /// Borrows raw directory-report bytes only until the next feed/reset/deinit; the caller parses the URI.
     pub fn reportedDirectory(self: *const Terminal) ![]const u8 {
         var value: c.GhosttyString = .{ .ptr = null, .len = 0 };
-        try check(self.api.ghostty_terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_PWD, &value));
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_PWD, &value));
         if (value.len != 0 and value.ptr == null) return error.InvalidTerminalDirectoryString;
         return if (value.len == 0) &.{} else value.ptr[0..value.len];
     }
@@ -171,31 +171,31 @@ pub const Terminal = struct {
     pub fn resize(self: *Terminal, columns: u16, rows: u16, width_px: u32, height_px: u32) !void {
         if (columns < 2 or rows == 0 or columns > 32767 or rows > 32767 or width_px == 0 or height_px == 0) return error.InvalidTerminalSize;
         if (self.callback_error) |err| return err;
-        try check(self.api.ghostty_terminal_resize(self.handle, columns, rows, width_px, height_px));
+        try check(self.api.terminal_resize(self.handle, columns, rows, width_px, height_px));
         self.frame_valid = false;
         if (self.callback_error) |err| return err;
     }
     /// Scroll changes invalidate the cached viewport without changing the live shell cursor.
     pub fn scroll(self: *Terminal, delta: i32) void {
-        self.api.ghostty_terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
+        self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
         self.frame_valid = false;
     }
     /// Encode navigation/function keys with the terminal's currently negotiated modes.
     pub fn encodeKey(self: *Terminal, virtual_key: u32, mods: u32, output: []u8) !?[]const u8 {
         const key = physicalTerminalKey(virtual_key) orelse return null;
         if (mods > 7) return error.InvalidKeyModifiers;
-        self.api.ghostty_key_encoder_setopt_from_terminal(self.key_encoder, self.handle);
-        self.api.ghostty_key_event_set_action(self.key_event, c.GHOSTTY_KEY_ACTION_PRESS);
-        self.api.ghostty_key_event_set_key(self.key_event, key);
-        self.api.ghostty_key_event_set_mods(self.key_event, @intCast(mods));
+        self.api.key_encoder_setopt_from_terminal(self.key_encoder, self.handle);
+        self.api.key_event_set_action(self.key_event, c.GHOSTTY_KEY_ACTION_PRESS);
+        self.api.key_event_set_key(self.key_event, key);
+        self.api.key_event_set_mods(self.key_event, @intCast(mods));
         var length: usize = 0;
-        try check(self.api.ghostty_key_encoder_encode(self.key_encoder, self.key_event, output.ptr, output.len, &length));
+        try check(self.api.key_encoder_encode(self.key_encoder, self.key_event, output.ptr, output.len, &length));
         if (length > output.len) return error.InvalidTerminalBufferLength;
         return output[0..length];
     }
     /// Clean frames reuse buffers. Dirty frames re-read every row to avoid Ghostty scroll under-reporting.
     pub fn readFrame(self: *Terminal) !*const TerminalFrame {
-        try check(self.api.ghostty_render_state_update(self.render_state, self.handle));
+        try check(self.api.render_state_update(self.render_state, self.handle));
         var dirty: c.GhosttyRenderStateDirty = undefined;
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
         self.frame.cursor = try self.readCursor();
@@ -218,23 +218,23 @@ pub const Terminal = struct {
         var iterator: c.GhosttyRenderStateRowIterator = self.row_iterator;
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, @ptrCast(&iterator));
         var row: usize = 0;
-        while (self.api.ghostty_render_state_row_iterator_next(self.row_iterator)) : (row += 1) {
+        while (self.api.render_state_row_iterator_next(self.row_iterator)) : (row += 1) {
             if (row >= rows) return error.InvalidTerminalRowCount;
             var cells: c.GhosttyRenderStateRowCells = self.row_cells;
-            try check(self.api.ghostty_render_state_row_get(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, @ptrCast(&cells)));
+            try check(self.api.render_state_row_get(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, @ptrCast(&cells)));
             var column: usize = 0;
-            while (self.api.ghostty_render_state_row_cells_next(self.row_cells)) : (column += 1) {
+            while (self.api.render_state_row_cells_next(self.row_cells)) : (column += 1) {
                 if (column >= columns) return error.InvalidTerminalColumnCount;
                 const cell = try self.readCell(foreground, background);
                 self.frame.cells.appendAssumeCapacity(cell);
             }
             if (column != columns) return error.InvalidTerminalColumnCount;
             const clean = false;
-            try check(self.api.ghostty_render_state_row_set(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &clean));
+            try check(self.api.render_state_row_set(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &clean));
         }
         if (row != rows or self.frame.cells.items.len != count) return error.InvalidTerminalRowCount;
         const clean: c.GhosttyRenderStateDirty = c.GHOSTTY_RENDER_STATE_DIRTY_FALSE;
-        try check(self.api.ghostty_render_state_set(self.render_state, c.GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean));
+        try check(self.api.render_state_set(self.render_state, c.GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean));
         self.frame.columns = columns;
         self.frame.rows = rows;
         self.frame.generation = try std.math.add(u64, self.frame.generation, 1);
@@ -257,7 +257,7 @@ pub const Terminal = struct {
     }
 
     fn getRender(self: *Terminal, field: c.GhosttyRenderStateData, output: ?*anyopaque) !void {
-        try check(self.api.ghostty_render_state_get(self.render_state, field, output));
+        try check(self.api.render_state_get(self.render_state, field, output));
     }
     fn readCursor(self: *Terminal) !TerminalCursor {
         var cursor: TerminalCursor = .{};
@@ -282,9 +282,9 @@ pub const Terminal = struct {
     }
     fn readCell(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TerminalCell {
         var raw: c.GhosttyCell = undefined;
-        try check(self.api.ghostty_render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
+        try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
         var wide: c.GhosttyCellWide = undefined;
-        try check(self.api.ghostty_cell_get(raw, c.GHOSTTY_CELL_DATA_WIDE, &wide));
+        try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_WIDE, &wide));
         const width: CellWidth = switch (wide) {
             0 => .narrow,
             1 => .wide,
@@ -295,13 +295,13 @@ pub const Terminal = struct {
         const style = try self.readStyle(default_fg, default_bg);
         var scratch: [128]u8 = undefined;
         var text: c.GhosttyBuffer = .{ .ptr = &scratch, .cap = scratch.len, .len = 0 };
-        const result = self.api.ghostty_render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text);
+        const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text);
         const bytes: []const u8 = if (result == c.GHOSTTY_OUT_OF_SPACE) blk: {
             if (text.len > max_grapheme_bytes) return error.TerminalGraphemeLimit;
             try self.grapheme.resize(self.allocator, text.len);
             text.ptr = self.grapheme.items.ptr;
             text.cap = self.grapheme.items.len;
-            try check(self.api.ghostty_render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text));
+            try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text));
             if (text.len > self.grapheme.items.len) return error.InvalidTerminalBufferLength;
             break :blk self.grapheme.items[0..text.len];
         } else blk: {
@@ -318,13 +318,13 @@ pub const Terminal = struct {
     fn readStyle(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TextStyle {
         var foreground = default_fg;
         var background = default_bg;
-        const fg = self.api.ghostty_render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &foreground);
+        const fg = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &foreground);
         if (fg == c.GHOSTTY_INVALID_VALUE) foreground = default_fg else try check(fg);
-        const bg = self.api.ghostty_render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
+        const bg = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
         if (bg == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(bg);
         var style = std.mem.zeroes(c.GhosttyStyle);
         style.size = @sizeOf(c.GhosttyStyle);
-        try check(self.api.ghostty_render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style));
+        try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style));
         if (style.inverse) std.mem.swap(c.GhosttyColorRgb, &foreground, &background);
         if (style.faint) {
             foreground.r = @intCast((@as(u16, foreground.r) + background.r) / 2);
@@ -336,8 +336,8 @@ pub const Terminal = struct {
     fn applyDefaultPalette(self: *Terminal) !void {
         const foreground = colorRgb(0xe4e4e7);
         const background = colorRgb(0x282c34);
-        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground));
-        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background));
         var palette: [256]c.GhosttyColorRgb = undefined;
         const ansi = [_]u32{ 0x282c34, 0xff5a5a, 0x5af05a, 0xf0d25a, 0x5a5aff, 0xf05af0, 0x5af0f0, 0xe4e4e7, 0x3d4354, 0xff8c8c, 0x8cff8c, 0xffe68c, 0x8c8cff, 0xff8cff, 0x8cffff, 0xffffff };
         for (ansi, 0..) |color, index| palette[index] = colorRgb(color);
@@ -350,7 +350,7 @@ pub const Terminal = struct {
             const level: u8 = @intCast(8 + (index - 232) * 10);
             palette[index] = .{ .r = level, .g = level, .b = level };
         }
-        try check(self.api.ghostty_terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette));
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette));
     }
 };
 
