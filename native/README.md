@@ -132,8 +132,8 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
 - Each pane uses the selected shell profile (integrated cmd by default). New tabs use the project launch
   directory; splits inherit the focused pane's last valid local OSC 7 directory,
   otherwise its starting directory (matching WPF, not a guessed prompt). Navigation
-  and function keys use Ghostty's encoder; character input is UTF-8.
-- Mouse wheel scrolls the focused viewport; `Ctrl+Shift+V` pastes plain text.
+  and function keys use Ghostty's encoder (`Ctrl+Backspace` emits `0x17`); character input is UTF-8.
+- Mouse wheel and primary-screen scroll shortcuts (`Shift+PageUp/PageDown`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+Home/End`) scroll the focused viewport; `Ctrl+Shift+V` and `Shift+Insert` paste text with newline normalization and DEC 2004 bracketed paste; write-only OSC 52 / OSC 1337 Copy sequences update the system clipboard.
 - Window resizing, caption controls and per-monitor DPI handling use Win32.
 
 The palette, default fonts and geometry follow Vex Dark: Segoe UI chrome,
@@ -187,7 +187,7 @@ circular dependency through the rendering/window adapter.
   forwarded unchanged and plain chunks bypass copying.
 - `src/terminal/api.zig`: checked symbol resolution and structured terminal API errors.
 - `src/terminal/terminal.zig`: one emulator/iterator/key encoder per pane,
-  reusable parsed snapshots, typed colors/styles/widths/cursor, ConPTY resize/cursor/key-encoder parity, validated UTF-8.
+  reusable parsed snapshots, typed colors/styles/widths/cursor, ConPTY resize/cursor/key-encoder parity, bracketed paste encoding, write-only OSC 52/1337 clipboard callbacks, validated UTF-8.
 - `src/windows/windows_ffi.zig`: callback-pointer conversion, opaque PTY owners,
   validated window/input seams and presentation of parsed snapshots.
 - `src/windows/wsl_registry.zig`: read-only, bounded/typed default distribution
