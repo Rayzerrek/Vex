@@ -8,7 +8,7 @@ pub const Kind = enum(u8) {
     badge = 2,
 };
 
-/// Curated vector brand glyphs matching `AppIconCatalog.generated.cs`.
+/// Curated vector brand & Lucide tool glyphs for terminal tabs and pane headers.
 pub const GlyphId = enum(u8) {
     none = 0,
     alacritty,
@@ -70,6 +70,20 @@ pub const GlyphId = enum(u8) {
     wezterm,
     zedindustries,
     zsh,
+    zig,
+    dotnet,
+    lazygit,
+    btop,
+    ssh,
+    aider,
+    emacs,
+    nano,
+    micro,
+    lua,
+    ollama,
+    yazi,
+    zellij,
+    uv,
 };
 
 /// Value type describing a pane or tab icon (shell prompt, vector brand glyph, or letter badge).
@@ -191,6 +205,20 @@ const glyph_catalog = [_]GlyphEntry{
     .{ .slug = "wezterm", .id = .wezterm, .rgb = 0x4E49EE },
     .{ .slug = "zedindustries", .id = .zedindustries, .rgb = 0x084CCF },
     .{ .slug = "zsh", .id = .zsh, .rgb = 0xF15A24, .is_shell = true },
+    .{ .slug = "zig", .id = .zig, .rgb = 0xF7A41D },
+    .{ .slug = "dotnet", .id = .dotnet, .rgb = 0x8B6CEF },
+    .{ .slug = "lazygit", .id = .lazygit, .rgb = 0x00AADD },
+    .{ .slug = "btop", .id = .btop, .rgb = 0x00A896 },
+    .{ .slug = "ssh", .id = .ssh, .rgb = 0x2B8CBE },
+    .{ .slug = "aider", .id = .aider, .rgb = 0x8B5CF6 },
+    .{ .slug = "emacs", .id = .emacs, .rgb = 0x9B72E5 },
+    .{ .slug = "nano", .id = .nano, .rgb = 0x4A90E2 },
+    .{ .slug = "micro", .id = .micro, .rgb = 0x50E3C2 },
+    .{ .slug = "lua", .id = .lua, .rgb = 0x5C8CFF },
+    .{ .slug = "ollama", .id = .ollama, .rgb = 0xF0EFEF },
+    .{ .slug = "yazi", .id = .yazi, .rgb = 0xF59E0B },
+    .{ .slug = "zellij", .id = .zellij, .rgb = 0x10B981 },
+    .{ .slug = "uv", .id = .uv, .rgb = 0xDE5FE9 },
 };
 
 const AliasEntry = struct {
@@ -209,9 +237,13 @@ const aliases = [_]AliasEntry{
     .{ .alias = "codex", .canonical = "codex" },
     .{ .alias = "nvim", .canonical = "neovim" },
     .{ .alias = "vim", .canonical = "vim" },
+    .{ .alias = "gvim", .canonical = "vim" },
+    .{ .alias = "vi", .canonical = "vim" },
     .{ .alias = "lazyvim", .canonical = "lazyvim" },
     .{ .alias = "hx", .canonical = "helix" },
     .{ .alias = "helix", .canonical = "helix" },
+    .{ .alias = "kak", .canonical = "micro" },
+    .{ .alias = "kakoune", .canonical = "micro" },
     .{ .alias = "copilot", .canonical = "githubcopilot" },
     .{ .alias = "zed", .canonical = "zedindustries" },
     .{ .alias = "next", .canonical = "nextdotjs" },
@@ -221,6 +253,22 @@ const aliases = [_]AliasEntry{
     .{ .alias = "rustc", .canonical = "rust" },
     .{ .alias = "py", .canonical = "python" },
     .{ .alias = "python3", .canonical = "python" },
+    .{ .alias = "uvx", .canonical = "uv" },
+    .{ .alias = "luajit", .canonical = "lua" },
+    .{ .alias = "mosh", .canonical = "ssh" },
+    .{ .alias = "btm", .canonical = "btop" },
+    .{ .alias = "top", .canonical = "btop" },
+    .{ .alias = "glances", .canonical = "btop" },
+    .{ .alias = "tig", .canonical = "lazygit" },
+    .{ .alias = "gh", .canonical = "github" },
+    .{ .alias = "kubectl", .canonical = "kubernetes" },
+    .{ .alias = "k9s", .canonical = "kubernetes" },
+    .{ .alias = "psql", .canonical = "postgresql" },
+    .{ .alias = "sqlite3", .canonical = "sqlite" },
+    .{ .alias = "redis-cli", .canonical = "redis" },
+    .{ .alias = "lf", .canonical = "yazi" },
+    .{ .alias = "ranger", .canonical = "yazi" },
+    .{ .alias = "screen", .canonical = "tmux" },
     .{ .alias = "node", .canonical = "nodedotjs" },
     .{ .alias = "nodejs", .canonical = "nodedotjs" },
     .{ .alias = "tsx", .canonical = "typescript" },
@@ -240,15 +288,7 @@ const SpecialBadgeEntry = struct {
     rgb: u32,
 };
 
-const special_badges = [_]SpecialBadgeEntry{
-    .{ .name = "lazygit", .text = "lg", .rgb = 0x00AADD },
-    .{ .name = "btop", .text = "bt", .rgb = 0x00A896 },
-    .{ .name = "ssh", .text = "S", .rgb = 0x2B8CBE },
-    .{ .name = "aider", .text = "ai", .rgb = 0x8B5CF6 },
-    .{ .name = "nano", .text = "na", .rgb = 0x4A90E2 },
-    .{ .name = "micro", .text = "mc", .rgb = 0x50E3C2 },
-    .{ .name = "emacs", .text = "em", .rgb = 0x7F5AB6 },
-};
+const special_badges = [_]SpecialBadgeEntry{};
 
 const shell_icon_names = [_][]const u8{
     "cmd",  "wsl",       "nu",  "nushell", "pwsh", "powershell", "bash",    "sh",     "gnubash",
@@ -531,9 +571,17 @@ test "app icon catalog resolves curated glyphs, aliases, special badges, and dar
     try std.testing.expectEqual(@as(u32, 0xB8B8BE), rust.color_rgb);
 
     const lazygit = resolveDirect("lazygit").?;
-    try std.testing.expectEqual(Kind.badge, lazygit.kind);
-    try std.testing.expectEqualStrings("lg", lazygit.badgeSlice());
+    try std.testing.expectEqual(Kind.glyph, lazygit.kind);
+    try std.testing.expectEqual(GlyphId.lazygit, lazygit.glyph);
     try std.testing.expectEqual(@as(u32, 0x00AADD), lazygit.color_rgb);
+
+    const zig_icon = resolveDirect("zig.exe").?;
+    try std.testing.expectEqual(Kind.glyph, zig_icon.kind);
+    try std.testing.expectEqual(GlyphId.zig, zig_icon.glyph);
+    try std.testing.expectEqual(@as(u32, 0xF7A41D), zig_icon.color_rgb);
+
+    const btop_icon = resolveDirect("btm").?;
+    try std.testing.expectEqual(GlyphId.btop, btop_icon.glyph);
 
     const pwsh = resolveDirect("pwsh.exe").?;
     try std.testing.expectEqual(Kind.shell, pwsh.kind);
