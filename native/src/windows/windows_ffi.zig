@@ -14,8 +14,10 @@ pub const c = @cImport({
 pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
-/// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab drags request immediate capture.
-pub const PointerResponse = enum(u32) { normal = c.VEX_POINTER_NORMAL, right = c.VEX_POINTER_RIGHT, down = c.VEX_POINTER_DOWN, tab_armed = c.VEX_POINTER_TAB_ARMED, tab_dragging = c.VEX_POINTER_TAB_DRAGGING };
+/// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
+pub const PointerResponse = enum(u32) { normal = c.VEX_POINTER_NORMAL, right = c.VEX_POINTER_RIGHT, down = c.VEX_POINTER_DOWN, tab_armed = c.VEX_POINTER_TAB_ARMED, tab_dragging = c.VEX_POINTER_TAB_DRAGGING, selection = c.VEX_POINTER_SELECTION };
+/// Viewport cell coordinate and physical surface position relative to a pane's terminal grid.
+pub const ViewportPoint = struct { column: u16, row: u16, x_px: f64, y_px: f64 };
 /// Window sizes/font metrics are in DIPs; only cell pixel metrics multiply by scale.
 pub const WindowMetrics = struct {
     width: f32,
@@ -38,6 +40,29 @@ pub const WindowMetrics = struct {
             .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - 36) / self.cell_height), 1, 1000)),
             .cell_width_px = @intFromFloat(std.math.clamp(@round(self.cell_width * self.scale), 1, 65536)),
             .cell_height_px = @intFromFloat(std.math.clamp(@round(self.cell_height * self.scale), 1, 65536)),
+        };
+    }
+    /// Maps a window DIP point into a pane's terminal viewport, optionally clamping outside drags to the grid.
+    pub fn viewportPoint(self: WindowMetrics, bounds: panes.PaneRect, x: f32, y: f32, clamp_outside: bool) !?ViewportPoint {
+        if (!std.math.isFinite(x) or !std.math.isFinite(y)) return error.InvalidWindowMetrics;
+        const size = try self.terminalSize(bounds);
+        const grid_left = bounds.x + 6;
+        const grid_top = bounds.y + 30;
+        const grid_right = bounds.x + bounds.width - 6;
+        const grid_bottom = bounds.y + bounds.height - 6;
+        if (grid_right <= grid_left or grid_bottom <= grid_top) return null;
+        if (!clamp_outside and (x < grid_left or x >= grid_right or y < grid_top or y >= grid_bottom)) return null;
+        const max_x = @max(0, @as(f32, @floatFromInt(size.columns)) * self.cell_width - 0.001);
+        const max_y = @max(0, @as(f32, @floatFromInt(size.rows)) * self.cell_height - 0.001);
+        const clamped_x = std.math.clamp(x - grid_left, 0, max_x);
+        const clamped_y = std.math.clamp(y - grid_top, 0, max_y);
+        const column: u16 = @intFromFloat(std.math.clamp(@floor(clamped_x / self.cell_width), 0, @as(f32, @floatFromInt(size.columns - 1))));
+        const row: u16 = @intFromFloat(std.math.clamp(@floor(clamped_y / self.cell_height), 0, @as(f32, @floatFromInt(size.rows - 1))));
+        return .{
+            .column = column,
+            .row = row,
+            .x_px = @as(f64, clamped_x) * @as(f64, self.scale),
+            .y_px = @as(f64, clamped_y) * @as(f64, self.scale),
         };
     }
 };
@@ -300,18 +325,19 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !v
         var style: terminal.TextStyle = .{ .foreground = 0xe4e4e7, .background = 0x282c34 };
         for (cells, 0..) |cell, column| {
             if (cell.width == .tail) continue;
+            const cell_style = effectiveCellStyle(cell);
             const text = frame.cellText(cell);
             const ascii = cell.width == .narrow and (text.len == 0 or (text.len == 1 and text[0] >= 32 and text[0] <= 126));
-            if (!ascii or !std.meta.eql(style, cell.style) or length == buffer.len) {
+            if (!ascii or !std.meta.eql(style, cell_style) or length == buffer.len) {
                 try drawRun(start, row, run_cells, buffer[0..length], style);
                 run_cells = 0;
                 length = 0;
                 start = column;
-                style = cell.style;
+                style = cell_style;
             }
             if (!ascii) {
                 const width: usize = if (cell.width == .wide) 2 else 1;
-                try drawRun(column, row, width, text, cell.style);
+                try drawRun(column, row, width, text, cell_style);
                 start = column + width;
             } else {
                 buffer[length] = if (text.len == 0) ' ' else text[0];
@@ -323,6 +349,14 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool) !v
     }
     const cursor = frame.cursor;
     if (focused and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows) c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), 0xe4e4e7);
+}
+fn effectiveCellStyle(cell: terminal.TerminalCell) terminal.TextStyle {
+    var style = cell.style;
+    if (cell.selected) {
+        style.background = 0x3b4261;
+        style.foreground = 0xffffff;
+    }
+    return style;
 }
 fn drawRun(column: usize, row: usize, cells: usize, text: []const u8, style: terminal.TextStyle) !void {
     if (cells == 0) return;
@@ -353,4 +387,21 @@ test "window geometry rejects NaN/zero metrics and clamps tiny/large terminal vi
     invalid = valid;
     invalid.scale = 0;
     try std.testing.expectError(error.InvalidWindowMetrics, invalid.validate());
+}
+
+test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid cells and scaled pixels" {
+    const metrics: WindowMetrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1.5 };
+    const bounds: panes.PaneRect = .{ .x = 10, .y = 50, .width = 332, .height = 228 };
+    // Header clicks (y < bounds.y + 30) do not start a viewport selection.
+    try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 24, 62, false));
+    // Inside the terminal grid (grid_left = 16, grid_top = 80):
+    const inside = (try metrics.viewportPoint(bounds, 36, 114, false)).?;
+    try std.testing.expectEqual(@as(u16, 2), inside.column);
+    try std.testing.expectEqual(@as(u16, 2), inside.row);
+    try std.testing.expectApproxEqAbs(@as(f64, 30.0), inside.x_px, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f64, 51.0), inside.y_px, 0.01);
+    // Clamped drag outside the pane clamps to the boundary cells.
+    const clamped = (try metrics.viewportPoint(bounds, -50, 900, true)).?;
+    try std.testing.expectEqual(@as(u16, 0), clamped.column);
+    try std.testing.expectEqual(@as(u16, 11), clamped.row);
 }

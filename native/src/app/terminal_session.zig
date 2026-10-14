@@ -63,6 +63,27 @@ pub const TerminalSession = struct {
         defer allocator.free(encoded);
         try self.writeUserInput(encoded);
     }
+    /// Copies the active terminal selection to the system clipboard when a selection range is present.
+    pub fn copySelectionToClipboard(self: *TerminalSession, allocator: std.mem.Allocator) !bool {
+        const selected = try self.terminal.selectedTextAlloc(allocator, true) orelse return false;
+        defer allocator.free(selected);
+        if (selected.len > 0) try platform.writeClipboardText(selected);
+        return true;
+    }
+    /// Deletes a cursor-anchored keyboard selection by sending one DEL (0x7f) per selected character.
+    pub fn deleteKeyboardSelection(self: *TerminalSession) !bool {
+        if (self.state != .running) return false;
+        const count = try self.terminal.consumeKeyboardSelectionBackspaces();
+        if (count == 0) return false;
+        const chunk = [_]u8{0x7f} ** 64;
+        var remaining = count;
+        while (remaining > 0) {
+            const step = @min(remaining, chunk.len);
+            try self.writeUserInput(chunk[0..step]);
+            remaining -= step;
+        }
+        return true;
+    }
     /// Avoids redundant ConPTY/emulator resizes; exited sessions retain a resizable terminal viewport.
     pub fn resize(self: *TerminalSession, size: platform.TerminalSize) !void {
         if (self.size) |previous| if (std.meta.eql(previous, size)) return;

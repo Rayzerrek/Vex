@@ -20,7 +20,7 @@ typedef struct {
 } VexPtyLaunch;
 /* Pointer event/cursor values are shared with the checked Zig adapter. */
 typedef enum { VEX_POINTER_HOVER = 0, VEX_POINTER_BEGIN = 1, VEX_POINTER_MOVE = 2, VEX_POINTER_END = 3, VEX_POINTER_CANCEL = 4 } VexPointerEvent;
-typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN = 2, VEX_POINTER_TAB_ARMED = 3, VEX_POINTER_TAB_DRAGGING = 4 } VexPointerResponse;
+typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN = 2, VEX_POINTER_TAB_ARMED = 3, VEX_POINTER_TAB_DRAGGING = 4, VEX_POINTER_SELECTION = 5 } VexPointerResponse;
 /* All callbacks run on the window thread. Context and borrowed bytes must remain live. */
 typedef struct {
     void* context;

@@ -177,6 +177,7 @@ static bool handleKey(uint32_t key) {
 }
 static void setPointerCursor(uint32_t response, float y) {
     uint16_t resource = response == VEX_POINTER_RIGHT ? 32644 : response == VEX_POINTER_DOWN ? 32645 :
+        response == VEX_POINTER_SELECTION ? 32513 :
         response == VEX_POINTER_TAB_ARMED || response == VEX_POINTER_TAB_DRAGGING || y < 74 ? 32512 : 32513;
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(resource)));
 }
