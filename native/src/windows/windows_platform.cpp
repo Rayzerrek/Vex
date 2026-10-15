@@ -49,6 +49,7 @@ static wchar_t projectBranch[64] = L"";
 static int hoveredCaptionButton;
 static int pressedCaptionButton;
 static bool hoveredNewTab;
+static bool hoveredShellPicker;
 static int hoveredTabIndex = -1;
 static bool hoveredTabClose;
 static bool trackingMouseLeave;
@@ -236,18 +237,28 @@ static void drawProjectPill() {
 }
 
 static void drawNewTabButton() {
-    const float bx = plusLeft() + 2.0f;
+    const float bx = plusLeft() + 1.0f;
     const float by = 8.0f;
     const bool enabled = tabStripCount < 8;
     if (enabled && hoveredNewTab) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + 28.0f, by + 28.0f), 5.0f, 5.0f), brush);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + 22.0f, by + 28.0f), 5.0f, 5.0f), brush);
     }
-    const float cx = bx + 14.0f;
+    const float cx = bx + 11.0f;
     const float cy = by + 14.0f;
     brush->SetColor(rgb(enabled ? (hoveredNewTab ? chromePalette.accent : chromePalette.text_primary) : chromePalette.text_muted));
-    target->DrawLine(D2D1::Point2F(cx - 5.0f, cy), D2D1::Point2F(cx + 5.0f, cy), brush, 1.35f);
-    target->DrawLine(D2D1::Point2F(cx, cy - 5.0f), D2D1::Point2F(cx, cy + 5.0f), brush, 1.35f);
+    target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.35f);
+    target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.35f);
+
+    const float sx = plusLeft() + 23.0f;
+    if (hoveredShellPicker) {
+        brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sx, by, sx + 15.0f, by + 28.0f), 4.0f, 4.0f), brush);
+    }
+    const float scx = sx + 7.5f;
+    brush->SetColor(rgb(hoveredShellPicker ? chromePalette.accent : chromePalette.text_muted));
+    target->DrawLine(D2D1::Point2F(scx - 3.0f, cy - 1.5f), D2D1::Point2F(scx, cy + 1.8f), brush, 1.25f, roundStrokeStyle);
+    target->DrawLine(D2D1::Point2F(scx, cy + 1.8f), D2D1::Point2F(scx + 3.0f, cy - 1.5f), brush, 1.25f, roundStrokeStyle);
 }
 
 static void drawCaptionButtons() {
@@ -535,13 +546,16 @@ static void beginPointerGesture(HWND hwnd, float x, float y) {
 static void updateTopChromeHover(float x, float y) {
     int nextCaption = 0;
     bool nextNewTab = false;
+    bool nextShellPicker = false;
     int nextTab = -1;
     bool nextTabClose = false;
     if (pointerCaptureState == PointerCaptureState::none && y >= 0.0f && y < 44.0f) {
         if (x >= clientWidth - 120.0f && x < clientWidth) {
             nextCaption = (x >= clientWidth - 40.0f) ? 3 : (x >= clientWidth - 80.0f) ? 2 : 1;
-        } else if (x >= plusLeft() && x < plusLeft() + 32.0f && y >= 7.0f && y <= 37.0f) {
+        } else if (x >= plusLeft() && x < plusLeft() + 23.0f && y >= 7.0f && y <= 37.0f) {
             nextNewTab = true;
+        } else if (x >= plusLeft() + 23.0f && x < plusLeft() + 38.0f && y >= 7.0f && y <= 37.0f) {
+            nextShellPicker = true;
         } else if (x >= 140.0f && x < plusLeft() && y >= 7.0f && y <= 37.0f) {
             uint32_t idx = (uint32_t)((x - 140.0f) / (tabWidthDip + 4.0f));
             float local = x - 140.0f - idx * (tabWidthDip + 4.0f);
@@ -552,9 +566,10 @@ static void updateTopChromeHover(float x, float y) {
         }
     }
     if (nextCaption != hoveredCaptionButton || nextNewTab != hoveredNewTab ||
-        nextTab != hoveredTabIndex || nextTabClose != hoveredTabClose) {
+        nextShellPicker != hoveredShellPicker || nextTab != hoveredTabIndex || nextTabClose != hoveredTabClose) {
         hoveredCaptionButton = nextCaption;
         hoveredNewTab = nextNewTab;
+        hoveredShellPicker = nextShellPicker;
         hoveredTabIndex = nextTab;
         hoveredTabClose = nextTabClose;
         vex_window_invalidate();
@@ -598,7 +613,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = point.x / scale;
-        if (point.y / scale < 44 && x < clientWidth - 120 && (x < 140 || x > plusLeft() + 32)) return HTCAPTION;
+        if (point.y / scale < 44 && x < clientWidth - 120 && (x < 140 || x > plusLeft() + 38)) return HTCAPTION;
         return HTCLIENT;
     }
     case WM_GETMINMAXINFO: {
@@ -654,7 +669,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             bool close = message == WM_MBUTTONDOWN || local > tabWidthDip - 22;
             if (close) callbacks.action(callbacks.context, 16, index);
             else beginPointerGesture(hwnd, x, y);
-        } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 32) callbacks.action(callbacks.context, 0, 0);
+        } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 23) callbacks.action(callbacks.context, 0, 0);
+        else if (y < 44 && x >= plusLeft() + 23 && x < plusLeft() + 38) callbacks.action(callbacks.context, 18, 0);
         else if (y >= 44) {
             if (message != WM_MBUTTONDOWN) {
                 beginPointerGesture(hwnd, x, y);
@@ -732,10 +748,11 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_MOUSELEAVE:
         trackingMouseLeave = false;
-        if (hoveredCaptionButton != 0 || pressedCaptionButton != 0 || hoveredNewTab || hoveredTabIndex != -1 || hoveredTabClose) {
+        if (hoveredCaptionButton != 0 || pressedCaptionButton != 0 || hoveredNewTab || hoveredShellPicker || hoveredTabIndex != -1 || hoveredTabClose) {
             hoveredCaptionButton = 0;
             pressedCaptionButton = 0;
             hoveredNewTab = false;
+            hoveredShellPicker = false;
             hoveredTabIndex = -1;
             hoveredTabClose = false;
             vex_window_invalidate();
@@ -812,7 +829,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) callbacks.exited(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 5:
-        if (selftestEnabled() && wparam <= 17 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
+        if (selftestEnabled() && wparam <= 18 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 6: {
         uint32_t source = (uint32_t)(wparam & 0xff), operation = (uint32_t)(wparam >> 8);
@@ -1969,6 +1986,67 @@ extern "C" void vex_draw_command_palette(const uint8_t* query, size_t query_leng
         }
     }
 }
+extern "C" void vex_draw_shell_picker(uint8_t mode, const VexShellPickerItem* items, size_t count) {
+    if (!target || !brush || !items || count == 0) return;
+    const D2D1_SIZE_F win = target->GetSize();
+    const float mw = fminf(460.0f, fmaxf(300.0f, win.width - 48.0f));
+    const size_t visible = count > 7 ? 7 : count;
+    const float mh = 78.0f + (float)visible * 42.0f + 30.0f;
+    const float mx = roundf((win.width - mw) * 0.5f);
+    const float my = 58.0f;
+    drawOverlayBackdropAndCard(mx, my, mw, mh);
+
+    label(L"Select Shell", mx + 18.0f, my + 12.0f, 160.0f, chromePalette.text_primary);
+    const wchar_t* modeLabels[4] = { L"New Tab", L"Split Right", L"Split Down", L"Default" };
+    const float pillGap = 6.0f;
+    const float pillW = (mw - 28.0f - 3.0f * pillGap) * 0.25f;
+    const float pillY = my + 38.0f;
+    for (uint8_t m = 0; m < 4; m++) {
+        const float px = mx + 14.0f + (float)m * (pillW + pillGap);
+        const bool active = (mode == m);
+        const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(px, pillY, px + pillW, pillY + 26.0f), 5.0f, 5.0f);
+        brush->SetColor(rgb(active ? chromePalette.active_tab_bg : chromePalette.pane_header_bg));
+        target->FillRoundedRectangle(pill, brush);
+        brush->SetColor(rgb(active ? chromePalette.active_tab_border : chromePalette.border));
+        target->DrawRoundedRectangle(pill, brush, active ? 1.2f : 1.0f);
+        labelWithFont(badgeFont, modeLabels[m], px + 9.0f, pillY + 5.0f, pillW - 12.0f, active ? chromePalette.text_primary : chromePalette.text_muted);
+    }
+
+    const float listY = my + 74.0f;
+    for (size_t i = 0; i < visible; i++) {
+        const VexShellPickerItem& item = items[i];
+        const float ry = listY + (float)i * 42.0f;
+        const D2D1_ROUNDED_RECT rowRect = D2D1::RoundedRect(D2D1::RectF(mx + 10.0f, ry, mx + mw - 10.0f, ry + 38.0f), 6.0f, 6.0f);
+        if (item.selected || item.hovered) {
+            brush->SetColor(rgb(item.selected ? chromePalette.active_tab_bg : chromePalette.inactive_tab_hover_bg));
+            target->FillRoundedRectangle(rowRect, brush);
+            if (item.selected) {
+                brush->SetColor(rgb(chromePalette.active_tab_border));
+                target->DrawRoundedRectangle(rowRect, brush, 1.0f);
+                brush->SetColor(rgb(chromePalette.accent));
+                target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx + 12.0f, ry + 8.0f, mx + 15.0f, ry + 30.0f), 1.5f, 1.5f), brush);
+            }
+        }
+        VexAppIcon icon = item.icon;
+        if (icon.kind == 0) {
+            icon.kind = 1;
+            icon.glyph = 1;
+            icon.color_rgb = chromePalette.accent;
+        }
+        drawCachedAppIcon(icon, mx + 22.0f, ry + 10.0f, 18.0f);
+        labelUtf8WithFont(chromeFont, item.name, item.name_length, mx + 48.0f, ry + 4.0f, mw - 130.0f, item.selected ? chromePalette.text_primary : chromePalette.text_muted);
+        labelUtf8WithFont(badgeFont, item.subtitle, item.subtitle_length, mx + 48.0f, ry + 21.0f, mw - 130.0f, chromePalette.text_muted);
+        if (item.is_default) {
+            const D2D1_ROUNDED_RECT badge = D2D1::RoundedRect(D2D1::RectF(mx + mw - 72.0f, ry + 10.0f, mx + mw - 18.0f, ry + 28.0f), 4.0f, 4.0f);
+            brush->SetColor(D2D1::ColorF(chromePalette.accent, 0.18f));
+            target->FillRoundedRectangle(badge, brush);
+            brush->SetColor(rgb(chromePalette.accent));
+            target->DrawRoundedRectangle(badge, brush, 1.0f);
+            labelWithFont(badgeFont, L"Default", mx + mw - 64.0f, ry + 11.0f, 44.0f, chromePalette.text_primary);
+        }
+    }
+    labelWithFont(badgeFont, L"\x2191\x2193 Select \x2022 Tab: Action Mode \x2022 Enter: Run \x2022 Esc: Close", mx + 18.0f, my + mh - 23.0f, mw - 36.0f, chromePalette.text_muted);
+}
 extern "C" void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t count) {
     if (!target || !brush || !cards || count == 0) return;
     const D2D1_SIZE_F win = target->GetSize();
@@ -2005,14 +2083,22 @@ extern "C" void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t count) {
         }
         drawCachedAppIcon(icon, cx + 12.0f, cy + 12.0f, 16.0f);
         labelUtf8OrDefault(c.title, c.title_length, cx + 34.0f, cy + 11.0f, cardW - 64.0f, chromePalette.text_primary);
+        if (c.status_detail && c.status_detail_length > 0) {
+            labelUtf8WithFont(badgeFont, c.status_detail, c.status_detail_length, cx + 12.0f, cy + 33.0f, cardW - 24.0f, chromePalette.text_muted);
+        }
 
         wchar_t numBadge[16];
         swprintf(numBadge, 16, L"#%u", c.index + 1);
         labelWithFont(badgeFont, numBadge, cx + cardW - 28.0f, cy + 12.0f, 24.0f, chromePalette.text_muted);
 
-        wchar_t panesBadge[32];
-        swprintf(panesBadge, 32, c.pane_count == 1 ? L"1 pane" : L"%u panes", c.pane_count);
-        labelWithFont(badgeFont, panesBadge, cx + 12.0f, cy + 56.0f, 80.0f, chromePalette.text_muted);
+        wchar_t panesBadge[48];
+        if (c.pane_count > 1 && c.status_origin_pane > 0) {
+            swprintf(panesBadge, 48, L"%u panes \x2022 Pane %u", c.pane_count, c.status_origin_pane);
+            labelWithFont(badgeFont, panesBadge, cx + 12.0f, cy + 56.0f, fmaxf(40.0f, cardW - 128.0f), chromePalette.text_muted);
+        } else {
+            swprintf(panesBadge, 48, c.pane_count == 1 ? L"1 pane" : L"%u panes", c.pane_count);
+            labelWithFont(badgeFont, panesBadge, cx + 12.0f, cy + 56.0f, 80.0f, chromePalette.text_muted);
+        }
 
         if (c.status.state >= 2 && c.status.state <= 5) {
             drawProgramStatus(c.status, cx + cardW - 116.0f, cy + 52.0f, 104.0f, false);

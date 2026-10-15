@@ -34,11 +34,18 @@ typedef struct {
 } VexCommandItem;
 typedef struct {
     const uint8_t* title; size_t title_length;
-    uint32_t index, pane_count;
+    const uint8_t* status_detail; size_t status_detail_length;
+    uint32_t index, pane_count, status_origin_pane;
     VexAppIcon icon;
     VexProgramStatus status;
     bool active, selected, hovered;
 } VexTabPeekCard;
+typedef struct {
+    const uint8_t* name; size_t name_length;
+    const uint8_t* subtitle; size_t subtitle_length;
+    VexAppIcon icon;
+    bool is_default, selected, hovered;
+} VexShellPickerItem;
 typedef struct {
     const uint8_t* name; size_t name_length;
     bool is_directory, selected, hovered;
@@ -129,6 +136,7 @@ void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, b
 void vex_draw_split_preview(VexPaneRect bounds);
 void vex_draw_theme_picker(bool dark_mode, const VexThemeCard* cards, size_t card_count);
 void vex_draw_command_palette(const uint8_t* query, size_t query_length, const VexCommandItem* items, size_t item_count);
+void vex_draw_shell_picker(uint8_t mode, const VexShellPickerItem* items, size_t item_count);
 void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t card_count);
 void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, bool scan_error);
 void vex_draw_close_confirm(VexCloseConfirmModal modal);

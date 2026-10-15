@@ -10,7 +10,53 @@ const WslShellCommand = wsl_launch.WslShellCommand;
 /// Built-in Windows shell IDs match WPF; WSL uses a separate launch request, never a cmd fallback.
 pub const BuiltinShellProfile = enum { system, cmd, powershell, pwsh, nu, gitbash };
 /// Resolved shell kind; the system alias has already resolved to cmd before reaching launch/render code.
-pub const ShellKind = enum(u32) { cmd = 1, powershell = 2, pwsh = 3, nu = 4, gitbash = 5, custom = 6, wsl = 7 };
+pub const ShellKind = enum(u32) {
+    cmd = 1,
+    powershell = 2,
+    pwsh = 3,
+    nu = 4,
+    gitbash = 5,
+    custom = 6,
+    wsl = 7,
+
+    /// Human-readable shell label matching WPF ShellProfile display names.
+    pub fn displayName(self: ShellKind) []const u8 {
+        return switch (self) {
+            .cmd => "Command Prompt",
+            .powershell => "Windows PowerShell",
+            .pwsh => "PowerShell 7",
+            .nu => "Nushell",
+            .gitbash => "Git Bash",
+            .custom => "Custom shell",
+            .wsl => "WSL",
+        };
+    }
+
+    /// Secondary subtitle shown in the Shell Picker dropdown.
+    pub fn subtitle(self: ShellKind) []const u8 {
+        return switch (self) {
+            .cmd => "cmd.exe",
+            .powershell => "powershell.exe",
+            .pwsh => "pwsh.exe",
+            .nu => "nu.exe",
+            .gitbash => "bash.exe --login -i",
+            .custom => "custom program",
+            .wsl => "wsl.exe",
+        };
+    }
+
+    /// Maps built-in Windows shell kinds back to their profile enum.
+    pub fn builtinProfile(self: ShellKind) ?BuiltinShellProfile {
+        return switch (self) {
+            .cmd => .cmd,
+            .powershell => .powershell,
+            .pwsh => .pwsh,
+            .nu => .nu,
+            .gitbash => .gitbash,
+            .custom, .wsl => null,
+        };
+    }
+};
 /// Unresolved automatic WSL selection or a parsed explicit/project distribution; resolved before launch construction.
 pub const WslDistributionSelection = union(enum) { automatic, named: wsl.WslDistribution };
 /// Startup-only shell selection borrows parsed argv until the launch owner has cloned it.
@@ -291,6 +337,25 @@ fn resolveBuiltinProgram(allocator: std.mem.Allocator, kind: BuiltinShellProfile
             return null;
         },
     }
+}
+
+/// Checks whether a built-in Windows shell executable and its required integration script exist on disk.
+pub fn isBuiltinShellAvailable(allocator: std.mem.Allocator, kind: BuiltinShellProfile, system_directory: []const u8, integration_directory: []const u8, environment: *const std.process.EnvMap) !bool {
+    const program = (try resolveBuiltinProgram(allocator, kind, system_directory, environment)) orelse return false;
+    defer allocator.free(program);
+    const resolved = resolvedShellKind(kind);
+    if (resolved == .cmd or resolved == .nu) {
+        const script = (try probeShellPath(allocator, integration_directory, if (resolved == .cmd) "Vex.cmd" else "Vex.nu")) orelse return false;
+        allocator.free(script);
+    }
+    return true;
+}
+
+/// Checks whether wsl.exe exists in the Windows system directory.
+pub fn isWslLauncherAvailable(allocator: std.mem.Allocator, system_directory: []const u8) !bool {
+    const path = (try probeShellPath(allocator, system_directory, "wsl.exe")) orelse return false;
+    allocator.free(path);
+    return true;
 }
 
 test "shell requests reject duplicates and relative/custom control paths without guessing" {

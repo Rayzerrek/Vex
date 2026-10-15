@@ -13,7 +13,7 @@ pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -484,6 +484,11 @@ pub fn drawThemePicker(dark_mode: bool, cards: []const c.VexThemeCard) void {
 /// Draws the Command Palette modal overlay with search query and filtered command items.
 pub fn drawCommandPalette(query: []const u8, items: []const c.VexCommandItem) void {
     c.vex_draw_command_palette(if (query.len == 0) null else query.ptr, query.len, if (items.len == 0) null else items.ptr, items.len);
+}
+/// Draws the Shell Picker overlay with action mode selector and available shell rows.
+pub fn drawShellPicker(mode: u8, items: []const c.VexShellPickerItem) void {
+    if (items.len == 0) return;
+    c.vex_draw_shell_picker(mode, items.ptr, items.len);
 }
 /// Draws the Tab Peek modal overview grid.
 pub fn drawTabPeek(cards: []const c.VexTabPeekCard) void {
