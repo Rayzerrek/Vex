@@ -402,11 +402,12 @@ const WorkspaceApplication = struct {
         const attention = session.terminal.program_status.takeAttention();
         session.needs_attention = !visible and (session.needs_attention or attention);
         const title_changed = previous_title != session.terminal.title.generation;
-        const chrome_changed = title_changed or previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
+        const status_changed = previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
+        const chrome_changed = title_changed or status_changed;
         if (!visible) {
-            if (chrome_changed) _ = session.refreshAppIcon(false);
+            if (status_changed) _ = session.refreshAppIcon(false);
             session.sync_defer_since_ms = null;
-            return chrome_changed;
+            return status_changed;
         }
         if (chrome_changed and model.activeTab().active_pane == id) {
             self.refreshProjectChrome();
@@ -2043,7 +2044,7 @@ fn containsAsciiIgnoreCase(haystack: []const u8, needle: []const u8) bool {
 }
 
 fn workspaceBounds(metrics: platform.WindowMetrics) panes.PaneRect {
-    return .{ .x = 6, .y = 44, .width = @max(0, metrics.width - 12), .height = @max(0, metrics.height - 50) };
+    return .{ .x = 0, .y = 44, .width = @max(0, metrics.width), .height = @max(0, metrics.height - 44) };
 }
 
 fn isModifierKey(key: u32) bool {

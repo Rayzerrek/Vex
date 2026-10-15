@@ -12,7 +12,8 @@ static VexWindowCallbacks callbacks;
 static HWND window;
 static ID2D1Factory* drawingFactory;
 static IDWriteFactory* textFactory;
-static ID2D1HwndRenderTarget* target;
+static ID2D1HwndRenderTarget* hwndTarget;
+static ID2D1RenderTarget* target;
 static ID2D1SolidColorBrush* brush;
 static IDWriteTextFormat* terminalFonts[4];
 static IDWriteTextFormat* chromeFont;
@@ -122,16 +123,17 @@ static bool selftestEnabled() {
     return GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) == 1 && enabled[0] == L'1';
 }
 static HRESULT createRenderTarget() {
-    if (target) return S_OK;
+    if (hwndTarget) { target = hwndTarget; return S_OK; }
     RECT bounds; GetClientRect(window, &bounds);
     const float dpi = (float)GetDpiForWindow(window);
     dpiScale = dpi > 0.0f ? (dpi / 96.0f) : 1.0f;
     HRESULT result = drawingFactory->CreateHwndRenderTarget(
         D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(), dpi, dpi),
-        D2D1::HwndRenderTargetProperties(window, D2D1::SizeU(bounds.right, bounds.bottom)), &target);
+        D2D1::HwndRenderTargetProperties(window, D2D1::SizeU(bounds.right, bounds.bottom)), &hwndTarget);
     if (FAILED(result)) return result;
+    target = hwndTarget;
     result = target->CreateSolidColorBrush(rgb(0xe4e4e7), &brush);
-    if (FAILED(result)) releaseCom(target);
+    if (FAILED(result)) { releaseCom(hwndTarget); target = nullptr; }
     return result;
 }
 static void updateWindowMetrics() {
@@ -251,23 +253,153 @@ static void drawCaptionButtons() {
     }
 }
 
-static void drawWindow() {
-    HRESULT result = createRenderTarget();
-    if (FAILED(result)) { platformError = (int)result; DestroyWindow(window); return; }
-    target->BeginDraw();
-    paintCount++;
-    target->Clear(rgb(chromePalette.window_bg));
+static void renderScene() {
+    target->Clear(rgb(chromePalette.pane_bg));
     rectangle(0.0f, 0.0f, clientWidth, 44.0f, chromePalette.titlebar_bg);
     rectangle(0.0f, 43.0f, clientWidth, 1.0f, chromePalette.border);
     drawProjectPill();
     drawNewTabButton();
     callbacks.paint(callbacks.context);
     drawCaptionButtons();
+}
+
+static void drawWindow() {
+    HRESULT result = createRenderTarget();
+    if (FAILED(result)) { platformError = (int)result; DestroyWindow(window); return; }
+    target->BeginDraw();
+    paintCount++;
+    renderScene();
     result = target->EndDraw();
     if (result == D2DERR_RECREATE_TARGET) {
-        clearIconCache(); releaseCom(brush); releaseCom(target); InvalidateRect(window, nullptr, FALSE);
+        clearIconCache(); releaseCom(brush); releaseCom(hwndTarget); target = nullptr; InvalidateRect(window, nullptr, FALSE);
     } else if (FAILED(result)) { platformError = (int)result; DestroyWindow(window); }
     else if (!firstFrame) { firstFrame = true; startupMilestone("first frame"); }
+}
+
+static bool renderToMemoryBmp(int& outWidth, int& outHeight, HDC& outMemDc, HBITMAP& outDib, HGDIOBJ& outOldObj, void*& outBits) {
+    outWidth = 0; outHeight = 0; outMemDc = nullptr; outDib = nullptr; outOldObj = nullptr; outBits = nullptr;
+    if (!drawingFactory || !window) return false;
+    RECT bounds; GetClientRect(window, &bounds);
+    const int width = bounds.right - bounds.left;
+    const int height = bounds.bottom - bounds.top;
+    if (width <= 0 || height <= 0) return false;
+    const float dpi = (float)GetDpiForWindow(window);
+    dpiScale = dpi > 0.0f ? (dpi / 96.0f) : 1.0f;
+
+    HDC memDc = CreateCompatibleDC(nullptr);
+    if (!memDc) return false;
+    BITMAPINFO bmi = {};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = height; // bottom-up DIB for standard BMP
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(memDc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!dib || !bits) {
+        if (dib) DeleteObject(dib);
+        DeleteDC(memDc);
+        return false;
+    }
+    HGDIOBJ oldObj = SelectObject(memDc, dib);
+
+    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+        dpi, dpi);
+    ID2D1DCRenderTarget* dcTarget = nullptr;
+    bool ok = false;
+    RECT rc = { 0, 0, width, height };
+    if (SUCCEEDED(drawingFactory->CreateDCRenderTarget(&props, &dcTarget)) && dcTarget) {
+        if (SUCCEEDED(dcTarget->BindDC(memDc, &rc))) {
+            ID2D1SolidColorBrush* dcBrush = nullptr;
+            if (SUCCEEDED(dcTarget->CreateSolidColorBrush(rgb(0xe4e4e7), &dcBrush)) && dcBrush) {
+                ID2D1RenderTarget* prevTarget = target;
+                ID2D1SolidColorBrush* prevBrush = brush;
+                clearIconCache();
+                target = dcTarget;
+                brush = dcBrush;
+                target->BeginDraw();
+                renderScene();
+                ok = SUCCEEDED(target->EndDraw());
+                clearIconCache();
+                target = prevTarget;
+                brush = prevBrush;
+                releaseCom(dcBrush);
+            }
+        }
+        releaseCom(dcTarget);
+    }
+    GdiFlush();
+    if (!ok) {
+        SelectObject(memDc, oldObj);
+        DeleteObject(dib);
+        DeleteDC(memDc);
+        return false;
+    }
+    outWidth = width; outHeight = height; outMemDc = memDc; outDib = dib; outOldObj = oldObj; outBits = bits;
+    return true;
+}
+
+static void drawToDc(HDC hdc) {
+    if (!hdc) return;
+    int width = 0, height = 0;
+    HDC memDc = nullptr; HBITMAP dib = nullptr; HGDIOBJ oldObj = nullptr; void* bits = nullptr;
+    if (!renderToMemoryBmp(width, height, memDc, dib, oldObj, bits)) return;
+    BitBlt(hdc, 0, 0, width, height, memDc, 0, 0, SRCCOPY);
+    SelectObject(memDc, oldObj);
+    DeleteObject(dib);
+    DeleteDC(memDc);
+}
+
+static bool saveCaptureBmp() {
+    int width = 0, height = 0;
+    HDC memDc = nullptr; HBITMAP dib = nullptr; HGDIOBJ oldObj = nullptr; void* bits = nullptr;
+    if (!renderToMemoryBmp(width, height, memDc, dib, oldObj, bits)) return false;
+
+    wchar_t path[32768] = {};
+    DWORD envLen = GetEnvironmentVariableW(L"VEX_NATIVE_CAPTURE_BMP", path, 32768);
+    if (!envLen || envLen >= 32768) {
+        DWORD modLen = GetModuleFileNameW(nullptr, path, 32768);
+        wchar_t* slash = modLen ? wcsrchr(path, L'\\') : nullptr;
+        if (slash) {
+            *slash = 0;
+            wchar_t* parentSlash = wcsrchr(path, L'\\');
+            if (parentSlash && (parentSlash - path) + 32 < 32768) {
+                wcscpy(parentSlash + 1, L"verification\\.capture.bmp");
+            }
+        }
+    }
+
+    bool saved = false;
+    const DWORD pixelBytes = (DWORD)(width * height * 4);
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+        BITMAPFILEHEADER bfh = {};
+        bfh.bfType = 0x4D42; // 'BM'
+        bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+        bfh.bfSize = bfh.bfOffBits + pixelBytes;
+        BITMAPINFOHEADER bih = {};
+        bih.biSize = sizeof(BITMAPINFOHEADER);
+        bih.biWidth = width;
+        bih.biHeight = height;
+        bih.biPlanes = 1;
+        bih.biBitCount = 32;
+        bih.biCompression = BI_RGB;
+        bih.biSizeImage = pixelBytes;
+        DWORD written1 = 0, written2 = 0, written3 = 0;
+        if (WriteFile(file, &bfh, sizeof(bfh), &written1, nullptr) &&
+            WriteFile(file, &bih, sizeof(bih), &written2, nullptr) &&
+            WriteFile(file, bits, pixelBytes, &written3, nullptr)) {
+            saved = (written1 == sizeof(bfh) && written2 == sizeof(bih) && written3 == pixelBytes);
+        }
+        CloseHandle(file);
+    }
+    SelectObject(memDc, oldObj);
+    DeleteObject(dib);
+    DeleteDC(memDc);
+    return saved;
 }
 
 static void pasteClipboard() {
@@ -586,9 +718,9 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     case WM_SIZE:
         if (wparam != SIZE_MINIMIZED && window) {
-            if (target) {
-                HRESULT result = target->Resize(D2D1::SizeU(LOWORD(lparam), HIWORD(lparam)));
-                if (result == D2DERR_RECREATE_TARGET) { clearIconCache(); releaseCom(brush); releaseCom(target); }
+            if (hwndTarget) {
+                HRESULT result = hwndTarget->Resize(D2D1::SizeU(LOWORD(lparam), HIWORD(lparam)));
+                if (result == D2DERR_RECREATE_TARGET) { clearIconCache(); releaseCom(brush); releaseCom(hwndTarget); target = nullptr; }
                 else if (FAILED(result)) { platformError = (int)result; DestroyWindow(hwnd); return 0; }
             }
             updateWindowMetrics(); InvalidateRect(hwnd, nullptr, FALSE);
@@ -598,7 +730,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         cancelPointerGesture();
         clearIconCache();
         auto bounds = reinterpret_cast<RECT*>(lparam);
-        if (target) target->SetDpi((float)HIWORD(wparam), (float)HIWORD(wparam));
+        if (hwndTarget) hwndTarget->SetDpi((float)HIWORD(wparam), (float)HIWORD(wparam));
         if (!SetWindowPos(hwnd, nullptr, bounds->left, bounds->top, bounds->right - bounds->left, bounds->bottom - bounds->top, SWP_NOZORDER | SWP_NOACTIVATE)) {
             DWORD error = GetLastError();
             platformError = (int)(error ? error : ERROR_INVALID_WINDOW_HANDLE);
@@ -611,6 +743,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: { PAINTSTRUCT paint; BeginPaint(hwnd, &paint); drawWindow(); EndPaint(hwnd, &paint); return 0; }
+    case WM_PRINT:
+    case WM_PRINTCLIENT:
+        drawToDc((HDC)wparam);
+        return 0;
     case WM_APP + 1: {
         if (wparam > UINT32_MAX) return 0;
         uint32_t token = (uint32_t)wparam;
@@ -668,6 +804,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         SendMessageW(hwnd, WM_LBUTTONUP, 0, release);
         return (LRESULT)result;
     }
+    case WM_APP + 7:
+        return (selftestEnabled() && saveCaptureBmp()) ? 1 : 0;
     case WM_TIMER:
         if (wparam == 2) {
             if (callbacks.tick) callbacks.tick(callbacks.context);
@@ -842,7 +980,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (iconBig) DestroyIcon(iconBig);
     if (iconSmall) DestroyIcon(iconSmall);
     clearIconCache();
-    releaseCom(brush); releaseCom(target);
+    releaseCom(brush); releaseCom(hwndTarget); target = nullptr;
     releaseCom(chromeFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
     for (auto& font : terminalFonts) releaseCom(font);
     releaseCom(roundStrokeStyle);
@@ -1552,11 +1690,16 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
 extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status) {
     rectangle(bounds.x, bounds.y, bounds.width, bounds.height, chromePalette.pane_bg);
     if (bounds.height >= 28.0f) {
-        rectangle(bounds.x + 1.0f, bounds.y + 1.0f, fmaxf(0, bounds.width - 2.0f), 26.0f, chromePalette.pane_header_bg);
-        rectangle(bounds.x + 1.0f, bounds.y + 27.0f, fmaxf(0, bounds.width - 2.0f), 1.0f, chromePalette.border);
+        rectangle(bounds.x, bounds.y, bounds.width, 26.0f, chromePalette.pane_header_bg);
+        rectangle(bounds.x, bounds.y + 26.0f, bounds.width, 1.0f, chromePalette.border);
+        if (can_focus && !zoomed && focused) {
+            rectangle(bounds.x, bounds.y, bounds.width, 2.0f, chromePalette.accent);
+        }
     }
-    brush->SetColor(rgb(focused ? chromePalette.active_tab_border : (hovered ? chromePalette.text_muted : chromePalette.border)));
-    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x + 0.5f, bounds.y + 0.5f, bounds.x + bounds.width - 0.5f, bounds.y + bounds.height - 0.5f), 6, 6), brush, 1);
+    if (can_focus && !zoomed) {
+        if (bounds.x > 1.0f) rectangle(bounds.x - 3.5f, bounds.y, 1.0f, bounds.height, chromePalette.border);
+        if (bounds.y > 45.0f) rectangle(bounds.x, bounds.y - 3.5f, bounds.width, 1.0f, chromePalette.border);
+    }
     drawPaneHeaderActions(bounds, focused, hovered, can_focus, zoomed, hovered_action);
     const float actionsWidth = (bounds.width >= 180.0f && bounds.height >= 28.0f) ? (can_focus ? 94.0f : 72.0f) : 0.0f;
     const float remainingWidth = fmaxf(0, bounds.width - actionsWidth);

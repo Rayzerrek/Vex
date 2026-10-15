@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_platform.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_pty.cpp"), .flags = native_flags });
     module.link_libc = true;
-    for ([_][]const u8{ "user32", "kernel32", "d2d1", "dwrite", "dwmapi", "ole32", "uuid", "advapi32", "shell32" }) |lib| module.linkSystemLibrary(lib, .{});
+    for ([_][]const u8{ "user32", "kernel32", "gdi32", "d2d1", "dwrite", "dwmapi", "ole32", "uuid", "advapi32", "shell32" }) |lib| module.linkSystemLibrary(lib, .{});
     const exe = b.addExecutable(.{ .name = "vex-native", .root_module = module });
     exe.subsystem = .Windows;
     const dll = b.addInstallFileWithDir(b.path("../Vendor/libghostty/ghostty-vt.dll"), .bin, "ghostty-vt.dll");
