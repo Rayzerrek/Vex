@@ -13,7 +13,7 @@ pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -316,12 +316,18 @@ pub fn runWindow(owner: anytype) !void {
         fn tick(context: ?*anyopaque) callconv(.c) void {
             if (recover(context)) |app| app.onTick();
         }
+        fn cursorWake(context: ?*anyopaque) callconv(.c) void {
+            if (recover(context)) |app| app.onCursorWake();
+        }
+        fn cursorActivity(context: ?*anyopaque, active: bool) callconv(.c) void {
+            if (recover(context)) |app| app.onCursorActivity(active);
+        }
         fn probe(context: ?*anyopaque, query: u32) callconv(.c) u64 {
             const app = recover(context) orelse return 0;
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .probe = Adapter.probe });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .probe = Adapter.probe });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
@@ -398,6 +404,14 @@ pub fn deferSynchronizedInvalidation() void {
 /// Counts native paint calls for opt-in desktop diagnostics, not GPU presentations.
 pub fn paintCount() u64 {
     return c.vex_window_paint_count();
+}
+/// Arms a single cursor wake in milliseconds, or cancels it when the cursor is ineligible.
+pub fn scheduleCursorWake(delay_ms: ?u32) !void {
+    if (c.vex_window_schedule_cursor_wake(delay_ms orelse 0) != 0) return error.CursorWakeSchedulingFailed;
+}
+/// Reports whether the native window currently owns a cursor animation timer.
+pub fn cursorWakeArmed() bool {
+    return c.vex_window_cursor_wake_armed();
 }
 /// Stop the loop before reporting a fatal callback error; avoid modal reentrancy into live owners.
 pub fn closeWindow() void {
@@ -538,9 +552,9 @@ pub fn drawSplitPreview(bounds: panes.PaneRect) void {
     c.vex_draw_split_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height });
 }
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
-pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
+pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, cursor_shown: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
     const cursor = frame.cursor;
-    const cursor_visible = focused and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
+    const cursor_visible = focused and cursor_shown and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
     const block_cursor = cursor_visible and cursor.shape == .block;
     var cached_fg: u32 = theme.foreground;
     var cached_bg: u32 = theme.background;

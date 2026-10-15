@@ -80,6 +80,8 @@ typedef struct {
     void (*action)(void*, uint32_t, uint32_t);
     void (*exited)(void*, uint32_t, uint32_t);
     void (*tick)(void*);
+    void (*cursor_wake)(void*);
+    void (*cursor_activity)(void*, bool);
     uint64_t (*probe)(void*, uint32_t);
 } VexWindowCallbacks;
 /* Zero is success; nonzero values are Win32/HRESULT error codes. */
@@ -93,6 +95,9 @@ void vex_window_set_chrome_palette(VexChromePalette palette);
 int vex_window_set_font_size(float font_size);
 float vex_window_font_size(void);
 uint64_t vex_window_paint_count(void);
+/* One-shot cursor wake; zero cancels it. No animation timer exists for a steady/hidden cursor. */
+int vex_window_schedule_cursor_wake(uint32_t delay_ms);
+bool vex_window_cursor_wake_armed(void);
 /* Window thread only; releasing capture may synchronously deliver WM_CAPTURECHANGED. */
 int vex_window_cancel_pointer_capture(void);
 bool vex_window_has_pointer_capture(void);
