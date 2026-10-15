@@ -2,6 +2,10 @@
 
 Work on `feat/zig-native`, alongside the unchanged `../windows/` application.
 The target is Windows + WSL; native Linux/macOS ports are out of scope for now.
+Presentation uses **D3D12 + DXGI flip-discard**. Terminal cells use a shared R8
+glyph atlas and native instanced D3D12 batches; chrome/overlays still use
+Direct2D/DirectWrite through D3D11On12. See [RENDERER.md](RENDERER.md) for ownership,
+tests, measured CPU/memory tradeoffs and the remaining UI migration.
 This is not yet a daily-driver replacement. The full behavior/visual contract
 and remaining work are in [REWRITE.md](REWRITE.md).
 
@@ -200,7 +204,12 @@ circular dependency through the rendering/window adapter.
   validated window/input seams and presentation of parsed snapshots.
 - `src/windows/wsl_registry.zig`: read-only, bounded/typed default distribution
   discovery; registry unit fixtures use unique volatile keys outside Lxss.
-- `src/windows/windows_platform.cpp`: Win32 event loop and Direct2D/DirectWrite COM.
+- `src/windows/windows_platform.cpp`: Win32 event loop and Direct2D/DirectWrite drawing adapter.
+- `src/windows/windows_renderer.{h,cpp}`: D3D12 device/queue/fences, DXGI flip-discard,
+  Direct2D-on-12 UI targets, native-pass interop, resize/recovery and GPU capture.
+- `src/windows/terminal_renderer.{h,cpp}`: shared bounded glyph atlas, miss-only
+  rasterization, native instanced cell drawing, reusable per-slot upload pages
+  and idle trimming. `terminal_shaders.hlsl` has checked-in compiled bytecode.
 - `src/windows/windows_pty.cpp`: per-session ConPTY worker/queue ownership and job objects.
 
 Each terminal owns and frees its native handles and Zig buffers. Workspace trees
@@ -261,8 +270,11 @@ consumed before libghostty to preserve the ConPTY prompt-redraw workaround.
 Native limits: 1,000 columns/rows for window grids, 1 Mi cells/frame, 64 KiB per
 grapheme and 64 MiB text/frame. Oversized/malformed frames fail explicitly.
 Longer graphemes grow a reusable buffer rather than overflowing a fixed stack
-buffer. Direct2D may choose a software device fallback; this is **not yet a
-custom Direct3D glyph-atlas renderer**.
+buffer. The D3D12 backend uses a hardware adapter or WARP software fallback.
+Terminal cells use native D3D12 batches and a shared glyph atlas; UI translation
+through D3D11On12 remains. Styled-text CPU and memory samples improve substantially,
+but plain-text process memory increases and latency remains unmeasured.
+See [the renderer evidence](RENDERER.md#performance-evidence).
 
 Zig is not memory-safe. Pinned C ABI calls, GetProcAddress and registered callback
 userdata necessarily use pointer conversions at the FFI seam. Runtime checks,
@@ -286,6 +298,7 @@ zig fmt --check build.zig src
 zig build test -Doptimize=Debug
 zig build test -Doptimize=ReleaseSafe
 zig build
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeRenderer.ps1 -RequireNativeGlyphAtlas
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeDividers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
@@ -358,6 +371,12 @@ Ignored artifacts under `zig-out/verification/`:
 - `wsl.json`: live selected-distribution WSL results.
 - `dividers.json`: live divider capture/resize/cancellation results.
 - `tabs.json`: live atomic tab-reorder/ownership/capture results.
+- `renderer.json`, `renderer-*.png`: hardware/WARP, GPU readback, graphics recreation,
+  resize/minimize/restore, overlays and idle-presentation checks.
+  Native atlas checks also cover warm reuse, batching, styled Unicode and eviction.
+  `-Dgraphics-debug=true` additionally enables installed D3D12 validation tools.
+- `atlas-performance/comparison.json`: alternating On12-only/native-atlas warm
+  process-CPU and memory samples from `tests/Measure-NativeRenderer.ps1`.
 
 `VEX_NATIVE_METRICS=<absolute-path>` enables local milestone logs. Timing starts
 at Zig main, before DLL initialization, not OS process creation. The test also

@@ -1,4 +1,5 @@
 #include "windows_platform.h"
+#include "windows_renderer.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
@@ -10,9 +11,12 @@
 
 static VexWindowCallbacks callbacks;
 static HWND window;
-static ID2D1Factory* drawingFactory;
+static ID2D1Factory1* drawingFactory;
 static IDWriteFactory* textFactory;
-static ID2D1HwndRenderTarget* hwndTarget;
+static WindowsRenderer renderer;
+static uint64_t rendererGeneration, rendererDebugMessages;
+static unsigned rendererRecoveryAttempts;
+static bool rendererResetOnNextResize;
 static ID2D1RenderTarget* target;
 static ID2D1SolidColorBrush* brush;
 static IDWriteTextFormat* terminalFonts[4];
@@ -122,19 +126,42 @@ static bool selftestEnabled() {
     wchar_t enabled[2];
     return GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) == 1 && enabled[0] == L'1';
 }
+static HRESULT releaseRenderer() {
+    clearIconCache(); releaseCom(brush); target = nullptr;
+    rendererDebugMessages += renderer.debugErrorCount();
+    return renderer.shutdown();
+}
+static void rendererFault(HRESULT result) {
+    if (WindowsRenderer::deviceLost(result) && rendererRecoveryAttempts < 3) {
+        rendererRecoveryAttempts++;
+        HRESULT shutdown = releaseRenderer();
+        if (SUCCEEDED(shutdown) || WindowsRenderer::deviceLost(shutdown)) {
+            InvalidateRect(window, nullptr, FALSE);
+            return;
+        }
+        result = shutdown;
+    }
+    platformError = (int)result;
+    DestroyWindow(window);
+}
 static HRESULT createRenderTarget() {
-    if (hwndTarget) { target = hwndTarget; return S_OK; }
-    RECT bounds; GetClientRect(window, &bounds);
-    const float dpi = (float)GetDpiForWindow(window);
-    dpiScale = dpi > 0.0f ? (dpi / 96.0f) : 1.0f;
-    HRESULT result = drawingFactory->CreateHwndRenderTarget(
-        D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(), dpi, dpi),
-        D2D1::HwndRenderTargetProperties(window, D2D1::SizeU(bounds.right, bounds.bottom)), &hwndTarget);
-    if (FAILED(result)) return result;
-    target = hwndTarget;
-    result = target->CreateSolidColorBrush(rgb(0xe4e4e7), &brush);
-    if (FAILED(result)) { releaseCom(hwndTarget); target = nullptr; }
-    return result;
+    if (!renderer.ready()) {
+        wchar_t warp[2];
+        const bool forceWarp = selftestEnabled() && GetEnvironmentVariableW(L"VEX_NATIVE_WARP", warp, 2) == 1 && warp[0] == L'1';
+        HRESULT result = renderer.initialize(window, drawingFactory, forceWarp);
+        if (FAILED(result)) return result;
+        rendererGeneration++;
+    }
+    target = renderer.drawingTarget();
+    if (!brush) return target->CreateSolidColorBrush(rgb(0xe4e4e7), &brush);
+    return S_OK;
+}
+static HRESULT resizeRenderer(UINT width, UINT height, float dpi) {
+    if (rendererResetOnNextResize) {
+        rendererResetOnNextResize = false;
+        return DXGI_ERROR_DEVICE_RESET;
+    }
+    return renderer.resize(width, height, dpi);
 }
 static void updateWindowMetrics() {
     RECT bounds; GetClientRect(window, &bounds);
@@ -263,17 +290,19 @@ static void renderScene() {
     drawCaptionButtons();
 }
 
-static void drawWindow() {
+static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
+    RECT bounds;
+    if (!IsWindow(window) || IsIconic(window) || !GetClientRect(window, &bounds) || bounds.right <= 0 || bounds.bottom <= 0) return false;
     HRESULT result = createRenderTarget();
-    if (FAILED(result)) { platformError = (int)result; DestroyWindow(window); return; }
-    target->BeginDraw();
+    if (SUCCEEDED(result)) result = renderer.beginFrame();
+    if (FAILED(result)) { rendererFault(result); return false; }
     paintCount++;
     renderScene();
-    result = target->EndDraw();
-    if (result == D2DERR_RECREATE_TARGET) {
-        clearIconCache(); releaseCom(brush); releaseCom(hwndTarget); target = nullptr; InvalidateRect(window, nullptr, FALSE);
-    } else if (FAILED(result)) { platformError = (int)result; DestroyWindow(window); }
-    else if (!firstFrame) { firstFrame = true; startupMilestone("first frame"); }
+    result = renderer.endFrame(pixels, stride);
+    if (FAILED(result)) { rendererFault(result); return false; }
+    rendererRecoveryAttempts = 0;
+    if (result == S_OK && !firstFrame) { firstFrame = true; startupMilestone("first frame"); }
+    return result == S_OK;
 }
 
 static bool renderToMemoryBmp(int& outWidth, int& outHeight, HDC& outMemDc, HBITMAP& outDib, HGDIOBJ& outOldObj, void*& outBits) {
@@ -304,35 +333,8 @@ static bool renderToMemoryBmp(int& outWidth, int& outHeight, HDC& outMemDc, HBIT
     }
     HGDIOBJ oldObj = SelectObject(memDc, dib);
 
-    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
-        D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
-        dpi, dpi);
-    ID2D1DCRenderTarget* dcTarget = nullptr;
-    bool ok = false;
-    RECT rc = { 0, 0, width, height };
-    if (SUCCEEDED(drawingFactory->CreateDCRenderTarget(&props, &dcTarget)) && dcTarget) {
-        if (SUCCEEDED(dcTarget->BindDC(memDc, &rc))) {
-            ID2D1SolidColorBrush* dcBrush = nullptr;
-            if (SUCCEEDED(dcTarget->CreateSolidColorBrush(rgb(0xe4e4e7), &dcBrush)) && dcBrush) {
-                ID2D1RenderTarget* prevTarget = target;
-                ID2D1SolidColorBrush* prevBrush = brush;
-                clearIconCache();
-                target = dcTarget;
-                brush = dcBrush;
-                target->BeginDraw();
-                renderScene();
-                ok = SUCCEEDED(target->EndDraw());
-                clearIconCache();
-                target = prevTarget;
-                brush = prevBrush;
-                releaseCom(dcBrush);
-            }
-        }
-        releaseCom(dcTarget);
-    }
-    GdiFlush();
-    if (!ok) {
+    // Read back the real D3D12-backed scene, not a separate software-rendered approximation.
+    if (!drawWindow(bits, (UINT)width * 4)) {
         SelectObject(memDc, oldObj);
         DeleteObject(dib);
         DeleteDC(memDc);
@@ -718,10 +720,14 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     case WM_SIZE:
         if (wparam != SIZE_MINIMIZED && window) {
-            if (hwndTarget) {
-                HRESULT result = hwndTarget->Resize(D2D1::SizeU(LOWORD(lparam), HIWORD(lparam)));
-                if (result == D2DERR_RECREATE_TARGET) { clearIconCache(); releaseCom(brush); releaseCom(hwndTarget); target = nullptr; }
-                else if (FAILED(result)) { platformError = (int)result; DestroyWindow(hwnd); return 0; }
+            RECT bounds;
+            if (!GetClientRect(hwnd, &bounds) || bounds.right <= 0 || bounds.bottom <= 0) return 0;
+            if (renderer.ready()) {
+                HRESULT result = resizeRenderer((UINT)bounds.right, (UINT)bounds.bottom, (float)GetDpiForWindow(hwnd));
+                if (FAILED(result)) {
+                    rendererFault(result);
+                    if (!IsWindow(hwnd)) return 0;
+                }
             }
             updateWindowMetrics(); InvalidateRect(hwnd, nullptr, FALSE);
         }
@@ -730,7 +736,6 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         cancelPointerGesture();
         clearIconCache();
         auto bounds = reinterpret_cast<RECT*>(lparam);
-        if (hwndTarget) hwndTarget->SetDpi((float)HIWORD(wparam), (float)HIWORD(wparam));
         if (!SetWindowPos(hwnd, nullptr, bounds->left, bounds->top, bounds->right - bounds->left, bounds->bottom - bounds->top, SWP_NOZORDER | SWP_NOACTIVATE)) {
             DWORD error = GetLastError();
             platformError = (int)(error ? error : ERROR_INVALID_WINDOW_HANDLE);
@@ -738,6 +743,17 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             return 0;
         }
         // A DPI transition need not change physical bounds, so WM_SIZE alone cannot refresh DIP geometry.
+        if (renderer.ready() && !IsIconic(hwnd)) {
+            RECT client;
+            if (!GetClientRect(hwnd, &client)) { rendererFault(HRESULT_FROM_WIN32(GetLastError())); return 0; }
+            if (client.right > 0 && client.bottom > 0) {
+                HRESULT result = resizeRenderer((UINT)client.right, (UINT)client.bottom, (float)HIWORD(wparam));
+                if (FAILED(result)) {
+                    rendererFault(result);
+                    if (!IsWindow(hwnd)) return 0;
+                }
+            }
+        }
         updateWindowMetrics(); InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
@@ -806,8 +822,40 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_APP + 7:
         return (selftestEnabled() && saveCaptureBmp()) ? 1 : 0;
+    case WM_APP + 8:
+        if (!selftestEnabled() || lparam) return 0;
+        switch (wparam) {
+            case 0: return renderer.ready() ? 12 : 0;
+            case 1: return renderer.software() ? 1 : 0;
+            case 2: return (LRESULT)renderer.framesPresented();
+            case 3: return (LRESULT)rendererGeneration;
+            case 4: return renderer.width();
+            case 5: return renderer.height();
+            case 6: return (LRESULT)(rendererDebugMessages + renderer.debugErrorCount());
+            case 7:
+                // Exercise the production recovery path after draining a healthy device.
+                rendererFault(DXGI_ERROR_DEVICE_RESET);
+                return 1;
+            case 8: rendererResetOnNextResize = true; return 1;
+            case 9: return renderer.debugValidationEnabled() ? 1 : 0;
+            case 10: return (LRESULT)renderer.terminal.drawCalls;
+            case 11: return (LRESULT)renderer.terminal.glyphHits;
+            case 12: return (LRESULT)renderer.terminal.glyphMisses;
+            case 13: return (LRESULT)renderer.terminal.uploadAllocations;
+            case 14: return (LRESULT)renderer.terminal.uploadCapacity();
+            case 15: return (LRESULT)renderer.terminal.atlasResets;
+            case 16: return TerminalRenderer::atlasSize * TerminalRenderer::atlasSize;
+            case 17: return (LRESULT)renderer.terminal.uploadTrims;
+            case 20: case 21: {
+                UINT64 bytes = 0;
+                return SUCCEEDED(renderer.videoMemoryUsage(wparam == 20, bytes)) ? (LRESULT)bytes : -1;
+            }
+        }
+        return 0;
     case WM_TIMER:
         if (wparam == 2) {
+            HRESULT result = renderer.trimTerminalUploadsIfIdle();
+            if (FAILED(result)) { rendererFault(result); return 0; }
             if (callbacks.tick) callbacks.tick(callbacks.context);
         } else {
             renderScheduledFrame();
@@ -877,6 +925,7 @@ static HRESULT rebuildTerminalFonts(float fontSize) {
         for (auto& font : newFonts) releaseCom(font);
         return result;
     }
+    renderer.terminal.clearGlyphCache();
     for (int i = 0; i < 4; i++) {
         releaseCom(terminalFonts[i]);
         terminalFonts[i] = newFonts[i];
@@ -979,8 +1028,8 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     } else platformError = (int)result;
     if (iconBig) DestroyIcon(iconBig);
     if (iconSmall) DestroyIcon(iconSmall);
-    clearIconCache();
-    releaseCom(brush); releaseCom(hwndTarget); target = nullptr;
+    HRESULT shutdown = releaseRenderer();
+    if (FAILED(shutdown) && !WindowsRenderer::deviceLost(shutdown) && !platformError) platformError = (int)shutdown;
     releaseCom(chromeFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
     for (auto& font : terminalFonts) releaseCom(font);
     releaseCom(roundStrokeStyle);
@@ -1718,9 +1767,15 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
     }
     labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 5.0f, fmaxf(0, remainingWidth - statusWidth - titleInset - 8), focused ? chromePalette.text_primary : chromePalette.text_muted);
     gridLeft = bounds.x + 6; gridTop = bounds.y + 30;
-    target->PushAxisAlignedClip(D2D1::RectF(gridLeft, gridTop, fmaxf(gridLeft, bounds.x + bounds.width - 6), fmaxf(gridTop, bounds.y + bounds.height - 6)), D2D1_ANTIALIAS_MODE_ALIASED);
+    const float scale = dpiScale;
+    const D3D12_RECT clip = {
+        (LONG)fmaxf(0, roundf(gridLeft * scale)), (LONG)fmaxf(0, roundf(gridTop * scale)),
+        (LONG)fminf((float)renderer.width(), fmaxf(gridLeft, bounds.x + bounds.width - 6) * scale),
+        (LONG)fminf((float)renderer.height(), fmaxf(gridTop, bounds.y + bounds.height - 6) * scale)
+    };
+    renderer.beginTerminalPass(clip);
 }
-extern "C" void vex_end_pane() { target->PopAxisAlignedClip(); }
+extern "C" void vex_end_pane() { renderer.endTerminalPass(); }
 extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active) {
     if (!isfinite(thumb_y) || !isfinite(thumb_height) || thumb_height <= 0.0f || bounds.width < 24.0f) return;
     const float width = active ? 10.0f : 6.0f;
@@ -2340,45 +2395,63 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
     return false;
 }
 
+static HRESULT paintAtlasGlyph(ID2D1RenderTarget* raster, ID2D1SolidColorBrush* rasterBrush, const uint8_t* utf8, size_t length, uint32_t flags, float x, float y, float width, float height) {
+    ID2D1RenderTarget* previousTarget = target;
+    ID2D1SolidColorBrush* previousBrush = brush;
+    target = raster; brush = rasterBrush;
+    bool custom = false;
+    if (length == 3 && (utf8[0] & 0xf0) == 0xe0) {
+        const uint32_t cp = ((uint32_t)(utf8[0] & 15) << 12) | ((uint32_t)(utf8[1] & 63) << 6) | (utf8[2] & 63);
+        custom = drawCustomGlyph(cp, x, y, width, height, 0xffffff);
+    }
+    target = previousTarget; brush = previousBrush;
+    if (custom) return S_OK;
+    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)utf8, (int)length, nullptr, 0);
+    if (count <= 0) return HRESULT_FROM_WIN32(GetLastError());
+    wchar_t scratch[4096];
+    auto text = count <= 4096 ? scratch : static_cast<wchar_t*>(HeapAlloc(GetProcessHeap(), 0, (size_t)count * sizeof(wchar_t)));
+    if (!text) return E_OUTOFMEMORY;
+    HRESULT result = S_OK;
+    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)utf8, (int)length, text, count)) result = HRESULT_FROM_WIN32(GetLastError());
+    else {
+        rasterBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+        raster->DrawText(text, count, terminalFonts[flags & 3], D2D1::RectF(x, y, x + width, y + height), rasterBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+    if (text != scratch) HeapFree(GetProcessHeap(), 0, text);
+    return result;
+}
 extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags) {
-    float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight, width = cells * cellWidth;
-    if (background != chromePalette.pane_bg) {
-        rectBounds(snapDip(x), snapDip(y), snapDip(x + width), snapDip(y + cellHeight), background);
-    }
-    if (!length || (flags & 16)) return 0;
-    if (!utf8 || length > 65536) return ERROR_INVALID_PARAMETER;
-    size_t trimmedLength = length;
-    while (trimmedLength > 0 && utf8[trimmedLength - 1] == ' ') trimmedLength--;
-    if (trimmedLength > 0) {
-        bool customDrawn = false;
-        if (cells == 1 && trimmedLength == 3 && (utf8[0] & 0xF0) == 0xE0) {
-            const uint32_t cp = ((uint32_t)(utf8[0] & 0x0F) << 12) | ((uint32_t)(utf8[1] & 0x3F) << 6) | (uint32_t)(utf8[2] & 0x3F);
-            customDrawn = drawCustomGlyph(cp, x, y, width, cellHeight, foreground);
+    const float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight, width = cells * cellWidth;
+    HRESULT result = S_OK;
+    if (background != chromePalette.pane_bg) result = renderer.terminal.drawSolid(snapDip(x), snapDip(y), snapDip(x + width), snapDip(y + cellHeight), background);
+    if (!length || (flags & 16) || FAILED(result)) return (int)renderer.terminalResult(result);
+    if (!utf8 || length > 65536) return (int)renderer.terminalResult(E_INVALIDARG);
+    size_t trimmed = length;
+    while (trimmed && utf8[trimmed - 1] == ' ') trimmed--;
+    bool ascii = length == cells;
+    for (size_t i = 0; ascii && i < trimmed; i++) ascii = utf8[i] >= 32 && utf8[i] <= 126;
+    if (ascii) {
+        for (size_t i = 0; i < trimmed && SUCCEEDED(result); i++) {
+            if (utf8[i] != ' ') result = renderer.terminal.drawGlyph(x + (float)i * cellWidth, y, cellWidth, cellHeight, utf8 + i, 1, flags, foreground, paintAtlasGlyph);
         }
-        if (!customDrawn) {
-            int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)utf8, (int)trimmedLength, nullptr, 0);
-            if (count <= 0) return (int)GetLastError();
-            wchar_t scratch[4096];
-            auto text = count <= 4096 ? scratch : static_cast<wchar_t*>(HeapAlloc(GetProcessHeap(), 0, (size_t)count * sizeof(wchar_t)));
-            if (!text) return ERROR_OUTOFMEMORY;
-            if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)utf8, (int)trimmedLength, text, count)) {
-                DWORD error = GetLastError(); if (text != scratch) HeapFree(GetProcessHeap(), 0, text); return (int)error;
-            }
-            brush->SetColor(rgb(foreground));
-            target->DrawText(text, count, terminalFonts[flags & 3], D2D1::RectF(x, y, x + width, y + cellHeight), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            if (text != scratch) HeapFree(GetProcessHeap(), 0, text);
-        }
-    }
-    if (flags & 4) rectangle(x, y + cellHeight - 2, width, 1, foreground);
-    if (flags & 8) rectangle(x, y + cellHeight * 0.55f, width, 1, foreground);
-    return 0;
+    } else if (trimmed) result = renderer.terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph);
+    if (SUCCEEDED(result) && (flags & 4)) result = renderer.terminal.drawSolid(x, y + cellHeight - 2, x + width, y + cellHeight - 1, foreground);
+    if (SUCCEEDED(result) && (flags & 8)) result = renderer.terminal.drawSolid(x, y + cellHeight * 0.55f, x + width, y + cellHeight * 0.55f + 1, foreground);
+    return (int)renderer.terminalResult(result);
 }
 extern "C" void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color) {
-    float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight;
-    if (style == 0) rectangle(x, y, 1.5f, cellHeight, color);
-    else if (style == 1) rectBounds(snapDip(x), snapDip(y), snapDip(x + cellWidth), snapDip(y + cellHeight), color);
-    else if (style == 2) rectangle(x, y + cellHeight - 2, cellWidth, 2, color);
-    else { brush->SetColor(rgb(color)); target->DrawRectangle(D2D1::RectF(x + 0.5f, y + 0.5f, x + cellWidth - 0.5f, y + cellHeight - 0.5f), brush); }
+    const float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight;
+    HRESULT result;
+    if (style == 0) result = renderer.terminal.drawSolid(x, y, x + 1.5f, y + cellHeight, color);
+    else if (style == 1) result = renderer.terminal.drawSolid(snapDip(x), snapDip(y), snapDip(x + cellWidth), snapDip(y + cellHeight), color);
+    else if (style == 2) result = renderer.terminal.drawSolid(x, y + cellHeight - 2, x + cellWidth, y + cellHeight, color);
+    else {
+        result = renderer.terminal.drawSolid(x, y, x + cellWidth, y + 1, color);
+        if (SUCCEEDED(result)) result = renderer.terminal.drawSolid(x, y + cellHeight - 1, x + cellWidth, y + cellHeight, color);
+        if (SUCCEEDED(result)) result = renderer.terminal.drawSolid(x, y + 1, x + 1, y + cellHeight - 1, color);
+        if (SUCCEEDED(result)) result = renderer.terminal.drawSolid(x + cellWidth - 1, y + 1, x + cellWidth, y + cellHeight - 1, color);
+    }
+    renderer.terminalResult(result);
 }
 extern "C" void vex_window_error(const char* message) {
     MessageBoxA(IsWindow(window) ? window : nullptr, message, "Vex native rewrite", MB_OK | MB_ICONERROR);
