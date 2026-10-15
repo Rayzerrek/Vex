@@ -17,6 +17,7 @@ const url_detector = @import("../terminal/url_detector.zig");
 const terminal_theme = @import("../workspace/terminal_theme.zig");
 const path_completion = @import("../terminal/path_completion.zig");
 const close_confirmation = @import("../workspace/close_confirmation.zig");
+const cursor_blink = @import("../workspace/cursor_blink.zig");
 
 const HoveredLink = struct {
     pane_id: panes.PaneId,
@@ -116,6 +117,7 @@ const CommandId = enum {
     next_tab,
     previous_tab,
     close_active,
+    toggle_cursor_blink,
 };
 
 const CommandDef = struct {
@@ -140,6 +142,7 @@ const command_defs = [_]CommandDef{
     .{ .id = .next_tab, .title = "Workspace: Next Tab", .shortcut = "Ctrl+Tab" },
     .{ .id = .previous_tab, .title = "Workspace: Previous Tab", .shortcut = "Ctrl+Shift+Tab" },
     .{ .id = .close_active, .title = "Workspace: Close Active Pane or Tab", .shortcut = "Ctrl+Shift+W" },
+    .{ .id = .toggle_cursor_blink, .title = "Cursor: Toggle Blinking", .shortcut = "" },
 };
 
 const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, pane: PaneDrag, selection: SelectionDrag, mouse: MouseDrag, scrollbar: ScrollbarDrag };
@@ -159,6 +162,10 @@ const WorkspaceApplication = struct {
     editing_tab: ?TabRename = null,
     overlay: OverlayState = .none,
     path_completion: path_completion.PathCompletion,
+    cursor_clock: std.time.Timer,
+    cursor_blink: cursor_blink.CursorBlink = .{},
+    cursor_blink_enabled: bool = true,
+    cursor_window_active: bool = false,
     theme_index: usize = terminal_theme.default_dark_index,
     last_dark_theme: usize = terminal_theme.default_dark_index,
     last_light_theme: usize = terminal_theme.default_light_index,
@@ -207,6 +214,7 @@ const WorkspaceApplication = struct {
             .machine_name = machine_name,
             .launch = launch,
             .path_completion = path_completion.PathCompletion.init(allocator),
+            .cursor_clock = try std.time.Timer.start(),
         };
     }
     fn deinit(self: *WorkspaceApplication) void {
@@ -224,6 +232,46 @@ const WorkspaceApplication = struct {
         if (self.health == .failed) return;
         self.health = .{ .failed = err };
         platform.closeWindow();
+    }
+    fn cursorNowMs(self: *WorkspaceApplication) u64 {
+        return self.cursor_clock.read() / std.time.ns_per_ms;
+    }
+    fn stopCursorBlink(self: *WorkspaceApplication) !void {
+        self.cursor_blink.synchronize(null, self.cursorNowMs());
+        try platform.scheduleCursorWake(null);
+    }
+    fn resetCursorOnInput(self: *WorkspaceApplication) !void {
+        if (self.cursor_blink.state == .stopped) return;
+        const now = self.cursorNowMs();
+        if (self.cursor_blink.resetOnInput(now)) platform.invalidateWindow();
+        try platform.scheduleCursorWake(self.cursor_blink.nextDelayMs(now));
+    }
+    pub fn onCursorActivity(self: *WorkspaceApplication, active: bool) void {
+        if (self.health == .failed or self.cursor_window_active == active) return;
+        self.cursor_window_active = active;
+        self.stopCursorBlink() catch |err| {
+            self.fail(err);
+            return;
+        };
+        platform.invalidateWindow();
+    }
+    pub fn onCursorWake(self: *WorkspaceApplication) void {
+        if (self.health == .failed) return;
+        const session = self.activeSession();
+        if (!self.cursor_blink_enabled or !self.cursor_window_active or self.overlay != .none or self.editing_tab != null or
+            session == null or self.cursor_blink.state != .blinking)
+        {
+            self.stopCursorBlink() catch |err| self.fail(err);
+            return;
+        }
+        const active = session orelse return;
+        if (active.state != .running or self.cursor_blink.state.blinking.key.pane != active.id) {
+            self.stopCursorBlink() catch |err| self.fail(err);
+            return;
+        }
+        const now = self.cursorNowMs();
+        if (self.cursor_blink.advance(now)) platform.invalidateWindow();
+        platform.scheduleCursorWake(self.cursor_blink.nextDelayMs(now)) catch |err| self.fail(err);
     }
     fn currentTheme(self: *const WorkspaceApplication) terminal_theme.TerminalTheme {
         return terminal_theme.themes[@min(self.theme_index, terminal_theme.themes.len - 1)];
@@ -495,18 +543,27 @@ const WorkspaceApplication = struct {
         }
         const active_tab = model.activeTab();
         const can_focus = active_tab.tree.paneCount() > 1;
+        var saw_active_pane = false;
         for (self.placements.items) |placement| {
             if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
-            const focused = active_tab.active_pane == placement.id and self.overlay == .none;
+            const focused = active_tab.active_pane == placement.id and self.overlay == .none and self.editing_tab == null;
             const hovered = self.hovered_pane == placement.id and self.overlay == .none;
             const hovered_action = if (hovered) self.hovered_header_action else null;
             const frame = try session.terminal.readFrame();
+            if (active_tab.active_pane == placement.id) {
+                saw_active_pane = true;
+                const key = if (focused and self.cursor_blink_enabled and self.cursor_window_active and session.state == .running)
+                    cursor_blink.CursorKey.fromFrame(placement.id, frame)
+                else
+                    null;
+                self.cursor_blink.synchronize(key, self.cursorNowMs());
+            }
             const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
             {
                 platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.displayTitle(), session.icon, session.terminal.program_status.programStatus());
                 defer platform.endPane();
-                try platform.drawTerminalFrame(frame, focused, pane_link, active_theme);
+                try platform.drawTerminalFrame(frame, focused, self.cursor_blink.isShown(), pane_link, active_theme);
             }
             if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
                 const sb_active = self.hovered_scrollbar == placement.id or (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id);
@@ -520,6 +577,8 @@ const WorkspaceApplication = struct {
                 }
             }
         }
+        if (!saw_active_pane) self.cursor_blink.synchronize(null, self.cursorNowMs());
+        try platform.scheduleCursorWake(self.cursor_blink.nextDelayMs(self.cursorNowMs()));
         try self.drawActiveOverlay();
     }
     fn drawActiveOverlay(self: *WorkspaceApplication) !void {
@@ -833,6 +892,7 @@ const WorkspaceApplication = struct {
             .next_tab => try self.applyAction(.next_tab, 0),
             .previous_tab => try self.applyAction(.previous_tab, 0),
             .close_active => try self.requestCloseActive(),
+            .toggle_cursor_blink => try self.applyAction(.toggle_cursor_blink, 0),
         }
     }
     fn collectTabIcons(self: *WorkspaceApplication, node: anytype, out: *[8]app_icon.AppIcon, count: *usize) anyerror!void {
@@ -871,6 +931,10 @@ const WorkspaceApplication = struct {
     pub fn onKey(self: *WorkspaceApplication, key: u32, modifiers: u32) bool {
         if (self.health == .failed) return true;
         if (isModifierKey(key)) return false;
+        self.resetCursorOnInput() catch |err| {
+            self.fail(err);
+            return true;
+        };
         if (self.overlay != .none) {
             return self.handleOverlayKey(key, modifiers) catch |err| {
                 self.fail(err);
@@ -1187,6 +1251,10 @@ const WorkspaceApplication = struct {
     }
     pub fn onText(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
+        self.resetCursorOnInput() catch |err| {
+            self.fail(err);
+            return;
+        };
         if (self.overlay == .command_palette) {
             if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
             var cp = &self.overlay.command_palette;
@@ -1238,6 +1306,10 @@ const WorkspaceApplication = struct {
     }
     pub fn onPaste(self: *WorkspaceApplication, bytes: []const u8) void {
         if (self.health == .failed) return;
+        self.resetCursorOnInput() catch |err| {
+            self.fail(err);
+            return;
+        };
         if (self.overlay == .command_palette) {
             const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
             if (trimmed.len > 0) {
@@ -1698,6 +1770,10 @@ const WorkspaceApplication = struct {
     }
     pub fn onPointer(self: *WorkspaceApplication, event: platform.PointerEvent, x: f32, y: f32, modifiers: u32) platform.PointerResponse {
         if (self.health == .failed) return .normal;
+        if (event == .begin) self.resetCursorOnInput() catch |err| {
+            self.fail(err);
+            return .normal;
+        };
         return self.handlePointer(event, x, y, modifiers) catch |err| {
             self.fail(err);
             return .normal;
@@ -1950,6 +2026,12 @@ const WorkspaceApplication = struct {
     fn applyAction(self: *WorkspaceApplication, action: platform.WorkspaceAction, index: u32) !void {
         if (try self.cancelPointerDrag()) try self.updateLayout();
         switch (action) {
+            .toggle_cursor_blink => {
+                self.cursor_blink_enabled = !self.cursor_blink_enabled;
+                try self.stopCursorBlink();
+                platform.invalidateWindow();
+                return;
+            },
             .command_palette => {
                 if (index > 0) {
                     self.overlay = .none;
@@ -2062,7 +2144,7 @@ const WorkspaceApplication = struct {
                 if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
-            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab => unreachable,
+            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
@@ -2141,6 +2223,19 @@ const WorkspaceApplication = struct {
             20 => return platform.paintCount(),
             34 => return @intFromEnum(self.launch.kind),
             38 => return if (self.activeSession()) |session| @intFromEnum(session.icon.glyph) else 0,
+            72 => return @intFromBool(self.cursor_blink_enabled),
+            73 => return @intFromBool(self.cursor_blink.isShown()),
+            74 => return @intFromBool(self.cursor_blink.state == .blinking),
+            75 => return @intFromBool(platform.cursorWakeArmed()),
+            76 => return @intFromBool(self.cursor_window_active),
+            77 => return if (self.activeSession()) |session| @intFromBool(session.terminal.frame.cursor.blinking) else 0,
+            78 => return if (self.activeSession()) |session| @intFromBool(session.terminal.frame.cursor.visible) else 0,
+            79 => return if (self.activeSession()) |session| session.terminal.frame.generation else 0,
+            80 => return if (self.activeSession()) |session| @intFromEnum(session.terminal.frame.cursor.shape) else 0,
+            81 => return if (self.activeSession()) |session| session.terminal.frame.cursor.column else 0,
+            82 => return if (self.activeSession()) |session| session.terminal.frame.cursor.row else 0,
+            83 => return if (self.metrics) |metrics| @intFromFloat(@round(metrics.cell_width * 1000)) else 0,
+            84 => return if (self.metrics) |metrics| @intFromFloat(@round(metrics.cell_height * 1000)) else 0,
             70 => return if (self.activeSession()) |session| @intFromBool(session.state == .exited) else 0,
             71 => return if (self.activeSession()) |session| switch (session.state) {
                 .running => 0,

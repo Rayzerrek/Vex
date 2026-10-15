@@ -288,7 +288,7 @@ HRESULT WindowsRenderer::endFrame(void* pixels, UINT stride) {
     if (FAILED(result)) return result;
     frames[frameIndex].fenceValue = value;
     result = swapChain->Present(1, 0);
-    if (result == S_OK) presented++;
+    if (SUCCEEDED(result)) presented++;
     return result;
 }
 

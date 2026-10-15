@@ -38,6 +38,7 @@ static float dpiScale = 1.0f;
 static uint32_t tabStripCount = 1;
 static float tabWidthDip = 160;
 static bool frameScheduled, firstOutput, firstFrame;
+static bool cursorWakeArmed;
 static ULONGLONG frameDeadline;
 static int platformError;
 static LARGE_INTEGER startupCounter, counterFrequency;
@@ -196,6 +197,20 @@ extern "C" void vex_window_defer_synchronized() {
 }
 extern "C" void vex_window_close() { if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 0, 0); }
 extern "C" uint64_t vex_window_paint_count() { return paintCount; }
+extern "C" bool vex_window_cursor_wake_armed() { return cursorWakeArmed; }
+extern "C" int vex_window_schedule_cursor_wake(uint32_t delay_ms) {
+    if (delay_ms > 60000) return ERROR_INVALID_PARAMETER;
+    if (cursorWakeArmed && IsWindow(window)) KillTimer(window, 3);
+    cursorWakeArmed = false;
+    if (!delay_ms) return 0;
+    if (!IsWindow(window)) return ERROR_INVALID_WINDOW_HANDLE;
+    if (!SetTimer(window, 3, delay_ms, nullptr)) {
+        DWORD error = GetLastError();
+        return (int)(error ? error : ERROR_NOT_ENOUGH_MEMORY);
+    }
+    cursorWakeArmed = true;
+    return 0;
+}
 
 static void drawProjectPill() {
     const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(8.0f, 7.0f, 134.0f, 37.0f), 6.0f, 6.0f);
@@ -303,8 +318,8 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     result = renderer.endFrame(pixels, stride);
     if (FAILED(result)) { rendererFault(result); return false; }
     rendererRecoveryAttempts = 0;
-    if (result == S_OK && !firstFrame) { firstFrame = true; startupMilestone("first frame"); }
-    return result == S_OK;
+    if (SUCCEEDED(result) && !firstFrame) { firstFrame = true; startupMilestone("first frame"); }
+    return SUCCEEDED(result);
 }
 
 static bool renderToMemoryBmp(int& outWidth, int& outHeight, HDC& outMemDc, HBITMAP& outDib, HGDIOBJ& outOldObj, void*& outBits) {
@@ -358,9 +373,21 @@ static void drawToDc(HDC hdc) {
 }
 
 static bool saveCaptureBmp() {
-    int width = 0, height = 0;
-    HDC memDc = nullptr; HBITMAP dib = nullptr; HGDIOBJ oldObj = nullptr; void* bits = nullptr;
-    if (!renderToMemoryBmp(width, height, memDc, dib, oldObj, bits)) return false;
+    if (!drawingFactory || !window) return false;
+    RECT bounds;
+    if (!GetClientRect(window, &bounds)) return false;
+    const int width = bounds.right - bounds.left;
+    const int height = bounds.bottom - bounds.top;
+    if (width <= 0 || height <= 0 || width > 16384 || height > 16384) return false;
+    const float dpi = (float)GetDpiForWindow(window);
+    dpiScale = dpi > 0.0f ? (dpi / 96.0f) : 1.0f;
+    const DWORD pixelBytes = (DWORD)(width * height * 4);
+    void* bits = HeapAlloc(GetProcessHeap(), 0, pixelBytes);
+    if (!bits) return false;
+    if (!drawWindow(bits, (UINT)width * 4)) {
+        HeapFree(GetProcessHeap(), 0, bits);
+        return false;
+    }
 
     wchar_t path[32768] = {};
     DWORD envLen = GetEnvironmentVariableW(L"VEX_NATIVE_CAPTURE_BMP", path, 32768);
@@ -377,7 +404,6 @@ static bool saveCaptureBmp() {
     }
 
     bool saved = false;
-    const DWORD pixelBytes = (DWORD)(width * height * 4);
     HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE) {
         BITMAPFILEHEADER bfh = {};
@@ -400,9 +426,7 @@ static bool saveCaptureBmp() {
         }
         CloseHandle(file);
     }
-    SelectObject(memDc, oldObj);
-    DeleteObject(dib);
-    DeleteDC(memDc);
+    HeapFree(GetProcessHeap(), 0, bits);
     return saved;
 }
 
@@ -721,6 +745,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         cancelPointerGesture();
         return 0;
     case WM_SIZE:
+        callbacks.cursor_activity(callbacks.context, wparam != SIZE_MINIMIZED && IsWindowVisible(hwnd) && GetFocus() == hwnd);
         if (wparam != SIZE_MINIMIZED && window) {
             RECT bounds;
             if (!GetClientRect(hwnd, &bounds) || bounds.right <= 0 || bounds.bottom <= 0) return 0;
@@ -787,7 +812,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) callbacks.exited(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 5:
-        if (selftestEnabled() && wparam <= 16 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
+        if (selftestEnabled() && wparam <= 17 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 6: {
         uint32_t source = (uint32_t)(wparam & 0xff), operation = (uint32_t)(wparam >> 8);
@@ -857,11 +882,14 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_TIMER:
-        if (wparam == 2) {
+        if (wparam == 3) {
+            KillTimer(hwnd, 3); cursorWakeArmed = false;
+            callbacks.cursor_wake(callbacks.context);
+        } else if (wparam == 2) {
             HRESULT result = renderer.trimTerminalUploadsIfIdle();
             if (FAILED(result)) { rendererFault(result); return 0; }
             if (callbacks.tick) callbacks.tick(callbacks.context);
-        } else {
+        } else if (wparam == 1) {
             renderScheduledFrame();
         }
         return 0;
@@ -872,7 +900,16 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_KEYUP: case WM_SYSKEYUP:
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
         return DefWindowProcW(hwnd, message, wparam, lparam);
-    case WM_KILLFOCUS: cancelPointerGesture(); pendingSurrogate = 0; return 0;
+    case WM_SETFOCUS:
+        callbacks.cursor_activity(callbacks.context, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+        return 0;
+    case WM_SHOWWINDOW:
+        callbacks.cursor_activity(callbacks.context, wparam && !IsIconic(hwnd) && GetFocus() == hwnd);
+        break;
+    case WM_KILLFOCUS:
+        cancelPointerGesture(); pendingSurrogate = 0;
+        callbacks.cursor_activity(callbacks.context, false);
+        return 0;
     case WM_CHAR: case WM_SYSCHAR: {
         uint16_t unit = (uint16_t)wparam;
         if (unit >= 0xd800 && unit <= 0xdbff) { pendingSurrogate = unit; return 0; }
@@ -893,7 +930,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_CLOSE: cancelPointerGesture(); DestroyWindow(hwnd); return 0;
-    case WM_DESTROY: cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); PostQuitMessage(0); return 0;
+    case WM_DESTROY: cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); cursorWakeArmed = false; PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }

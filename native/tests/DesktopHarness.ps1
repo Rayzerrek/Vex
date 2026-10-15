@@ -110,7 +110,7 @@ function Save-NativeScreenshot([IntPtr]$Window, [string]$Path) {
         $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
-function Start-NativeInstance([string]$Arguments = $NativeLaunchArguments, [string]$ExecutablePath = $Executable, [string]$WorkingDirectory = $NativeWorkingDirectory) {
+function Start-NativeInstance([string]$Arguments = $NativeLaunchArguments, [string]$ExecutablePath = $Executable, [string]$WorkingDirectory = $NativeWorkingDirectory, [bool]$BlinkingCursor = $false) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $start = @{ FilePath = $ExecutablePath; WorkingDirectory = $WorkingDirectory; PassThru = $true }
     if ($Arguments.Length -gt 0) { $start.ArgumentList = $Arguments }
@@ -122,7 +122,11 @@ function Start-NativeInstance([string]$Arguments = $NativeLaunchArguments, [stri
         if ($process.HasExited) { throw 'Vex native smoke: process exited before opening its window.' }
     } until ($process.MainWindowHandle -ne [IntPtr]::Zero -or [DateTime]::UtcNow -gt $deadline)
     if ($process.MainWindowHandle -eq [IntPtr]::Zero) { $process.Kill(); throw 'Vex native smoke: window startup timed out.' }
-    return [pscustomobject]@{ Process = $process; Window = $process.MainWindowHandle; ReadyMs = $watch.Elapsed.TotalMilliseconds }
+    $readyMs = $watch.Elapsed.TotalMilliseconds
+    # Steady-cursor fixtures measure output-driven paints, not intentional cursor animation.
+    # Use the production palette action; cursor-specific tests opt into the default blinking mode.
+    if (!$BlinkingCursor) { Invoke-NativeAction $process.MainWindowHandle 17 }
+    return [pscustomobject]@{ Process = $process; Window = $process.MainWindowHandle; ReadyMs = $readyMs }
 }
 function Close-NativeInstance($Process, [IntPtr]$Window) {
     [VexNativeSmoke]::SendWindowMessage($Window, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null

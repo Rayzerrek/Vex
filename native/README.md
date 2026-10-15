@@ -235,7 +235,13 @@ tabs keep consuming VT output but do not materialize/draw their grids until
 selected, nor schedule active-window paints just for hidden output. Dirty snapshots read all rows because Ghostty can under-report dirty
 rows after scroll shifts. Frame requests coalesce with a deadline check that
 prevents continuous posted pipe output from starving WM_TIMER/WM_PAINT. There
-is no repeating idle timer.
+is no continuously running render loop. A one-shot 530 ms cursor wake exists
+only for the focused, visible, running pane when VT requests blinking. Hidden
+or steady cursors, overlays, inactive windows and minimization stop it; input
+reveals the cursor immediately. `Cursor: Toggle Blinking` in the command palette
+disables animation for the current app lifetime without changing VT modes or
+writing the WPF profile. The existing metadata/idle-upload maintenance timer
+does not repaint unless chrome changes.
 
 Directory reports use the synchronous native PWD callback: each report is parsed
 before a later one in the same read can replace it. There is no per-output-block
@@ -305,6 +311,7 @@ zig build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeRenderer.ps1 -RequireNativeGlyphAtlas
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeIcons.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeProcessExit.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCursorBlink.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeDividers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
@@ -403,7 +410,7 @@ final divider styling, shell icons,
 status tooltips/origin routing,
 hyperlinks/path completion,
 IME/click-to-move-cursor/extended key protocols, custom glyphs/color
-emoji, true block cursor/blink, accessibility and packaging. Process-exit closing
+emoji, full caret visual parity, accessibility and packaging. Process-exit closing
 and running-program close confirmations are implemented; native failure injection
 and broader physical teardown-race testing remain pending.
 Native currently does not read or overwrite the production WPF profile.

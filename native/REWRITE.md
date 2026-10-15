@@ -56,7 +56,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Workspace shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
 | Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; automatic pane/tab exit close, final-tab retention, captured-gesture cancellation and stable-ID close confirmations implemented; Win32 failure injection pending |
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache, ConPTY-stripped DCS filter (`+q` XTGETTCAP / `$qm` DECRQSS), disabled resize scrollback pull, DEC 2048 in-band resize reports (`\x1b[48;...t`), DEC 2026 synchronized output frame batching (100 ms starvation cap), default bar cursor and ConPTY-compatible key encoder options implemented |
-| Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | D3D12 queue/fences + DXGI flip-discard presentation, native instanced cell drawing with a shared bounded R8 glyph atlas, Direct2D/DirectWrite UI via D3D11On12 (see `RENDERER.md`), themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented; pixel fixtures, custom box/Powerline glyphs, color emoji and blink pending |
+| Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | D3D12 queue/fences + DXGI flip-discard presentation, native instanced cell drawing with a shared bounded R8 glyph atlas, Direct2D/DirectWrite UI via D3D11On12 (see `RENDERER.md`), themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented, plus VT-aware cursor blinking with conditional one-shot wakes; full pixel/caret comparisons, custom box/Powerline glyphs and color emoji pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys, `Ctrl+Backspace`, primary-screen viewport scroll shortcuts (`Shift+PageUp/PageDown`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+Home/End`), mouse selection (cell, word double-click, line triple-click, captured outside-pane drag clamping, copy-on-select), keyboard selection (`Shift+Left/Right/Home/End`, `Ctrl+Shift+Left/Right/Home/End`), selection highlight rendering, `Ctrl+C` (smart copy when selected) / `Ctrl+Shift+C` copy, `Ctrl+Shift+X` cut and `Backspace` cursor-end selection deletion, `Ctrl+Shift+V` / `Shift+Insert` / right-click paste with newline normalization and DEC 2004 bracketed paste, wheel scroll, TUI mouse reporting (`DEC 1000/1002/1003` + SGR/SGR-pixels/UTF-8/urxvt encoding with `Shift` override), and write-only OSC 52 / OSC 1337 clipboard sequences implemented; IME and click-to-move-cursor pending |
 | Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash, absolute custom executables and project/default/explicit-distribution WSL/Linux programs; cmd/PS/Nu integration implemented; profile menu, per-pane overrides and persistence pending |
 | Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local/selected-distribution Linux OSC 7 ownership/inheritance and WSL UNC project startup implemented; cross-distribution/Windows-shell mismatches reject; project UI and Linux process metadata pending |
@@ -323,6 +323,28 @@ These are behavioral contracts, not opportunities to redesign the app.
   establishing the cause. Synthetic gestures still require a quiet desktop;
   native allocation-failure injection and physical teardown-race testing remain
   pending.
+
+## Cursor blink checkpoint
+
+- The real Ghostty cursor-blink flag follows DECSCUSR/DEC 12 independently of
+  DEC 25 visibility. A value-only pane/cursor key and monotonic 530 ms scheduler
+  preserve phase across paints, reveal on input/position/style/focus change,
+  and skip missed periods without repaint catch-up loops or snapshot ownership.
+- Only the selected, visible, running pane can arm the one-shot Win32 timer.
+  Steady/hidden/off-viewport cursors, inactive windows, minimization, overlays,
+  tab rename and process exit stop it. Stale timer messages cannot resurrect it.
+  The palette exposes an app-lifetime blink toggle; profile persistence remains
+  pending and the WPF profile is untouched.
+- The desktop harness explicitly selects steady cursors through that production
+  action for quiescent rendering/benchmark fixtures. This is not a selftest-only
+  shortcut in production blink behavior. Cursor tests opt into the real default.
+- Live ConPTY checks cover steady/reveal, bar/block cursor-cell GPU differences,
+  cached snapshot generation, input reveal, the actual palette command,
+  focus/minimize/restore, inactive-pane/hidden-tab isolation and exited terminals.
+  Focus messages are synthetic, not physical keyboard/multi-monitor evidence.
+  Each eligible blink still repaints the scene; no CPU/memory/latency improvement
+  is claimed. Existing upload trimming requires two seconds without presentation,
+  so active blinking can postpone it until the window becomes inactive.
 
 ## Native D3D12 terminal draw checkpoint
 
