@@ -29,6 +29,7 @@ public static class VexNativeSmoke {
     }
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
 }
 '@
 function Send-NativeText([IntPtr]$Window, [string]$Text) {
@@ -80,7 +81,26 @@ function Invoke-NativeAction([IntPtr]$Window, [int]$Action, [int]$Index = 0) {
 }
 function Save-NativeScreenshot([IntPtr]$Window, [string]$Path) {
     [VexNativeSmoke]::SetForegroundWindow($Window) | Out-Null
-    Start-Sleep -Milliseconds 300
+    Start-Sleep -Milliseconds 150
+    $dir = Split-Path -Parent $Path
+    if ($dir) { New-Item -ItemType Directory -Force $dir | Out-Null }
+    $bmpPath = Join-Path $dir '.capture.bmp'
+    Remove-Item $bmpPath -ErrorAction SilentlyContinue
+    $captured = [VexNativeSmoke]::SendWindowMessage($Window, 0x8007, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64()
+    if ($captured -eq 1 -and (Test-Path $bmpPath)) {
+        $bytes = [IO.File]::ReadAllBytes($bmpPath)
+        $stream = New-Object IO.MemoryStream(,$bytes)
+        try {
+            $img = [Drawing.Image]::FromStream($stream)
+            try {
+                $img.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
+            } finally { $img.Dispose() }
+        } finally {
+            $stream.Dispose()
+            Remove-Item $bmpPath -ErrorAction SilentlyContinue
+        }
+        return
+    }
     $bounds = New-Object VexNativeSmoke+Rect
     if (![VexNativeSmoke]::GetWindowRect($Window, [ref]$bounds)) { throw 'Vex native smoke: screenshot bounds unavailable.' }
     $bitmap = New-Object Drawing.Bitmap ($bounds.Right - $bounds.Left), ($bounds.Bottom - $bounds.Top)

@@ -8,7 +8,7 @@ $NativeWorkingDirectory = Split-Path $PSScriptRoot -Parent
 $NativeLaunchArguments = '--program "' + $env:WINDIR + '\System32\cmd.exe" --arguments /d'
 
 function Get-NativeRootHandleX([IntPtr]$Window) {
-    return 6 + ((Get-NativeSurface $Window).Width - 18) * (Get-NativeProbe $Window 40) / 1000.0 + 3
+    return ((Get-NativeSurface $Window).Width - 6) * (Get-NativeProbe $Window 40) / 1000.0 + 3
 }
 function Start-NativeDividerDrag([IntPtr]$Window, [double]$X, [double]$Y) {
     [VexNativeSmoke]::SetForegroundWindow($Window) | Out-Null
@@ -90,7 +90,7 @@ try {
         Send-NativePointer $window 0x202 $outside 150
         Assert-NativeDragEnded $window
         $ratio = (Get-NativeProbe $window 40) / 1000.0
-        $available = (Get-NativeSurface $window).Width - 18
+        $available = (Get-NativeSurface $window).Width - 6
         if ($ratio -lt 0.099 -or $ratio -gt 0.901 -or $available * [Math]::Min($ratio, 1 - $ratio) -lt 99) { throw 'Vex native dividers: outside drag violated ratio/minimum limits.' }
     }
     # Move back to the center before adding a nested down split.
@@ -103,7 +103,7 @@ try {
     $rows = Get-NativeProbe $window 44
     $surface = Get-NativeSurface $window
     $nestedX = (Get-NativeRootHandleX $window) + 100
-    $nestedY = 44 + ($surface.Height - 56) / 2 + 3
+    $nestedY = 44 + ($surface.Height - 50) / 2 + 3
     Start-NativeDividerDrag $window $nestedX $nestedY
     Send-NativePointer $window 0x200 $nestedX ($nestedY + 60) 1
     $resizedRows = Get-NativeProbe $window 44
