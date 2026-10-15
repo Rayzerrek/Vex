@@ -139,13 +139,24 @@ try {
     if ((Get-NativeProbe $window 55) -le 0) { throw 'Vex native tabs: path completion returned zero matches.' }
     Invoke-NativeAction $window 12 99
     Assert-NativeProbe $window 53 0 'path completion overlay closes cleanly'
+    Invoke-NativeAction $window 6 1
+    Send-NativeStatus $window 'state=working:app=build'
+    Assert-NativeProbe $window 31 2 'tab 1 reports working status before close request'
+    Invoke-NativeAction $window 16 99
+    Assert-NativeProbe $window 53 5 'close confirmation modal opens for running session'
+    Assert-NativeProbe $window 10 8 'tab remains open while close confirmation modal is active'
+    Invoke-NativeAction $window 16 98
+    Assert-NativeProbe $window 53 0 'close confirmation modal cancels cleanly'
+    Assert-NativeProbe $window 10 8 'cancelled close preserves tab count'
+    Send-NativeStatus $window 'state=done:app=build'
+    Invoke-NativeAction $window 6 0
     Send-NativeText $window ('@set VEX_FLOOD=VEX_NATIVE_FLOOD_' + "`r" + '@for /l %i in (1,1,1000000) do @echo %VEX_FLOOD%OK' + "`r")
     Assert-NativeProbe $window 1 1 'flooding output reaches the real viewport before captured shutdown'
     Assert-NativeTabGesture (Invoke-NativeTabGesture $window 0 3000 20 7) $lastId
     if (!$process.WaitForExit(5000) -or $process.ExitCode -ne 0) { throw 'Vex native tabs: flooding captured shutdown failed.' }
     $process = $null
     New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
-    @{ result = 'PASS'; checks = 'atomic Win32 replay, threshold, selection, both move directions, stable tab/pane/PTY/viewport/status owners, outside drop, cancellation/DPI, source close, eight tabs, dark/light themes, overlays, font zoom, path completion and flooding captured shutdown' } | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $OutputDirectory 'tabs.json')
+    @{ result = 'PASS'; checks = 'atomic Win32 replay, threshold, selection, both move directions, stable tab/pane/PTY/viewport/status owners, outside drop, cancellation/DPI, source close, eight tabs, dark/light themes, overlays, font zoom, path completion, close confirmation and flooding captured shutdown' } | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $OutputDirectory 'tabs.json')
     Write-Host 'Vex native tabs: PASS'
 } finally {
     if ($process -and !$process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null }

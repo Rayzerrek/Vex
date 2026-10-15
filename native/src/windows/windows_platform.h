@@ -43,6 +43,15 @@ typedef struct {
     const uint8_t* name; size_t name_length;
     bool is_directory, selected, hovered;
 } VexPathCompletionItem;
+typedef struct {
+    const uint8_t* title; size_t title_length;
+    const uint8_t* message; size_t message_length;
+    const uint8_t* confirm_label; size_t confirm_label_length;
+    VexAppIcon icon;
+    uint8_t kind;
+    uint8_t selected_button;
+    uint8_t hovered_button;
+} VexCloseConfirmModal;
 /* Borrowed UTF-16 strings exclude sentinel lengths; environment includes its final double NUL. */
 typedef struct {
     const uint16_t* program; size_t program_length;
@@ -117,6 +126,7 @@ void vex_draw_theme_picker(bool dark_mode, const VexThemeCard* cards, size_t car
 void vex_draw_command_palette(const uint8_t* query, size_t query_length, const VexCommandItem* items, size_t item_count);
 void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t card_count);
 void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, bool scan_error);
+void vex_draw_close_confirm(VexCloseConfirmModal modal);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);
 void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color);
 /* Loads only the DLL beside the executable, never a library from PATH/CWD. */

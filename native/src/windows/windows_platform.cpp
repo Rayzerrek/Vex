@@ -624,7 +624,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             float local = x - 140 - index * (tabWidthDip + 4);
             if (index >= tabStripCount || local >= tabWidthDip) return 0;
             bool close = message == WM_MBUTTONDOWN || local > tabWidthDip - 22;
-            if (close) callbacks.action(callbacks.context, 7, index);
+            if (close) callbacks.action(callbacks.context, 16, index);
             else beginPointerGesture(hwnd, x, y);
         } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 32) callbacks.action(callbacks.context, 0, 0);
         else if (y >= 44) {
@@ -769,7 +769,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) callbacks.exited(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 5:
-        if (selftestEnabled() && wparam <= 15 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
+        if (selftestEnabled() && wparam <= 16 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 6: {
         uint32_t source = (uint32_t)(wparam & 0xff), operation = (uint32_t)(wparam >> 8);
@@ -1989,6 +1989,82 @@ extern "C" void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* dire
         }
     }
     target->PopAxisAlignedClip();
+}
+extern "C" void vex_draw_close_confirm(VexCloseConfirmModal modal) {
+    if (!target || !brush) return;
+    const D2D1_SIZE_F win = target->GetSize();
+    const float mw = fminf(440.0f, fmaxf(300.0f, win.width - 48.0f));
+    const float mh = 186.0f;
+    const float mx = roundf((win.width - mw) * 0.5f);
+    const float my = roundf(fmaxf(56.0f, (win.height - mh) * 0.44f));
+    drawOverlayBackdropAndCard(mx, my, mw, mh);
+
+    const uint32_t dangerColor = (modal.kind == 2)
+        ? (chromePalette.is_dark ? 0xf59e0b : 0xd97706)
+        : (chromePalette.is_dark ? 0xef4444 : 0xdc2626);
+
+    // Top accent bar inside the modal card
+    brush->SetColor(rgb(dangerColor));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx + 14.0f, my + 1.0f, mx + mw - 14.0f, my + 3.5f), 1.5f, 1.5f), brush);
+
+    // Icon badge
+    const D2D1_ROUNDED_RECT iconBox = D2D1::RoundedRect(D2D1::RectF(mx + 20.0f, my + 18.0f, mx + 48.0f, my + 46.0f), 7.0f, 7.0f);
+    brush->SetColor(D2D1::ColorF(dangerColor, chromePalette.is_dark ? 0.18f : 0.12f));
+    target->FillRoundedRectangle(iconBox, brush);
+    brush->SetColor(D2D1::ColorF(dangerColor, 0.45f));
+    target->DrawRoundedRectangle(iconBox, brush, 1.0f);
+
+    VexAppIcon icon = modal.icon;
+    if (icon.kind == 0) {
+        icon.kind = 1;
+        icon.glyph = 1;
+        icon.color_rgb = dangerColor;
+    }
+    drawCachedAppIcon(icon, mx + 25.0f, my + 23.0f, 18.0f);
+
+    if (modal.title && modal.title_length > 0) {
+        labelUtf8WithFont(chromeFont, modal.title, modal.title_length, mx + 58.0f, my + 23.0f, mw - 78.0f, chromePalette.text_primary);
+    }
+
+    if (modal.message && modal.message_length > 0) {
+        wchar_t wide[512];
+        int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(modal.message), (int)modal.message_length, wide, 511);
+        if (count > 0 && chromeFont) {
+            brush->SetColor(rgb(chromePalette.text_muted));
+            target->DrawText(wide, (UINT32)count, chromeFont, D2D1::RectF(mx + 22.0f, my + 58.0f, mx + mw - 22.0f, my + 124.0f), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+    }
+
+    labelWithFont(badgeFont, L"Esc: Cancel \x2022 Enter: Confirm", mx + 22.0f, my + mh - 36.0f, 165.0f, chromePalette.text_muted);
+
+    const float btnY = my + mh - 46.0f;
+    const float btnH = 32.0f;
+    const float confirmW = 128.0f;
+    const float confirmX = mx + mw - 20.0f - confirmW;
+    const float cancelW = 88.0f;
+    const float cancelX = confirmX - 10.0f - cancelW;
+
+    const bool cancelSelected = (modal.selected_button == 0);
+    const bool cancelHovered = (modal.hovered_button == 1);
+    const D2D1_ROUNDED_RECT cancelRect = D2D1::RoundedRect(D2D1::RectF(cancelX, btnY, cancelX + cancelW, btnY + btnH), 6.0f, 6.0f);
+    brush->SetColor(rgb((cancelSelected || cancelHovered) ? chromePalette.active_tab_bg : chromePalette.pane_bg));
+    target->FillRoundedRectangle(cancelRect, brush);
+    brush->SetColor(rgb(cancelSelected ? chromePalette.accent : chromePalette.border));
+    target->DrawRoundedRectangle(cancelRect, brush, cancelSelected ? 1.5f : 1.0f);
+    label(L"Cancel", cancelX + 22.0f, btnY + 7.0f, cancelW - 24.0f, chromePalette.text_primary);
+
+    const bool confirmSelected = (modal.selected_button == 1);
+    const bool confirmHovered = (modal.hovered_button == 2);
+    const D2D1_ROUNDED_RECT confirmRect = D2D1::RoundedRect(D2D1::RectF(confirmX, btnY, confirmX + confirmW, btnY + btnH), 6.0f, 6.0f);
+    brush->SetColor(D2D1::ColorF(dangerColor, (confirmSelected || confirmHovered) ? 0.92f : 0.78f));
+    target->FillRoundedRectangle(confirmRect, brush);
+    brush->SetColor(rgb(confirmSelected ? 0xffffff : dangerColor));
+    target->DrawRoundedRectangle(confirmRect, brush, confirmSelected ? 1.5f : 1.0f);
+    if (modal.confirm_label && modal.confirm_label_length > 0) {
+        const float textW = (float)modal.confirm_label_length * 6.8f;
+        const float textX = confirmX + fmaxf(12.0f, (confirmW - textW) * 0.5f);
+        labelUtf8WithFont(chromeFont, modal.confirm_label, modal.confirm_label_length, textX, btnY + 7.0f, confirmW - 16.0f, 0xffffff);
+    }
 }
 static float snapDip(float v) {
     return dpiScale > 0.0f ? roundf(v * dpiScale) / dpiScale : roundf(v);
