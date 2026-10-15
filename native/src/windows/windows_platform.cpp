@@ -31,6 +31,7 @@ struct IconCacheEntry {
 static IconCacheEntry iconCache[64];
 static size_t iconCacheCount;
 static size_t iconCacheClock;
+static uint64_t activeTabIconKey, focusedPaneIconKey;
 static float cellWidth, cellHeight, clientWidth, clientHeight, gridLeft, gridTop;
 static float terminalFontSize = 14.0f;
 static float dpiScale = 1.0f;
@@ -281,6 +282,7 @@ static void drawCaptionButtons() {
 }
 
 static void renderScene() {
+    activeTabIconKey = 0; focusedPaneIconKey = 0;
     target->Clear(rgb(chromePalette.pane_bg));
     rectangle(0.0f, 0.0f, clientWidth, 44.0f, chromePalette.titlebar_bg);
     rectangle(0.0f, 43.0f, clientWidth, 1.0f, chromePalette.border);
@@ -846,6 +848,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 15: return (LRESULT)renderer.terminal.atlasResets;
             case 16: return TerminalRenderer::atlasSize * TerminalRenderer::atlasSize;
             case 17: return (LRESULT)renderer.terminal.uploadTrims;
+            case 30: return (LRESULT)activeTabIconKey;
+            case 31: return (LRESULT)focusedPaneIconKey;
             case 20: case 21: {
                 UINT64 bytes = 0;
                 return SUCCEEDED(renderer.videoMemoryUsage(wparam == 20, bytes)) ? (LRESULT)bytes : -1;
@@ -1514,6 +1518,16 @@ static void drawCachedAppIcon(VexAppIcon icon, float x, float y, float sizeDip) 
     drawAppIconContent(target, brush, icon, x, y, sizeDip);
 }
 
+static uint64_t drawAppIconTile(VexAppIcon icon, float x, float y) {
+    constexpr float glyphSize = 12.0f;
+    brush->SetColor(rgb(chromePalette.pane_header_bg));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + 18.0f, y + 18.0f), 4.0f, 4.0f), brush);
+    brush->SetColor(rgb(chromePalette.border));
+    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, y + 0.5f, x + 17.5f, y + 17.5f), 3.5f, 3.5f), brush, 1.0f);
+    drawCachedAppIcon(icon, x + 3.0f, y + 3.0f, glyphSize);
+    return computeIconCacheKey(icon, (uint32_t)glyphSize);
+}
+
 static void drawProgramStatus(VexProgramStatus status, float x, float y, float width, bool iconOnly) {
     if (status.state < 2 || status.state > 5) return;
     const wchar_t* icon = L"\x25CC";
@@ -1622,11 +1636,8 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool e
                 brush->SetColor(rgb(tabBg));
                 target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(tx - 1.0f, ty - 1.0f, tx + 19.0f, ty + 19.0f), 4.5f, 4.5f), brush);
             }
-            brush->SetColor(rgb(chromePalette.pane_header_bg));
-            target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(tx, ty, tx + 18.0f, ty + 18.0f), 4.0f, 4.0f), brush);
-            brush->SetColor(rgb(chromePalette.border));
-            target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(tx + 0.5f, ty + 0.5f, tx + 17.5f, ty + 17.5f), 3.5f, 3.5f), brush, 1.0f);
-            drawCachedAppIcon(icons[i], tx + 3.0f, ty + 3.0f, 12.0f);
+            const uint64_t iconKey = drawAppIconTile(icons[i], tx, ty);
+            if (active && i == 0) activeTabIconKey = iconKey;
         }
         inset = 7.0f + 18.0f + (float)(visible - 1) * 10.0f + 5.0f;
         if (icon_count > visible && width >= 132.0f) {
@@ -1756,14 +1767,9 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
     if (statusWidth > 0) drawProgramStatus(status, bounds.x + remainingWidth - statusWidth - 8, bounds.y + 4, statusWidth, remainingWidth < 260);
     float titleInset = 10.0f;
     if (bounds.width >= 90.0f && bounds.height >= 28.0f) {
-        VexAppIcon headerIcon = icon;
-        if (headerIcon.kind == 0) {
-            headerIcon.kind = 1;
-            headerIcon.glyph = 1;
-            headerIcon.color_rgb = focused ? chromePalette.accent : chromePalette.text_muted;
-        }
-        drawCachedAppIcon(headerIcon, bounds.x + 8.0f, bounds.y + 7.0f, 14.0f);
-        titleInset = 26.0f;
+        const uint64_t iconKey = drawAppIconTile(icon, bounds.x + 8.0f, bounds.y + 4.0f);
+        if (focused) focusedPaneIconKey = iconKey;
+        titleInset = 30.0f;
     }
     labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 5.0f, fmaxf(0, remainingWidth - statusWidth - titleInset - 8), focused ? chromePalette.text_primary : chromePalette.text_muted);
     gridLeft = bounds.x + 6; gridTop = bounds.y + 30;
