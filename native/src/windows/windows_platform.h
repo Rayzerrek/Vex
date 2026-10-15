@@ -39,6 +39,10 @@ typedef struct {
     VexProgramStatus status;
     bool active, selected, hovered;
 } VexTabPeekCard;
+typedef struct {
+    const uint8_t* name; size_t name_length;
+    bool is_directory, selected, hovered;
+} VexPathCompletionItem;
 /* Borrowed UTF-16 strings exclude sentinel lengths; environment includes its final double NUL. */
 typedef struct {
     const uint16_t* program; size_t program_length;
@@ -77,6 +81,8 @@ void vex_window_defer_synchronized(void);
 void vex_window_close(void);
 void vex_window_paste_clipboard(void);
 void vex_window_set_chrome_palette(VexChromePalette palette);
+int vex_window_set_font_size(float font_size);
+float vex_window_font_size(void);
 uint64_t vex_window_paint_count(void);
 /* Window thread only; releasing capture may synchronously deliver WM_CAPTURECHANGED. */
 int vex_window_cancel_pointer_capture(void);
@@ -110,6 +116,7 @@ void vex_draw_split_preview(VexPaneRect bounds);
 void vex_draw_theme_picker(bool dark_mode, const VexThemeCard* cards, size_t card_count);
 void vex_draw_command_palette(const uint8_t* query, size_t query_length, const VexCommandItem* items, size_t item_count);
 void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t card_count);
+void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, bool scan_error);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);
 void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color);
 /* Loads only the DLL beside the executable, never a library from PATH/CWD. */

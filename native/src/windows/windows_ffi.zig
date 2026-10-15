@@ -13,7 +13,7 @@ pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -184,7 +184,7 @@ pub const PtyOwner = struct {
     }
 };
 
-/// Exact implemented workspace chords; plain Ctrl keys remain terminal input except Ctrl+Tab.
+/// Exact implemented workspace chords; plain Ctrl keys remain terminal input except Ctrl+Tab and font zoom.
 pub fn workspaceShortcut(key: u32, modifiers: u32) ?WorkspaceAction {
     if (modifiers == 3) return switch (key) {
         'T' => .new_tab,
@@ -193,11 +193,20 @@ pub fn workspaceShortcut(key: u32, modifiers: u32) ?WorkspaceAction {
         'W' => .close_active,
         'P' => .command_palette,
         'M' => .theme_picker,
+        'F' => .path_completion,
         0x20 => .tab_peek,
         9 => .previous_tab,
+        0xBB, 0x6B => .zoom_in,
+        0xBD, 0x6D => .zoom_out,
         else => null,
     };
-    if (modifiers == 2 and key == 9) return .next_tab;
+    if (modifiers == 2) return switch (key) {
+        9 => .next_tab,
+        0xBB, 0x6B => .zoom_in,
+        0xBD, 0x6D => .zoom_out,
+        '0', 0x60 => .zoom_reset,
+        else => null,
+    };
     return null;
 }
 
@@ -467,6 +476,27 @@ pub fn drawTabPeek(cards: []const c.VexTabPeekCard) void {
     if (cards.len == 0) return;
     c.vex_draw_tab_peek(cards.ptr, cards.len);
 }
+/// Draws the cursor-anchored inline path completion popup.
+pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: []const u8, items: []const c.VexPathCompletionItem, scan_error: bool) void {
+    c.vex_draw_path_completion(
+        .{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height },
+        if (dir_text.len == 0) null else dir_text.ptr,
+        dir_text.len,
+        if (query.len == 0) null else query.ptr,
+        query.len,
+        if (items.len == 0) null else items.ptr,
+        items.len,
+        scan_error,
+    );
+}
+/// Dynamically updates the terminal font size in DIPs [9.0, 32.0] and triggers a grid layout resize.
+pub fn setFontSize(size: f32) !void {
+    if (c.vex_window_set_font_size(size) != 0) return error.InvalidFontSize;
+}
+/// Returns the active terminal font size in DIPs.
+pub fn fontSize() f32 {
+    return c.vex_window_font_size();
+}
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
 pub fn beginPane(bounds: panes.PaneRect, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary) void {
     const action_code: u8 = if (hovered_action) |action| @intFromEnum(action) else 0;
@@ -653,10 +683,15 @@ test "workspace shortcuts exactly match implemented WPF chords without stealing 
     try std.testing.expectEqual(@as(?WorkspaceAction, .close_active), workspaceShortcut('W', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .command_palette), workspaceShortcut('P', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .theme_picker), workspaceShortcut('M', 3));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .path_completion), workspaceShortcut('F', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .tab_peek), workspaceShortcut(0x20, 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .next_tab), workspaceShortcut(9, 2));
     try std.testing.expectEqual(@as(?WorkspaceAction, .previous_tab), workspaceShortcut(9, 3));
-    for ([_]u32{ 'T', 'R', 'D', 'W', 'C', 'S', 'P', 'M' }) |key| try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, 2));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .zoom_in), workspaceShortcut(0xBB, 2));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .zoom_in), workspaceShortcut(0xBB, 3));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .zoom_out), workspaceShortcut(0xBD, 2));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .zoom_reset), workspaceShortcut('0', 2));
+    for ([_]u32{ 'T', 'R', 'D', 'W', 'C', 'S', 'P', 'M', 'F' }) |key| try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, 2));
     try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut('T', 7));
 }
 

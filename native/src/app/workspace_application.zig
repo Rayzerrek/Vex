@@ -15,6 +15,7 @@ const tab_strip = @import("../workspace/tab_strip.zig");
 const app_icon = @import("../terminal/app_icon.zig");
 const url_detector = @import("../terminal/url_detector.zig");
 const terminal_theme = @import("../workspace/terminal_theme.zig");
+const path_completion = @import("../terminal/path_completion.zig");
 
 const HoveredLink = struct {
     pane_id: panes.PaneId,
@@ -82,12 +83,17 @@ const OverlayState = union(enum) {
     theme_picker: ThemePickerOverlay,
     command_palette: CommandPaletteOverlay,
     tab_peek: TabPeekOverlay,
+    path_completion: struct { pane_id: panes.PaneId },
 };
 
 const CommandId = enum {
+    open_path_completion,
     open_theme_picker,
     toggle_dark_light,
     open_tab_peek,
+    zoom_in,
+    zoom_out,
+    zoom_reset,
     new_tab,
     split_right,
     split_down,
@@ -105,9 +111,13 @@ const CommandDef = struct {
 };
 
 const command_defs = [_]CommandDef{
+    .{ .id = .open_path_completion, .title = "Path Completion: Insert File or Folder Path...", .shortcut = "Ctrl+Shift+F" },
     .{ .id = .open_theme_picker, .title = "Color Theme: Open Theme Studio...", .shortcut = "Ctrl+Shift+M" },
     .{ .id = .toggle_dark_light, .title = "Color Theme: Toggle Dark / Light Mode", .shortcut = "Tab in Studio" },
     .{ .id = .open_tab_peek, .title = "Tab Overview: Peek All Tabs", .shortcut = "Ctrl+Shift+Space" },
+    .{ .id = .zoom_in, .title = "Font Size: Zoom In", .shortcut = "Ctrl++" },
+    .{ .id = .zoom_out, .title = "Font Size: Zoom Out", .shortcut = "Ctrl+-" },
+    .{ .id = .zoom_reset, .title = "Font Size: Reset Zoom", .shortcut = "Ctrl+0" },
     .{ .id = .new_tab, .title = "Workspace: New Tab", .shortcut = "Ctrl+Shift+T" },
     .{ .id = .split_right, .title = "Pane: Split Right", .shortcut = "Ctrl+Shift+R" },
     .{ .id = .split_down, .title = "Pane: Split Down", .shortcut = "Ctrl+Shift+D" },
@@ -134,6 +144,7 @@ const WorkspaceApplication = struct {
     pointer_drag: PointerDrag = .none,
     editing_tab: ?TabRename = null,
     overlay: OverlayState = .none,
+    path_completion: path_completion.PathCompletion,
     theme_index: usize = terminal_theme.default_dark_index,
     last_dark_theme: usize = terminal_theme.default_dark_index,
     last_light_theme: usize = terminal_theme.default_light_index,
@@ -175,7 +186,14 @@ const WorkspaceApplication = struct {
         const branch = readGitBranch(parsed.bytes, &branch_buf);
         try platform.setProjectInfo(projectDisplayName(parsed.bytes), branch);
         platform.setChromePalette(terminal_theme.themes[terminal_theme.default_dark_index].chromePalette());
-        return .{ .allocator = allocator, .api = api, .project_directory = parsed, .machine_name = machine_name, .launch = launch };
+        return .{
+            .allocator = allocator,
+            .api = api,
+            .project_directory = parsed,
+            .machine_name = machine_name,
+            .launch = launch,
+            .path_completion = path_completion.PathCompletion.init(allocator),
+        };
     }
     fn deinit(self: *WorkspaceApplication) void {
         // Window callbacks have stopped before this runs. Native worker teardown precedes VT free.
@@ -183,6 +201,7 @@ const WorkspaceApplication = struct {
         self.sessions.deinit(self.allocator);
         if (self.model) |*model| model.deinit();
         self.placements.deinit(self.allocator);
+        self.path_completion.deinit();
         self.allocator.free(self.project_directory.bytes);
         self.allocator.free(self.machine_name);
         self.launch.deinit();
@@ -314,6 +333,9 @@ const WorkspaceApplication = struct {
         }
         if (self.hovered_link) |hl| {
             if (hl.pane_id == id) self.hovered_link = null;
+        }
+        if (self.overlay == .path_completion and self.overlay.path_completion.pane_id == id) {
+            self.overlay = .none;
         }
         for (self.sessions.items, 0..) |session, index| if (session.id == id) {
             _ = self.sessions.swapRemove(index);
@@ -548,7 +570,102 @@ const WorkspaceApplication = struct {
                 }
                 platform.drawTabPeek(cards[0..visible]);
             },
+            .path_completion => |pc| {
+                const popup_bounds = (try self.pathCompletionPopupBounds(pc.pane_id)) orelse return;
+                var items: [8]platform.c.VexPathCompletionItem = undefined;
+                const total = self.path_completion.matches.items.len;
+                const start = @min(self.path_completion.first_visible, total);
+                const visible = @min(total - start, items.len);
+                for (0..visible) |i| {
+                    const m = self.path_completion.matches.items[start + i];
+                    const entry = self.path_completion.entries.items[m.entry_index];
+                    items[i] = .{
+                        .name = if (entry.name.len == 0) null else entry.name.ptr,
+                        .name_length = entry.name.len,
+                        .is_directory = entry.is_directory,
+                        .selected = (start + i) == self.path_completion.selected_index,
+                        .hovered = if (self.path_completion.hovered_index) |hi| hi == (start + i) else false,
+                    };
+                }
+                platform.drawPathCompletion(
+                    popup_bounds,
+                    self.path_completion.directory,
+                    self.path_completion.query(),
+                    items[0..visible],
+                    self.path_completion.scan_error,
+                );
+            },
         }
+    }
+    fn pathCompletionPopupBounds(self: *WorkspaceApplication, pane_id: panes.PaneId) !?panes.PaneRect {
+        const metrics = self.metrics orelse return null;
+        const placement = self.findPlacement(pane_id) orelse return null;
+        const session = self.findSession(pane_id) orelse return null;
+        const frame = try session.terminal.readFrame();
+        const total = self.path_completion.matches.items.len;
+        const start = @min(self.path_completion.first_visible, total);
+        const visible = @min(total - start, 8);
+        const mw = @min(@as(f32, 420.0), @max(@as(f32, 260.0), metrics.width - 24.0));
+        const mh = 56.0 + @as(f32, @floatFromInt(@max(visible, 1))) * 26.0 + 8.0;
+        const cursor_col: f32 = if (frame.cursor.visible and frame.cursor.column < frame.columns) @floatFromInt(frame.cursor.column) else 0.0;
+        const cursor_row: f32 = if (frame.cursor.visible and frame.cursor.row < frame.rows) @floatFromInt(frame.cursor.row) else 0.0;
+        const anchor_x = placement.bounds.x + 6.0 + cursor_col * metrics.cell_width;
+        const cursor_top = placement.bounds.y + 30.0 + cursor_row * metrics.cell_height;
+        const cursor_bottom = cursor_top + metrics.cell_height;
+        const mx = @round(std.math.clamp(anchor_x, 8.0, @max(8.0, metrics.width - mw - 8.0)));
+        const my_below = cursor_bottom + 4.0;
+        const my = @round(if (my_below + mh > metrics.height - 8.0 and cursor_top - mh - 4.0 >= 46.0)
+            cursor_top - mh - 4.0
+        else
+            std.math.clamp(my_below, 46.0, @max(46.0, metrics.height - mh - 8.0)));
+        return .{ .x = mx, .y = my, .width = mw, .height = mh };
+    }
+    fn openPathCompletion(self: *WorkspaceApplication) !void {
+        self.commitTabRename();
+        const model = if (self.model) |*model| model else return;
+        const pane_id = model.activeTab().active_pane;
+        const session = self.findSession(pane_id) orelse return;
+        if (session.state != .running) return;
+        var row_buf: [1024]u8 = undefined;
+        const dir = if (session.directory.reported) |rep|
+            rep
+        else blk: {
+            const frame = try session.terminal.readFrame();
+            const line = extractCursorLine(frame, &row_buf);
+            if (path_completion.readPromptDirectory(line)) |prompt_dir| {
+                break :blk prompt_dir;
+            }
+            const cur = session.directory.current().bytes;
+            break :blk if (cur.len > 0) cur else self.project_directory.bytes;
+        };
+        try self.path_completion.openDirectory(dir, "");
+        self.overlay = .{ .path_completion = .{ .pane_id = pane_id } };
+        platform.invalidateWindow();
+    }
+    fn insertSelectedPathCompletion(self: *WorkspaceApplication, pane_id: panes.PaneId, raw: bool) !void {
+        const session = self.findSession(pane_id) orelse {
+            self.overlay = .none;
+            platform.invalidateWindow();
+            return;
+        };
+        const full_path = try self.path_completion.selectedFullPathAlloc(self.allocator);
+        defer if (full_path) |fp| self.allocator.free(fp);
+        self.overlay = .none;
+        platform.invalidateWindow();
+        if (full_path) |fp| {
+            const quote_kind = path_completion.ShellQuoteKind.fromProgram(self.launch.program);
+            const formatted = try path_completion.formatPathAlloc(self.allocator, fp, quote_kind, raw);
+            defer self.allocator.free(formatted);
+            if (session.state == .running and formatted.len > 0) {
+                try session.paste(self.allocator, formatted);
+            }
+        }
+    }
+    fn adjustFontZoom(self: *WorkspaceApplication, delta: f32) !void {
+        _ = self;
+        const current = platform.fontSize();
+        const target: f32 = if (delta == 0.0) 14.0 else @round(current + delta);
+        _ = try platform.setFontSize(target);
     }
     fn openThemePicker(self: *WorkspaceApplication) void {
         self.commitTabRename();
@@ -574,6 +691,7 @@ const WorkspaceApplication = struct {
     fn executeCommand(self: *WorkspaceApplication, id: CommandId) !void {
         self.overlay = .none;
         switch (id) {
+            .open_path_completion => try self.openPathCompletion(),
             .open_theme_picker => self.openThemePicker(),
             .toggle_dark_light => try self.toggleDarkLightTheme(),
             .open_tab_peek => self.openTabPeek(),
@@ -590,6 +708,9 @@ const WorkspaceApplication = struct {
                     self.beginTabRename(model.selected_tab);
                 }
             },
+            .zoom_in => try self.adjustFontZoom(1.0),
+            .zoom_out => try self.adjustFontZoom(-1.0),
+            .zoom_reset => try self.adjustFontZoom(0.0),
             .next_tab => try self.applyAction(.next_tab, 0),
             .previous_tab => try self.applyAction(.previous_tab, 0),
             .close_active => try self.applyAction(.close_active, 0),
@@ -682,13 +803,18 @@ const WorkspaceApplication = struct {
     }
     fn handleOverlayKey(self: *WorkspaceApplication, key: u32, modifiers: u32) !bool {
         if (platform.workspaceShortcut(key, modifiers)) |action| {
-            if (action == .theme_picker or action == .command_palette or action == .tab_peek) {
+            if (action == .zoom_in or action == .zoom_out or action == .zoom_reset) {
+                try self.applyAction(action, 0);
+                return true;
+            }
+            if (action == .theme_picker or action == .command_palette or action == .tab_peek or action == .path_completion) {
                 if (self.overlay == .theme_picker) {
                     try self.applyTheme(self.overlay.theme_picker.initial_theme_index);
                 }
                 const same = (action == .theme_picker and self.overlay == .theme_picker) or
                     (action == .command_palette and self.overlay == .command_palette) or
-                    (action == .tab_peek and self.overlay == .tab_peek);
+                    (action == .tab_peek and self.overlay == .tab_peek) or
+                    (action == .path_completion and self.overlay == .path_completion);
                 self.overlay = .none;
                 if (!same) try self.applyAction(action, 0) else platform.invalidateWindow();
                 return true;
@@ -798,6 +924,64 @@ const WorkspaceApplication = struct {
                 platform.invalidateWindow();
                 return true;
             },
+            .path_completion => |pc| {
+                if (key == 0x1B) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if (key == 0x0D) {
+                    try self.insertSelectedPathCompletion(pc.pane_id, (modifiers & 1) != 0);
+                    return true;
+                }
+                if (key == 0x09 or key == 0x27) {
+                    if (try self.path_completion.enterSelectedDirectory()) {
+                        platform.invalidateWindow();
+                    } else if (key == 0x09) {
+                        try self.insertSelectedPathCompletion(pc.pane_id, (modifiers & 1) != 0);
+                    }
+                    return true;
+                }
+                if (key == 0x25) {
+                    if (try self.path_completion.navigateParent()) {
+                        platform.invalidateWindow();
+                    }
+                    return true;
+                }
+                if (key == 0x26) {
+                    self.path_completion.moveSelection(-1, 8);
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if (key == 0x28) {
+                    self.path_completion.moveSelection(1, 8);
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if (key == 0x21) {
+                    self.path_completion.moveSelection(-8, 8);
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if (key == 0x22) {
+                    self.path_completion.moveSelection(8, 8);
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if (key == 0x08 or key == 0x2E) {
+                    if ((modifiers & 2) != 0) {
+                        try self.path_completion.clearQuery();
+                    } else {
+                        _ = try self.path_completion.backspaceQuery();
+                    }
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if ((modifiers & 6) == 0 and key >= 0x20 and !(key >= 0x21 and key <= 0x28) and !(key >= 0x70 and key <= 0x87)) {
+                    return false;
+                }
+                return true;
+            },
         }
     }
     fn handleSessionKey(self: *WorkspaceApplication, session: *TerminalSession, key: u32, modifiers: u32) !bool {
@@ -862,6 +1046,15 @@ const WorkspaceApplication = struct {
             }
             return;
         }
+        if (self.overlay == .path_completion) {
+            if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
+            self.path_completion.appendQuery(bytes) catch |err| {
+                self.fail(err);
+                return;
+            };
+            platform.invalidateWindow();
+            return;
+        }
         if (self.overlay != .none) return;
         if (self.editing_tab) |*edit| {
             if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
@@ -906,6 +1099,17 @@ const WorkspaceApplication = struct {
             }
             return;
         }
+        if (self.overlay == .path_completion) {
+            const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
+            if (trimmed.len > 0) {
+                self.path_completion.appendQuery(trimmed) catch |err| {
+                    self.fail(err);
+                    return;
+                };
+                platform.invalidateWindow();
+            }
+            return;
+        }
         if (self.overlay != .none) return;
         if (self.editing_tab) |*edit| {
             const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
@@ -938,7 +1142,17 @@ const WorkspaceApplication = struct {
         }
     }
     pub fn onScroll(self: *WorkspaceApplication, delta: i32, x: f32, y: f32, modifiers: u32) void {
-        if (self.health == .failed or delta == 0 or self.overlay != .none) return;
+        if (self.health == .failed or delta == 0) return;
+        if ((modifiers & 2) != 0) {
+            self.adjustFontZoom(if (delta < 0) 1.0 else -1.0) catch |err| self.fail(err);
+            return;
+        }
+        if (self.overlay == .path_completion) {
+            self.path_completion.moveSelection(if (delta < 0) -1 else 1, 8);
+            platform.invalidateWindow();
+            return;
+        }
+        if (self.overlay != .none) return;
         self.handleScroll(delta, x, y, modifiers) catch |err| self.fail(err);
     }
     fn handleScroll(self: *WorkspaceApplication, delta: i32, x: f32, y: f32, modifiers: u32) !void {
@@ -1187,6 +1401,39 @@ const WorkspaceApplication = struct {
                         return;
                     }
                     if (x < mx or x >= mx + mw or y < my or y >= my + mh) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                }
+            },
+            .path_completion => |pc| {
+                const popup = (try self.pathCompletionPopupBounds(pc.pane_id)) orelse return;
+                const total = self.path_completion.matches.items.len;
+                const start = @min(self.path_completion.first_visible, total);
+                const visible = @min(total - start, 8);
+                const list_y = popup.y + 56.0;
+                var hit_idx: ?usize = null;
+                if (x >= popup.x + 6.0 and x < popup.x + popup.width - 6.0 and y >= list_y) {
+                    const row = @floor((y - list_y) / 26.0);
+                    if (row >= 0 and row < @as(f32, @floatFromInt(visible))) {
+                        hit_idx = start + @as(usize, @intFromFloat(row));
+                    }
+                }
+                if (event == .hover or event == .move) {
+                    if (self.path_completion.hovered_index != hit_idx) {
+                        self.path_completion.hovered_index = hit_idx;
+                        if (hit_idx) |hi| self.path_completion.selected_index = hi;
+                        platform.invalidateWindow();
+                    }
+                    return;
+                }
+                if (event == .begin) {
+                    if (hit_idx) |hi| {
+                        self.path_completion.selected_index = hi;
+                        try self.insertSelectedPathCompletion(pc.pane_id, false);
+                        return;
+                    }
+                    if (!popup.contains(x, y)) {
                         self.overlay = .none;
                         platform.invalidateWindow();
                     }
@@ -1546,6 +1793,33 @@ const WorkspaceApplication = struct {
                 self.openTabPeek();
                 return;
             },
+            .path_completion => {
+                if (index == 99) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return;
+                }
+                if (index == 98) {
+                    if (self.overlay == .path_completion) {
+                        try self.insertSelectedPathCompletion(self.overlay.path_completion.pane_id, false);
+                    }
+                    return;
+                }
+                try self.openPathCompletion();
+                return;
+            },
+            .zoom_in => {
+                try self.adjustFontZoom(1.0);
+                return;
+            },
+            .zoom_out => {
+                try self.adjustFontZoom(-1.0);
+                return;
+            },
+            .zoom_reset => {
+                try self.adjustFontZoom(0.0);
+                return;
+            },
             .rename_tab => {
                 self.beginTabRename(index);
                 return;
@@ -1582,7 +1856,7 @@ const WorkspaceApplication = struct {
                 if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
-            .rename_tab, .command_palette, .theme_picker, .tab_peek => unreachable,
+            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
@@ -1654,7 +1928,10 @@ const WorkspaceApplication = struct {
                 .command_palette => 1,
                 .theme_picker => 2,
                 .tab_peek => 3,
+                .path_completion => 4,
             },
+            54 => return @intFromFloat(@round(platform.fontSize())),
+            55 => return self.path_completion.matches.items.len,
             60...67 => return if (query - 60 < model.tabs.items.len) @intFromEnum(model.tabs.items[query - 60].id) else 0,
             43 => return if (self.activeSession()) |session| if (session.size) |size| size.columns else 0 else 0,
             44 => return if (self.activeSession()) |session| if (session.size) |size| size.rows else 0 else 0,
@@ -1700,6 +1977,28 @@ const WorkspaceApplication = struct {
         return @intFromBool(found);
     }
 };
+
+fn extractCursorLine(frame: *const terminal.TerminalFrame, buf: []u8) []const u8 {
+    if (!frame.cursor.visible or frame.cursor.row >= frame.rows or frame.columns == 0) return &.{};
+    const row_offset = @as(usize, frame.cursor.row) * @as(usize, frame.columns);
+    if (row_offset + frame.columns > frame.cells.items.len) return &.{};
+    const cells = frame.cells.items[row_offset .. row_offset + frame.columns];
+    var len: usize = 0;
+    for (cells) |cell| {
+        if (cell.width == .tail) continue;
+        const text = frame.cellText(cell);
+        if (text.len == 0) {
+            if (len >= buf.len) break;
+            buf[len] = ' ';
+            len += 1;
+        } else {
+            if (len + text.len > buf.len) break;
+            @memcpy(buf[len .. len + text.len], text);
+            len += text.len;
+        }
+    }
+    return std.mem.trimRight(u8, buf[0..len], " ");
+}
 
 fn themeIndexForModeSlot(dark_mode: bool, target_slot: usize) usize {
     var slot: usize = 0;
