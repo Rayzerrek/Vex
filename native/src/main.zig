@@ -29,6 +29,7 @@ test {
     _ = @import("windows/wsl_registry.zig");
     _ = @import("workspace/pane_tree.zig");
     _ = @import("workspace/divider_drag.zig");
+    _ = @import("workspace/cursor_blink.zig");
     _ = @import("workspace/tab_strip.zig");
     _ = @import("workspace/tab_drag.zig");
     _ = @import("workspace/terminal_theme.zig");
