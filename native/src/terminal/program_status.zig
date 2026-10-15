@@ -35,6 +35,50 @@ pub const ProgramStatusSummary = struct {
     app: ?[]const u8 = null,
     title: ?[]const u8 = null,
     message: ?[]const u8 = null,
+
+    /// Matches WPF's ProgramStatusPresentation badge label across states and blocked reason kinds.
+    pub fn badgeLabel(self: ProgramStatusSummary) []const u8 {
+        return switch (self.state) {
+            .none, .idle => "",
+            .working => "Working",
+            .done => "Finished",
+            .blocked => switch (self.kind orelse .question) {
+                .permission => "Needs approval",
+                .auth => "Needs sign-in",
+                .question => "Needs input",
+            },
+            .failed => "Failed",
+        };
+    }
+
+    /// Selects the most specific human-readable status detail without allocating.
+    pub fn detailSlice(self: ProgramStatusSummary) []const u8 {
+        if (self.message) |m| if (m.len > 0) return m;
+        if (self.title) |t| if (t.len > 0) return t;
+        if (self.app) |a| if (a.len > 0) return a;
+        return self.badgeLabel();
+    }
+
+    /// Formats a bounded origin/detail line for multi-pane Tab Peek cards ("Pane N • Detail").
+    pub fn formatOriginDetail(self: ProgramStatusSummary, buf: []u8, origin_pane_number: u8, pane_count: usize, origin_pane_title: []const u8) []const u8 {
+        if (self.state == .none or self.state == .idle or buf.len == 0) return "";
+        const raw_detail = self.detailSlice();
+        const detail = if (raw_detail.len > 0) raw_detail else origin_pane_title;
+        if (pane_count > 1 and origin_pane_number > 0) {
+            const prefix = std.fmt.bufPrint(buf, "Pane {d}", .{origin_pane_number}) catch return "";
+            if (detail.len == 0 or prefix.len + 3 >= buf.len) return prefix;
+            buf[prefix.len] = ' ';
+            buf[prefix.len + 1] = '-';
+            buf[prefix.len + 2] = ' ';
+            const avail = buf.len - (prefix.len + 3);
+            const copy_len = @min(detail.len, avail);
+            @memcpy(buf[prefix.len + 3 ..][0..copy_len], detail[0..copy_len]);
+            return buf[0 .. prefix.len + 3 + copy_len];
+        }
+        const copy_len = @min(detail.len, buf.len);
+        @memcpy(buf[0..copy_len], detail[0..copy_len]);
+        return buf[0..copy_len];
+    }
 };
 
 fn StatusField(comptime capacity: usize) type {
@@ -564,3 +608,21 @@ fn checkStatusAllocations(allocator: std.mem.Allocator) !void {
 test "status allocator failures preserve records and release every owner" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkStatusAllocations, .{});
 }
+
+test "status presentation labels and multi-pane origin detail formatting match WPF" {
+    var buf: [64]u8 = undefined;
+    const perm: ProgramStatusSummary = .{ .state = .blocked, .kind = .permission, .app = "claude", .message = "Allow bash tool?" };
+    try std.testing.expectEqualStrings("Needs approval", perm.badgeLabel());
+    try std.testing.expectEqualStrings("Allow bash tool?", perm.detailSlice());
+    try std.testing.expectEqualStrings("Pane 2 - Allow bash tool?", perm.formatOriginDetail(&buf, 2, 3, "PowerShell 7"));
+    try std.testing.expectEqualStrings("Allow bash tool?", perm.formatOriginDetail(&buf, 1, 1, "PowerShell 7"));
+
+    const auth: ProgramStatusSummary = .{ .state = .blocked, .kind = .auth };
+    try std.testing.expectEqualStrings("Needs sign-in", auth.badgeLabel());
+    try std.testing.expectEqualStrings("Pane 3 - Needs sign-in", auth.formatOriginDetail(&buf, 3, 4, "Nushell"));
+
+    const idle: ProgramStatusSummary = .{ .state = .idle };
+    try std.testing.expectEqualStrings("", idle.badgeLabel());
+    try std.testing.expectEqualStrings("", idle.formatOriginDetail(&buf, 1, 2, "Command Prompt"));
+}
+

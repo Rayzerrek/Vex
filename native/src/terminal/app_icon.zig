@@ -136,6 +136,18 @@ pub const AppIcon = struct {
             self.color_rgb == other.color_rgb and
             self.is_shell == other.is_shell;
     }
+
+    /// Returns the vector brand icon for a ShellKind in the Shell Picker dropdown.
+    pub fn shellBrandIcon(shell_kind_id: u32) AppIcon {
+        return switch (shell_kind_id) {
+            2 => glyphIcon(.powershell, 0x5391FE, true),
+            3 => glyphIcon(.powershell, 0x5E9CFF, true),
+            4 => glyphIcon(.nushell, 0x4E9A06, true),
+            5 => glyphIcon(.gitforwindows, 0xF05032, true),
+            7 => glyphIcon(.linux, 0xFCC624, true),
+            else => terminal_shell,
+        };
+    }
 };
 
 const GlyphEntry = struct {

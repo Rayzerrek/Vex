@@ -27,6 +27,9 @@ pub const TerminalSession = struct {
     active_process_title: [64]u8 = undefined,
     active_process_title_len: usize = 0,
     has_foreground_process: bool = false,
+    shell_kind: shell.ShellKind = .cmd,
+    shell_name: []const u8 = "Command Prompt",
+    shell_program: []const u8 = "cmd.exe",
 
     /// Allocates at the final address before registering callbacks; startup failure releases every partial owner.
     pub fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch) !*TerminalSession {
@@ -38,7 +41,16 @@ pub const TerminalSession = struct {
         errdefer terminal.deinit();
         var pty = try platform.PtyOwner.init(allocator, id, pane_directory.current(), launch);
         errdefer pty.deinit();
-        session.* = .{ .id = id, .terminal = terminal, .pty = pty, .directory = pane_directory, .machine_name = machine_name };
+        session.* = .{
+            .id = id,
+            .terminal = terminal,
+            .pty = pty,
+            .directory = pane_directory,
+            .machine_name = machine_name,
+            .shell_kind = launch.kind,
+            .shell_name = launch.shellName(),
+            .shell_program = launch.program,
+        };
         try session.terminal.attachResponseSink(session.pty.responseSink());
         try session.terminal.attachDirectorySink(session);
         try session.terminal.attachClipboardSink(session);
@@ -109,12 +121,13 @@ pub const TerminalSession = struct {
             try self.pty.write(report);
         }
     }
-    /// Returns the active title for tab and pane headers, falling back to the detected foreground process name when the shell has not set an app title.
+    /// Returns the active title for tab and pane headers, falling back to the detected foreground process name or the session's shell name when the shell has not set an app title.
     pub fn displayTitle(self: *const TerminalSession) []const u8 {
         if (self.active_process_title_len > 0 and self.terminal.title.appSlice().len == 0) {
             return self.active_process_title[0..self.active_process_title_len];
         }
-        return self.terminal.title.slice();
+        const title = self.terminal.title.slice();
+        return if (title.len > 0) title else self.shell_name;
     }
     /// Resolves the active foreground program icon and process title using cached PID inspection or OSC title/status fallback.
     pub fn refreshAppIcon(self: *TerminalSession, query_process: bool) bool {

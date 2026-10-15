@@ -80,6 +80,19 @@ const TabPeekOverlay = struct {
     hovered_index: ?usize = null,
 };
 
+const ShellPickerMode = enum(u8) {
+    new_tab = 0,
+    split_right = 1,
+    split_down = 2,
+    set_default = 3,
+};
+
+const ShellPickerOverlay = struct {
+    mode: ShellPickerMode = .new_tab,
+    selected_index: usize = 0,
+    hovered_index: ?usize = null,
+};
+
 const CloseTarget = union(enum) {
     pane: panes.PaneId,
     tab: workspace.TabId,
@@ -99,6 +112,7 @@ const OverlayState = union(enum) {
     tab_peek: TabPeekOverlay,
     path_completion: struct { pane_id: panes.PaneId },
     close_confirm: CloseConfirmOverlay,
+    shell_picker: ShellPickerOverlay,
 };
 
 const CommandId = enum {
@@ -110,8 +124,12 @@ const CommandId = enum {
     zoom_out,
     zoom_reset,
     new_tab,
+    new_tab_with_shell,
     split_right,
+    split_right_with_shell,
     split_down,
+    split_down_with_shell,
+    change_default_shell,
     toggle_focus_mode,
     rename_active_tab,
     next_tab,
@@ -135,8 +153,12 @@ const command_defs = [_]CommandDef{
     .{ .id = .zoom_out, .title = "Font Size: Zoom Out", .shortcut = "Ctrl+-" },
     .{ .id = .zoom_reset, .title = "Font Size: Reset Zoom", .shortcut = "Ctrl+0" },
     .{ .id = .new_tab, .title = "Workspace: New Tab", .shortcut = "Ctrl+Shift+T" },
+    .{ .id = .new_tab_with_shell, .title = "Workspace: New Tab with Shell...", .shortcut = "" },
     .{ .id = .split_right, .title = "Pane: Split Right", .shortcut = "Ctrl+Shift+R" },
+    .{ .id = .split_right_with_shell, .title = "Pane: Split Right with Shell...", .shortcut = "" },
     .{ .id = .split_down, .title = "Pane: Split Down", .shortcut = "Ctrl+Shift+D" },
+    .{ .id = .split_down_with_shell, .title = "Pane: Split Down with Shell...", .shortcut = "" },
+    .{ .id = .change_default_shell, .title = "Shell: Change Default Shell...", .shortcut = "" },
     .{ .id = .toggle_focus_mode, .title = "Pane: Toggle Focus / Zoom Mode", .shortcut = "" },
     .{ .id = .rename_active_tab, .title = "Tab: Rename Active Tab", .shortcut = "Double-Click" },
     .{ .id = .next_tab, .title = "Workspace: Next Tab", .shortcut = "Ctrl+Tab" },
@@ -154,6 +176,10 @@ const WorkspaceApplication = struct {
     project_directory: directory.DirectoryPath,
     machine_name: []u8,
     launch: shell.ShellLaunch,
+    default_shell_kind: shell.ShellKind,
+    shell_launches: std.ArrayList(*shell.ShellLaunch) = .empty,
+    available_shells: [6]shell.ShellKind = undefined,
+    available_shell_count: u8 = 0,
     sessions: std.ArrayList(*TerminalSession) = .empty,
     model: ?workspace.WorkspaceModel = null,
     placements: std.ArrayList(panes.PanePlacement) = .empty,
@@ -202,6 +228,7 @@ const WorkspaceApplication = struct {
         defer environment.deinit();
         var launch = try shell.ShellLaunch.resolve(allocator, request, system_directory, integration_directory, &environment);
         errdefer launch.deinit();
+        const default_kind = launch.kind;
         try platform.setShellName(launch.shellName());
         var branch_buf: [128]u8 = undefined;
         const branch = readGitBranch(parsed.bytes, &branch_buf);
@@ -213,6 +240,7 @@ const WorkspaceApplication = struct {
             .project_directory = parsed,
             .machine_name = machine_name,
             .launch = launch,
+            .default_shell_kind = default_kind,
             .path_completion = path_completion.PathCompletion.init(allocator),
             .cursor_clock = try std.time.Timer.start(),
         };
@@ -226,6 +254,11 @@ const WorkspaceApplication = struct {
         self.path_completion.deinit();
         self.allocator.free(self.project_directory.bytes);
         self.allocator.free(self.machine_name);
+        for (self.shell_launches.items) |cached| {
+            cached.deinit();
+            self.allocator.destroy(cached);
+        }
+        self.shell_launches.deinit(self.allocator);
         self.launch.deinit();
     }
     pub fn fail(self: *WorkspaceApplication, err: anyerror) void {
@@ -376,12 +409,87 @@ const WorkspaceApplication = struct {
         const model = if (self.model) |*model| model else return null;
         return self.findSession(model.activeTab().active_pane);
     }
+    fn discoverAvailableShells(self: *WorkspaceApplication) void {
+        if (self.available_shell_count > 0) return;
+        const system_directory = platform.systemDirectoryAlloc(self.allocator) catch null;
+        defer if (system_directory) |dir| self.allocator.free(dir);
+        const executable_directory = std.fs.selfExeDirPathAlloc(self.allocator) catch null;
+        defer if (executable_directory) |dir| self.allocator.free(dir);
+        const integration_directory = if (executable_directory) |dir| std.fmt.allocPrint(self.allocator, "{s}\\ShellIntegration", .{dir}) catch null else null;
+        defer if (integration_directory) |dir| self.allocator.free(dir);
+        var environment = std.process.getEnvMap(self.allocator) catch null;
+        defer if (environment) |*env| env.deinit();
+
+        const candidates = [_]shell.ShellKind{ .pwsh, .powershell, .cmd, .nu, .gitbash, .wsl };
+        var count: u8 = 0;
+        for (candidates) |candidate| {
+            var available = candidate == self.launch.kind;
+            if (!available) if (system_directory) |sys_dir| if (integration_directory) |int_dir| if (environment) |*env_ptr| {
+                if (candidate == .wsl) {
+                    if (shell.isWslLauncherAvailable(self.allocator, sys_dir) catch false) {
+                        if (wsl_registry.readDefaultWslDistributionAlloc(self.allocator)) |distro| {
+                            self.allocator.free(distro.bytes);
+                            available = true;
+                        } else |_| {}
+                    }
+                } else if (candidate.builtinProfile()) |profile| {
+                    available = shell.isBuiltinShellAvailable(self.allocator, profile, sys_dir, int_dir, env_ptr) catch false;
+                }
+            };
+            if (available and count < self.available_shells.len) {
+                self.available_shells[count] = candidate;
+                count += 1;
+            }
+        }
+        if (count == 0) {
+            self.available_shells[0] = self.launch.kind;
+            count = 1;
+        }
+        self.available_shell_count = count;
+    }
+    fn resolveShellLaunch(self: *WorkspaceApplication, kind: shell.ShellKind) !*const shell.ShellLaunch {
+        if (kind == self.launch.kind) return &self.launch;
+        for (self.shell_launches.items) |cached| {
+            if (cached.kind == kind) return cached;
+        }
+        try self.shell_launches.ensureUnusedCapacity(self.allocator, 1);
+        const system_directory = try platform.systemDirectoryAlloc(self.allocator);
+        defer self.allocator.free(system_directory);
+        const executable_directory = try std.fs.selfExeDirPathAlloc(self.allocator);
+        defer self.allocator.free(executable_directory);
+        const integration_directory = try std.fmt.allocPrint(self.allocator, "{s}\\ShellIntegration", .{executable_directory});
+        defer self.allocator.free(integration_directory);
+        var environment = try std.process.getEnvMap(self.allocator);
+        defer environment.deinit();
+
+        const default_distribution = if (kind == .wsl) wsl_registry.readDefaultWslDistributionAlloc(self.allocator) catch null else null;
+        defer if (default_distribution) |name| self.allocator.free(name.bytes);
+        var request: shell.ShellRequest = undefined;
+        if (kind == .wsl) {
+            request = .{ .wsl = .{
+                .distribution = if (default_distribution) |name| .{ .named = name } else .automatic,
+                .command = .default,
+            } };
+        } else {
+            const profile = kind.builtinProfile() orelse return &self.launch;
+            request = .{ .builtin = profile };
+        }
+        const owned = try self.allocator.create(shell.ShellLaunch);
+        errdefer self.allocator.destroy(owned);
+        owned.* = try shell.ShellLaunch.resolve(self.allocator, request, system_directory, integration_directory, &environment);
+        self.shell_launches.appendAssumeCapacity(owned);
+        return owned;
+    }
     fn addSession(self: *WorkspaceApplication, path: directory.DirectoryPath) !*TerminalSession {
+        return self.addSessionWithKind(path, self.default_shell_kind);
+    }
+    fn addSessionWithKind(self: *WorkspaceApplication, path: directory.DirectoryPath, kind: shell.ShellKind) !*TerminalSession {
+        const launch_ptr = try self.resolveShellLaunch(kind);
         // Reserving first prevents an allocation failure from stranding a live process.
         try self.sessions.ensureUnusedCapacity(self.allocator, 1);
         const token = self.next_token;
         self.next_token = try std.math.add(u32, token, 1);
-        const session = try TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, &self.launch);
+        const session = try TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, launch_ptr);
         errdefer session.destroy(self.allocator);
         const t = self.currentTheme();
         try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
@@ -628,16 +736,31 @@ const WorkspaceApplication = struct {
             },
             .tab_peek => |tpk| {
                 var cards: [9]platform.c.VexTabPeekCard = undefined;
+                var detail_bufs: [9][192]u8 = undefined;
                 const visible = @min(model.tabs.items.len, cards.len);
                 for (model.tabs.items[0..visible], 0..) |tab, idx| {
                     const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
                     const presentation = try self.tabProgramStatus(tab.tree.root);
                     const title = tab.customTitle() orelse active_session.displayTitle();
+                    const pane_count = tab.tree.paneCount();
+                    const origin_title = if (presentation.origin_pane_id) |oid|
+                        if (self.findSession(oid)) |s| s.displayTitle() else ""
+                    else
+                        "";
+                    const detail = presentation.summary.formatOriginDetail(
+                        &detail_bufs[idx],
+                        presentation.origin_pane_number,
+                        pane_count,
+                        origin_title,
+                    );
                     cards[idx] = .{
                         .title = if (title.len == 0) null else title.ptr,
                         .title_length = title.len,
+                        .status_detail = if (detail.len == 0) null else detail.ptr,
+                        .status_detail_length = detail.len,
+                        .status_origin_pane = presentation.origin_pane_number,
                         .index = @intCast(idx),
-                        .pane_count = @intCast(tab.tree.paneCount()),
+                        .pane_count = @intCast(pane_count),
                         .icon = platform.nativeAppIcon(active_session.icon),
                         .status = platform.nativeStatusBadge(presentation.summary),
                         .active = idx == model.selected_tab,
@@ -682,6 +805,26 @@ const WorkspaceApplication = struct {
                     cc.selected_button,
                     cc.hovered_button,
                 );
+            },
+            .shell_picker => |sp| {
+                self.discoverAvailableShells();
+                var items: [6]platform.c.VexShellPickerItem = undefined;
+                const count: usize = @min(@as(usize, self.available_shell_count), items.len);
+                for (self.available_shells[0..count], 0..) |kind, idx| {
+                    const name = kind.displayName();
+                    const sub = kind.subtitle();
+                    items[idx] = .{
+                        .name = if (name.len == 0) null else name.ptr,
+                        .name_length = name.len,
+                        .subtitle = if (sub.len == 0) null else sub.ptr,
+                        .subtitle_length = sub.len,
+                        .icon = platform.nativeAppIcon(app_icon.AppIcon.shellBrandIcon(@intFromEnum(kind))),
+                        .is_default = kind == self.default_shell_kind,
+                        .selected = idx == sp.selected_index,
+                        .hovered = if (sp.hovered_index) |hi| hi == idx else false,
+                    };
+                }
+                platform.drawShellPicker(@intFromEnum(sp.mode), items[0..count]);
             },
         }
     }
@@ -831,7 +974,7 @@ const WorkspaceApplication = struct {
         self.overlay = .none;
         platform.invalidateWindow();
         if (full_path) |fp| {
-            const quote_kind = path_completion.ShellQuoteKind.fromProgram(self.launch.program);
+            const quote_kind = path_completion.ShellQuoteKind.fromProgram(session.shell_program);
             const formatted = try path_completion.formatPathAlloc(self.allocator, fp, quote_kind, raw);
             defer self.allocator.free(formatted);
             if (session.state == .running and formatted.len > 0) {
@@ -866,6 +1009,55 @@ const WorkspaceApplication = struct {
         self.overlay = .{ .tab_peek = .{ .selected_index = model.selected_tab } };
         platform.invalidateWindow();
     }
+    fn openShellPicker(self: *WorkspaceApplication, mode: ShellPickerMode) void {
+        self.commitTabRename();
+        self.discoverAvailableShells();
+        var selected: usize = 0;
+        const count: usize = self.available_shell_count;
+        for (self.available_shells[0..count], 0..) |kind, idx| {
+            if (kind == self.default_shell_kind) {
+                selected = idx;
+                break;
+            }
+        }
+        self.overlay = .{ .shell_picker = .{
+            .mode = mode,
+            .selected_index = selected,
+            .hovered_index = null,
+        } };
+        platform.invalidateWindow();
+    }
+    fn executeShellPickerChoice(self: *WorkspaceApplication, mode: ShellPickerMode, kind: shell.ShellKind) !void {
+        self.overlay = .none;
+        const model = if (self.model) |*model| model else return;
+        switch (mode) {
+            .set_default => {
+                self.default_shell_kind = kind;
+                try platform.setShellName(kind.displayName());
+                platform.invalidateWindow();
+            },
+            .new_tab => {
+                if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) {
+                    platform.invalidateWindow();
+                    return;
+                }
+                const session = try self.addSessionWithKind(self.project_directory, kind);
+                errdefer self.removeSession(session.id);
+                try model.newTab(session.id);
+                for (self.sessions.items) |s| {
+                    if (model.activeTab().tree.containsPane(s.id)) s.needs_attention = false;
+                }
+                try self.updateLayout();
+            },
+            .split_right, .split_down => {
+                const active = self.activeSession() orelse return error.MissingPaneSession;
+                const session = try self.addSessionWithKind(active.directory.current(), kind);
+                errdefer self.removeSession(session.id);
+                try model.splitActivePane(session.id, if (mode == .split_right) .right else .down);
+                try self.updateLayout();
+            },
+        }
+    }
     fn executeCommand(self: *WorkspaceApplication, id: CommandId) !void {
         self.overlay = .none;
         switch (id) {
@@ -874,8 +1066,12 @@ const WorkspaceApplication = struct {
             .toggle_dark_light => try self.toggleDarkLightTheme(),
             .open_tab_peek => self.openTabPeek(),
             .new_tab => try self.applyAction(.new_tab, 0),
+            .new_tab_with_shell => self.openShellPicker(.new_tab),
             .split_right => try self.applyAction(.split_right, 0),
+            .split_right_with_shell => self.openShellPicker(.split_right),
             .split_down => try self.applyAction(.split_down, 0),
+            .split_down_with_shell => self.openShellPicker(.split_down),
+            .change_default_shell => self.openShellPicker(.set_default),
             .toggle_focus_mode => {
                 if (self.model) |*model| {
                     if (model.toggleFocusMode()) try self.updateLayout() else platform.invalidateWindow();
@@ -914,19 +1110,57 @@ const WorkspaceApplication = struct {
             },
         }
     }
-    const TabStatus = struct { summary: status.ProgramStatusSummary, attention: bool };
+    const TabStatus = struct {
+        summary: status.ProgramStatusSummary,
+        attention: bool,
+        origin_pane_number: u8 = 0,
+        origin_pane_id: ?panes.PaneId = null,
+        attention_pane_id: ?panes.PaneId = null,
+    };
     fn tabProgramStatus(self: *WorkspaceApplication, node: anytype) anyerror!TabStatus {
+        var leaf_counter: u8 = 0;
+        return self.tabProgramStatusLeafOrder(node, &leaf_counter);
+    }
+    fn tabProgramStatusLeafOrder(self: *WorkspaceApplication, node: anytype, leaf_counter: *u8) anyerror!TabStatus {
         return switch (node.*) {
             .leaf => |id| blk: {
+                leaf_counter.* +|= 1;
+                const pane_num = leaf_counter.*;
                 const session = self.findSession(id) orelse return error.MissingPaneSession;
-                break :blk .{ .summary = session.terminal.program_status.programStatus(), .attention = session.needs_attention };
+                const summary = session.terminal.program_status.programStatus();
+                const has_visible_status = summary.state != .none and summary.state != .idle;
+                break :blk .{
+                    .summary = summary,
+                    .attention = session.needs_attention,
+                    .origin_pane_number = if (has_visible_status) pane_num else 0,
+                    .origin_pane_id = if (has_visible_status) id else null,
+                    .attention_pane_id = if (session.needs_attention) id else null,
+                };
             },
             .split => |split| blk: {
-                const first = try self.tabProgramStatus(split.first);
-                const second = try self.tabProgramStatus(split.second);
-                break :blk .{ .summary = if (second.summary.state.displayPriority() > first.summary.state.displayPriority()) second.summary else first.summary, .attention = first.attention or second.attention };
+                const first = try self.tabProgramStatusLeafOrder(split.first, leaf_counter);
+                const second = try self.tabProgramStatusLeafOrder(split.second, leaf_counter);
+                const pick_second = second.summary.state.displayPriority() > first.summary.state.displayPriority();
+                const chosen = if (pick_second) second else first;
+                break :blk .{
+                    .summary = chosen.summary,
+                    .attention = first.attention or second.attention,
+                    .origin_pane_number = chosen.origin_pane_number,
+                    .origin_pane_id = chosen.origin_pane_id,
+                    .attention_pane_id = first.attention_pane_id orelse second.attention_pane_id,
+                };
             },
         };
+    }
+    fn focusTabAttentionOrigin(self: *WorkspaceApplication, tab_index: usize) void {
+        const model = if (self.model) |*model| model else return;
+        if (tab_index >= model.tabs.items.len) return;
+        const presentation = self.tabProgramStatus(model.tabs.items[tab_index].tree.root) catch return;
+        const target_pane = presentation.attention_pane_id orelse
+            (if (presentation.summary.state == .blocked) presentation.origin_pane_id else null);
+        if (target_pane) |pane_id| {
+            _ = model.focusPane(pane_id);
+        }
     }
     pub fn onKey(self: *WorkspaceApplication, key: u32, modifiers: u32) bool {
         if (self.health == .failed) return true;
@@ -1198,6 +1432,41 @@ const WorkspaceApplication = struct {
                 }
                 return true;
             },
+            .shell_picker => |*sp| {
+                if (key == 0x1B) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                self.discoverAvailableShells();
+                const count: usize = self.available_shell_count;
+                if (count == 0) return true;
+                if (key == 0x0D) {
+                    const idx = @min(sp.selected_index, count - 1);
+                    const mode = sp.mode;
+                    const kind = self.available_shells[idx];
+                    try self.executeShellPickerChoice(mode, kind);
+                    return true;
+                }
+                if (key == 0x09) {
+                    const next_mode: u8 = if ((modifiers & 1) != 0)
+                        (@intFromEnum(sp.mode) + 3) % 4
+                    else
+                        (@intFromEnum(sp.mode) + 1) % 4;
+                    sp.mode = @enumFromInt(next_mode);
+                    platform.invalidateWindow();
+                    return true;
+                }
+                switch (key) {
+                    0x25 => sp.mode = @enumFromInt((@intFromEnum(sp.mode) + 3) % 4),
+                    0x27 => sp.mode = @enumFromInt((@intFromEnum(sp.mode) + 1) % 4),
+                    0x26 => sp.selected_index = if (sp.selected_index > 0) sp.selected_index - 1 else count - 1,
+                    0x28 => sp.selected_index = (sp.selected_index + 1) % count,
+                    else => {},
+                }
+                platform.invalidateWindow();
+                return true;
+            },
         }
     }
     fn handleSessionKey(self: *WorkspaceApplication, session: *TerminalSession, key: u32, modifiers: u32) !bool {
@@ -1374,6 +1643,19 @@ const WorkspaceApplication = struct {
         if (self.overlay == .path_completion) {
             self.path_completion.moveSelection(if (delta < 0) -1 else 1, 8);
             platform.invalidateWindow();
+            return;
+        }
+        if (self.overlay == .shell_picker) {
+            self.discoverAvailableShells();
+            const count: usize = self.available_shell_count;
+            if (count > 0) {
+                var sp = &self.overlay.shell_picker;
+                sp.selected_index = if (delta < 0)
+                    (if (sp.selected_index > 0) sp.selected_index - 1 else count - 1)
+                else
+                    (sp.selected_index + 1) % count;
+                platform.invalidateWindow();
+            }
             return;
         }
         if (self.overlay != .none) return;
@@ -1690,6 +1972,58 @@ const WorkspaceApplication = struct {
                     }
                     if (hit_btn == 2) {
                         try self.confirmCloseOverlay();
+                        return;
+                    }
+                    if (x < mx or x >= mx + mw or y < my or y >= my + mh) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                }
+            },
+            .shell_picker => |*sp| {
+                self.discoverAvailableShells();
+                const count: usize = @min(@as(usize, self.available_shell_count), 6);
+                const mw = @min(@as(f32, 460.0), @max(@as(f32, 300.0), metrics.width - 48.0));
+                const row_h: f32 = 42.0;
+                const mh = 76.0 + @as(f32, @floatFromInt(@max(count, 1))) * row_h + 14.0;
+                const mx = @round((metrics.width - mw) * 0.5);
+                const my: f32 = 52.0;
+                const pill_gap: f32 = 6.0;
+                const pill_w = (mw - 32.0 - pill_gap * 3.0) * 0.25;
+                const pill_y = my + 38.0;
+                const pill_h: f32 = 24.0;
+                const list_y = my + 70.0;
+
+                var hit_idx: ?usize = null;
+                if (x >= mx + 12.0 and x < mx + mw - 12.0 and y >= list_y) {
+                    const row = @floor((y - list_y) / row_h);
+                    if (row >= 0 and row < @as(f32, @floatFromInt(count))) {
+                        hit_idx = @intFromFloat(row);
+                    }
+                }
+                if (event == .hover or event == .move) {
+                    if (sp.hovered_index != hit_idx) {
+                        sp.hovered_index = hit_idx;
+                        if (hit_idx) |hi| sp.selected_index = hi;
+                        platform.invalidateWindow();
+                    }
+                    return;
+                }
+                if (event == .begin) {
+                    if (y >= pill_y and y < pill_y + pill_h) {
+                        for (0..4) |m| {
+                            const px = mx + 16.0 + @as(f32, @floatFromInt(m)) * (pill_w + pill_gap);
+                            if (x >= px and x < px + pill_w) {
+                                sp.mode = @enumFromInt(@as(u8, @intCast(m)));
+                                platform.invalidateWindow();
+                                return;
+                            }
+                        }
+                    }
+                    if (hit_idx) |hi| {
+                        const mode = sp.mode;
+                        const kind = self.available_shells[hi];
+                        try self.executeShellPickerChoice(mode, kind);
                         return;
                     }
                     if (x < mx or x >= mx + mw or y < my or y >= my + mh) {
@@ -2112,6 +2446,41 @@ const WorkspaceApplication = struct {
                 try self.requestCloseTab(index);
                 return;
             },
+            .shell_picker => {
+                if (index == 0) {
+                    if (self.overlay == .shell_picker) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    } else {
+                        self.openShellPicker(.new_tab);
+                    }
+                    return;
+                }
+                if (index == 99) {
+                    if (self.overlay == .shell_picker) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                    return;
+                }
+                if (index >= 1 and index <= 7) {
+                    try self.executeShellPickerChoice(.new_tab, @enumFromInt(index));
+                    return;
+                }
+                if (index >= 11 and index <= 17) {
+                    try self.executeShellPickerChoice(.split_right, @enumFromInt(index - 10));
+                    return;
+                }
+                if (index >= 21 and index <= 27) {
+                    try self.executeShellPickerChoice(.split_down, @enumFromInt(index - 20));
+                    return;
+                }
+                if (index >= 31 and index <= 37) {
+                    try self.executeShellPickerChoice(.set_default, @enumFromInt(index - 30));
+                    return;
+                }
+                return;
+            },
             else => {},
         }
         const model = if (self.model) |*model| model else return;
@@ -2135,16 +2504,23 @@ const WorkspaceApplication = struct {
                 errdefer self.removeSession(session.id);
                 try model.splitActivePane(session.id, if (action == .split_right) .right else .down);
             },
-            .next_tab => model.cycleTab(true),
-            .previous_tab => model.cycleTab(false),
+            .next_tab => {
+                model.cycleTab(true);
+                self.focusTabAttentionOrigin(model.selected_tab);
+            },
+            .previous_tab => {
+                model.cycleTab(false);
+                self.focusTabAttentionOrigin(model.selected_tab);
+            },
             .select_tab => {
                 if (!model.selectTab(index)) return;
+                self.focusTabAttentionOrigin(model.selected_tab);
             },
             .close_active => {
                 if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
-            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink => unreachable,
+            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink, .shell_picker => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
@@ -2221,7 +2597,7 @@ const WorkspaceApplication = struct {
             13 => return self.sessions.items.len,
             14 => return if (self.activeSession()) |session| session.pty.processId() else 0,
             20 => return platform.paintCount(),
-            34 => return @intFromEnum(self.launch.kind),
+            34 => return @intFromEnum(self.default_shell_kind),
             38 => return if (self.activeSession()) |session| @intFromEnum(session.icon.glyph) else 0,
             72 => return @intFromBool(self.cursor_blink_enabled),
             73 => return @intFromBool(self.cursor_blink.isShown()),
@@ -2236,6 +2612,14 @@ const WorkspaceApplication = struct {
             82 => return if (self.activeSession()) |session| session.terminal.frame.cursor.row else 0,
             83 => return if (self.metrics) |metrics| @intFromFloat(@round(metrics.cell_width * 1000)) else 0,
             84 => return if (self.metrics) |metrics| @intFromFloat(@round(metrics.cell_height * 1000)) else 0,
+            85 => return if (self.activeSession()) |session| @intFromEnum(session.shell_kind) else 0,
+            86 => return (self.tabProgramStatus(model.activeTab().tree.root) catch return 0).origin_pane_number,
+            87 => return if ((self.tabProgramStatus(model.activeTab().tree.root) catch return 0).origin_pane_id) |id| @intFromEnum(id) else 0,
+            88 => {
+                self.discoverAvailableShells();
+                return self.available_shell_count;
+            },
+            89 => return if (self.overlay == .shell_picker) @intFromEnum(self.overlay.shell_picker.mode) else 0,
             70 => return if (self.activeSession()) |session| @intFromBool(session.state == .exited) else 0,
             71 => return if (self.activeSession()) |session| switch (session.state) {
                 .running => 0,
@@ -2270,6 +2654,7 @@ const WorkspaceApplication = struct {
                 .tab_peek => 3,
                 .path_completion => 4,
                 .close_confirm => 5,
+                .shell_picker => 6,
             },
             54 => return @intFromFloat(@round(platform.fontSize())),
             55 => return self.path_completion.matches.items.len,
