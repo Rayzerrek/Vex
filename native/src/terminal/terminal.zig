@@ -26,6 +26,7 @@ pub const TerminalCursor = struct {
     column: u16 = 0,
     row: u16 = 0,
     visible: bool = false,
+    blinking: bool = false,
     wide_tail: bool = false,
     shape: enum(u32) { bar = 0, block = 1, underline = 2, hollow = 3 } = .bar,
     /// Caret boundary column; wide-tail cursors sit after the second cell of the wide glyph.
@@ -859,6 +860,7 @@ pub const Terminal = struct {
         var in_viewport = false;
         var shape: c.GhosttyRenderStateCursorVisualStyle = 0;
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE, &cursor.visible);
+        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING, &cursor.blinking);
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE, &in_viewport);
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, &shape);
         cursor.shape = switch (shape) {
@@ -1481,6 +1483,26 @@ test "default cursor is bar, DECSCUSR updates and resets shape, and encodeKey st
     var encoded: [64]u8 = undefined;
     try std.testing.expectEqualStrings("\x1b[A", (try terminal.encodeKey(0x26, 0, &encoded)).?);
     try std.testing.expectEqualStrings("\x1b[1;2A", (try terminal.encodeKey(0x26, 1, &encoded)).?);
+}
+
+test "cursor blink flag follows DECSCUSR, DEC 12 and visibility independently in the real DLL" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.readFrame()).cursor.blinking);
+    const reports = [_][]const u8{ "\x1b[1 q", "\x1b[2 q", "\x1b[3 q", "\x1b[4 q", "\x1b[5 q", "\x1b[6 q", "\x1b[0 q" };
+    for (reports, 0..) |report, index| {
+        try terminal.feedOutput(report);
+        try std.testing.expectEqual(index % 2 == 0, (try terminal.readFrame()).cursor.blinking);
+    }
+    try terminal.feedOutput("\x1b[?12l");
+    try std.testing.expect(!(try terminal.readFrame()).cursor.blinking);
+    try terminal.feedOutput("\x1b[?12h\x1b[?25l");
+    const hidden = (try terminal.readFrame()).cursor;
+    try std.testing.expect(hidden.blinking);
+    try std.testing.expect(!hidden.visible);
+    try terminal.feedOutput("\x1b[?25h");
+    try std.testing.expect((try terminal.readFrame()).cursor.visible);
 }
 
 fn checkPasteAllocationFailures(allocator: std.mem.Allocator, api: *const binding.Api) !void {
