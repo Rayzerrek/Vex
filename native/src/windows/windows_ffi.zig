@@ -13,7 +13,7 @@ pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -488,6 +488,29 @@ pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: [
         items.len,
         scan_error,
     );
+}
+/// Draws the Close Confirmation modal for tabs or panes with active foreground processes or unsaved buffers.
+pub fn drawCloseConfirm(
+    title: []const u8,
+    message: []const u8,
+    confirm_label: []const u8,
+    icon: app_icon.AppIcon,
+    kind: u8,
+    selected_button: u8,
+    hovered_button: u8,
+) void {
+    c.vex_draw_close_confirm(.{
+        .title = if (title.len == 0) null else title.ptr,
+        .title_length = title.len,
+        .message = if (message.len == 0) null else message.ptr,
+        .message_length = message.len,
+        .confirm_label = if (confirm_label.len == 0) null else confirm_label.ptr,
+        .confirm_label_length = confirm_label.len,
+        .icon = nativeAppIcon(icon),
+        .kind = kind,
+        .selected_button = selected_button,
+        .hovered_button = hovered_button,
+    });
 }
 /// Dynamically updates the terminal font size in DIPs [9.0, 32.0] and triggers a grid layout resize.
 pub fn setFontSize(size: f32) !void {

@@ -6,6 +6,7 @@ const panes = @import("../workspace/pane_tree.zig");
 const directory = @import("../shell/directory.zig");
 const shell = @import("../shell/shell_launch.zig");
 const app_icon = @import("../terminal/app_icon.zig");
+const close_confirmation = @import("../workspace/close_confirmation.zig");
 
 const terminal_title = @import("../terminal/terminal_title.zig");
 
@@ -165,6 +166,33 @@ pub const TerminalSession = struct {
         const title_changed = self.active_process_title_len != previous_title_len or
             !std.mem.eql(u8, previous_title_buf[0..previous_title_len], self.active_process_title[0..self.active_process_title_len]);
         return !previous_icon.eql(self.icon) or title_changed;
+    }
+    /// Captures a borrowed close-evaluation snapshot of the session's running/title/process state.
+    pub fn closeSnapshot(self: *TerminalSession, query_process: bool) close_confirmation.PaneCloseSnapshot {
+        if (query_process and self.state == .running) {
+            const now = std.time.milliTimestamp();
+            if (now - self.last_icon_probe_ms >= 100) {
+                self.last_icon_probe_ms = now;
+                _ = self.refreshAppIcon(true);
+            }
+        }
+        const prog_status = self.terminal.program_status.programStatus();
+        const status_app = prog_status.app orelse "";
+        const status_running = (prog_status.state == .working or prog_status.state == .blocked) and status_app.len > 0;
+        return .{
+            .is_running = self.state == .running,
+            .title = self.terminal.title.slice(),
+            .app_name = self.terminal.title.appSlice(),
+            .status_app = status_app,
+            .has_foreground_process = self.has_foreground_process or status_running,
+            .active_process_title = if (self.active_process_title_len > 0)
+                self.active_process_title[0..self.active_process_title_len]
+            else if (status_running)
+                status_app
+            else
+                "",
+            .icon = self.icon,
+        };
     }
 };
 

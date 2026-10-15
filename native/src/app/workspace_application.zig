@@ -16,6 +16,7 @@ const app_icon = @import("../terminal/app_icon.zig");
 const url_detector = @import("../terminal/url_detector.zig");
 const terminal_theme = @import("../workspace/terminal_theme.zig");
 const path_completion = @import("../terminal/path_completion.zig");
+const close_confirmation = @import("../workspace/close_confirmation.zig");
 
 const HoveredLink = struct {
     pane_id: panes.PaneId,
@@ -78,12 +79,25 @@ const TabPeekOverlay = struct {
     hovered_index: ?usize = null,
 };
 
+const CloseTarget = union(enum) {
+    pane: panes.PaneId,
+    tab: usize,
+};
+
+const CloseConfirmOverlay = struct {
+    target: CloseTarget,
+    confirmation: close_confirmation.CloseConfirmation,
+    selected_button: u8 = 1,
+    hovered_button: u8 = 0,
+};
+
 const OverlayState = union(enum) {
     none,
     theme_picker: ThemePickerOverlay,
     command_palette: CommandPaletteOverlay,
     tab_peek: TabPeekOverlay,
     path_completion: struct { pane_id: panes.PaneId },
+    close_confirm: CloseConfirmOverlay,
 };
 
 const CommandId = enum {
@@ -335,6 +349,9 @@ const WorkspaceApplication = struct {
             if (hl.pane_id == id) self.hovered_link = null;
         }
         if (self.overlay == .path_completion and self.overlay.path_completion.pane_id == id) {
+            self.overlay = .none;
+        }
+        if (self.overlay == .close_confirm and self.overlay.close_confirm.target == .pane and self.overlay.close_confirm.target.pane == id) {
             self.overlay = .none;
         }
         for (self.sessions.items, 0..) |session, index| if (session.id == id) {
@@ -596,7 +613,108 @@ const WorkspaceApplication = struct {
                     self.path_completion.scan_error,
                 );
             },
+            .close_confirm => |*cc| {
+                platform.drawCloseConfirm(
+                    cc.confirmation.titleSlice(),
+                    cc.confirmation.messageSlice(),
+                    cc.confirmation.confirmSlice(),
+                    cc.confirmation.icon,
+                    if (cc.confirmation.reason == .foreground_process) 2 else 0,
+                    cc.selected_button,
+                    cc.hovered_button,
+                );
+            },
         }
+    }
+    fn collectTabCloseSnapshots(self: *WorkspaceApplication, node: anytype, out: *[16]close_confirmation.PaneCloseSnapshot, count: *usize) anyerror!void {
+        switch (node.*) {
+            .leaf => |id| {
+                const session = self.findSession(id) orelse return error.MissingPaneSession;
+                if (count.* < out.len) {
+                    out[count.*] = session.closeSnapshot(true);
+                    count.* += 1;
+                }
+            },
+            .split => |split| {
+                try self.collectTabCloseSnapshots(split.first, out, count);
+                try self.collectTabCloseSnapshots(split.second, out, count);
+            },
+        }
+    }
+    fn requestClosePane(self: *WorkspaceApplication, pane_id: panes.PaneId) !void {
+        self.commitTabRename();
+        const model = if (self.model) |*model| model else return;
+        if (model.activeTab().tree.paneCount() <= 1) {
+            return self.requestCloseTab(model.selected_tab);
+        }
+        const session = self.findSession(pane_id) orelse return;
+        if (close_confirmation.evaluatePane(session.closeSnapshot(true), .pane)) |confirmation| {
+            self.overlay = .{ .close_confirm = .{
+                .target = .{ .pane = pane_id },
+                .confirmation = confirmation,
+                .selected_button = 1,
+                .hovered_button = 0,
+            } };
+            platform.invalidateWindow();
+            return;
+        }
+        if (model.closePaneSplit(pane_id)) |id| {
+            self.removeSession(id);
+            try self.updateLayout();
+        }
+    }
+    fn requestCloseTab(self: *WorkspaceApplication, index: usize) !void {
+        self.commitTabRename();
+        const model = if (self.model) |*model| model else return;
+        if (index >= model.tabs.items.len or model.tabs.items.len <= 1) return;
+        var snapshots: [16]close_confirmation.PaneCloseSnapshot = undefined;
+        var count: usize = 0;
+        try self.collectTabCloseSnapshots(model.tabs.items[index].tree.root, &snapshots, &count);
+        if (close_confirmation.evaluateTab(snapshots[0..count])) |confirmation| {
+            self.overlay = .{ .close_confirm = .{
+                .target = .{ .tab = index },
+                .confirmation = confirmation,
+                .selected_button = 1,
+                .hovered_button = 0,
+            } };
+            platform.invalidateWindow();
+            return;
+        }
+        try self.closeTab(index);
+        for (self.sessions.items) |session| {
+            if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
+        }
+        try self.updateLayout();
+    }
+    fn requestCloseActive(self: *WorkspaceApplication) !void {
+        const model = if (self.model) |*model| model else return;
+        if (model.activeTab().tree.paneCount() > 1) {
+            try self.requestClosePane(model.activeTab().active_pane);
+        } else {
+            try self.requestCloseTab(model.selected_tab);
+        }
+    }
+    fn confirmCloseOverlay(self: *WorkspaceApplication) !void {
+        if (self.overlay != .close_confirm) return;
+        const target = self.overlay.close_confirm.target;
+        self.overlay = .none;
+        const model = if (self.model) |*model| model else return;
+        switch (target) {
+            .pane => |pane_id| {
+                if (model.closePaneSplit(pane_id)) |id| {
+                    self.removeSession(id);
+                } else {
+                    try self.closeTab(model.selected_tab);
+                }
+            },
+            .tab => |index| {
+                try self.closeTab(index);
+            },
+        }
+        for (self.sessions.items) |session| {
+            if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
+        }
+        try self.updateLayout();
     }
     fn pathCompletionPopupBounds(self: *WorkspaceApplication, pane_id: panes.PaneId) !?panes.PaneRect {
         const metrics = self.metrics orelse return null;
@@ -714,7 +832,7 @@ const WorkspaceApplication = struct {
             .zoom_reset => try self.adjustFontZoom(0.0),
             .next_tab => try self.applyAction(.next_tab, 0),
             .previous_tab => try self.applyAction(.previous_tab, 0),
-            .close_active => try self.applyAction(.close_active, 0),
+            .close_active => try self.requestCloseActive(),
         }
     }
     fn collectTabIcons(self: *WorkspaceApplication, node: anytype, out: *[8]app_icon.AppIcon, count: *usize) anyerror!void {
@@ -762,7 +880,11 @@ const WorkspaceApplication = struct {
         if (self.editing_tab) |*edit| {
             if (platform.workspaceShortcut(key, modifiers)) |action| {
                 self.commitTabRename();
-                self.onAction(action, 0);
+                if (action == .close_active) {
+                    self.requestCloseActive() catch |err| self.fail(err);
+                } else {
+                    self.onAction(action, 0);
+                }
                 return true;
             }
             if (key == 0x0D) {
@@ -793,7 +915,11 @@ const WorkspaceApplication = struct {
             return true;
         }
         if (platform.workspaceShortcut(key, modifiers)) |action| {
-            self.onAction(action, 0);
+            if (action == .close_active) {
+                self.requestCloseActive() catch |err| self.fail(err);
+            } else {
+                self.onAction(action, 0);
+            }
             return true;
         }
         const session = self.activeSession() orelse return false;
@@ -980,6 +1106,31 @@ const WorkspaceApplication = struct {
                 }
                 if ((modifiers & 6) == 0 and key >= 0x20 and !(key >= 0x21 and key <= 0x28) and !(key >= 0x70 and key <= 0x87)) {
                     return false;
+                }
+                return true;
+            },
+            .close_confirm => |*cc| {
+                if (key == 0x1B or ((modifiers & 6) == 0 and key == 'N')) {
+                    self.overlay = .none;
+                    platform.invalidateWindow();
+                    return true;
+                }
+                if ((modifiers & 6) == 0 and key == 'Y') {
+                    try self.confirmCloseOverlay();
+                    return true;
+                }
+                if (key == 0x0D or key == 0x20) {
+                    if (cc.selected_button == 1) {
+                        try self.confirmCloseOverlay();
+                    } else {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                    return true;
+                }
+                if (key == 0x09 or key == 0x25 or key == 0x27) {
+                    cc.selected_button = if (cc.selected_button == 0) 1 else 0;
+                    platform.invalidateWindow();
                 }
                 return true;
             },
@@ -1248,15 +1399,7 @@ const WorkspaceApplication = struct {
                         try model.splitPane(placement.id, session.id, if (header_action == .split_right) .right else .down);
                         try self.updateLayout();
                     },
-                    .close => {
-                        if (model.closePaneSplit(placement.id)) |id| {
-                            self.removeSession(id);
-                            try self.updateLayout();
-                        } else {
-                            try self.closeTab(model.selected_tab);
-                            try self.updateLayout();
-                        }
-                    },
+                    .close => try self.requestClosePane(placement.id),
                 }
                 return;
             }
@@ -1435,6 +1578,49 @@ const WorkspaceApplication = struct {
                         return;
                     }
                     if (!popup.contains(x, y)) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                }
+            },
+            .close_confirm => |*cc| {
+                const mw = @min(@as(f32, 440.0), @max(@as(f32, 300.0), metrics.width - 48.0));
+                const mh: f32 = 186.0;
+                const mx = @round((metrics.width - mw) * 0.5);
+                const my = @round(@max(@as(f32, 56.0), (metrics.height - mh) * 0.44));
+                const btn_y = my + mh - 46.0;
+                const btn_h: f32 = 32.0;
+                const confirm_w: f32 = 128.0;
+                const confirm_x = mx + mw - 20.0 - confirm_w;
+                const cancel_w: f32 = 88.0;
+                const cancel_x = confirm_x - 10.0 - cancel_w;
+
+                var hit_btn: u8 = 0;
+                if (y >= btn_y and y < btn_y + btn_h) {
+                    if (x >= cancel_x and x < cancel_x + cancel_w) {
+                        hit_btn = 1;
+                    } else if (x >= confirm_x and x < confirm_x + confirm_w) {
+                        hit_btn = 2;
+                    }
+                }
+                if (event == .hover or event == .move) {
+                    if (cc.hovered_button != hit_btn) {
+                        cc.hovered_button = hit_btn;
+                        platform.invalidateWindow();
+                    }
+                    return;
+                }
+                if (event == .begin) {
+                    if (hit_btn == 1) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                        return;
+                    }
+                    if (hit_btn == 2) {
+                        try self.confirmCloseOverlay();
+                        return;
+                    }
+                    if (x < mx or x >= mx + mw or y < my or y >= my + mh) {
                         self.overlay = .none;
                         platform.invalidateWindow();
                     }
@@ -1825,6 +2011,25 @@ const WorkspaceApplication = struct {
                 self.beginTabRename(index);
                 return;
             },
+            .request_close_tab => {
+                if (index == 99) {
+                    try self.requestCloseActive();
+                    return;
+                }
+                if (index == 98) {
+                    if (self.overlay == .close_confirm) {
+                        self.overlay = .none;
+                        platform.invalidateWindow();
+                    }
+                    return;
+                }
+                if (index == 97) {
+                    try self.confirmCloseOverlay();
+                    return;
+                }
+                try self.requestCloseTab(index);
+                return;
+            },
             else => {},
         }
         const model = if (self.model) |*model| model else return;
@@ -1857,7 +2062,7 @@ const WorkspaceApplication = struct {
                 if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
-            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset => unreachable,
+            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
@@ -1930,6 +2135,7 @@ const WorkspaceApplication = struct {
                 .theme_picker => 2,
                 .tab_peek => 3,
                 .path_completion => 4,
+                .close_confirm => 5,
             },
             54 => return @intFromFloat(@round(platform.fontSize())),
             55 => return self.path_completion.matches.items.len,
