@@ -27,6 +27,7 @@ static IconCacheEntry iconCache[64];
 static size_t iconCacheCount;
 static size_t iconCacheClock;
 static float cellWidth, cellHeight, clientWidth, clientHeight, gridLeft, gridTop;
+static float terminalFontSize = 14.0f;
 static float dpiScale = 1.0f;
 static uint32_t tabStripCount = 1;
 static float tabWidthDip = 160;
@@ -632,7 +633,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) callbacks.exited(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 5:
-        if (selftestEnabled() && wparam <= 11 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
+        if (selftestEnabled() && wparam <= 15 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 6: {
         uint32_t source = (uint32_t)(wparam & 0xff), operation = (uint32_t)(wparam >> 8);
@@ -707,6 +708,57 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
+static HRESULT rebuildTerminalFonts(float fontSize) {
+    if (!textFactory || !isfinite(fontSize)) return E_INVALIDARG;
+    const float clamped = fminf(32.0f, fmaxf(9.0f, roundf(fontSize)));
+    IDWriteTextFormat* newFonts[4] = {};
+    HRESULT result = S_OK;
+    for (int i = 0; i < 4 && SUCCEEDED(result); i++) {
+        result = textFactory->CreateTextFormat(L"Cascadia Mono", nullptr, (i & 1) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            (i & 2) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, clamped, L"en-us", &newFonts[i]);
+        if (SUCCEEDED(result)) result = newFonts[i]->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+    float newCellWidth = 0.0f, newCellHeight = 0.0f;
+    if (SUCCEEDED(result)) {
+        IDWriteTextLayout* measure = nullptr;
+        result = textFactory->CreateTextLayout(L"M", 1, newFonts[0], 200, 200, &measure);
+        if (SUCCEEDED(result)) {
+            DWRITE_TEXT_METRICS metrics; DWRITE_LINE_METRICS line; UINT32 count;
+            result = measure->GetMetrics(&metrics);
+            if (SUCCEEDED(result)) result = measure->GetLineMetrics(&line, 1, &count);
+            if (SUCCEEDED(result)) {
+                newCellWidth = metrics.width;
+                newCellHeight = ceilf(line.height);
+                if (!isfinite(newCellWidth) || !isfinite(newCellHeight) || newCellWidth <= 0 || newCellHeight <= 0) result = E_INVALIDARG;
+                for (int i = 0; i < 4 && SUCCEEDED(result); i++) result = newFonts[i]->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, newCellHeight, line.baseline);
+            }
+            releaseCom(measure);
+        }
+    }
+    if (FAILED(result)) {
+        for (auto& font : newFonts) releaseCom(font);
+        return result;
+    }
+    for (int i = 0; i < 4; i++) {
+        releaseCom(terminalFonts[i]);
+        terminalFonts[i] = newFonts[i];
+    }
+    terminalFontSize = clamped;
+    cellWidth = newCellWidth;
+    cellHeight = newCellHeight;
+    return S_OK;
+}
+extern "C" int vex_window_set_font_size(float font_size) {
+    HRESULT result = rebuildTerminalFonts(font_size);
+    if (FAILED(result)) return (int)result;
+    if (IsWindow(window)) {
+        updateWindowMetrics();
+        vex_window_invalidate();
+    }
+    return 0;
+}
+extern "C" float vex_window_font_size(void) { return terminalFontSize; }
+
 static void loadAppIcons(HICON& outBig, HICON& outSmall) {
     outBig = nullptr;
     outSmall = nullptr;
@@ -747,26 +799,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (SUCCEEDED(result)) result = configureChromeFormat(chromeBoldFont);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f, L"en-us", &badgeFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(badgeFont);
-    for (int i = 0; i < 4 && SUCCEEDED(result); i++) {
-        result = textFactory->CreateTextFormat(L"Cascadia Mono", nullptr, (i & 1) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-            (i & 2) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14, L"en-us", &terminalFonts[i]);
-        if (SUCCEEDED(result)) result = terminalFonts[i]->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    }
-    if (SUCCEEDED(result)) {
-        IDWriteTextLayout* measure = nullptr;
-        result = textFactory->CreateTextLayout(L"M", 1, terminalFonts[0], 100, 100, &measure);
-        if (SUCCEEDED(result)) {
-            DWRITE_TEXT_METRICS metrics; DWRITE_LINE_METRICS line; UINT32 count;
-            result = measure->GetMetrics(&metrics);
-            if (SUCCEEDED(result)) result = measure->GetLineMetrics(&line, 1, &count);
-            if (SUCCEEDED(result)) {
-                cellWidth = metrics.width; cellHeight = ceilf(line.height);
-                if (!isfinite(cellWidth) || !isfinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) result = E_INVALIDARG;
-                for (auto font : terminalFonts) if (SUCCEEDED(result)) result = font->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, cellHeight, line.baseline);
-            }
-            releaseCom(measure);
-        }
-    }
+    if (SUCCEEDED(result)) result = rebuildTerminalFonts(14.0f);
     HICON iconBig = nullptr, iconSmall = nullptr;
     loadAppIcons(iconBig, iconSmall);
     if (SUCCEEDED(result)) {
@@ -1744,6 +1777,75 @@ extern "C" void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t count) {
             drawProgramStatus(c.status, cx + cardW - 116.0f, cy + 52.0f, 104.0f, false);
         }
     }
+}
+extern "C" void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, bool scan_error) {
+    if (!target || !brush || bounds.width <= 0.0f || bounds.height <= 0.0f) return;
+    const float mx = bounds.x, my = bounds.y, mw = bounds.width, mh = bounds.height;
+    brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? 0.45f : 0.18f));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx - 1.0f, my + 2.0f, mx + mw + 1.0f, my + mh + 4.0f), 8.0f, 8.0f), brush);
+    const D2D1_ROUNDED_RECT card = D2D1::RoundedRect(D2D1::RectF(mx, my, mx + mw, my + mh), 7.0f, 7.0f);
+    brush->SetColor(rgb(chromePalette.titlebar_bg));
+    target->FillRoundedRectangle(card, brush);
+    brush->SetColor(rgb(chromePalette.active_tab_border));
+    target->DrawRoundedRectangle(card, brush, 1.2f);
+
+    target->PushAxisAlignedClip(D2D1::RectF(mx + 4.0f, my + 2.0f, mx + mw - 4.0f, my + mh - 2.0f), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+    if (directory && directory_length > 0) {
+        wchar_t dirBuf[260];
+        const int wlen = MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(directory), (int)directory_length, dirBuf, 259);
+        if (wlen > 0) {
+            dirBuf[wlen] = L'\0';
+            const wchar_t* displayDir = wlen > 44 ? (dirBuf + (wlen - 44)) : dirBuf;
+            labelWithFont(badgeFont, displayDir, mx + 10.0f, my + 6.0f, mw - 20.0f, chromePalette.text_muted);
+        }
+    }
+
+    const D2D1_ROUNDED_RECT searchBox = D2D1::RoundedRect(D2D1::RectF(mx + 8.0f, my + 24.0f, mx + mw - 8.0f, my + 50.0f), 5.0f, 5.0f);
+    brush->SetColor(rgb(chromePalette.pane_bg));
+    target->FillRoundedRectangle(searchBox, brush);
+    brush->SetColor(rgb(chromePalette.accent));
+    target->DrawRoundedRectangle(searchBox, brush, 1.0f);
+    label(L"/", mx + 15.0f, my + 28.0f, 14.0f, chromePalette.accent);
+    if (query_length == 0 || !query) {
+        labelWithFont(badgeFont, L"Filter path\x2026 (\x2190 up \x2022 Tab dir \x2022 Enter insert)", mx + 28.0f, my + 30.0f, mw - 40.0f, chromePalette.text_muted);
+    } else {
+        labelUtf8OrDefault(query, query_length, mx + 28.0f, my + 28.0f, mw - 40.0f, chromePalette.text_primary);
+    }
+
+    const float listY = my + 56.0f, rowH = 26.0f;
+    const size_t visible = item_count > 8 ? 8 : item_count;
+    if (visible == 0 || !items) {
+        labelWithFont(badgeFont, scan_error ? L"Unable to read directory" : L"No matching files or folders", mx + 14.0f, listY + 5.0f, mw - 28.0f, chromePalette.text_muted);
+    } else {
+        for (size_t i = 0; i < visible; i++) {
+            const VexPathCompletionItem& it = items[i];
+            const float iy = listY + (float)i * rowH;
+            const D2D1_ROUNDED_RECT rowRect = D2D1::RoundedRect(D2D1::RectF(mx + 6.0f, iy, mx + mw - 6.0f, iy + rowH - 2.0f), 4.0f, 4.0f);
+            if (it.selected || it.hovered) {
+                brush->SetColor(rgb(it.selected ? chromePalette.active_tab_bg : chromePalette.inactive_tab_hover_bg));
+                target->FillRoundedRectangle(rowRect, brush);
+            }
+            if (it.selected) {
+                brush->SetColor(rgb(chromePalette.accent));
+                target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx + 8.0f, iy + 5.0f, mx + 11.0f, iy + rowH - 7.0f), 1.5f, 1.5f), brush);
+            }
+            const float ix = mx + 16.0f;
+            if (it.is_directory) {
+                brush->SetColor(rgb(chromePalette.accent));
+                target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(ix, iy + 6.0f, ix + 5.5f, iy + 9.0f), 1.0f, 1.0f), brush);
+                target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(ix, iy + 8.0f, ix + 12.5f, iy + 17.5f), 1.5f, 1.5f), brush);
+            } else {
+                brush->SetColor(rgb(chromePalette.text_muted));
+                target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(ix + 1.5f, iy + 5.5f, ix + 11.0f, iy + 17.5f), 1.2f, 1.2f), brush, 1.1f);
+            }
+            labelUtf8OrDefault(it.name, it.name_length, mx + 33.0f, iy + 3.0f, mw - 68.0f, chromePalette.text_primary);
+            if (it.is_directory) {
+                labelWithFont(badgeFont, L"DIR", mx + mw - 34.0f, iy + 5.0f, 26.0f, chromePalette.accent);
+            }
+        }
+    }
+    target->PopAxisAlignedClip();
 }
 static float snapDip(float v) {
     return dpiScale > 0.0f ? roundf(v * dpiScale) / dpiScale : roundf(v);
