@@ -56,7 +56,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Workspace shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
 | Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; auto-close/close confirmations and further cancellation/Win32 failure injection pending |
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache, ConPTY-stripped DCS filter (`+q` XTGETTCAP / `$qm` DECRQSS), disabled resize scrollback pull, DEC 2048 in-band resize reports (`\x1b[48;...t`), DEC 2026 synchronized output frame batching (100 ms starvation cap), default bar cursor and ConPTY-compatible key encoder options implemented |
-| Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | DirectWrite baseline, themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented; pixel fixtures, custom box/Powerline glyphs, color emoji and blink pending |
+| Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | D3D12 queue/fences + DXGI flip-discard presentation, native instanced cell drawing with a shared bounded R8 glyph atlas, Direct2D/DirectWrite UI via D3D11On12 (see `RENDERER.md`), themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented; pixel fixtures, custom box/Powerline glyphs, color emoji and blink pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys, `Ctrl+Backspace`, primary-screen viewport scroll shortcuts (`Shift+PageUp/PageDown`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+Home/End`), mouse selection (cell, word double-click, line triple-click, captured outside-pane drag clamping, copy-on-select), keyboard selection (`Shift+Left/Right/Home/End`, `Ctrl+Shift+Left/Right/Home/End`), selection highlight rendering, `Ctrl+C` (smart copy when selected) / `Ctrl+Shift+C` copy, `Ctrl+Shift+X` cut and `Backspace` cursor-end selection deletion, `Ctrl+Shift+V` / `Shift+Insert` / right-click paste with newline normalization and DEC 2004 bracketed paste, wheel scroll, TUI mouse reporting (`DEC 1000/1002/1003` + SGR/SGR-pixels/UTF-8/urxvt encoding with `Shift` override), and write-only OSC 52 / OSC 1337 clipboard sequences implemented; IME and click-to-move-cursor pending |
 | Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash, absolute custom executables and project/default/explicit-distribution WSL/Linux programs; cmd/PS/Nu integration implemented; profile menu, per-pane overrides and persistence pending |
 | Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local/selected-distribution Linux OSC 7 ownership/inheritance and WSL UNC project startup implemented; cross-distribution/Windows-shell mismatches reject; project UI and Linux process metadata pending |
@@ -301,6 +301,68 @@ These are behavioral contracts, not opportunities to redesign the app.
   scripts pass. Atomic tab smoke additionally passes three successive runs.
   Windows built-ins and Ubuntu WSL remain covered. WPF files/profile are unchanged;
   its suites were not rerun. These checks do not establish visual/performance parity.
+
+## Native D3D12 terminal draw checkpoint
+
+- `windows/terminal_renderer.{h,cpp}` adds a native instanced terminal pass with
+  a shared 1 MiB R8 atlas, bounded collision-checked UTF-8 keys and miss-only
+  software DirectWrite/procedural glyph rasterization. Text, cell backgrounds,
+  decorations and cursors batch through precompiled shaders; chrome/overlays
+  still use On12. Grayscale antialiasing/quarter-pixel phases are not a claim of
+  old ClearType pixel parity, color emoji or a completed rendering-in-Zig port.
+- Persistently mapped 256 KiB upload pages belong to one of two fence-protected
+  slots. Warm frames reuse them; idle trimming drains GPU work before releasing
+  excess pages. Cache exhaustion records earlier draws before texture coordinates
+  are reused. Neither uploads nor glyph storage grow without explicit limits.
+- The extended desktop renderer fixture verifies warm cache hits/no new misses
+  or upload allocations, warm batching, styles/Unicode/wide/combining/custom
+  glyphs, and more visible unique CJK graphemes than cache entries. Hardware and
+  WARP fixtures pass, including in graphics-debug mode with no validation
+  errors/corruption. Existing performance warnings remain logged.
+- All 103 Zig tests pass in Debug/ReleaseSafe; ReleaseSafe build and all five
+  existing desktop suites pass (including Windows shell presets and Ubuntu WSL).
+  Native allocation-failure injection, actual GPU loss, physical cross-monitor
+  DPI, Windows 10 execution and input-to-present latency remain unverified.
+- Three alternating warm CPU/memory samples per workload compare with the saved
+  preceding On12-only executable: styled 28x96 text falls from median 52.257 to
+  1.476 process-CPU ms/frame and ~357 to ~182–188 MiB process working set. Plain
+  text timing ranges overlap and memory increases ~11 MiB. These are not GPU
+  frame times, end-to-end latency or a whole-app 35x speedup. The old ~53.5 MB
+  HWND baseline has not been recovered; removing remaining On12 UI overhead is
+  separate work. Full method, resource budgets and limitations: `RENDERER.md`.
+- All files remain under `native/`; the sibling WPF implementation/profile are
+  untouched. The earlier presentation-only checkpoint below is historical.
+
+## D3D12 presentation checkpoint
+
+- `windows/windows_renderer.{h,cpp}` replaces the HWND render target with a scoped
+  D3D12 device/direct queue/fence owner, two BGRA flip-discard buffers and
+  Direct2D/DirectWrite drawing via official D3D11On12 interop. No native glyph-atlas
+  pass, renderer-in-Zig migration or performance improvement is claimed.
+- Acquire/release/Flush and per-buffer fences govern GPU ownership; resize drops
+  every bitmap/wrapper reference and flushes deferred destruction before releasing
+  native buffers. DPI-only changes rebuild targets. Graphics reset/recreation
+  preserves live sessions, viewport contents and layout updates during resize.
+- The desktop fixture covers hardware and forced WARP, GPU-backed capture with
+  byte-identical pre/post healthy-device recreation, an injected resize reset,
+  minimize/restore, idle present suppression, three panes, overlays/themes/zoom
+  and selftest-only diagnostics. Screenshots were inspected. Actual GPU loss,
+  physical multi-monitor DPI and Windows 10 execution remain unverified.
+- All 103 Zig tests pass in Debug/ReleaseSafe; ReleaseSafe build and the five
+  existing Windows desktop suites pass, including all installed Windows shell
+  presets and Ubuntu WSL. The renderer fixture also passes with D3D12 debugging:
+  zero validation errors/corruption, but logged translation performance warnings
+  820/1328 remain. This is not a warning-free result.
+- A same-machine, one-off ReleaseSafe workspace smoke shows increased one-pane
+  working set (~53.5 MB to ~179.0 MB) and first-frame log (~97.5 ms to ~123.3 ms)
+  versus native `b9f099e`. These are not benchmark distributions or a WPF comparison;
+  translation overhead is a regression to address with native D3D12 draw passes,
+  not evidence that choosing a newer API made Vex faster.
+- Build commands, resource lifecycle, artifacts, limitations and the incremental
+  native draw-pass direction are documented in [RENDERER.md](RENDERER.md).
+  WPF source/profile remain untouched. Repository-wide `zig fmt --check src`
+  still reports six pre-existing unformatted Zig files; unrelated formatting was
+  not changed in this checkpoint. The changed `build.zig` passes formatting.
 
 ## Source structure checkpoint
 
