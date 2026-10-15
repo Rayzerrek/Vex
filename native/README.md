@@ -135,6 +135,10 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
 - `Ctrl+Shift+W`: close a split or tab; a tab's **×** / middle-click or a pane header's **×** closes it.
 - The last tab stays open, as in WPF. Closing a split focuses the first remaining
   leaf. Closing an active tab selects the left neighbor, or right for tab zero.
+- Shell exit automatically closes its pane or nonfinal tab, including hidden
+  panes without stealing visible focus. The final pane retains its output and
+  exit-code banner; new tabs can still launch. Exit cancels captured gestures
+  before tree edits, and close confirmations retain stable tab identities.
 - Each pane uses the selected shell profile (integrated cmd by default). New tabs use the project launch
   directory; splits inherit the focused pane's last valid local OSC 7 directory,
   otherwise its starting directory (matching WPF, not a guessed prompt). Navigation
@@ -300,6 +304,7 @@ zig build test -Doptimize=ReleaseSafe
 zig build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeRenderer.ps1 -RequireNativeGlyphAtlas
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeIcons.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeProcessExit.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeDividers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
@@ -372,6 +377,8 @@ Ignored artifacts under `zig-out/verification/`:
 - `wsl.json`: live selected-distribution WSL results.
 - `dividers.json`: live divider capture/resize/cancellation results.
 - `tabs.json`: live atomic tab-reorder/ownership/capture results.
+- `process-exit.json`, `process-exit-final.png`: automatic visible/hidden pane/tab
+  close, capture cancellation, stable confirmation targets and final-tab retention.
 - `icons.json`, `icons-*.png`: matching tab/pane icon presentation in dark/light
   themes, synthetic current-monitor DPI, application titles and split focus.
 - `renderer.json`, `renderer-*.png`: hardware/WARP, GPU readback, graphics recreation,
@@ -396,8 +403,9 @@ final divider styling, shell icons,
 status tooltips/origin routing,
 hyperlinks/path completion,
 IME/click-to-move-cursor/extended key protocols, custom glyphs/color
-emoji, true block cursor/blink, accessibility and packaging. Automatic close on
-process exit and running-program close confirmation are also not yet migrated.
+emoji, true block cursor/blink, accessibility and packaging. Process-exit closing
+and running-program close confirmations are implemented; native failure injection
+and broader physical teardown-race testing remain pending.
 Native currently does not read or overwrite the production WPF profile.
 
 Before replacing WPF, all ledger rows need functional/visual parity and matched

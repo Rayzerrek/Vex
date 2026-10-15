@@ -81,7 +81,7 @@ const TabPeekOverlay = struct {
 
 const CloseTarget = union(enum) {
     pane: panes.PaneId,
-    tab: usize,
+    tab: workspace.TabId,
 };
 
 const CloseConfirmOverlay = struct {
@@ -672,7 +672,7 @@ const WorkspaceApplication = struct {
         try self.collectTabCloseSnapshots(model.tabs.items[index].tree.root, &snapshots, &count);
         if (close_confirmation.evaluateTab(snapshots[0..count])) |confirmation| {
             self.overlay = .{ .close_confirm = .{
-                .target = .{ .tab = index },
+                .target = .{ .tab = model.tabs.items[index].id },
                 .confirmation = confirmation,
                 .selected_button = 1,
                 .hovered_button = 0,
@@ -707,8 +707,8 @@ const WorkspaceApplication = struct {
                     try self.closeTab(model.selected_tab);
                 }
             },
-            .tab => |index| {
-                try self.closeTab(index);
+            .tab => |tab_id| {
+                if (model.tabIndex(tab_id)) |index| try self.closeTab(index);
             },
         }
         for (self.sessions.items) |session| {
@@ -2080,20 +2080,54 @@ const WorkspaceApplication = struct {
     }
     pub fn onExited(self: *WorkspaceApplication, id: panes.PaneId, code: u32) void {
         if (self.health == .failed) return;
+        self.handleProcessExit(id, code) catch |err| self.fail(err);
+    }
+    fn handleProcessExit(self: *WorkspaceApplication, id: panes.PaneId, code: u32) !void {
         const session = self.findSession(id) orelse return;
+        if (session.state != .running) return;
+        const model = if (self.model) |*model| model else return error.MissingPaneSession;
+        const tab_id = owner: {
+            for (model.tabs.items) |tab| {
+                if (tab.tree.containsPane(id)) break :owner tab.id;
+            }
+            return error.MissingPaneSession;
+        };
         session.state = .{ .exited = code };
         session.terminal.program_status.onProgramExited();
-        var banner_buf: [96]u8 = undefined;
-        if (std.fmt.bufPrint(&banner_buf, "\r\n\x1b[2m[process exited with code {d}]\x1b[m\r\n", .{code})) |banner| {
-            session.terminal.feedOutput(banner) catch {};
-        } else |_| {}
-        if (self.model) |*model| {
-            if (!model.activeTab().tree.containsPane(id)) {
-                session.needs_attention = true;
-            }
+        _ = try self.cancelPointerDrag();
+        if (self.overlay == .close_confirm) {
+            const targets_exit = switch (self.overlay.close_confirm.target) {
+                .pane => |pane_id| pane_id == id,
+                .tab => |target_tab| target_tab == tab_id,
+            };
+            if (targets_exit) self.overlay = .none;
         }
-        _ = session.refreshAppIcon(false);
-        platform.invalidateWindow();
+        switch (model.closeExitedPane(id)) {
+            .stale => return error.MissingPaneSession,
+            .retained_final => {
+                var banner_buf: [96]u8 = undefined;
+                const banner = try std.fmt.bufPrint(&banner_buf, "\r\n\x1b[2m[process exited with code {d}]\x1b[m\r\n", .{code});
+                try session.terminal.feedOutput(banner);
+                _ = session.refreshAppIcon(false);
+                platform.invalidateWindow();
+            },
+            .pane_closed, .tab_closed => |action| {
+                if (action == .tab_closed) {
+                    if (self.editing_tab) |edit| {
+                        if (edit.tab_id == tab_id) self.cancelTabRename();
+                    }
+                    if (self.overlay == .tab_peek) {
+                        self.overlay.tab_peek.selected_index = @min(self.overlay.tab_peek.selected_index, model.tabs.items.len - 1);
+                        self.overlay.tab_peek.hovered_index = null;
+                    }
+                }
+                self.removeSession(id);
+                for (self.sessions.items) |remaining| {
+                    if (model.activeTab().tree.containsPane(remaining.id)) remaining.needs_attention = false;
+                }
+                try self.updateLayout();
+            },
+        }
     }
     pub fn onProbe(self: *WorkspaceApplication, query: u32) u64 {
         if (self.health == .failed) return 0;
@@ -2107,6 +2141,11 @@ const WorkspaceApplication = struct {
             20 => return platform.paintCount(),
             34 => return @intFromEnum(self.launch.kind),
             38 => return if (self.activeSession()) |session| @intFromEnum(session.icon.glyph) else 0,
+            70 => return if (self.activeSession()) |session| @intFromBool(session.state == .exited) else 0,
+            71 => return if (self.activeSession()) |session| switch (session.state) {
+                .running => 0,
+                .exited => |code| code,
+            } else 0,
             40 => return switch (model.activeTab().tree.root.*) {
                 .leaf => 0,
                 .split => |split| @intFromFloat(@round(split.ratio * 1000)),

@@ -54,7 +54,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Project -> tabs -> split tree, active leaf | `Model/Project.cs`, `WorkspaceTab.cs`, `PaneNode.cs` | One project, up to 8 tabs, recursive splits, focus, per-tab pane focus/zoom toggle, interactive pane header buttons (Focus/Zoom, Split Right, Split Down, Close), close and captured tab reorder; multiple projects, pane moves and tab ghost/push/scroll preview still pending |
 | Split orientation/ratio | `SplitPaneView.xaml.cs` | Right/down at 0.5; ratio clamping 0.1..0.9; live captured divider dragging, 100-DIP interactive minimum and rollback implemented; final divider styling/physical multi-monitor DPI evidence pending; split directories use the last valid local OSC 7 report, otherwise the pane's launch directory |
 | Workspace shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
-| Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; auto-close/close confirmations and further cancellation/Win32 failure injection pending |
+| Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; automatic pane/tab exit close, final-tab retention, captured-gesture cancellation and stable-ID close confirmations implemented; Win32 failure injection pending |
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache, ConPTY-stripped DCS filter (`+q` XTGETTCAP / `$qm` DECRQSS), disabled resize scrollback pull, DEC 2048 in-band resize reports (`\x1b[48;...t`), DEC 2026 synchronized output frame batching (100 ms starvation cap), default bar cursor and ConPTY-compatible key encoder options implemented |
 | Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | D3D12 queue/fences + DXGI flip-discard presentation, native instanced cell drawing with a shared bounded R8 glyph atlas, Direct2D/DirectWrite UI via D3D11On12 (see `RENDERER.md`), themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented; pixel fixtures, custom box/Powerline glyphs, color emoji and blink pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys, `Ctrl+Backspace`, primary-screen viewport scroll shortcuts (`Shift+PageUp/PageDown`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+Home/End`), mouse selection (cell, word double-click, line triple-click, captured outside-pane drag clamping, copy-on-select), keyboard selection (`Shift+Left/Right/Home/End`, `Ctrl+Shift+Left/Right/Home/End`), selection highlight rendering, `Ctrl+C` (smart copy when selected) / `Ctrl+Shift+C` copy, `Ctrl+Shift+X` cut and `Backspace` cursor-end selection deletion, `Ctrl+Shift+V` / `Shift+Insert` / right-click paste with newline normalization and DEC 2004 bracketed paste, wheel scroll, TUI mouse reporting (`DEC 1000/1002/1003` + SGR/SGR-pixels/UTF-8/urxvt encoding with `Shift` override), and write-only OSC 52 / OSC 1337 clipboard sequences implemented; IME and click-to-move-cursor pending |
@@ -301,6 +301,28 @@ These are behavioral contracts, not opportunities to redesign the app.
   scripts pass. Atomic tab smoke additionally passes three successive runs.
   Windows built-ins and Ubuntu WSL remain covered. WPF files/profile are unchanged;
   its suites were not rerun. These checks do not establish visual/performance parity.
+
+## Process-exit close checkpoint
+
+- Exited shells close their own split or nonfinal tab without selecting hidden
+  tabs. Active split close uses first-leaf fallback; tab close uses the existing
+  neighboring-tab rule. Unknown/duplicate pane tokens leave ownership unchanged.
+  The final workspace leaf stays readable with a real exit-code banner, and a
+  fresh tab can still start. Banner/feed failures now propagate rather than being
+  silently discarded.
+- Captured gestures cancel before model mutation/session teardown. Close-popup
+  targets use stable TabId values so an unrelated background exit cannot retarget
+  a pending confirmation to the tab now occupying its old array index.
+- Two pure model fixtures cover every selected/closing tab combination, nested
+  hidden panes, focus/zoom fallback, stale IDs and the final-tab rule. A live
+  ConPTY fixture covers exit codes, visible/background pane/tab closure, real
+  pointer capture, confirmation index shifts, session release and retained final
+  output. All 105 Zig tests pass in Debug/ReleaseSafe. The eight desktop fixtures
+  pass on their latest runs. One earlier workspace attempt observed two paints
+  during its zero-hidden-output-paint sample; its isolated rerun passed, without
+  establishing the cause. Synthetic gestures still require a quiet desktop;
+  native allocation-failure injection and physical teardown-race testing remain
+  pending.
 
 ## Native D3D12 terminal draw checkpoint
 

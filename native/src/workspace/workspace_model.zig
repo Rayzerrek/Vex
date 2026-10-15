@@ -29,6 +29,9 @@ pub const WorkspaceTab = struct {
     }
 };
 
+/// Result of applying a process exit to its owning tab; stale tokens never target a replacement pane.
+pub const PaneExitAction = enum { stale, retained_final, pane_closed, tab_closed };
+
 /// Owns one project's tabs, matching Project.MaxTabs and WPF close/focus behavior.
 pub const WorkspaceModel = struct {
     allocator: std.mem.Allocator,
@@ -125,13 +128,25 @@ pub const WorkspaceModel = struct {
     }
     /// Closes a specific leaf in the active tab; falls back to the first leaf if the active pane was closed.
     pub fn closePaneSplit(self: *WorkspaceModel, target: panes.PaneId) ?panes.PaneId {
-        const tab = self.activeTab();
+        return self.closePaneInTab(self.selected_tab, target);
+    }
+    fn closePaneInTab(self: *WorkspaceModel, index: usize, target: panes.PaneId) ?panes.PaneId {
+        const tab = &self.tabs.items[index];
         if (!tab.tree.closePane(target)) return null;
         if (tab.active_pane == target or !tab.tree.containsPane(tab.active_pane)) {
             tab.active_pane = tab.tree.firstLeaf();
         }
         if (tab.tree.paneCount() <= 1 or tab.is_focus_mode) tab.is_focus_mode = false;
         return target;
+    }
+    /// Removes an exited pane without selecting its tab; the final workspace leaf remains readable.
+    pub fn closeExitedPane(self: *WorkspaceModel, id: panes.PaneId) PaneExitAction {
+        for (self.tabs.items, 0..) |tab, index| {
+            if (!tab.tree.containsPane(id)) continue;
+            if (self.closePaneInTab(index, id) != null) return .pane_closed;
+            return if (self.closeTab(index)) .tab_closed else .retained_final;
+        }
+        return .stale;
     }
     /// A split close falls back to the first leaf; the final leaf must be closed as a tab.
     pub fn closeActiveSplit(self: *WorkspaceModel) ?panes.PaneId {
@@ -145,6 +160,45 @@ pub const WorkspaceModel = struct {
         return true;
     }
 };
+
+test "process exit closes any tab with the same selection fallback and ignores duplicate tokens" {
+    for (0..3) |closing| for (0..3) |selected| {
+        var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+        defer model.deinit();
+        try model.newTab(@enumFromInt(2));
+        try model.newTab(@enumFromInt(3));
+        try std.testing.expect(model.selectTab(selected));
+        const closed_id = model.tabs.items[closing].active_pane;
+        const expected = if (selected != closing) model.activeTab().id else model.tabs.items[if (closing == 0) 1 else closing - 1].id;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+        model.allocator = failing.allocator();
+        const result = model.closeExitedPane(closed_id);
+        model.allocator = std.testing.allocator;
+        try std.testing.expectEqual(PaneExitAction.tab_closed, result);
+        try std.testing.expectEqual(expected, model.activeTab().id);
+        try std.testing.expectEqual(@as(usize, 2), model.tabs.items.len);
+        try std.testing.expectEqual(PaneExitAction.stale, model.closeExitedPane(closed_id));
+    };
+}
+
+test "background pane exit collapses its tree and focus mode without stealing visible focus" {
+    var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+    defer model.deinit();
+    try model.splitActivePane(@enumFromInt(2), .right);
+    try model.splitActivePane(@enumFromInt(3), .down);
+    try std.testing.expect(model.toggleFocusMode());
+    try model.newTab(@enumFromInt(4));
+    try std.testing.expectEqual(PaneExitAction.pane_closed, model.closeExitedPane(@enumFromInt(3)));
+    try std.testing.expectEqual(@as(usize, 1), model.selected_tab);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(4)), model.activeTab().active_pane);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(1)), model.tabs.items[0].active_pane);
+    try std.testing.expect(!model.tabs.items[0].is_focus_mode);
+    try std.testing.expectEqual(PaneExitAction.pane_closed, model.closeExitedPane(@enumFromInt(2)));
+    try std.testing.expectEqual(PaneExitAction.tab_closed, model.closeExitedPane(@enumFromInt(1)));
+    try std.testing.expectEqual(PaneExitAction.retained_final, model.closeExitedPane(@enumFromInt(4)));
+    try std.testing.expectEqual(@as(usize, 1), model.tabs.items.len);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(4)), model.activeTab().active_pane);
+}
 
 test "tab limit, cycling, closing neighbors and final tab match the Windows model" {
     var workspace = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
