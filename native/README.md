@@ -123,7 +123,7 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
   This checkpoint draws an insertion marker, not WPF's animated ghost/push preview.
 - `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down (also exits focus/zoom mode if active so the new split is visible).
 - Custom Windows DWM titlebar chrome (`#181A1F` top bar, DWM dark mode, rounded corners, border color, and bundled `app.ico`), left project pill with Lucide Folder glyph, project folder name, and live `.git/HEAD` branch name, hoverable `+` new-tab button, and native Windows Minimize / Maximize-Restore / Close (`#E81123` hover) caption buttons.
-- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge) and pane headers render a `14×14` favicon resolved from a 73-entry Lucide + SimpleIcons vector catalog (`app_icon.zig`) using zero-allocation cached-PID ConPTY foreground process inspection (`vex_pty_foreground_process`), OSC 0/2 titles, and OSC 7501 `app` metadata, backed by a per-DPI Direct2D GPU `ID2D1Bitmap` cache.
+- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge) and pane headers use the same `18×18` icon tile and `12×12` favicon as tabs, without focus-based shell recoloring; favicons are resolved from a 73-entry Lucide + SimpleIcons vector catalog (`app_icon.zig`) using zero-allocation cached-PID ConPTY foreground process inspection (`vex_pty_foreground_process`), OSC 0/2 titles, and OSC 7501 `app` metadata, backed by a per-DPI Direct2D GPU `ID2D1Bitmap` cache.
 - Click a pane to focus it. Drag a right/down divider to resize its two subtrees
   live, without changing terminal focus. Ratios stay in 0.1..0.9; interactive
   dragging also keeps each neighbor at least 100 DIPs. Too-small containers
@@ -299,6 +299,7 @@ zig build test -Doptimize=Debug
 zig build test -Doptimize=ReleaseSafe
 zig build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeRenderer.ps1 -RequireNativeGlyphAtlas
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeIcons.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeDividers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
@@ -371,6 +372,8 @@ Ignored artifacts under `zig-out/verification/`:
 - `wsl.json`: live selected-distribution WSL results.
 - `dividers.json`: live divider capture/resize/cancellation results.
 - `tabs.json`: live atomic tab-reorder/ownership/capture results.
+- `icons.json`, `icons-*.png`: matching tab/pane icon presentation in dark/light
+  themes, synthetic current-monitor DPI, application titles and split focus.
 - `renderer.json`, `renderer-*.png`: hardware/WARP, GPU readback, graphics recreation,
   resize/minimize/restore, overlays and idle-presentation checks.
   Native atlas checks also cover warm reuse, batching, styled Unicode and eviction.
