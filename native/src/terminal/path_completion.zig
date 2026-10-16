@@ -242,43 +242,56 @@ pub const PathCompletion = struct {
         }
     }
 
+    /// Retains the best fifty path matches using bounded scratch space; warm queries reuse output storage.
     pub fn refreshMatches(self: *PathCompletion) !void {
-        self.matches.clearRetainingCapacity();
+        const ranking = MatchRanking{ .entries = self.entries.items };
+        var scratch: [@sizeOf(Match) * max_matches]u8 align(@alignOf(Match)) = undefined;
+        var scratch_allocator = std.heap.FixedBufferAllocator.init(&scratch);
+        var best = std.PriorityQueue(Match, MatchRanking, MatchRanking.worstFirst).init(scratch_allocator.allocator(), ranking);
+        defer best.deinit();
+        try best.ensureTotalCapacityPrecise(max_matches);
+
         const q = self.query();
         for (self.entries.items, 0..) |entry, idx| {
             const score = scorePath(entry.name, entry.is_directory, q) orelse continue;
-            if (self.matches.items.len < max_matches) {
-                try self.matches.append(self.allocator, .{ .entry_index = idx, .score = score });
-            } else {
-                var worst_pos: usize = 0;
-                var worst_score = self.matches.items[0].score;
-                var worst_entry_idx = self.matches.items[0].entry_index;
-                for (self.matches.items[1..], 1..) |m, m_pos| {
-                    if (m.score < worst_score or (m.score == worst_score and m.entry_index > worst_entry_idx)) {
-                        worst_pos = m_pos;
-                        worst_score = m.score;
-                        worst_entry_idx = m.entry_index;
-                    }
-                }
-                if (score > worst_score) {
-                    self.matches.items[worst_pos] = .{ .entry_index = idx, .score = score };
+            const candidate = Match{ .entry_index = idx, .score = score };
+            if (best.count() < max_matches) {
+                try best.add(candidate);
+            } else if (best.peek()) |worst| {
+                if (ranking.bestFirst(candidate, worst)) {
+                    _ = best.remove();
+                    try best.add(candidate);
                 }
             }
         }
 
-        const Context = struct {
-            entries: []const Entry,
-            pub fn lessThan(ctx: @This(), a: Match, b: Match) bool {
-                if (a.score != b.score) return a.score > b.score;
-                const na = ctx.entries[a.entry_index].name;
-                const nb = ctx.entries[b.entry_index].name;
-                return std.ascii.lessThanIgnoreCase(na, nb);
-            }
-        };
-        std.mem.sort(Match, self.matches.items, Context{ .entries = self.entries.items }, Context.lessThan);
+        // Reserve before replacing visible results so allocation failure preserves the prior list.
+        try self.matches.ensureTotalCapacity(self.allocator, best.count());
+        self.matches.clearRetainingCapacity();
+        self.matches.appendSliceAssumeCapacity(best.items);
+        std.mem.sort(Match, self.matches.items, ranking, MatchRanking.bestFirst);
         if (self.selected_index >= self.matches.items.len) {
             self.selected_index = 0;
         }
+    }
+};
+
+const MatchRanking = struct {
+    entries: []const Entry,
+
+    fn worstFirst(self: MatchRanking, a: Match, b: Match) std.math.Order {
+        if (a.score != b.score) return std.math.order(a.score, b.score);
+        const na = self.entries[a.entry_index].name;
+        const nb = self.entries[b.entry_index].name;
+        const folded = std.ascii.orderIgnoreCase(nb, na);
+        if (folded != .eq) return folded;
+        const exact = std.mem.order(u8, nb, na);
+        if (exact != .eq) return exact;
+        return std.math.order(b.entry_index, a.entry_index);
+    }
+
+    fn bestFirst(self: MatchRanking, a: Match, b: Match) bool {
+        return self.worstFirst(a, b) == .gt;
     }
 };
 
@@ -522,6 +535,81 @@ pub fn readPromptDirectory(line: []const u8) ?[]const u8 {
         if (c < 0x20 or c == 0x7f) return null;
     }
     return candidate;
+}
+
+test "path completion keeps the best fifty matches regardless of directory enumeration order" {
+    const allocator = std.testing.allocator;
+    var completion = PathCompletion.init(allocator);
+    defer completion.deinit();
+    for (0..max_entries) |i| {
+        const name = try std.fmt.allocPrint(allocator, "file-{d:0>5}", .{max_entries - i});
+        errdefer allocator.free(name);
+        try completion.entries.append(allocator, .{ .name = name, .is_directory = i % 7 == 0 });
+    }
+
+    const Oracle = struct {
+        fn lessThan(entries: []const Entry, a: Match, b: Match) bool {
+            if (a.score != b.score) return a.score > b.score;
+            return std.ascii.lessThanIgnoreCase(entries[a.entry_index].name, entries[b.entry_index].name);
+        }
+    };
+    var expected: std.ArrayList(Match) = .empty;
+    defer expected.deinit(allocator);
+    for ([_][]const u8{ "", "file", "f1", "000", "zz", "-", "file-00001" }) |q| {
+        @memcpy(completion.query_buf[0..q.len], q);
+        completion.query_len = q.len;
+        expected.clearRetainingCapacity();
+        for (completion.entries.items, 0..) |entry, index| {
+            const score = scorePath(entry.name, entry.is_directory, q) orelse continue;
+            try expected.append(allocator, .{ .entry_index = index, .score = score });
+        }
+        std.mem.sort(Match, expected.items, completion.entries.items, Oracle.lessThan);
+        try completion.refreshMatches();
+        try std.testing.expectEqualSlices(Match, expected.items[0..@min(max_matches, expected.items.len)], completion.matches.items);
+    }
+}
+
+test "path completion preserves results on allocation failure and warm queries allocate nothing" {
+    const allocator = std.testing.allocator;
+    var completion = PathCompletion.init(allocator);
+    defer completion.deinit();
+    for (0..100) |i| {
+        const name = try std.fmt.allocPrint(allocator, "file-{d:0>5}", .{i});
+        errdefer allocator.free(name);
+        try completion.entries.append(allocator, .{ .name = name, .is_directory = false });
+    }
+    const prior = Match{ .entry_index = 0, .score = 17 };
+    try completion.matches.append(allocator, prior);
+    completion.selected_index = 0;
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    completion.allocator = failing.allocator();
+    defer completion.allocator = allocator;
+    try std.testing.expectError(error.OutOfMemory, completion.refreshMatches());
+    try std.testing.expectEqualSlices(Match, &.{prior}, completion.matches.items);
+
+    completion.allocator = allocator;
+    try completion.refreshMatches();
+    completion.allocator = failing.allocator();
+    try completion.appendQuery("file-0");
+    _ = try completion.backspaceQuery();
+    try completion.clearQuery();
+    try std.testing.expectEqual(max_matches, completion.matches.items.len);
+}
+
+test "path completion uses deterministic case ties at the result limit" {
+    const allocator = std.testing.allocator;
+    var completion = PathCompletion.init(allocator);
+    defer completion.deinit();
+    for (0..max_matches + 2) |i| {
+        const name = try allocator.dupe(u8, if (i < max_matches) "file" else "FILE");
+        errdefer allocator.free(name);
+        try completion.entries.append(allocator, .{ .name = name, .is_directory = false });
+    }
+    try completion.refreshMatches();
+    try std.testing.expectEqual(max_matches, completion.matches.items.len);
+    try std.testing.expectEqual(max_matches, completion.matches.items[0].entry_index);
+    try std.testing.expectEqual(max_matches + 1, completion.matches.items[1].entry_index);
+    try std.testing.expectEqual(@as(usize, 0), completion.matches.items[2].entry_index);
 }
 
 test "scorePath ranks exact, prefix, contiguous, camelCase, and directories above weak matches" {
