@@ -15,6 +15,7 @@ Remove-Item $metrics -ErrorAction SilentlyContinue
 $oldMetrics = $env:VEX_NATIVE_METRICS
 $oldSelftest = $env:VEX_NATIVE_SELFTEST
 $process = $null
+$backgroundGate = $null
 try {
     $previousDpiContext = [VexNativeSmoke]::SetThreadDpiAwarenessContext([IntPtr](-4))
     $env:VEX_NATIVE_METRICS = $metrics
@@ -121,7 +122,7 @@ try {
     if ($freshToken -le $closedToken) { throw 'Vex native smoke: a pane token was reused.' }
     Assert-NativeProbe $window 4 0 'new tab output isolation'
     Send-NativeText $window ('@set VEX_ROOT=VEX_NATIVE_ROOT_DIRECTORY_' + "`r" + '@if /i "%CD%"=="' + $NativeWorkingDirectory + '" echo %VEX_ROOT%OK' + "`r")
-    Assert-NativeProbe $window 9 1 'new tabs use the project root, not a changed pane directory'
+    Assert-NativeProbe $window 9 1 'new tabs use the launch directory, not a changed pane directory'
     Send-NativeText $window ('@set VEX_TAB=VEX_NATIVE_TAB_' + "`r" + '@echo %VEX_TAB%B' + "`r")
     Assert-NativeProbe $window 5 1 'second tab marker'
     Invoke-NativeAction $window 5
@@ -129,16 +130,39 @@ try {
     Assert-NativeProbe $window 5 0 'previous tab cannot see second tab output'
     Invoke-NativeAction $window 4
     Assert-NativeProbe $window 5 1 'next tab retains its terminal'
-    Send-NativeText $window ('@set VEX_BACKGROUND=VEX_NATIVE_BACKGROUND_' + "`r" + '@ping -n 2 127.0.0.1 >nul & @echo %VEX_BACKGROUND%OK' + "`r")
+    # Start plain output only after real process metadata settles, without racing a timed child sleep.
+    $backgroundGateName = 'Local\VexBackgroundOutput-' + [Guid]::NewGuid().ToString('N')
+    $backgroundGate = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset, $backgroundGateName)
+    $backgroundFixture = "`$gate=[Threading.EventWaitHandle]::OpenExisting('$backgroundGateName');[Console]::Title='Future delayed command';[Console]::WriteLine('VEX_NATIVE_PANE_'+'C');`$gate.WaitOne()|Out-Null;`$gate.Dispose();[Console]::WriteLine('VEX_NATIVE_BACKGROUND_'+'OK');Start-Sleep -Milliseconds 3500;[Console]::Title='Finished hidden task';[Console]::WriteLine('VEX_NATIVE_FLOOD_'+'OK')"
+    $backgroundEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($backgroundFixture))
+    Send-NativeText $window ('@"' + $env:WINDIR + '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -EncodedCommand ' + $backgroundEncoded + "`r")
+    Assert-NativeProbe $window 6 1 'background writer is ready before the quiet-output sample'
+    Assert-NativeProbe $window 94 10 'nested powershell process metadata is visible before the quiet-output sample'
     Invoke-NativeAction $window 5
     Start-Sleep -Milliseconds 300
+    $hiddenTitleBefore = Get-NativeProbe $window 108
+    $activeTitleBefore = Get-NativeProbe $window 109
     $paintCountBefore = Get-NativeProbe $window 20
+    $backgroundGate.Set() | Out-Null
     Start-Sleep -Milliseconds 1200
     $backgroundPaints = (Get-NativeProbe $window 20) - $paintCountBefore
-    if ($backgroundPaints -ne 0) { throw "Vex native smoke: background output caused $backgroundPaints active-window paints." }
+    if ($backgroundPaints -ne 0) {
+        $hiddenTitleDelta = (Get-NativeProbe $window 108) - $hiddenTitleBefore
+        $activeTitleDelta = (Get-NativeProbe $window 109) - $activeTitleBefore
+        throw "Vex native smoke: background output caused $backgroundPaints active-window paints (hidden title delta=$hiddenTitleDelta, active title delta=$activeTitleDelta)."
+    }
     Assert-NativeProbe $window 7 0 'hidden output does not change the active tab'
+    $beforeTitlePaints = Get-NativeProbe $window 20
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        if ((Get-NativeProbe $window 108) -gt $hiddenTitleBefore -and (Get-NativeProbe $window 20) -gt $beforeTitlePaints) { break }
+        Start-Sleep -Milliseconds 30
+    } until ([DateTime]::UtcNow -gt $deadline)
+    if ((Get-NativeProbe $window 108) -le $hiddenTitleBefore -or (Get-NativeProbe $window 20) -le $beforeTitlePaints) { throw 'Vex native smoke: a changed hidden title did not repaint its visible header.' }
+    Assert-NativeProbe $window 47 0 'hidden title changes do not steal tab focus'
     Invoke-NativeAction $window 4
     Assert-NativeProbe $window 7 1 'hidden output is parsed before tab becomes visible'
+    Assert-NativeProbe $window 1 1 'background writer completed before the next shell command'
 
     $terminalProcessId = Get-NativeProbe $window 14
     Send-NativeText $window ('@ping -n 100 127.0.0.1 >nul' + "`r")
@@ -157,7 +181,7 @@ try {
     if (Get-Process -Id $terminalProcessId -ErrorAction SilentlyContinue) { throw 'Vex native smoke: closed pane left its shell running.' }
     for ($index = 1; $index -lt 8; $index++) { Invoke-NativeAction $window 0 }
     Invoke-NativeAction $window 0
-    Assert-NativeProbe $window 10 8 '8-tab project limit matches WPF'
+    Assert-NativeProbe $window 10 8 'terminal window enforces the eight-tab limit'
     Invoke-NativeAction $window 6 999
     Assert-NativeProbe $window 10 8 'invalid tab index is ignored safely'
     for ($index = 7; $index -gt 0; $index--) { Invoke-NativeAction $window 7 $index }
@@ -181,7 +205,7 @@ try {
     Close-NativeInstance $process $window
     [pscustomobject]@{
         Result = 'PASS'
-        Checks = @('ConPTY round trip/resize', '2,000-line output', 'nested right/down splits', 'click focus', 'isolated pane/tab output', 'stale output token rejection', 'background parsing', 'Unicode OSC 7 split directory', 'new-tab project directory', 'OSC 7501 transport/priority/acknowledgement', 'hidden-tab status indicator repaint', 'close/focus fallback', '8-tab limit', 'process-tree teardown', 'resize under active output', 'flooding-tab close', 'active-output shutdown')
+        Checks = @('ConPTY round trip/resize', '2,000-line output', 'nested right/down splits', 'click focus', 'isolated pane/tab output', 'stale output token rejection', 'background parsing', 'Unicode OSC 7 split directory', 'new-tab launch directory', 'OSC 7501 transport/priority/acknowledgement', 'hidden-tab status indicator repaint', 'close/focus fallback', '8-tab limit', 'process-tree teardown', 'resize under active output', 'flooding-tab close', 'active-output shutdown')
         WindowReadyMs = [Math]::Round($windowReadyMs, 2)
         SinglePaneWorkingSetBytes = $singlePaneMemory
         ThreePaneWorkingSetBytes = $threePaneMemory
@@ -191,6 +215,7 @@ try {
     } | ConvertTo-Json | Tee-Object -FilePath (Join-Path $OutputDirectory 'result.json')
 } finally {
     if ($process -and !$process.HasExited) { $process.Kill() }
+    if ($backgroundGate) { $backgroundGate.Dispose() }
     if ($previousDpiContext -and $previousDpiContext -ne [IntPtr]::Zero) { [VexNativeSmoke]::SetThreadDpiAwarenessContext($previousDpiContext) | Out-Null }
     $env:VEX_NATIVE_METRICS = $oldMetrics
     $env:VEX_NATIVE_SELFTEST = $oldSelftest

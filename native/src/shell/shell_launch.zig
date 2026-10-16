@@ -57,7 +57,7 @@ pub const ShellKind = enum(u32) {
         };
     }
 };
-/// Unresolved automatic WSL selection or a parsed explicit/project distribution; resolved before launch construction.
+/// Unresolved automatic WSL selection or a parsed explicit/directory distribution; resolved before launch construction.
 pub const WslDistributionSelection = union(enum) { automatic, named: wsl.WslDistribution };
 /// Startup-only shell selection borrows parsed argv until the launch owner has cloned it.
 pub const ShellRequest = union(enum) {
@@ -115,17 +115,17 @@ pub const ShellRequest = union(enum) {
         if (raw_arguments != null) return error.CustomShellRequiresProgram;
         return .{ .builtin = if (kind) |selected| selected.windows else .system };
     }
-    /// WSL UNC projects choose their own distribution; non-system Windows/cross-distribution requests fail rather than remap.
-    pub fn forProjectDirectory(self: ShellRequest, path: directory.DirectoryPath) !ShellRequest {
-        const project_distribution = (try wsl.networkDistribution(path.bytes)) orelse return self;
+    /// WSL UNC working directories pin their distribution; incompatible shell requests fail rather than remap.
+    pub fn forWorkingDirectory(self: ShellRequest, path: directory.DirectoryPath) !ShellRequest {
+        const path_distribution = (try wsl.networkDistribution(path.bytes)) orelse return self;
         switch (self) {
             .wsl => |profile| {
-                if (profile.distribution == .named and !std.ascii.eqlIgnoreCase(profile.distribution.named.bytes, project_distribution.bytes)) return error.WslDistributionMismatch;
+                if (profile.distribution == .named and !std.ascii.eqlIgnoreCase(profile.distribution.named.bytes, path_distribution.bytes)) return error.WslDistributionMismatch;
                 var selected = self;
-                if (profile.distribution == .automatic) selected.wsl.distribution = .{ .named = project_distribution };
+                if (profile.distribution == .automatic) selected.wsl.distribution = .{ .named = path_distribution };
                 return selected;
             },
-            .builtin => |profile| if (profile == .system) return .{ .wsl = .{ .distribution = .{ .named = project_distribution }, .command = .default } },
+            .builtin => |profile| if (profile == .system) return .{ .wsl = .{ .distribution = .{ .named = path_distribution }, .command = .default } },
             .custom => {},
         }
         return error.WslDirectoryRequiresShell;
@@ -465,26 +465,26 @@ test "WSL requests retain automatic or explicit distribution selection and arbit
     try std.testing.expectError(error.InvalidWslProgram, ShellRequest.parseArguments(&.{ "--shell", "wsl:/", "--distribution", "Ubuntu" }));
 }
 
-test "project directory selection keeps Windows defaults and pins WSL projects without registry access" {
-    const windows_path = try directory.DirectoryPath.parse("C:\\project");
-    const project = try directory.DirectoryPath.parse("\\\\wsl$\\Ubuntu\\home\\user");
+test "working directory selection keeps Windows defaults and pins WSL paths without registry access" {
+    const windows_path = try directory.DirectoryPath.parse("C:\\work");
+    const linux_path = try directory.DirectoryPath.parse("\\\\wsl$\\Ubuntu\\home\\user");
     const default = try ShellRequest.parseArguments(&.{});
-    try std.testing.expectEqual(.system, (try default.forProjectDirectory(windows_path)).builtin);
-    const selected_default = try default.forProjectDirectory(project);
+    try std.testing.expectEqual(.system, (try default.forWorkingDirectory(windows_path)).builtin);
+    const selected_default = try default.forWorkingDirectory(linux_path);
     try std.testing.expectEqualStrings("Ubuntu", selected_default.wsl.distribution.named.bytes);
     try std.testing.expect(selected_default.wsl.command == .default);
     const automatic = try ShellRequest.parseArguments(&.{ "--shell", "wsl:/usr/bin/fish", "--arguments", "--interactive" });
-    try std.testing.expect((try automatic.forProjectDirectory(windows_path)).wsl.distribution == .automatic);
-    const selected = try automatic.forProjectDirectory(project);
+    try std.testing.expect((try automatic.forWorkingDirectory(windows_path)).wsl.distribution == .automatic);
+    const selected = try automatic.forWorkingDirectory(linux_path);
     try std.testing.expectEqualStrings("Ubuntu", selected.wsl.distribution.named.bytes);
     try std.testing.expectEqualStrings("/usr/bin/fish", selected.wsl.command.program.path.bytes);
     try std.testing.expectEqualStrings("--interactive", selected.wsl.command.program.arguments);
     const explicit = try ShellRequest.parseArguments(&.{ "--shell", "wsl", "--distribution", "Ubuntu" });
-    try std.testing.expectEqualStrings("Ubuntu", (try explicit.forProjectDirectory(project)).wsl.distribution.named.bytes);
+    try std.testing.expectEqualStrings("Ubuntu", (try explicit.forWorkingDirectory(linux_path)).wsl.distribution.named.bytes);
     const other = try ShellRequest.parseArguments(&.{ "--shell", "wsl", "--distribution", "Debian" });
-    try std.testing.expectError(error.WslDistributionMismatch, other.forProjectDirectory(project));
-    try std.testing.expectError(error.WslDirectoryRequiresShell, (try ShellRequest.parseArguments(&.{ "--shell", "cmd" })).forProjectDirectory(project));
-    try std.testing.expectError(error.WslDirectoryRequiresShell, (try ShellRequest.parseArguments(&.{ "--program", "C:\\custom.exe" })).forProjectDirectory(project));
+    try std.testing.expectError(error.WslDistributionMismatch, other.forWorkingDirectory(linux_path));
+    try std.testing.expectError(error.WslDirectoryRequiresShell, (try ShellRequest.parseArguments(&.{ "--shell", "cmd" })).forWorkingDirectory(linux_path));
+    try std.testing.expectError(error.WslDirectoryRequiresShell, (try ShellRequest.parseArguments(&.{ "--program", "C:\\custom.exe" })).forWorkingDirectory(linux_path));
 }
 
 fn checkWslLaunchAllocations(allocator: std.mem.Allocator, root: []const u8) !void {

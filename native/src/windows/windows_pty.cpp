@@ -6,6 +6,8 @@
 #include <string.h>
 
 HWND vex_native_window();
+static void extractLowerStem(const wchar_t* path, wchar_t (&stem)[64]);
+static bool isShellStem(const wchar_t* stem);
 
 struct VexPty {
     uint32_t token;
@@ -20,8 +22,9 @@ struct VexPty {
     DWORD outputLength;
     volatile LONG stopping, outputPending;
     DWORD fgPid;
+    wchar_t rootStem[64];
     uint64_t fgCreateTime;
-    uint8_t fgExe[64];
+    uint8_t fgExe[256];
     size_t fgExeLen;
     uint8_t fgCmd[512];
     size_t fgCmdLen;
@@ -104,6 +107,7 @@ static DWORD WINAPI writePtyInput(void* context) {
 }
 
 static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLaunch launch) {
+    extractLowerStem(reinterpret_cast<const wchar_t*>(launch.program), session->rootStem);
     session->outputConsumed = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!session->outputConsumed) return GetLastError();
     session->inputReady = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -272,8 +276,7 @@ static bool matchStem(const wchar_t* stem, const wchar_t* const* list, size_t co
 
 static bool isIgnoredHelper(const wchar_t* stem) {
     static const wchar_t* const list[] = {
-        L"conhost", L"openconsole", L"wslhost", L"wslrelay", L"wslservice",
-        L"git-remote-https", L"git-credential-manager", L"ssh-agent", L"gpg-agent"
+        L"conhost", L"openconsole", L"wslhost", L"wslrelay", L"wslservice"
     };
     return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
 }
@@ -282,32 +285,6 @@ static bool isShellStem(const wchar_t* stem) {
     static const wchar_t* const list[] = {
         L"pwsh", L"powershell", L"cmd", L"bash", L"zsh", L"fish", L"nu",
         L"elvish", L"sh", L"dash", L"ash", L"ksh", L"tcsh", L"csh", L"wsl"
-    };
-    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
-}
-
-static bool isTerminalHostStem(const wchar_t* stem) {
-    static const wchar_t* const list[] = {
-        L"nvim", L"vim", L"vi", L"hx", L"helix", L"nano", L"micro", L"emacs", L"kak",
-        L"lazygit", L"gitui", L"tig", L"btop", L"btm", L"htop", L"top", L"yazi", L"ranger", L"lf",
-        L"claude", L"codex", L"opencode", L"aider", L"zig", L"cargo", L"rustc", L"go", L"dotnet",
-        L"rg", L"fd", L"fzf"
-    };
-    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
-}
-
-static bool isRuntimeHostStem(const wchar_t* stem) {
-    static const wchar_t* const list[] = {
-        L"node", L"nodejs", L"bun", L"deno", L"python", L"python3", L"py"
-    };
-    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
-}
-
-static bool needsCommandLineRead(const wchar_t* stem) {
-    static const wchar_t* const list[] = {
-        L"node", L"nodejs", L"bun", L"deno", L"python", L"python3", L"py", L"ruby", L"perl",
-        L"java", L"javaw", L"dotnet", L"wsl", L"npx", L"pnpm", L"yarn", L"npm",
-        L"uv", L"uvx", L"pipx", L"cmd", L"pwsh", L"powershell", L"bash", L"sh"
     };
     return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
 }
@@ -337,39 +314,6 @@ static size_t readProcessCommandLineUtf8(HANDLE process, uint8_t* out, size_t ca
     if (!ReadProcessMemory(process, params.CommandLine.Buffer, wideBuf, wcharCount * sizeof(wchar_t), &bytesRead)) return 0;
     int utf8Len = WideCharToMultiByte(CP_UTF8, 0, wideBuf, static_cast<int>(wcharCount), reinterpret_cast<char*>(out), static_cast<int>(cap), nullptr, nullptr);
     return utf8Len > 0 ? static_cast<size_t>(utf8Len) : 0;
-}
-
-static bool containsAsciiIgnoreCase(const uint8_t* hay, size_t hayLen, const char* needle) {
-    size_t nLen = strlen(needle);
-    if (!nLen || hayLen < nLen) return false;
-    for (size_t i = 0; i + nLen <= hayLen; ++i) {
-        bool match = true;
-        for (size_t j = 0; j < nLen; ++j) {
-            uint8_t c = hay[i + j];
-            if (c >= 'A' && c <= 'Z') c = static_cast<uint8_t>(c + 32);
-            if (c != static_cast<uint8_t>(needle[j])) { match = false; break; }
-        }
-        if (match) return true;
-    }
-    return false;
-}
-
-static bool isPackageRunnerCommandLine(DWORD pid) {
-    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-    if (!proc) return false;
-    uint8_t cmd[512];
-    size_t len = readProcessCommandLineUtf8(proc, cmd, sizeof(cmd));
-    CloseHandle(proc);
-    if (!len) return false;
-    return containsAsciiIgnoreCase(cmd, len, "npm-cli.js") ||
-           containsAsciiIgnoreCase(cmd, len, "npx-cli.js") ||
-           containsAsciiIgnoreCase(cmd, len, "\\npm\\bin\\") ||
-           containsAsciiIgnoreCase(cmd, len, "pnpm.cjs") ||
-           containsAsciiIgnoreCase(cmd, len, "\\pnpm\\") ||
-           containsAsciiIgnoreCase(cmd, len, "\\yarn\\") ||
-           containsAsciiIgnoreCase(cmd, len, "corepack") ||
-           containsAsciiIgnoreCase(cmd, len, "bun run ") ||
-           containsAsciiIgnoreCase(cmd, len, "bunx ");
 }
 
 struct SnapshotNode {
@@ -412,8 +356,6 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
     DWORD rootPid = GetProcessId(session->process);
     if (!rootPid) return 0;
 
-    refreshProcessSnapshot();
-
     struct QueueEntry {
         DWORD pid;
         uint8_t depth;
@@ -426,11 +368,19 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
     DWORD chosenPid = 0;
     const wchar_t* chosenExe = nullptr;
     wchar_t chosenStem[64] = {};
+    // Custom roots own their workers. Their identity comes from launch metadata, not a capped system scan.
+    if (!isShellStem(session->rootStem)) {
+        chosenPid = rootPid;
+        chosenExe = session->rootStem;
+        wcscpy_s(chosenStem, session->rootStem);
+        qHead = qTail;
+    } else {
+        refreshProcessSnapshot();
+    }
 
     DWORD fallbackShellPid = 0;
     const wchar_t* fallbackShellExe = nullptr;
     wchar_t fallbackShellStem[64] = {};
-
     while (qHead < qTail) {
         QueueEntry curr = queue[qHead++];
         if (curr.depth >= 12) continue;
@@ -449,34 +399,30 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
             if (isIgnoredHelper(stem)) continue;
 
             bool isShell = isShellStem(stem) && wcscmp(stem, L"wsl") != 0;
-            if (!isShell) {
+            if (!isShell && !chosenPid) {
                 chosenPid = childPid;
                 chosenExe = snapshotNodes[i].exe;
                 wcscpy_s(chosenStem, stem);
-            } else if (fallbackShellPid == 0) {
+            } else if (isShell && !fallbackShellPid) {
                 fallbackShellPid = childPid;
                 fallbackShellExe = snapshotNodes[i].exe;
                 wcscpy_s(fallbackShellStem, stem);
             }
 
-            bool expandChildren = true;
-            if (isTerminalHostStem(stem)) {
-                expandChildren = false;
-            } else if (isRuntimeHostStem(stem)) {
-                expandChildren = isPackageRunnerCommandLine(childPid);
-            }
+            // Any application owns its workers; launcher arguments are decoded once by the Zig identity parser.
+            const bool expandChildren = isShell;
             if (expandChildren && qTail < 64) {
                 queue[qTail++] = { childPid, static_cast<uint8_t>(curr.depth + 1) };
             }
         }
     }
 
+    // A nested shell is itself live foreground work even before it starts another application.
     if (!chosenPid && fallbackShellPid) {
         chosenPid = fallbackShellPid;
         chosenExe = fallbackShellExe;
         wcscpy_s(chosenStem, fallbackShellStem);
     }
-
     if (!chosenPid || !chosenExe || !chosenStem[0]) {
         session->fgPid = 0;
         session->fgCreateTime = 0;
@@ -486,9 +432,7 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
     }
 
     uint64_t createTime = 0;
-    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, chosenPid);
-    bool canReadVm = proc != nullptr;
-    if (!proc) proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, chosenPid);
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, chosenPid);
     if (proc) {
         FILETIME ftCreate = {}, ftExit = {}, ftKernel = {}, ftUser = {};
         if (GetProcessTimes(proc, &ftCreate, &ftExit, &ftKernel, &ftUser)) {
@@ -496,9 +440,8 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
         }
     }
 
-    // Fast path: if PID and creation timestamp match cached state (and PEB command line succeeded when needed), skip memory reads.
-    if (chosenPid == session->fgPid && createTime != 0 && createTime == session->fgCreateTime &&
-        (!needsCommandLineRead(chosenStem) || session->fgCmdLen > 0)) {
+    // Cache failed/denied command-line reads too: unavailable metadata must not trigger repeated PEB reads.
+    if (chosenPid == session->fgPid && createTime != 0 && createTime == session->fgCreateTime) {
         if (proc) CloseHandle(proc);
         size_t eLen = session->fgExeLen < exe_capacity ? session->fgExeLen : exe_capacity;
         size_t cLen = session->fgCmdLen < cmd_capacity ? session->fgCmdLen : cmd_capacity;
@@ -511,9 +454,9 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
 
     int exeUtf8 = WideCharToMultiByte(CP_UTF8, 0, chosenExe, -1, reinterpret_cast<char*>(session->fgExe), sizeof(session->fgExe), nullptr, nullptr);
     session->fgExeLen = exeUtf8 > 1 ? static_cast<size_t>(exeUtf8 - 1) : 0;
-    session->fgCmdLen = (canReadVm && needsCommandLineRead(chosenStem))
-        ? readProcessCommandLineUtf8(proc, session->fgCmd, sizeof(session->fgCmd))
-        : 0;
+    if (proc) CloseHandle(proc);
+    proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, chosenPid);
+    session->fgCmdLen = readProcessCommandLineUtf8(proc, session->fgCmd, sizeof(session->fgCmd));
     session->fgPid = chosenPid;
     session->fgCreateTime = createTime;
     if (proc) CloseHandle(proc);

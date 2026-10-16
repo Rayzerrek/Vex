@@ -35,7 +35,8 @@ try {
             'gitbash' { Send-NativeText $window ("printf '%s%s\n' VEX_NATIVE_SHELL_ READY" + "`r") }
         }
         Assert-NativeProbe $window 35 1 ($profile + ' shell round trip')
-        if ($profile -ne 'gitbash') { Assert-NativeProbe $window 31 1 ($profile + ' integrated prompt becomes idle') }
+        if ($profile -ne 'gitbash') { Assert-NativeProbe $window 107 1 ($profile + ' integrated prompt becomes idle') }
+        Assert-NativeProbe $window 31 0 ($profile + ' prompt markers do not fabricate program status')
         switch ($profile) {
             'cmd' { Send-NativeText $window ('@if "%TERM%/%COLORTERM%"=="xterm-256color/truecolor" echo %VEX_READY%ENV_OK' + "`r") }
             { $_ -in 'powershell', 'pwsh' } { Send-NativeText $window ("if (`$env:TERM -eq 'xterm-256color' -and `$env:COLORTERM -eq 'truecolor') { [Console]::WriteLine('VEX_NATIVE_SHELL_'+'ENV_OK') }" + "`r") }
@@ -49,7 +50,7 @@ try {
             if ($profile -eq 'nu') { $changeDirectory = 'cd "' + $folder.Replace('\', '\\').Replace('"', '\"') + '"' }
             else { $changeDirectory = "Set-Location -LiteralPath '" + $folder.Replace("'", "''") + "'" }
             Send-NativeText $window ($changeDirectory + "`r")
-            Assert-NativeProbe $window 31 1 ($profile + ' directory command completes')
+            Assert-NativeProbe $window 107 1 ($profile + ' directory command completes')
             # Wait for the prompt's actual OSC 7 callback, not merely a previous idle frame.
             $deadline = [DateTime]::UtcNow.AddSeconds(15)
             do {
@@ -59,18 +60,20 @@ try {
             } until ([DateTime]::UtcNow -gt $deadline)
             if ($reported -ne 1) { throw "Vex native smoke: $profile did not report a live Unicode directory." }
             Invoke-NativeAction $window 1
-            Assert-NativeProbe $window 31 1 ($profile + ' split owns an independent integrated shell')
+            Assert-NativeProbe $window 107 1 ($profile + ' split owns an independent integrated shell')
             if ($profile -eq 'nu') { $probe = 'if $env.PWD == "' + $folder.Replace('\', '\\') + '" { print ("VEX_NATIVE_SHELL_" + "DIRECTORY_OK") }' }
             else { $probe = "if (`$PWD.ProviderPath -eq '" + $folder.Replace("'", "''") + "') { [Console]::WriteLine('VEX_NATIVE_SHELL_'+'DIRECTORY_OK') }" }
             Send-NativeText $window ($probe + "`r")
             Assert-NativeProbe $window 36 1 ($profile + ' split inherits prompt-reported Unicode directory')
             if ($profile -eq 'nu') { Send-NativeText $window ('sleep 2500ms' + "`r") }
             else { Send-NativeText $window ('Start-Sleep -Milliseconds 2500' + "`r") }
-            Assert-NativeProbe $window 31 2 ($profile + ' command-start marker')
-            Assert-NativeProbe $window 31 3 ($profile + ' long command completed result')
+            Assert-NativeProbe $window 107 2 ($profile + ' command-start marker')
+            Assert-NativeProbe $window 31 0 ($profile + ' running shell command does not fabricate program status')
+            Assert-NativeProbe $window 107 3 ($profile + ' long command completed lifecycle')
             if ($profile -eq 'nu') { Send-NativeText $window ('run-external $env.ComSpec /d /c exit 7' + "`r") }
             else { Send-NativeText $window ('& $env:ComSpec /d /c exit 7' + "`r") }
-            Assert-NativeProbe $window 31 5 ($profile + ' failed command reports error')
+            Assert-NativeProbe $window 107 5 ($profile + ' failed shell command lifecycle')
+            Assert-NativeProbe $window 31 0 ($profile + ' failed shell command does not fabricate program status')
         }
         Close-NativeInstance $process $window
         $results += [pscustomobject]@{ Shell = $profile; Result = 'PASS' }
@@ -85,7 +88,8 @@ try {
     $window = $instance.Window
     Send-NativeText $window ('@set VEX_READY=VEX_NATIVE_SHELL_' + "`r" + '@echo %VEX_READY%READY' + "`r")
     Assert-NativeProbe $window 35 1 'cmd bootstrap resolves a Unicode/spaced installation path'
-    Assert-NativeProbe $window 31 1 'cmd bootstrap actually emits its prompt marker'
+    Assert-NativeProbe $window 107 1 'cmd bootstrap actually emits its prompt marker'
+    Assert-NativeProbe $window 31 0 'cmd bootstrap markers remain distinct from program status'
     Close-NativeInstance $process $window
     $results += [pscustomobject]@{ Shell = 'cmd Unicode install'; Result = 'PASS' }
     $results | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $OutputDirectory 'shells.json')

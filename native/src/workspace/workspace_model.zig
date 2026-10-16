@@ -32,7 +32,7 @@ pub const WorkspaceTab = struct {
 /// Result of applying a process exit to its owning tab; stale tokens never target a replacement pane.
 pub const PaneExitAction = enum { stale, retained_final, pane_closed, tab_closed };
 
-/// Owns one project's tabs, matching Project.MaxTabs and WPF close/focus behavior.
+/// Owns the window's terminal tabs directly; there is no project or workspace grouping layer.
 pub const WorkspaceModel = struct {
     allocator: std.mem.Allocator,
     tabs: std.ArrayList(WorkspaceTab),

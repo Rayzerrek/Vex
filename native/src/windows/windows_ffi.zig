@@ -361,12 +361,6 @@ pub fn machineNameAlloc(allocator: std.mem.Allocator) ![]u8 {
 pub fn setShellName(name: []const u8) !void {
     if (c.vex_window_shell_name(name.ptr, name.len) != 0) return error.InvalidShellDisplayName;
 }
-/// Publishes the active project folder name and optional Git branch into top-bar chrome.
-pub fn setProjectInfo(name: []const u8, branch: []const u8) !void {
-    const name_ptr: [*c]const u8 = if (name.len == 0) null else name.ptr;
-    const branch_ptr: [*c]const u8 = if (branch.len == 0) null else branch.ptr;
-    if (c.vex_window_project_info(name_ptr, name.len, branch_ptr, branch.len) != 0) return error.InvalidProjectInfo;
-}
 /// Resolves the actual Windows system directory without trusting WINDIR/SystemRoot environment variables.
 pub fn systemDirectoryAlloc(allocator: std.mem.Allocator) ![]u8 {
     var buffer: [1024]u8 = undefined;
@@ -470,7 +464,6 @@ pub fn setChromePalette(palette: terminal_theme.ChromePalette) void {
         .text_primary = palette.text_primary,
         .text_muted = palette.text_muted,
         .accent = palette.accent,
-        .git_branch = palette.git_branch,
         .is_dark = palette.is_dark,
     });
 }
@@ -480,8 +473,8 @@ pub fn drawThemePicker(dark_mode: bool, cards: []const c.VexThemeCard) void {
     c.vex_draw_theme_picker(dark_mode, cards.ptr, cards.len);
 }
 /// Draws the Command Palette modal overlay with search query and filtered command items.
-pub fn drawCommandPalette(query: []const u8, items: []const c.VexCommandItem) void {
-    c.vex_draw_command_palette(if (query.len == 0) null else query.ptr, query.len, if (items.len == 0) null else items.ptr, items.len);
+pub fn drawCommandPalette(query: []const u8, items: []const c.VexCommandItem, bounds: panes.PaneRect, first: usize, total: usize) void {
+    c.vex_draw_command_palette(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, if (query.len == 0) null else query.ptr, query.len, if (items.len == 0) null else items.ptr, items.len, first, total);
 }
 /// Draws the Shell Picker overlay with action mode selector and available shell rows.
 pub fn drawShellPicker(mode: u8, items: []const c.VexShellPickerItem) void {
@@ -494,7 +487,7 @@ pub fn drawTabPeek(cards: []const c.VexTabPeekCard) void {
     c.vex_draw_tab_peek(cards.ptr, cards.len);
 }
 /// Draws the cursor-anchored inline path completion popup.
-pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: []const u8, items: []const c.VexPathCompletionItem, scan_error: bool) void {
+pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: []const u8, items: []const c.VexPathCompletionItem, scan_error: bool, loading: bool, truncated: bool) void {
     c.vex_draw_path_completion(
         .{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height },
         if (dir_text.len == 0) null else dir_text.ptr,
@@ -503,7 +496,7 @@ pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: [
         query.len,
         if (items.len == 0) null else items.ptr,
         items.len,
-        scan_error,
+        @as(u32, @intFromBool(scan_error)) | (@as(u32, @intFromBool(loading)) << 1) | (@as(u32, @intFromBool(truncated)) << 2),
     );
 }
 /// Draws the Close Confirmation modal for tabs or panes with active foreground processes or unsaved buffers.

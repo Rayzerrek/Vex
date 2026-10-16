@@ -2,6 +2,9 @@
 
 Work on `feat/zig-native`, alongside the unchanged `../windows/` application.
 The target is Windows + WSL; native Linux/macOS ports are out of scope for now.
+Native is a terminal multiplexer: a window owns tabs and split panes directly.
+Projects, named workspaces, project switching and Git-aware project chrome are
+not part of the native app or its roadmap.
 All GPU drawing and presentation use **native D3D12 + DXGI flip-discard**:
 terminal cells, chrome, vector icons, overlays and screenshot readback. There is
 no D3D11On12/translated UI device. DirectWrite and software WIC/Direct2D remain
@@ -39,8 +42,8 @@ zig build run -- --shell gitbash
 zig build run -- --program 'C:\Windows\System32\cmd.exe' --arguments /d
 ```
 
-`system` on a Windows project, and explicit `cmd`, resolve to the actual Windows
-system cmd. A WSL UNC project instead makes `system` choose that distribution's
+`system` in a Windows working directory, and explicit `cmd`, resolve to the actual Windows
+system cmd. A WSL UNC working directory instead makes `system` choose that distribution's
 Linux login shell. Built-ins are resolved
 once using canonical locations and absolute PATH entries; missing Windows
 built-ins fall back to cmd. Custom programs must be absolute and available;
@@ -80,9 +83,9 @@ zig build run -- --shell wsl:/usr/bin/fish --distribution Ubuntu
 ```
 
 WSL uses the actual system `wsl.exe`. An explicit `--distribution` must match a
-WSL UNC project; otherwise that project's distribution is used, or the current
-user's registered default for a Windows project. Launching from a WSL UNC
-project with no shell flags selects Linux automatically; explicit non-system
+WSL UNC working directory; otherwise that directory's distribution is used, or the current
+user's registered default for a Windows directory. Launching from a WSL UNC
+directory with no shell flags selects Linux automatically; explicit non-system
 Windows/custom shell requests still reject rather than silently remap.
 
 Default metadata is read once from `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`,
@@ -106,7 +109,7 @@ WSL directory with a Windows shell is rejected. CreateProcessW starts the
 launcher in its Windows directory, not a Linux filesystem view.
 
 Linux OSC 7 reports become owned paths in the selected distribution. Splits
-inherit them; new tabs retain the project root. Local hosts are empty,
+inherit them; new tabs use the application's startup directory. Local hosts are empty,
 `localhost` or the Win32 machine name. A differently configured Linux hostname
 is not yet recognized; remote/malformed reports preserve the previous path.
 Linux backslash filenames reject rather than undergoing a lossy conversion.
@@ -114,9 +117,9 @@ No Linux prompt integration is injected and no user startup file is rewritten;
 existing OSC 7/133/7501 integration remains optional. Linux foreground-process
 tracking remains pending.
 
-## Implemented workspace
+## Terminal multiplexer
 
-One project, with up to **8 tabs**, each owning independent terminal panes:
+Each window owns up to **8 tabs**, each with independent terminal panes:
 
 - `Ctrl+Shift+T`: new tab with the current default shell; clicking **+** in the `[ + | ▾ ]` top-bar split button does the same, while clicking **▾** opens the Shell Picker overlay (`New Tab`, `Split Right`, `Split Down`, `Set Default`).
 - `Ctrl+Tab` / `Ctrl+Shift+Tab`: next/previous tab; click selects a tab. When switching to a multi-pane tab that has an active attention or highest-priority status pane, focus automatically routes to that origin pane.
@@ -128,8 +131,8 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
   directory and unread status remain attached to the same tab.
   This checkpoint draws an insertion marker, not WPF's animated ghost/push preview.
 - `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down (also exits focus/zoom mode if active so the new split is visible).
-- Custom Windows DWM titlebar chrome (`#181A1F` top bar, DWM dark mode, rounded corners, border color, and bundled `app.ico`), left project pill with Lucide Folder glyph, project folder name, and live `.git/HEAD` branch name, hoverable `[ + | ▾ ]` new-tab / shell-picker split button, and native Windows Minimize / Maximize-Restore / Close (`#E81123` hover) caption buttons.
-- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge) and pane headers use the same `18×18` icon tile and `12×12` favicon as tabs, without focus-based shell recoloring; favicons are resolved from a 73-entry Lucide + SimpleIcons vector catalog (`app_icon.zig`) using per-session shell overrides, zero-allocation cached-PID ConPTY foreground process inspection (`vex_pty_foreground_process`), OSC 0/2 titles, and OSC 7501 `app` metadata, drawn as native D3D12 analytic vector primitives, with cached grayscale text masks for fallback badges.
+- Custom Windows DWM titlebar chrome (`#181A1F` top bar, DWM dark mode, rounded corners, border color, and bundled `app.ico`), tabs starting at an 8-DIP left margin, hoverable `[ + | ▾ ]` new-tab / shell-picker split button, and native Windows Minimize / Maximize-Restore / Close (`#E81123` hover) caption buttons. No project selector, directory pill or Git branch lookup.
+- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge) and pane headers use the same `18×18` icon tile and `12×12` favicon as tabs, without focus-based shell recoloring; favicons use optional 73-entry brand data (`app_icon.zig`), cached process metadata, OSC 0/2 titles and current OSC 7501 `app` identity. Generated brand paths are rasterized only on UI-atlas misses and drawn through native D3D12 masks; unknown programs receive deterministic monograms without affecting execution or close protection.
 - Click a pane to focus it. Drag a right/down divider to resize its two subtrees
   live, without changing terminal focus. Ratios stay in 0.1..0.9; interactive
   dragging also keeps each neighbor at least 100 DIPs. Too-small containers
@@ -145,7 +148,7 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
   panes without stealing visible focus. The final pane retains its output and
   exit-code banner; new tabs can still launch. Exit cancels captured gestures
   before tree edits, and close confirmations retain stable tab identities.
-- Each pane uses the current default shell profile (integrated cmd by default) or an explicit per-pane shell override chosen from the Shell Picker or Command Palette. New tabs use the project launch
+- Each pane uses the current default shell profile (integrated cmd by default) or an explicit per-pane shell override chosen from the Shell Picker or Command Palette. New tabs use the application's startup
   directory; splits inherit the focused pane's last valid local OSC 7 directory,
   otherwise its starting directory (matching WPF, not a guessed prompt). Navigation
   and function keys use Ghostty's encoder (`Ctrl+Backspace` emits `0x17`); character input is UTF-8.
@@ -161,6 +164,25 @@ The palette, default fonts and geometry follow Vex Dark: Segoe UI chrome,
 focus outline. Font/cell metrics come from DirectWrite. Initial window size is
 1120 × 700 DIPs, minimum 640 × 400. This is **not yet pixel-identical UI parity**.
 
+## Command palette and path autocomplete
+
+- `Ctrl+Shift+P`: fuzzy action search; Up/Down, wheel, Home/End and Page keys reach
+  every action, not just the first visible page. Geometry adapts to window height.
+- `Ctrl+Shift+F`: cursor-anchored recursive path search. Indexing starts lazily on
+  a background worker; typing remains available, stale navigation is cancelled
+  between filesystem operations, and only the newest revision is published.
+- Tab/Right opens a folder, Left goes to its parent, Enter inserts the selected
+  path, Shift+Enter requests raw insertion, Escape dismisses. No result means no
+  insertion; the popup stays open while indexing. Nothing executes a command.
+- Directory context comes from valid OSC 7 or the launch directory, not scraped
+  screen text. Foreground programs receive literal paths; known shell prompts
+  use their quoting adapter. Unknown shells are not assumed to be cmd.
+- Each index caps at 16,384 entries and 8 MiB of path names; the best fifty results
+  are ranked with bounded scratch storage. Loading/errors/limits are visible.
+
+See [UNIVERSALITY.md](UNIVERSALITY.md) for the audit, Rex references, performance
+samples and remaining limits (including WSL process/mount metadata and OS IO cancellation).
+
 ## Ownership and rendering
 
 Code is grouped by responsibility, not by one class per file:
@@ -168,7 +190,7 @@ Code is grouped by responsibility, not by one class per file:
 ```text
 src/
   main.zig
-  app/         workspace/session owners
+  app/         terminal owner, input, overlays and command registry
   workspace/   pure tab and pane-tree models
   terminal/    emulator, typed ABI, feed/status parsing
   shell/       launch/directory models and integration scripts
@@ -192,7 +214,12 @@ circular dependency through the rendering/window adapter.
 - `src/workspace/divider_drag.zig`: allocation-free divider hit/drag lifecycle,
   grab offset, minimum-size limits and rollback using stable divider IDs.
 - `src/main.zig`: allocator/error boundary and explicit root test imports.
-- `src/app/workspace_application.zig`: main-thread workspace orchestration.
+- `src/app/terminal_application.zig`: single window-thread session/lifecycle owner.
+- `src/app/terminal_keyboard.zig`: key/text/paste routing and tab rename input.
+- `src/app/terminal_pointer.zig`: pointer gestures, mouse reporting and hover state.
+- `src/app/terminal_overlays.zig`: popup state, painting and overlay event handling.
+- `src/app/terminal_commands.zig`: typed built-in actions and bounded fuzzy ranking.
+- `src/app/terminal_diagnostics.zig`: selftest observations of the live application, not simulated state.
 - `src/app/terminal_session.zig`: stable per-pane ownership and teardown.
 - `src/shell/shell_launch.zig`: startup selection, executable resolution,
   encoded Windows bootstraps and owned child environment.
@@ -204,7 +231,10 @@ circular dependency through the rendering/window adapter.
 - `src/terminal/program_status.zig`: owned OSC 7501 records, hierarchy, priority,
   BEL (`\x07`) attention, acknowledgement and bounded text parsing.
 - `src/terminal/terminal_title.zig`: bounded OSC 0/2 terminal title sanitization and fallback formatting.
-- `src/terminal/app_icon.zig`: 73-entry curated Lucide + SimpleIcons vector icon catalog, process/command-line/OSC title resolution, dark-color contrast lifting, and deterministic fallback monograms.
+- `src/terminal/app_icon.zig`: optional brand data, process/OSC identity resolution, contrast lifting and generic monograms; `tools/Generate-AppIconGeometry.ps1 -Check` guards the Zig/C++ catalog order.
+- `src/terminal/command_line.zig`: allocation-free launcher grammar decoding without target-application allowlists.
+- `src/terminal/path_index.zig`: lazy recursive indexing worker with owned revisioned requests/results and cooperative cancellation.
+- `src/workspace/command_palette.zig`: bounded UTF-8 query state, fuzzy ranking and shared viewport geometry.
 - `src/terminal/terminal_feed.zig`: bounded status and ConPTY-stripped DCS (`+q` XTGETTCAP / `$qm` DECRQSS) interception; unrelated VT is
   forwarded unchanged and plain chunks bypass copying.
 - `src/terminal/api.zig`: checked symbol resolution and structured terminal API errors.
@@ -214,8 +244,10 @@ circular dependency through the rendering/window adapter.
   validated window/input seams and presentation of parsed snapshots.
 - `src/windows/wsl_registry.zig`: read-only, bounded/typed default distribution
   discovery; registry unit fixtures use unique volatile keys outside Lxss.
-- `src/windows/windows_platform.cpp`: Win32 event loop and native UI/terminal drawing adapter;
-  DirectWrite metrics and software raster callbacks stay at this seam.
+- `src/windows/windows_window.cpp`: Win32 lifetime/event loop, DirectWrite font ownership and render-frame setup.
+- `src/windows/windows_chrome.{h,cpp}`: tabs, pane headers, popups and presentation diagnostics.
+- `src/windows/terminal_drawing.{h,cpp}`: pane clipping, cell/cursor submission and miss-only procedural/text raster callbacks.
+- `src/windows/windows_system.cpp`: machine/directory lookup, clipboard writes and terminal DLL symbol loading.
 - `src/windows/windows_renderer.{h,cpp}`: D3D12 device/queue/fences, DXGI flip-discard,
   ordered native UI/terminal passes, resize/recovery and D3D12 readback.
 - `src/windows/ui_renderer.{h,cpp}`: native analytic shapes/vector icons, intersecting
@@ -224,6 +256,11 @@ circular dependency through the rendering/window adapter.
   rasterization, native instanced cell drawing, reusable per-slot upload pages
   and nonblocking reclamation of unused pages, including during cursor blinking. `terminal_shaders.hlsl` has checked-in compiled bytecode.
 - `src/windows/windows_pty.cpp`: per-session ConPTY worker/queue ownership and job objects.
+
+`src/workspace/` is a historical directory name for active terminal tab/split models,
+not project management or named workspaces. Feature modules borrow the one application
+owner; callback aliases add no forwarding objects or dispatch layer. C++ paint modules
+borrow frame values/fonts from the window owner and allocate no new frame owners.
 
 Each terminal owns and frees its native handles and Zig buffers. Workspace trees
 contain IDs, not pointers into movable session arrays. All emulator/UI access is
@@ -272,12 +309,14 @@ and propagate to the application.
 
 Status presentation follows the title/secondary-activity hierarchy in
 [almonk's Rex Activity Mode demo](https://x.com/almonk/status/2109262000165437943),
-adapted to **horizontal tabs**. Reported task names appear above plain activity
-text; pane headers show quiet text/progress instead of colored status pills.
-Custom tab titles win over reported names. Tabs grow to 200 DIPs when space
-permits and compact normally. The overlapping favicon stack and `+N` are unchanged.
-There is no separate activity bar, vertical tabbar or remote-host UI. Idle is
-shown only when reported; absent reports do not imply idle or an invented age.
+adapted to **horizontal tabs**. Tabs show the reported task name with no activity
+subtitle; a working report shows an animated three-dot icon at the tab's right edge
+on inactive tabs only, as in Rex, while blocked, done and error show a single glyph
+on any tab. Pane headers show only the status icon, with no text or percentage. Custom tab titles win over reported
+names. Tabs grow to 200 DIPs when space permits and compact normally. The overlapping
+favicon stack and `+N` are unchanged. There is no separate activity bar, vertical
+tabbar or remote-host UI. Idle is shown only when reported; absent reports do not
+imply idle or an invented age.
 
 Tabs aggregate the first highest-priority pane in tree order, recording its 1-based pane index (`origin_pane_number`) and
 attention pane (`attention_pane_id`). Tab Peek cards display multi-pane origin
@@ -290,13 +329,11 @@ paints. Attention is latched across a pipe batch, even if a later report clears
 its record. Exit removes running/blocked/idle records; RIS clears all records,
 while soft reset and alternate-screen switches preserve them.
 
-OSC 133 prompt/start/completion markers use a monotonic terminal clock. Routine
-successful commands under two seconds return to Idle; longer commands retain
-Done and failed commands retain an exit-code message until acknowledged. Prompt
-markers drop running/blocked/idle explicit records without erasing unread
-results. OSC 9;4 progress remains a fallback only until a valid OSC 7501 report
-(including clear), and RIS re-enables that fallback. Semantic markers are
-consumed before libghostty to preserve the ConPTY prompt-redraw workaround.
+Program status comes only from OSC 7501 records, as in Rex. OSC 133 prompt markers
+drop running/blocked/idle explicit records at the next prompt without erasing
+unread results; they never create status, attention or progress by themselves,
+and OSC 9;4 progress is ignored for presentation. Semantic markers are consumed
+before libghostty to preserve the ConPTY prompt-redraw workaround.
 
 Native limits: 1,000 columns/rows for window grids, 1 Mi cells/frame, 64 KiB per
 grapheme and 64 MiB text/frame. Oversized/malformed frames fail explicitly.
@@ -338,6 +375,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeProcessEx
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCursorBlink.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShellPickerAndStatusOrigin.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativePathCompletion.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativePalette.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeUniversalPrograms.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCloseConfirmation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeDividers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
@@ -360,7 +400,7 @@ This does not inject failures into libghostty/Win32's own allocators.
 The Windows test types commands via native character messages, checks the
 **parsed viewport**, resizes, floods output, uses three nested panes, switches
 independent tabs, verifies hidden output, inherits a reported Unicode/spaced
-folder on split, retains project-root behavior for new tabs, ignores stale
+folder on split, retains startup-directory behavior for new tabs, ignores stale
 output tokens, exercises
 the 8-tab limit, kills a real child process with its pane, and closes a flooding
 tab/window. Sentinels are assembled by the shell so echoed input cannot pass.
@@ -375,9 +415,9 @@ Unicode/spaced installation directory. The workspace/status fixture uses a raw
 custom cmd to isolate explicit status reports from prompt cleanup.
 The WSL test requires a registered default, a POSIX-compatible default shell,
 and Bash in its selected distribution. It exercises registry-default selection,
-project-aware UNC selection, pinned split distribution, default login and an explicit Linux program at a Unicode/spaced/apostrophe path, child
+directory-aware UNC selection, pinned split distribution, default login and an explicit Linux program at a Unicode/spaced/apostrophe path, child
 environment defaults/overrides, Linux OSC 7, split/new-tab directories, UNC
-project startup and Linux shell/child exit on busy pane close.
+directory startup and Linux shell/child exit on busy pane close.
 
 The divider fixture sends DPI-scaled Win32 pointer messages to live right/down
 and nested panes. It checks actual window-thread capture, unchanged focus,
@@ -449,7 +489,7 @@ benchmarks**, and working set excludes GPU allocations and child processes.
 
 ## Still pending
 
-See the full ledger in [REWRITE.md](REWRITE.md): multiple projects, WSL Linux
+See the full ledger in [REWRITE.md](REWRITE.md): WSL Linux
 process metadata/prompt adapters,
 profile/session compatibility and persistence, saved layouts,
 settings/themes persistence, tab drag ghost/push animations and strip scrolling,

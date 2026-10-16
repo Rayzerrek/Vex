@@ -191,7 +191,6 @@ pub const ProgramStatusTracker = struct {
             'D' => {
                 const code = if (body.len > 2) std.fmt.parseInt(i32, std.mem.trim(u8, body[2..], " \t\r\n\x0b\x0c"), 10) catch 0 else 0;
                 try self.completeShellCommand(code, now_ns);
-                self.attention_pending = self.attention_pending or self.shellStatusSummary().state.needsAttention();
             },
             else => {},
         }
@@ -211,17 +210,16 @@ pub const ProgramStatusTracker = struct {
             '4' => .{ .blocked = progress },
             else => return,
         };
-        self.attention_pending = self.attention_pending or self.shellStatusSummary().state.needsAttention();
     }
-    fn shellStatusSummary(self: *const ProgramStatusTracker) ProgramStatusSummary {
+    /// Shell/progress lifecycle is observable for close safety and diagnostics, never presented as OSC 7501 status.
+    pub fn shellActivityState(self: *const ProgramStatusTracker) ProgramStatusState {
         return switch (self.shell_status) {
-            .none => .{},
-            .idle => .{ .state = .idle },
-            .done => .{ .state = .done },
-            .working => |progress| .{ .state = .working, .progress = progress },
-            .blocked => |progress| .{ .state = .blocked, .progress = progress },
-            .failed_progress => |progress| .{ .state = .failed, .progress = progress },
-            .failed_command => |*message| .{ .state = .failed, .message = message.slice() },
+            .none => .none,
+            .idle => .idle,
+            .done => .done,
+            .working => .working,
+            .blocked => .blocked,
+            .failed_progress, .failed_command => .failed,
         };
     }
     fn completeShellCommand(self: *ProgramStatusTracker, code: i32, now_ns: u64) !void {
@@ -242,7 +240,7 @@ pub const ProgramStatusTracker = struct {
                 if (record.state.displayPriority() >= current.state.displayPriority()) selected = record;
             } else selected = record;
         }
-        const record = selected orelse return self.shellStatusSummary();
+        const record = selected orelse return .{};
         var app: ?[]const u8 = if (record.app) |*field| field.slice() else null;
         var id = record.id.slice();
         while (app == null and id.len != 0) {
@@ -521,31 +519,17 @@ test "OOM at record cap preserves both an eviction candidate and a replacement t
     try std.testing.expectEqual(.blocked, tracker.programStatus().state);
 }
 
-test "OSC 133 short/long commands, failure and repeated prompt markers match WPF" {
+test "OSC 133 markers never surface program status or attention, matching the protocol" {
     var tracker: ProgramStatusTracker = .{ .allocator = std.testing.allocator };
     defer tracker.deinit();
     try tracker.applyShellMarker("A", 0);
-    try std.testing.expectEqual(.idle, tracker.programStatus().state);
     try tracker.applyShellMarker("C;ignored=field", 10);
-    try std.testing.expectEqual(.working, tracker.programStatus().state);
-    try tracker.applyShellMarker("D;0", 20);
-    try std.testing.expectEqual(.idle, tracker.programStatus().state);
-    try std.testing.expect(!tracker.takeAttention());
-    try tracker.applyShellMarker("C", 0);
+    try std.testing.expectEqual(.none, tracker.programStatus().state);
     try tracker.applyShellMarker("D;0", 2 * std.time.ns_per_s);
-    try tracker.applyShellMarker("A", 3 * std.time.ns_per_s);
-    try std.testing.expectEqual(.done, tracker.programStatus().state);
-    try std.testing.expect(tracker.takeAttention());
-    tracker.acknowledgeProgramStatus();
     try tracker.applyShellMarker("C", 0);
     try tracker.applyShellMarker("D;-2147483648", 1);
-    try tracker.applyShellMarker("A", 2);
-    try std.testing.expectEqual(.failed, tracker.programStatus().state);
-    try std.testing.expectEqualStrings("Exited with code -2147483648", tracker.programStatus().message orelse return error.MissingShellError);
-    tracker.onProgramExited();
-    try std.testing.expectEqual(.failed, tracker.programStatus().state);
-    tracker.acknowledgeProgramStatus();
     try std.testing.expectEqual(.none, tracker.programStatus().state);
+    try std.testing.expect(!tracker.takeAttention());
 }
 
 test "prompt removes running records but retains unread results across screen/process changes" {
@@ -561,37 +545,23 @@ test "prompt removes running records but retains unread results across screen/pr
     try std.testing.expectEqual(.none, tracker.programStatus().state);
     try tracker.applyShellMarker("C", 0);
     try tracker.applyShellMarker("A", std.time.ns_per_s);
-    try std.testing.expectEqual(.idle, tracker.programStatus().state);
+    try std.testing.expectEqual(.none, tracker.programStatus().state);
     try tracker.applyShellMarker("D;7", 2 * std.time.ns_per_s);
-    try std.testing.expectEqual(.idle, tracker.programStatus().state);
+    try std.testing.expectEqual(.none, tracker.programStatus().state);
 }
 
-test "OSC 9;4 progress stops at the first valid explicit report, even a clear, until reset" {
+test "OSC 9;4 progress never surfaces status, and explicit OSC 7501 records still win" {
     var tracker: ProgramStatusTracker = .{ .allocator = std.testing.allocator };
     defer tracker.deinit();
     tracker.applyProgressReport("1;30");
-    try std.testing.expectEqual(@as(?u8, 30), tracker.programStatus().progress);
-    try tracker.applyProgramStatus("state=invalid");
+    try std.testing.expectEqual(.none, tracker.programStatus().state);
+    try std.testing.expect(!tracker.takeAttention());
     tracker.applyProgressReport("4;50");
-    try std.testing.expectEqual(.blocked, tracker.programStatus().state);
-    tracker.acknowledgeProgramStatus();
-    try std.testing.expectEqual(.blocked, tracker.programStatus().state);
+    try std.testing.expect(!tracker.takeAttention());
     try tracker.applyProgramStatus("state=blocked:kind=auth");
     tracker.applyProgressReport("1;90");
     try std.testing.expectEqual(@as(?ProgramStatusKind, .auth), tracker.programStatus().kind);
-    tracker.resetProgramStatus();
-    tracker.applyProgressReport("1;90");
-    try std.testing.expectEqual(@as(?u8, 90), tracker.programStatus().progress);
-    tracker.applyProgressReport("3;50");
-    try std.testing.expect(tracker.programStatus().progress == null);
-    tracker.applyProgressReport("2;101");
-    try std.testing.expectEqual(.failed, tracker.programStatus().state);
-    try std.testing.expect(tracker.programStatus().progress == null);
-    tracker.applyProgressReport("0");
-    try std.testing.expectEqual(.none, tracker.programStatus().state);
-    try tracker.applyProgramStatus("state=clear");
-    tracker.applyProgressReport("1;70");
-    try std.testing.expectEqual(.none, tracker.programStatus().state);
+    try std.testing.expectEqual(.blocked, tracker.programStatus().state);
 }
 
 fn checkStatusAllocations(allocator: std.mem.Allocator) !void {

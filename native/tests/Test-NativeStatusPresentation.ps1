@@ -64,7 +64,7 @@ try {
     Start-Sleep -Seconds 11
     if ((Get-NativeProbe $window 20) -le $paints) { throw 'Vex status UI: hidden message-only report did not request a paint.' }
     $after = Save-PresentationCapture $window 'status-horizontal-updated'
-    if ($before -eq $after) { throw 'Vex status UI: updated background-tab subtitle did not reach GPU pixels.' }
+    if ($before -eq $after) { throw 'Vex status UI: updated background-tab report did not reach GPU pixels.' }
     Assert-NativeProbe $window 47 1 'background status never steals selected-tab focus'
     Invoke-NativeAction $window 6 0
     Assert-NativeProbe $window 12 $firstPane 'returning to the working tab retains pane identity'
@@ -100,7 +100,7 @@ try {
     $process = $null
     $report = [pscustomobject]@{
         Result = 'PASS'; GraphicsDebug = [bool]$graphicsDebug
-        Checks = @('horizontal title/subtitle presentation', 'real working/idle/blocked/done/error reports', 'message-only hidden-tab repaint without focus theft', 'stable ConPTY identity', 'four stacked favicons and overflow', 'custom title presentation', 'dark/light and compact native GPU captures')
+        Checks = @('horizontal title with animated working icon', 'real working/idle/blocked/done/error reports', 'message-only hidden-tab repaint without focus theft', 'stable ConPTY identity', 'four stacked favicons and overflow', 'custom title presentation', 'dark/light and compact native GPU captures')
         Limitations = @('Rex-inspired presentation, not pixel-identical macOS UI', 'no separate activity bar, vertical tabs or remote sessions', 'synthetic keyboard/window messages; physical DPI and accessibility remain unverified')
     }
     $report | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $OutputDirectory 'status-presentation.json')

@@ -1281,7 +1281,7 @@ test "OSC 7 borrowed directory reports survive every UTF-8/terminator chunk boun
     }
 }
 
-test "shell markers preserve the actual DLL prompt grid and legacy fallback cannot overwrite explicit status" {
+test "shell markers preserve the actual DLL prompt grid and never surface status over explicit reports" {
     const api = try binding.Api.load();
     var terminal = try Terminal.init(std.testing.allocator, &api);
     defer terminal.deinit();
@@ -1289,10 +1289,9 @@ test "shell markers preserve the actual DLL prompt grid and legacy fallback cann
     for (bytes) |byte| try terminal.feedOutput(&.{byte});
     try std.testing.expect(try terminal.containsViewportText("prompt> "));
     try std.testing.expectEqual(@as(u16, 8), (try terminal.readFrame()).cursor.column);
-    try std.testing.expectEqual(.failed, terminal.program_status.programStatus().state);
-    terminal.program_status.acknowledgeProgramStatus();
+    try std.testing.expectEqual(.none, terminal.program_status.programStatus().state);
     try terminal.feedOutput("\x1b]9;4;1;30\x07");
-    try std.testing.expectEqual(@as(?u8, 30), terminal.program_status.programStatus().progress);
+    try std.testing.expectEqual(.none, terminal.program_status.programStatus().state);
     try terminal.feedOutput("\x1b]7501;state=blocked:kind=auth\x07\x1b]9;4;1;90\x07");
     try std.testing.expectEqual(@as(?status.ProgramStatusKind, .auth), terminal.program_status.programStatus().kind);
 }
@@ -1661,7 +1660,7 @@ test "BEL control latches background attention without firing on OSC BEL termina
     try terminal.feedOutput("before\x07after");
     try std.testing.expect(terminal.program_status.takeAttention());
     try std.testing.expect(!terminal.program_status.takeAttention());
-    try std.testing.expectEqual(.idle, terminal.program_status.programStatus().state);
+    try std.testing.expectEqual(.none, terminal.program_status.programStatus().state);
     try std.testing.expect(try terminal.containsViewportText("beforeafter"));
     try terminal.feedOutput("\x07\x1bc");
     try std.testing.expect(!terminal.program_status.takeAttention());

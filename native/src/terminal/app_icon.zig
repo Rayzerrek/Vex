@@ -1,5 +1,6 @@
 const std = @import("std");
 const terminal_title = @import("terminal_title.zig");
+const command_identity = @import("command_line.zig");
 
 /// Visual presentation kind for a resolved terminal pane/tab application icon.
 pub const Kind = enum(u8) {
@@ -239,8 +240,7 @@ const AliasEntry = struct {
 };
 
 const aliases = [_]AliasEntry{
-    .{ .alias = "agy", .canonical = "googlegemini" },
-    .{ .alias = "antigravity", .canonical = "googlegemini" },
+    .{ .alias = "agy", .canonical = "antigravity" },
     .{ .alias = "gemini", .canonical = "googlegemini" },
     .{ .alias = "gemini-cli", .canonical = "googlegemini" },
     .{ .alias = "oc", .canonical = "opencode" },
@@ -252,6 +252,7 @@ const aliases = [_]AliasEntry{
     .{ .alias = "codex-cli", .canonical = "codex" },
     .{ .alias = "qwen-code", .canonical = "qwen" },
     .{ .alias = "aider-chat", .canonical = "aider" },
+    .{ .alias = "pi-coding-agent", .canonical = "pi" },
     .{ .alias = "nvim", .canonical = "neovim" },
     .{ .alias = "vim", .canonical = "vim" },
     .{ .alias = "gvim", .canonical = "vim" },
@@ -259,8 +260,6 @@ const aliases = [_]AliasEntry{
     .{ .alias = "lazyvim", .canonical = "lazyvim" },
     .{ .alias = "hx", .canonical = "helix" },
     .{ .alias = "helix", .canonical = "helix" },
-    .{ .alias = "kak", .canonical = "micro" },
-    .{ .alias = "kakoune", .canonical = "micro" },
     .{ .alias = "copilot", .canonical = "githubcopilot" },
     .{ .alias = "zed", .canonical = "zedindustries" },
     .{ .alias = "next", .canonical = "nextdotjs" },
@@ -284,13 +283,6 @@ const aliases = [_]AliasEntry{
     .{ .alias = "uvx", .canonical = "uv" },
     .{ .alias = "pipx", .canonical = "python" },
     .{ .alias = "luajit", .canonical = "lua" },
-    .{ .alias = "mosh", .canonical = "ssh" },
-    .{ .alias = "btm", .canonical = "btop" },
-    .{ .alias = "bottom", .canonical = "btop" },
-    .{ .alias = "top", .canonical = "btop" },
-    .{ .alias = "glances", .canonical = "btop" },
-    .{ .alias = "tig", .canonical = "lazygit" },
-    .{ .alias = "gitui", .canonical = "lazygit" },
     .{ .alias = "lazydocker", .canonical = "docker" },
     .{ .alias = "gh", .canonical = "github" },
     .{ .alias = "kubectl", .canonical = "kubernetes" },
@@ -299,15 +291,11 @@ const aliases = [_]AliasEntry{
     .{ .alias = "psql", .canonical = "postgresql" },
     .{ .alias = "sqlite3", .canonical = "sqlite" },
     .{ .alias = "redis-cli", .canonical = "redis" },
-    .{ .alias = "lf", .canonical = "yazi" },
-    .{ .alias = "ranger", .canonical = "yazi" },
-    .{ .alias = "screen", .canonical = "tmux" },
     .{ .alias = "node", .canonical = "nodedotjs" },
     .{ .alias = "nodejs", .canonical = "nodedotjs" },
     .{ .alias = "tsc", .canonical = "typescript" },
     .{ .alias = "tsx", .canonical = "typescript" },
     .{ .alias = "ts-node", .canonical = "typescript" },
-    .{ .alias = "deno", .canonical = "typescript" },
     .{ .alias = "nu", .canonical = "nushell" },
     .{ .alias = "pwsh", .canonical = "powershell" },
     .{ .alias = "powershell", .canonical = "powershell" },
@@ -316,30 +304,9 @@ const aliases = [_]AliasEntry{
     .{ .alias = "fish", .canonical = "fishshell" },
 };
 
-const SpecialBadgeEntry = struct {
-    name: []const u8,
-    text: []const u8,
-    rgb: u32,
-};
-
-const special_badges = [_]SpecialBadgeEntry{};
-
 const shell_icon_names = [_][]const u8{
     "cmd",  "wsl",       "wslhost", "nu",   "nushell", "pwsh", "powershell", "bash", "sh", "gnubash",
     "fish", "fishshell", "zsh",     "dash", "ksh",     "ash",  "gitbash",    "system",
-};
-
-const shim_hosts = [_][]const u8{
-    "node",    "nodejs", "deno",   "wsl", "wslhost", "bun",        "bunx", "tsx",  "ts-node", "npx", "pnpm", "pnpx", "yarn", "npm",
-    "python",  "python3", "py",    "uv",  "uvx",     "pipx",       "cmd",  "pwsh", "powershell", "bash", "sh",
-};
-
-const editor_hosts = [_][]const u8{
-    "nvim", "neovim", "vim", "gvim", "hx", "helix", "nano", "micro", "emacs", "kak", "kakoune",
-};
-
-const command_line_noise = [_][]const u8{
-    "npm", "npx", "node_modules", "bin", "lib", "cli", "scripts", "cmd",
 };
 
 const whitespace = " \t\r\n";
@@ -357,19 +324,7 @@ pub fn adjustDarkBrandColor(rgb: u32) u32 {
 /// True when `name` is a script/VM host (`node`, `bun`, `wsl`, `deno`, etc.) whose command line or title identifies the app.
 pub fn isShimHost(name: []const u8) bool {
     const clean = cleanExecutableName(name);
-    for (shim_hosts) |shim| {
-        if (std.ascii.eqlIgnoreCase(clean, shim)) return true;
-    }
-    return false;
-}
-
-/// True when `name` is an editor (`nvim`, `hx`, `vim`, `emacs`, etc.) whose child LSP workers must not steal the tab icon.
-pub fn isEditorHost(name: []const u8) bool {
-    const clean = cleanExecutableName(name);
-    for (editor_hosts) |editor| {
-        if (std.ascii.eqlIgnoreCase(clean, editor)) return true;
-    }
-    return false;
+    return command_identity.isCommandHost(clean) or std.ascii.eqlIgnoreCase(clean, "wsl") or std.ascii.eqlIgnoreCase(clean, "wslhost");
 }
 
 /// Resolves a known shell, special badge, alias, or brand glyph directly by name. Returns `null` if unknown.
@@ -379,9 +334,6 @@ pub fn resolveDirect(raw_name: []const u8) ?AppIcon {
 
     for (shell_icon_names) |shell_name| {
         if (std.ascii.eqlIgnoreCase(clean, shell_name)) return AppIcon.terminal_shell;
-    }
-    for (special_badges) |badge| {
-        if (std.ascii.eqlIgnoreCase(clean, badge.name)) return AppIcon.badgeIcon(badge.text, badge.rgb);
     }
     var canonical = clean;
     for (aliases) |entry| {
@@ -402,7 +354,7 @@ pub fn resolveDirect(raw_name: []const u8) ?AppIcon {
 pub fn fromProcess(process_name: []const u8) AppIcon {
     const clean = cleanExecutableName(process_name);
     if (resolveDirect(clean)) |known| return known;
-    const initial: u8 = if (clean.len > 0) std.ascii.toUpper(clean[0]) else '?';
+    const initial: u8 = if (clean.len > 0 and std.ascii.isAlphanumeric(clean[0])) std.ascii.toUpper(clean[0]) else '?';
     const badge = [1]u8{initial};
     return AppIcon.badgeIcon(&badge, hashColor(clean));
 }
@@ -413,37 +365,16 @@ pub fn fromCommandLine(command_line: []const u8, shim_name: []const u8) ?AppIcon
     if (trimmed.len == 0) return null;
     const clean_shim = cleanExecutableName(shim_name);
 
-    if (terminal_title.parseCommandLineApp(trimmed)) |app| {
+    if (command_identity.parseCommandLineApp(trimmed)) |app| {
         if (!std.ascii.eqlIgnoreCase(app, clean_shim)) {
             if (resolveDirect(app)) |icon| {
                 if (!icon.is_shell) return icon;
-            } else if (isShellIconName(clean_shim) and app.len > 0 and std.ascii.isAlphabetic(app[0])) {
+            } else if (app.len > 0) {
                 return fromProcess(app);
             }
         }
     }
 
-    const needle = "node_modules";
-    var search_from: usize = 0;
-    var nm_idx: ?usize = null;
-    while (search_from + needle.len <= trimmed.len) : (search_from += 1) {
-        if (std.ascii.eqlIgnoreCase(trimmed[search_from..][0..needle.len], needle)) {
-            nm_idx = search_from;
-            break;
-        }
-    }
-    const idx = nm_idx orelse return null;
-    const after_nm = trimmed[idx + needle.len ..];
-
-    var token_iter = std.mem.tokenizeAny(u8, after_nm, " \t\"'/\\");
-    while (token_iter.next()) |raw_seg| {
-        const seg = stripExtension(raw_seg);
-        if (seg.len == 0 or std.ascii.eqlIgnoreCase(seg, clean_shim) or isCommandLineNoise(seg)) continue;
-        if (resolveDirect(seg)) |icon| {
-            if (!icon.is_shell) return icon;
-        }
-        if (seg.len >= 3 and std.ascii.eqlIgnoreCase(seg[0..3], "pi-")) return resolveDirect("pi");
-    }
     return null;
 }
 
@@ -465,17 +396,18 @@ pub fn fromTitle(raw_title: []const u8) ?AppIcon {
     return null;
 }
 
-/// Resolves a pane's icon using the .NET `AppIconTracker` + `AppIconCatalog.Resolve` priority hierarchy:
-/// 1. Active non-shell foreground process (shim command line -> OSC title -> catalog -> letter badge).
-/// 2. OSC 777 `status_app` report when no foreground child process overrides it.
-/// 3. OSC 0 / OSC 2 `osc_title` application name (for WSL, remote SSH, or shell builtins).
-/// 4. Default terminal shell prompt icon (`>_`).
+/// Explicit current OSC 7501 identity wins for any executable, followed by process/launcher metadata.
+/// Callers exclude completed stale reports while another foreground program is running.
 pub fn resolve(
     process_name: ?[]const u8,
     command_line: ?[]const u8,
     osc_title: ?[]const u8,
     status_app: ?[]const u8,
 ) AppIcon {
+    if (status_app) |raw| {
+        const name = std.mem.trim(u8, raw, whitespace);
+        if (name.len > 0) return fromProcess(name);
+    }
     if (process_name) |proc_raw| {
         const proc_name = std.mem.trim(u8, proc_raw, whitespace);
         if (proc_name.len > 0) {
@@ -487,33 +419,13 @@ pub fn resolve(
                 if (osc_title) |title| {
                     if (fromTitle(title)) |shim_title_icon| return shim_title_icon;
                 }
-                if (status_app) |status_name| {
-                    if (resolveDirect(status_name)) |status_icon| {
-                        if (!status_icon.is_shell) return status_icon;
-                    }
-                }
             }
             if (resolveDirect(proc_name)) |known| {
                 if (!known.is_shell) return known;
             }
-            if (!is_shim) {
-                if (osc_title) |title| {
-                    if (fromTitle(title)) |title_icon| return title_icon;
-                }
-                return fromProcess(proc_name);
-            }
+            if (!is_shim) return fromProcess(proc_name);
             if (resolveDirect(proc_name)) |known_shim| return known_shim;
-            return AppIcon.terminal_shell;
-        }
-    }
-
-    if (status_app) |status_raw| {
-        const status_trimmed = std.mem.trim(u8, status_raw, whitespace);
-        if (status_trimmed.len > 0) {
-            if (resolveDirect(status_trimmed)) |icon| {
-                if (!icon.is_shell) return icon;
-            }
-            return fromProcess(status_trimmed);
+            return fromProcess(proc_name);
         }
     }
 
@@ -559,20 +471,6 @@ fn fromHsv(hue: f64, saturation: f64, value: f64) u32 {
     return (r << 16) | (g << 8) | b;
 }
 
-fn isCommandLineNoise(segment: []const u8) bool {
-    for (command_line_noise) |noise| {
-        if (std.ascii.eqlIgnoreCase(segment, noise)) return true;
-    }
-    return false;
-}
-
-fn isShellIconName(clean: []const u8) bool {
-    for (shell_icon_names) |shell_name| {
-        if (std.ascii.eqlIgnoreCase(clean, shell_name)) return true;
-    }
-    return false;
-}
-
 fn cleanExecutableName(raw: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n\"'");
     if (trimmed.len == 0) return "";
@@ -612,7 +510,7 @@ test "app icon catalog resolves curated glyphs, aliases, special badges, and dar
     try std.testing.expectEqual(@as(u32, 0xD97757), claude.color_rgb);
 
     const agy = resolveDirect("antigravity").?;
-    try std.testing.expectEqual(GlyphId.googlegemini, agy.glyph);
+    try std.testing.expectEqual(GlyphId.antigravity, agy.glyph);
 
     const rust = resolveDirect("cargo").?;
     try std.testing.expectEqual(GlyphId.rust, rust.glyph);
@@ -628,8 +526,12 @@ test "app icon catalog resolves curated glyphs, aliases, special badges, and dar
     try std.testing.expectEqual(GlyphId.zig, zig_icon.glyph);
     try std.testing.expectEqual(@as(u32, 0xF7A41D), zig_icon.color_rgb);
 
-    const btop_icon = resolveDirect("btm").?;
+    const btop_icon = resolveDirect("btop").?;
     try std.testing.expectEqual(GlyphId.btop, btop_icon.glyph);
+    for ([_][]const u8{ "deno", "kakoune", "ranger", "lf", "screen", "gitui", "tig", "btm", "mosh" }) |name| {
+        try std.testing.expect(resolveDirect(name) == null);
+        try std.testing.expectEqual(Kind.badge, fromProcess(name).kind);
+    }
 
     const pwsh = resolveDirect("pwsh.exe").?;
     try std.testing.expectEqual(Kind.shell, pwsh.kind);
@@ -687,9 +589,22 @@ test "app icon resolution handles shim command lines, OSC titles, and unknown pr
     try std.testing.expectEqual(Kind.badge, unknown_proc.kind);
     try std.testing.expectEqualStrings("R", unknown_proc.badgeSlice());
     try std.testing.expect(!unknown_proc.is_shell);
+    const unicode_proc = fromProcess("音.exe");
+    try std.testing.expectEqualStrings("?", unicode_proc.badgeSlice());
 
     const idle_shell = resolve(null, null, "C:\\Users\\Ziut\\code\\vex", null);
     try std.testing.expectEqual(Kind.shell, idle_shell.kind);
     try std.testing.expect(idle_shell.is_shell);
+}
+
+test "explicit shim app beats stale OSC title and native processes keep their own identity" {
+    try std.testing.expectEqual(GlyphId.claudecode, resolve("node.exe", "node.exe", "nvim", "claude-code").glyph);
+    try std.testing.expectEqual(GlyphId.neovim, resolve("nvim.exe", null, "claude", null).glyph);
+    try std.testing.expectEqual(GlyphId.claudecode, resolve("future-runtime.exe", null, "nvim", "claude-code").glyph);
+    const unknown = resolve("custom-tool.exe", null, "nvim", null);
+    try std.testing.expectEqual(Kind.badge, unknown.kind);
+    try std.testing.expectEqualStrings("C", unknown.badgeSlice());
+    try std.testing.expectEqual(GlyphId.antigravity, resolveDirect("antigravity").?.glyph);
+    try std.testing.expectEqual(GlyphId.antigravity, resolveDirect("agy").?.glyph);
 }
 
