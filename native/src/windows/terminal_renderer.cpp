@@ -113,6 +113,7 @@ HRESULT TerminalRenderer::createPipeline() {
 HRESULT TerminalRenderer::beginFrame(UINT index) {
     if (!deviceOwner || index >= frameCount || passOpen) return E_UNEXPECTED;
     frameIndex = index;
+    frameTimeMs = GetTickCount64();
     auto& frame = frames[index];
     frame.pageIndex = 0;
     for (UINT i = 0; i < frame.pageCount; i++) frame.pages[i].used = 0;
@@ -164,7 +165,10 @@ HRESULT TerminalRenderer::allocateUpload(UINT bytes, UINT alignment, UINT& page,
             frame.pageCount++; uploadAllocations++;
         }
         offset = (upload.used + alignment - 1) & ~(alignment - 1);
-        if (offset <= pageBytes - bytes) { upload.used = offset + bytes; return S_OK; }
+        if (offset <= pageBytes - bytes) {
+            upload.used = offset + bytes; upload.lastUsedMs = frameTimeMs;
+            return S_OK;
+        }
         frame.pageIndex++;
     }
 }
@@ -307,21 +311,18 @@ UINT64 TerminalRenderer::uploadCapacity() const {
     return total;
 }
 
-bool TerminalRenderer::hasExcessUploads() const {
-    for (const auto& frame : frames) if (frame.pageCount > 2) return true;
-    return false;
-}
-
-void TerminalRenderer::trimUploads() {
-    for (auto& frame : frames) {
-        for (UINT i = 2; i < frame.pageCount; i++) {
-            auto& upload = frame.pages[i];
-            upload.resource->Unmap(0, nullptr);
-            upload.resource.Reset(); upload.mapped = nullptr; upload.used = 0;
-        }
-        if (frame.pageCount > 2) { frame.pageCount = 2; uploadTrims++; }
-        frame.pageIndex = 0;
+void TerminalRenderer::trimUnusedUploads(UINT index, ULONGLONG now) {
+    auto& frame = frames[index];
+    const UINT previousCount = frame.pageCount;
+    // Keep a warm reserve and a contiguous prefix so allocation can reuse the remaining pages.
+    while (frame.pageCount > 2) {
+        auto& upload = frame.pages[frame.pageCount - 1];
+        if (now - upload.lastUsedMs < 2000) break;
+        upload.resource->Unmap(0, nullptr);
+        upload.resource.Reset(); upload.mapped = nullptr; upload.used = 0; upload.lastUsedMs = 0;
+        frame.pageCount--;
     }
+    if (frame.pageCount != previousCount) { frame.pageIndex = 0; uploadTrims++; }
 }
 
 void TerminalRenderer::shutdown() {

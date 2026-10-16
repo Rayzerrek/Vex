@@ -195,7 +195,6 @@ HRESULT WindowsRenderer::resize(UINT width, UINT height, float dpi) {
 HRESULT WindowsRenderer::beginFrame() {
     if (!ready() || phase != FramePhase::none) return E_UNEXPECTED;
     frameError = S_OK;
-    lastFrameMs = GetTickCount64();
     frameIndex = swapChain->GetCurrentBackBufferIndex();
     if (frameIndex >= bufferCount) return E_UNEXPECTED;
     auto& frame = frames[frameIndex];
@@ -292,11 +291,16 @@ HRESULT WindowsRenderer::endFrame(void* pixels, UINT stride) {
     return result;
 }
 
-HRESULT WindowsRenderer::trimTerminalUploadsIfIdle() {
-    if (!ready() || phase != FramePhase::none || GetTickCount64() - lastFrameMs < 2000 || !terminal.hasExcessUploads()) return S_OK;
-    HRESULT result = waitIdle();
-    if (SUCCEEDED(result)) terminal.trimUploads();
-    return result;
+HRESULT WindowsRenderer::trimUnusedTerminalUploads() {
+    if (!ready() || phase != FramePhase::none) return S_OK;
+    const UINT64 completed = fence->GetCompletedValue();
+    if (completed == UINT64_MAX) return device->GetDeviceRemovedReason();
+    const ULONGLONG now = GetTickCount64();
+    // Maintenance never waits on the GPU or treats cursor-only presents as upload activity.
+    for (UINT index = 0; index < bufferCount; index++) {
+        if (completed >= frames[index].fenceValue) terminal.trimUnusedUploads(index, now);
+    }
+    return S_OK;
 }
 
 HRESULT WindowsRenderer::videoMemoryUsage(bool local, UINT64& bytes) const {

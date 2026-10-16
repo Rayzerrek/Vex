@@ -218,7 +218,7 @@ circular dependency through the rendering/window adapter.
   Direct2D-on-12 UI targets, native-pass interop, resize/recovery and GPU capture.
 - `src/windows/terminal_renderer.{h,cpp}`: shared bounded glyph atlas, miss-only
   rasterization, native instanced cell drawing, reusable per-slot upload pages
-  and idle trimming. `terminal_shaders.hlsl` has checked-in compiled bytecode.
+  and nonblocking reclamation of unused pages, including during cursor blinking. `terminal_shaders.hlsl` has checked-in compiled bytecode.
 - `src/windows/windows_pty.cpp`: per-session ConPTY worker/queue ownership and job objects.
 
 Each terminal owns and frees its native handles and Zig buffers. Workspace trees

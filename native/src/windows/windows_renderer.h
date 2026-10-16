@@ -33,7 +33,7 @@ public:
     UINT64 debugErrorCount() const;
     bool debugValidationEnabled() const;
     HRESULT videoMemoryUsage(bool local, UINT64& bytes) const;
-    HRESULT trimTerminalUploadsIfIdle();
+    HRESULT trimUnusedTerminalUploads();
     static bool deviceLost(HRESULT result);
 
 private:
@@ -61,7 +61,6 @@ private:
     HANDLE fenceEvent = nullptr;
     UINT64 nextFence = 1;
     UINT64 presented = 0;
-    ULONGLONG lastFrameMs = 0;
     UINT pixelWidth = 0, pixelHeight = 0, frameIndex = 0;
     float targetDpi = 0;
     bool usesWarp = false;

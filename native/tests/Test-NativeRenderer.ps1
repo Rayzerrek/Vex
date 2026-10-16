@@ -191,11 +191,23 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
             Save-RendererCapture $window "renderer-$driver-eviction" | Out-Null
             if ((Get-RendererProbe $window 15) -le $resets) { throw 'Vex renderer: the bounded glyph cache did not exercise eviction.' }
             Assert-NativeProbe $window 14 $shellPid 'atlas eviction preserves the shell'
+            $peakUploadCapacity = Get-RendererProbe $window 14
+            if ($peakUploadCapacity -le 1024 * 1024) { throw 'Vex renderer: atlas churn did not grow uploads beyond the warm reserve.' }
+            Invoke-NativeAction $window 17
+            [VexNativeSmoke]::SendWindowMessage($window, 0x7, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
             Invoke-NativeAction $window 15
             Send-NativeText $window ("@cls`r")
             Assert-NativeProbe $window 0 0 'clear the eviction fixture'
             Send-NativeText $window ('@set VEX_SMOKE=VEX_NATIVE_SMOKE_' + "`r" + '@echo %VEX_SMOKE%OK' + "`r")
             Assert-NativeProbe $window 0 1 'shell still accepts input after atlas eviction'
+            Assert-NativeProbe $window 75 1 'cursor keeps presenting while excess uploads age out'
+            $framesBeforeTrim = Get-RendererProbe $window 2
+            Assert-RendererProbe $window 14 (1024 * 1024)
+            Assert-NativeProbe $window 75 1 'upload trimming does not stop cursor animation'
+            if ((Get-RendererProbe $window 2) -le $framesBeforeTrim) { throw 'Vex renderer: upload trim fixture did not present blinking frames.' }
+            if ((Get-RendererProbe $window 17) -le 0) { throw 'Vex renderer: excess upload pages were not reclaimed.' }
+            Save-RendererCapture $window "renderer-$driver-trimmed" | Out-Null
+            Invoke-NativeAction $window 17
         }
         Invoke-NativeAction $window 1
         Invoke-NativeAction $window 2
@@ -241,7 +253,7 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
     $report = [pscustomobject]@{
         Result = 'PASS'
         Drivers = $results
-        Checks = @('D3D12 presentation', 'hardware/default and forced WARP', 'GPU BGRA readback', 'pixel-identical healthy-device recreation', 'same live shell/viewport after recreation', 'resize including injected device reset/layout refresh', 'synthetic same-monitor DPI', 'no presents while minimized or idle', 'restore', 'three panes', 'palette/theme/tab-peek overlays', 'light theme/font zoom', 'debug-layer errors when enabled', 'selftest-only diagnostics')
+        Checks = @('D3D12 presentation', 'hardware/default and forced WARP', 'GPU BGRA readback', 'pixel-identical healthy-device recreation', 'same live shell/viewport after recreation', 'resize including injected device reset/layout refresh', 'synthetic same-monitor DPI', 'no presents while minimized or idle', 'restore', 'three panes', 'palette/theme/tab-peek overlays', 'light theme/font zoom', 'debug-layer errors when enabled', 'unused upload reclamation during cursor animation', 'selftest-only diagnostics')
         NativeGlyphAtlasChecks = [bool]$RequireNativeGlyphAtlas
         Limitations = @('recreation is injected, not physical GPU removal', 'no physical multi-monitor DPI or Windows 10 run', 'not a latency/performance comparison')
     }

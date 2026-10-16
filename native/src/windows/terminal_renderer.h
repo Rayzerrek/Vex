@@ -19,9 +19,8 @@ public:
     HRESULT drawSolid(float left, float top, float right, float bottom, uint32_t color, uint8_t alpha = 255);
     HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter);
     void clearGlyphCache();
-    bool hasExcessUploads() const;
-    // Caller must drain the shared queue first; cached atlas texels do not depend on upload pages.
-    void trimUploads();
+    // Caller must verify this frame slot's fence completed; never frees recently used pages.
+    void trimUnusedUploads(UINT index, ULONGLONG now);
     UINT64 glyphHits = 0, glyphMisses = 0, atlasResets = 0, drawCalls = 0, uploadAllocations = 0;
     UINT64 uploadCapacity() const;
     UINT64 uploadTrims = 0;
@@ -29,7 +28,7 @@ public:
 private:
     template<class T> using ComPtr = RendererComPtr<T>;
     static constexpr UINT frameCount = 2, pageBytes = 256 * 1024, maxPages = 256, maxGlyphs = 2048, cacheSlots = 4096;
-    struct UploadPage { ComPtr<ID3D12Resource> resource; uint8_t* mapped = nullptr; UINT used = 0; };
+    struct UploadPage { ComPtr<ID3D12Resource> resource; uint8_t* mapped = nullptr; UINT used = 0; ULONGLONG lastUsedMs = 0; };
     struct Frame {
         ComPtr<ID3D12CommandAllocator> allocator;
         UploadPage pages[maxPages];
@@ -56,6 +55,7 @@ private:
     Glyph glyphs[cacheSlots];
     UINT frameIndex = 0, shelfX = 0, shelfY = 0, shelfHeight = 0, glyphCount = 0, keyBytes = 0;
     UINT pendingPage = 0, pendingOffset = 0, pendingQuads = 0;
+    ULONGLONG frameTimeMs = 0;
     float scale = 1;
     bool apartmentOwned = false, passOpen = false;
     ID3D12Resource* passBuffer = nullptr;

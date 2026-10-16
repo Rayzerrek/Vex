@@ -62,9 +62,12 @@ scrollbars, split previews and modals retain their ordering.
 
 Upload pages are persistently mapped, 256 KiB each, and reused only after the
 owning back buffer's fence completes. Each of two slots is capped at 64 MiB;
-overflow is an error, never silent truncation. Once presentation has been idle
-for two seconds, the existing metadata timer drains the queue once and releases
-excess pages, retaining at most two per slot. This does not schedule a new paint
+overflow is an error, never silent truncation. The existing metadata timer checks
+completed slot fences without waiting on the GPU. It releases contiguous tail
+pages unused for two seconds, retaining a warm reserve of two per slot. Recent
+page use, not presentation activity, extends retention: cursor blinking cannot
+pin pages left over from an earlier glyph-upload burst. Pages needed by the
+current workload stay allocated. Maintenance does not schedule a new paint
 or add a render/trim busy loop. Driver allocations are **not** included in these
 application-owned resource budgets.
 
