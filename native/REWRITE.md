@@ -347,6 +347,20 @@ These are behavioral contracts, not opportunities to redesign the app.
   in that historical checkpoint. The upload reclamation checkpoint below removes
   that dependency.
 
+## Path query UTF-8 checkpoint
+
+- Initial queries and appended text validate UTF-8 before mutation. The 128-byte
+  cap retains only complete codepoints; backspace removes a whole codepoint.
+  A truncated character is not buffered for later input, and malformed input
+  returns `InvalidUtf8` without changing the query.
+- Fixtures cover every partial-fit boundary for two-, three- and four-byte
+  characters, exact fits, backspace and malformed/overlong/surrogate/out-of-range
+  input. Both regressions failed before the fix. All 115 tests pass in Debug and
+  ReleaseSafe, and the ReleaseSafe application builds.
+- The live cmd picker fixture verifies that a rejected emoji at byte 127 leaves
+  no partial character and that 127 backspaces restore the full result list.
+  These are synthetic UTF-16 window messages, not physical keyboard/IME evidence.
+
 ## Path completion ranking checkpoint
 
 - The result cap now applies the same score/name ordering as final presentation,

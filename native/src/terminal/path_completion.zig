@@ -69,15 +69,17 @@ pub const PathCompletion = struct {
     }
 
     pub fn openDirectory(self: *PathCompletion, dir_path: []const u8, initial_query: []const u8) !void {
+        const prefix = try boundedQueryPrefix(initial_query, self.query_buf.len);
+        var query_copy: [128]u8 = undefined;
+        @memcpy(query_copy[0..prefix.len], prefix);
         const trimmed = std.mem.trimRight(u8, dir_path, "\\/");
         const effective = if (trimmed.len == 0 and dir_path.len > 0) dir_path else if (trimmed.len == 2 and trimmed[1] == ':') dir_path[0..3] else trimmed;
         const owned_dir = try self.allocator.dupe(u8, effective);
         if (self.directory.len > 0) self.allocator.free(self.directory);
         self.directory = owned_dir;
 
-        const q_len = @min(initial_query.len, self.query_buf.len);
-        @memcpy(self.query_buf[0..q_len], initial_query[0..q_len]);
-        self.query_len = q_len;
+        @memcpy(self.query_buf[0..prefix.len], query_copy[0..prefix.len]);
+        self.query_len = prefix.len;
         self.selected_index = 0;
         self.hovered_index = null;
         self.first_visible = 0;
@@ -117,21 +119,21 @@ pub const PathCompletion = struct {
         return try std.fs.path.join(allocator, &.{ self.directory, entry.name });
     }
 
+    /// Appends complete UTF-8 codepoints within the byte limit; malformed input leaves the query unchanged.
     pub fn appendQuery(self: *PathCompletion, text: []const u8) !void {
+        const prefix = try boundedQueryPrefix(text, self.query_buf.len - self.query_len);
         for (text) |c| {
             if (c < 0x20 or c == 0x7f) return;
         }
-        const avail = self.query_buf.len - self.query_len;
-        const copy_len = @min(avail, text.len);
-        if (copy_len == 0) return;
-        @memcpy(self.query_buf[self.query_len .. self.query_len + copy_len], text[0..copy_len]);
-        self.query_len += copy_len;
+        if (prefix.len == 0) return;
+        @memcpy(self.query_buf[self.query_len .. self.query_len + prefix.len], prefix);
+        self.query_len += prefix.len;
 
         const current_q = self.query();
         if (std.mem.lastIndexOfAny(u8, current_q, "/\\")) |sep| {
-            const prefix = current_q[0 .. sep + 1];
+            const directory_prefix = current_q[0 .. sep + 1];
             const remainder = current_q[sep + 1 ..];
-            if (self.resolveSubdirectoryAlloc(prefix)) |resolved| {
+            if (self.resolveSubdirectoryAlloc(directory_prefix)) |resolved| {
                 defer self.allocator.free(resolved);
                 var rem_buf: [128]u8 = undefined;
                 const rem_len = remainder.len;
@@ -275,6 +277,15 @@ pub const PathCompletion = struct {
         }
     }
 };
+
+fn boundedQueryPrefix(text: []const u8, capacity: usize) ![]const u8 {
+    if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
+    var len = @min(text.len, capacity);
+    if (len < text.len) {
+        while (len > 0 and text[len] & 0xc0 == 0x80) : (len -= 1) {}
+    }
+    return text[0..len];
+}
 
 const MatchRanking = struct {
     entries: []const Entry,
@@ -535,6 +546,49 @@ pub fn readPromptDirectory(line: []const u8) ?[]const u8 {
         if (c < 0x20 or c == 0x7f) return null;
     }
     return candidate;
+}
+
+test "path query limits never split a UTF-8 codepoint and backspace removes one codepoint" {
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    for ([_][]const u8{ "ż", "中", "😀" }) |character| {
+        for (1..character.len) |missing| {
+            var text: [132]u8 = @splat('a');
+            const prefix_len = completion.query_buf.len - missing;
+            @memcpy(text[prefix_len .. prefix_len + character.len], character);
+            const input = text[0 .. prefix_len + character.len];
+            try completion.openDirectory("", input);
+            try std.testing.expectEqualStrings(input[0..prefix_len], completion.query());
+            try std.testing.expect(std.unicode.utf8ValidateSlice(completion.query()));
+
+            try completion.openDirectory("", input[0..prefix_len]);
+            try completion.appendQuery(character);
+            try std.testing.expectEqualStrings(input[0..prefix_len], completion.query());
+        }
+        try completion.openDirectory("", "");
+        try completion.appendQuery(character);
+        try std.testing.expectEqualStrings(character, completion.query());
+        try std.testing.expect(try completion.backspaceQuery());
+        try std.testing.expectEqualStrings("", completion.query());
+    }
+    var exact: [128]u8 = @splat('a');
+    @memcpy(exact[124..], "😀");
+    try completion.openDirectory("", &exact);
+    try std.testing.expectEqualStrings(&exact, completion.query());
+    try std.testing.expect(try completion.backspaceQuery());
+    try std.testing.expectEqualStrings(exact[0..124], completion.query());
+}
+
+test "path queries reject malformed UTF-8 without changing existing query or results" {
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    try completion.openDirectory("", "keep");
+    for ([_][]const u8{ "\xff", "\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82" }) |invalid| {
+        try std.testing.expectError(error.InvalidUtf8, completion.appendQuery(invalid));
+        try std.testing.expectEqualStrings("keep", completion.query());
+        try std.testing.expectError(error.InvalidUtf8, completion.openDirectory("", invalid));
+        try std.testing.expectEqualStrings("keep", completion.query());
+    }
 }
 
 test "path completion keeps the best fifty matches regardless of directory enumeration order" {
