@@ -347,6 +347,27 @@ These are behavioral contracts, not opportunities to redesign the app.
   in that historical checkpoint. The upload reclamation checkpoint below removes
   that dependency.
 
+## Path directory transaction checkpoint
+
+- Directory changes construct a complete replacement owner before freeing the
+  current path, entries or matches. Allocation failure retains those buffers,
+  the query, selection, hover and scroll position. Borrowed current paths/queries
+  remain valid until commit; parent navigation no longer copies the query to heap.
+- Nonempty paths use the existing absolute Windows/WSL directory parser before
+  filesystem access, including rejection of drive-relative `C:` (which previously
+  could reach an out-of-bounds root slice). Empty paths retain the model's clear
+  operation. Unavailable directories expose the existing scan-error view; failed
+  iteration clears partial entries rather than presenting an incomplete success.
+- The allocation-failure fixture first fails on the previous implementation,
+  then exercises every Zig allocation in initial indexing and replacement against
+  real temporary directories. Additional fixtures cover borrowed-input reopen,
+  parent/child navigation, invalid paths and missing-directory presentation.
+- All 118 tests pass in Debug/ReleaseSafe; the ReleaseSafe build and live path
+  picker/workspace fixtures pass. The picker exercises Tab/Left navigation,
+  retained filters and actual file insertion under a Unicode/spaced child path.
+  Native directory-enumeration failure injection remains unverified; indexing
+  is still synchronous and bounded. No startup/performance improvement is claimed.
+
 ## Path query UTF-8 checkpoint
 
 - Initial queries and appended text validate UTF-8 before mutation. The 128-byte

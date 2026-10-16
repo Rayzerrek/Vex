@@ -403,6 +403,8 @@ Ignored artifacts under `zig-out/verification/`:
   bounded fifty-result picker, filtering beyond the initial limit, empty-query
   recovery, and Unicode/spaced paths. Ranking fixtures compare all retained
   results with a full sort over 16,384 entries; warm queries reuse output storage.
+  Query limits preserve UTF-8 codepoints. Directory changes retain the old view
+  on allocation failure; live tests cover parent/child navigation and query retention.
 - `icons.json`, `icons-*.png`: matching tab/pane icon presentation in dark/light
   themes, synthetic current-monitor DPI, application titles and split focus.
 - `renderer.json`, `renderer-*.png`: hardware/WARP, GPU readback, graphics recreation,
