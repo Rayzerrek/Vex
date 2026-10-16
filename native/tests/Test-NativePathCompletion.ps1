@@ -50,11 +50,22 @@ try {
     Send-NativeText $window "`r"
     Assert-NativeProbe $window 3 1 'filtered result inserts the correct path into the live shell'
 
+    Send-NativeText $window '@type '
+    Invoke-NativeAction $window 12
+    Send-NativeText $window ('a' * 127)
+    Send-NativeText $window ([char]::ConvertFromUtf32(0x1f600))
+    for ($i = 0; $i -lt 127; $i++) {
+        [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]8, [IntPtr]::Zero) | Out-Null
+    }
+    Assert-NativeProbe $window 55 50 'query limit rejects a whole emoji rather than leaving a partial UTF-8 character'
+    Invoke-NativeAction $window 12 99
+    [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]27, [IntPtr]::Zero) | Out-Null
+
     Close-NativeInstance $process $window
     $process = $null
     $report = [pscustomobject]@{
         Result = 'PASS'
-        Checks = @('live cmd completion', 'bounded fifty results', 'alphabetical default selection', 'empty matches and backspace recovery', 'filter beyond initial result limit', 'Unicode and spaced full-path insertion', 'GPU popup capture')
+        Checks = @('live cmd completion', 'bounded fifty results', 'alphabetical default selection', 'empty matches and backspace recovery', 'filter beyond initial result limit', 'Unicode and spaced full-path insertion', 'whole-codepoint query limit and backspace recovery', 'GPU popup capture')
         Limitations = @('synthetic keyboard messages, not physical keyboard or IME', 'directory scanning remains synchronous and bounded, not background indexing')
     }
     $report | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $OutputDirectory 'path-completion.json')
