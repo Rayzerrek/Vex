@@ -1879,15 +1879,21 @@ extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
 }
 static void drawOverlayBackdropAndCard(float mx, float my, float mw, float mh) {
     const D2D1_SIZE_F win = target->GetSize();
-    brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? 0.48f : 0.24f));
+    brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? 0.50f : 0.22f));
     target->FillRectangle(D2D1::RectF(0.0f, 44.0f, win.width, win.height), brush);
-    brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? 0.35f : 0.14f));
-    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx - 2.0f, my + 4.0f, mx + mw + 2.0f, my + mh + 6.0f), 11.0f, 11.0f), brush);
-    const D2D1_ROUNDED_RECT modal = D2D1::RoundedRect(D2D1::RectF(mx, my, mx + mw, my + mh), 9.0f, 9.0f);
+    // Rex multi-layer ambient shadow
+    brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? 0.18f : 0.06f));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx - 4.0f, my + 4.0f, mx + mw + 4.0f, my + mh + 12.0f), 14.0f, 14.0f), brush);
+    brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? 0.28f : 0.10f));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx - 1.5f, my + 2.0f, mx + mw + 1.5f, my + mh + 6.0f), 13.0f, 13.0f), brush);
+    const D2D1_ROUNDED_RECT modal = D2D1::RoundedRect(D2D1::RectF(mx, my, mx + mw, my + mh), 12.0f, 12.0f);
     brush->SetColor(rgb(chromePalette.titlebar_bg));
     target->FillRoundedRectangle(modal, brush);
     brush->SetColor(rgb(chromePalette.border));
-    target->DrawRoundedRectangle(modal, brush, 1.2f);
+    target->DrawRoundedRectangle(modal, brush, 1.0f);
+    // Subtle top inner highlight
+    brush->SetColor(D2D1::ColorF(0xffffff, chromePalette.is_dark ? 0.08f : 0.35f));
+    target->DrawLine(D2D1::Point2F(mx + 12.0f, my + 1.0f), D2D1::Point2F(mx + mw - 12.0f, my + 1.0f), brush, 1.0f, roundCaps);
 }
 extern "C" void vex_draw_theme_picker(bool dark_mode, const VexThemeCard* cards, size_t count) {
     if (!target || !brush || !cards || count == 0) return;
