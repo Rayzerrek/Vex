@@ -903,7 +903,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             KillTimer(hwnd, 3); cursorWakeArmed = false;
             callbacks.cursor_wake(callbacks.context);
         } else if (wparam == 2) {
-            HRESULT result = renderer.trimTerminalUploadsIfIdle();
+            HRESULT result = renderer.trimUnusedTerminalUploads();
             if (FAILED(result)) { rendererFault(result); return 0; }
             if (callbacks.tick) callbacks.tick(callbacks.context);
         } else if (wparam == 1) {

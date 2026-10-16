@@ -344,7 +344,21 @@ These are behavioral contracts, not opportunities to redesign the app.
   Focus messages are synthetic, not physical keyboard/multi-monitor evidence.
   Each eligible blink still repaints the scene; no CPU/memory/latency improvement
   is claimed. Existing upload trimming requires two seconds without presentation,
-  so active blinking can postpone it until the window becomes inactive.
+  in that historical checkpoint. The upload reclamation checkpoint below removes
+  that dependency.
+
+## Upload reclamation checkpoint
+
+- Each upload page records its last allocation-use time once per frame, without
+  a clock call per quad. Maintenance releases only tail pages unused for two
+  seconds, retaining two warm pages per slot and all recently used pages.
+- Completed slot fences gate resource release. Maintenance neither drains nor
+  waits on the queue, and ongoing cursor presentation cannot pin stale uploads.
+- The live hardware/WARP regression first failed on the previous implementation
+  (16.5 MiB retained instead of the 1 MiB reserve), then passed with real cursor
+  animation continuing through reclamation. ReleaseSafe build, all 110 tests in
+  Debug/ReleaseSafe and the cursor desktop fixture pass. No startup/latency or
+  whole-process memory improvement is inferred from the upload-capacity check.
 
 ## Native D3D12 terminal draw checkpoint
 
