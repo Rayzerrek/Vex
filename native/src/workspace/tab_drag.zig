@@ -97,7 +97,7 @@ test "tab drag threshold, home/no-target preview, commit and cancellation preser
     try std.testing.expect(drag == .dragging);
     try std.testing.expectEqual(@as(?f32, null), try drag.markerX(&model, layout));
     try std.testing.expect(try drag.move(&model, layout, .{ .x = 600, .y = 20 }));
-    try std.testing.expectEqual(@as(?f32, 468), try drag.markerX(&model, layout));
+    try std.testing.expectEqual(@as(?f32, 548), try drag.markerX(&model, layout));
     try std.testing.expectEqual(@as(workspace.TabId, @enumFromInt(1)), model.tabs.items[0].id);
     try std.testing.expect(try drag.move(&model, layout, .{ .x = 600, .y = 53 }));
     try std.testing.expectEqual(@as(?f32, null), try drag.markerX(&model, layout));

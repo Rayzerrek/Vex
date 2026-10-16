@@ -3,6 +3,7 @@ const panes = @import("../workspace/pane_tree.zig");
 const terminal = @import("../terminal/terminal.zig");
 const directory = @import("../shell/directory.zig");
 const status = @import("../terminal/program_status.zig");
+const status_presentation = @import("../terminal/status_presentation.zig");
 const shell = @import("../shell/shell_launch.zig");
 const tab_strip = @import("../workspace/tab_strip.zig");
 const app_icon = @import("../terminal/app_icon.zig");
@@ -431,7 +432,7 @@ pub fn drawTab(index: usize, count: usize, active: bool, editing: bool, title: [
         native_icons[idx] = nativeAppIcon(icon);
     }
     const icons_ptr: [*c]const c.VexAppIcon = if (icon_count == 0) null else &native_icons;
-    c.vex_draw_tab(@intCast(index), @intCast(count), active, editing, if (title.len == 0) null else title.ptr, title.len, icons_ptr, icon_count, nativeStatusBadge(summary), attention);
+    c.vex_draw_tab(@intCast(index), @intCast(count), active, editing, if (title.len == 0) null else title.ptr, title.len, icons_ptr, icon_count, nativeProgramStatus(summary), attention);
 }
 pub fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
     var badge = [4]u8{ 0, 0, 0, 0 };
@@ -446,19 +447,16 @@ pub fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
         .badge = badge,
     };
 }
-pub fn nativeStatusBadge(summary: status.ProgramStatusSummary) c.VexProgramStatus {
+/// Projects status with borrowed UTF-8-bounded detail, consumed synchronously by native drawing.
+pub fn nativeProgramStatus(summary: status.ProgramStatusSummary) c.VexProgramStatus {
+    const detail = status_presentation.statusDetail(summary);
     return .{ .state = @intFromEnum(summary.state), .kind = if (summary.kind) |kind| switch (kind) {
         .permission => 1,
         .question => 2,
         .auth => 3,
-    } else 0, .progress = if (summary.progress) |progress| progress else -1 };
+    } else 0, .progress = if (summary.progress) |progress| progress else -1, .detail = if (detail.len > 0) detail.ptr else null, .detail_length = detail.len };
 }
-/// Only visible badge fields affect hidden-output repaint scheduling; metadata remains owned by the tracker.
-pub fn statusBadgeKey(summary: status.ProgramStatusSummary) u32 {
-    const badge = nativeStatusBadge(summary);
-    return badge.state | (badge.kind << 8) | (@as(u32, @intCast(badge.progress + 1)) << 16);
-}
-/// Updates the Direct2D window chrome palette to match the active dark or light theme.
+/// Updates native window chrome colors to match the active dark or light theme.
 pub fn setChromePalette(palette: terminal_theme.ChromePalette) void {
     c.vex_window_set_chrome_palette(.{
         .window_bg = palette.window_bg,
@@ -542,7 +540,7 @@ pub fn fontSize() f32 {
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
 pub fn beginPane(bounds: panes.PaneRect, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary) void {
     const action_code: u8 = if (hovered_action) |action| @intFromEnum(action) else 0;
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeStatusBadge(summary));
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary));
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {
@@ -718,6 +716,20 @@ fn drawRun(column: usize, row: usize, cells: usize, text: []const u8, style: ter
     if (c.vex_draw_run(@intCast(column), @intCast(row), @intCast(cells), text.ptr, text.len, style.foreground, style.background, flags) != 0) return error.NativeTextRenderingFailed;
 }
 
+test "native status bridge carries bounded UTF-8 detail only for synchronous presentation" {
+    var message: [260]u8 = @splat('a');
+    @memcpy(message[255..259], "😀");
+    const projected = nativeProgramStatus(.{ .state = .working, .progress = 42, .message = &message });
+    try std.testing.expectEqual(@as(u32, 2), projected.state);
+    try std.testing.expectEqual(@as(i32, 42), projected.progress);
+    try std.testing.expectEqual(@as(usize, 255), projected.detail_length);
+    try std.testing.expect(projected.detail != null);
+    try std.testing.expectEqualStrings(message[0..255], projected.detail[0..projected.detail_length]);
+    const empty = nativeProgramStatus(.{});
+    try std.testing.expectEqual(@as(usize, 0), empty.detail_length);
+    try std.testing.expect(empty.detail == null);
+}
+
 test "workspace shortcuts exactly match implemented WPF chords without stealing terminal Ctrl keys" {
     try std.testing.expectEqual(@as(?WorkspaceAction, .new_tab), workspaceShortcut('T', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .split_right), workspaceShortcut('R', 3));
@@ -804,4 +816,3 @@ test "ensureMinimumContrast preserves readable colors and boosts low-contrast fo
     try std.testing.expect(!isBlockGraphic("─"));
     try std.testing.expect(!isBlockGraphic("A"));
 }
-

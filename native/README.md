@@ -270,13 +270,22 @@ queries reply `ESC ] 7501 ; ? ESC \` through the reporting pane's PTY, in byte
 order with emulator responses. Allocation failures preserve previous records
 and propagate to the application.
 
-Pane headers show status/progress; tabs aggregate the first highest-priority
-pane in tree order, recording its 1-based pane index (`origin_pane_number`) and
+Status presentation follows the title/secondary-activity hierarchy in
+[almonk's Rex Activity Mode demo](https://x.com/almonk/status/2109262000165437943),
+adapted to **horizontal tabs**. Reported task names appear above plain activity
+text; pane headers show quiet text/progress instead of colored status pills.
+Custom tab titles win over reported names. Tabs grow to 200 DIPs when space
+permits and compact normally. The overlapping favicon stack and `+N` are unchanged.
+There is no separate activity bar, vertical tabbar or remote-host UI. Idle is
+shown only when reported; absent reports do not imply idle or an invented age.
+
+Tabs aggregate the first highest-priority pane in tree order, recording its 1-based pane index (`origin_pane_number`) and
 attention pane (`attention_pane_id`). Tab Peek cards display multi-pane origin
 details (`Pane N - ...` and `• Pane N` badge), and selecting or cycling to a tab
 routes focus to its attention or status-origin pane. User input acknowledges done/error results, not blocked
 records. Selecting a tab alone does not acknowledge results. Background status
-changes repaint tab indicators; ordinary hidden output still causes zero
+changes, including message-only updates, repaint the corresponding tab subtitle;
+ordinary hidden output still causes zero
 paints. Attention is latched across a pipe batch, even if a later report clears
 its record. Exit removes running/blocked/idle records; RIS clears all records,
 while soft reset and alternate-screen switches preserve them.
@@ -323,6 +332,7 @@ zig build test -Doptimize=ReleaseSafe
 zig build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeRenderer.ps1 -RequireNativeGlyphAtlas
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeUiRenderer.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeStatusPresentation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeIcons.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeProcessExit.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCursorBlink.ps1
@@ -413,6 +423,9 @@ Ignored artifacts under `zig-out/verification/`:
   on allocation failure; live tests cover parent/child navigation and query retention.
 - `icons.json`, `icons-*.png`: matching tab/pane icon presentation in dark/light
   themes, synthetic current-monitor DPI, application titles and split focus.
+- `status-presentation.json`, `status-*.png` under `status-presentation/`: real
+  ConPTY task/status reports, background message-only repaint, preserved manual
+  titles, four stacked favicons/overflow, and horizontal dark/light/compact UI.
 - `ui-pixels.json`, `ui-*.png` under `native-ui-pixels/`: GPU pixel assertions for
   rounded fills/strokes, lines, ellipses, alpha, nested clips, tiled text and
   pixel-stable 2,300-label UI atlas eviction; this is a gated diagnostic scene,

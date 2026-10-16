@@ -5,6 +5,7 @@ const panes = @import("../workspace/pane_tree.zig");
 const workspace = @import("../workspace/workspace_model.zig");
 const directory = @import("../shell/directory.zig");
 const status = @import("../terminal/program_status.zig");
+const status_presentation = @import("../terminal/status_presentation.zig");
 const shell = @import("../shell/shell_launch.zig");
 const terminal = @import("../terminal/terminal.zig");
 const TerminalSession = @import("terminal_session.zig").TerminalSession;
@@ -563,7 +564,7 @@ const WorkspaceApplication = struct {
         if (self.health == .failed) return false;
         // A queued event from a removed pane cannot target another pane, even after many opens/closes.
         const session = self.findSession(id) orelse return false;
-        const previous = platform.statusBadgeKey(session.terminal.program_status.programStatus());
+        const previous = status_presentation.statusPresentationKey(session.terminal.program_status.programStatus());
         const previous_title = session.terminal.title.generation;
         const previous_attention = session.needs_attention;
         session.terminal.feedOutput(bytes) catch |err| {
@@ -575,7 +576,7 @@ const WorkspaceApplication = struct {
         const attention = session.terminal.program_status.takeAttention();
         session.needs_attention = !visible and (session.needs_attention or attention);
         const title_changed = previous_title != session.terminal.title.generation;
-        const status_changed = previous != platform.statusBadgeKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
+        const status_changed = previous != status_presentation.statusPresentationKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
         const chrome_changed = title_changed or status_changed;
         if (!visible) {
             if (status_changed) _ = session.refreshAppIcon(false);
@@ -642,7 +643,9 @@ const WorkspaceApplication = struct {
                 icon_count = 1;
             }
             const is_editing = if (self.editing_tab) |edit| edit.tab_id == tab.id else false;
-            const tab_title = if (is_editing) self.editing_tab.?.buf[0..self.editing_tab.?.len] else (tab.customTitle() orelse active_session.displayTitle());
+            const reported_title = status_presentation.statusTitle(presentation.summary, active_session.displayTitle());
+            const default_title = tab.customTitle() orelse reported_title;
+            const tab_title = if (self.editing_tab) |*edit| (if (edit.tab_id == tab.id) edit.buf[0..edit.len] else default_title) else default_title;
             platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, is_editing, tab_title, tab_icons[0..icon_count], presentation.summary, presentation.attention);
         }
         if (self.pointer_drag == .tab) {
@@ -669,7 +672,8 @@ const WorkspaceApplication = struct {
             }
             const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
             {
-                platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, session.displayTitle(), session.icon, session.terminal.program_status.programStatus());
+                const summary = session.terminal.program_status.programStatus();
+                platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary);
                 defer platform.endPane();
                 try platform.drawTerminalFrame(frame, focused, self.cursor_blink.isShown(), pane_link, active_theme);
             }
@@ -741,7 +745,7 @@ const WorkspaceApplication = struct {
                 for (model.tabs.items[0..visible], 0..) |tab, idx| {
                     const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
                     const presentation = try self.tabProgramStatus(tab.tree.root);
-                    const title = tab.customTitle() orelse active_session.displayTitle();
+                    const title = tab.customTitle() orelse status_presentation.statusTitle(presentation.summary, active_session.displayTitle());
                     const pane_count = tab.tree.paneCount();
                     const origin_title = if (presentation.origin_pane_id) |oid|
                         if (self.findSession(oid)) |s| s.displayTitle() else ""
@@ -762,7 +766,7 @@ const WorkspaceApplication = struct {
                         .index = @intCast(idx),
                         .pane_count = @intCast(pane_count),
                         .icon = platform.nativeAppIcon(active_session.icon),
-                        .status = platform.nativeStatusBadge(presentation.summary),
+                        .status = platform.nativeProgramStatus(presentation.summary),
                         .active = idx == model.selected_tab,
                         .selected = idx == tpk.selected_index,
                         .hovered = if (tpk.hovered_index) |hi| hi == idx else false,
