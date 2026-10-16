@@ -25,7 +25,7 @@ pub const TabStripLayout = struct {
     /// Allows two-line activity labels when space permits; compact slots still preserve close/drag hit regions.
     pub fn init(width: f32, count: usize) !TabStripLayout {
         if (!std.math.isFinite(width) or width <= 0 or width > 65536 or count == 0 or count > workspace.WorkspaceModel.max_tabs) return error.InvalidTabStripLayout;
-        return .{ .count = count, .tab_width = @min(200, @max(24, (width - left - 120 - 38) / @as(f32, @floatFromInt(count)) - gap)) };
+        return .{ .count = count, .tab_width = @min(200, @max(24, (width - left - 120 - 63) / @as(f32, @floatFromInt(count)) - gap)) };
     }
     /// Tab slots include their trailing gap for insertion, but gap clicks never select or close a tab.
     pub fn slotWidth(self: TabStripLayout) f32 {
@@ -82,7 +82,7 @@ test "tab strip shares bounded geometry with body/close/gap and insertion hit te
     const single = try TabStripLayout.init(640, 1);
     try std.testing.expectEqual(@as(?usize, null), try single.insertionSlot(0, .{ .x = 3000, .y = 20 }));
     const compact = try TabStripLayout.init(640, 8);
-    try std.testing.expect(compact.tab_width >= 24 and compact.plusLeft() + 32 <= 640 - 120);
+    try std.testing.expect(compact.tab_width >= 24 and compact.plusLeft() + 63 <= 640 - 120);
     try std.testing.expectError(error.InvalidTabStripLayout, TabStripLayout.init(std.math.nan(f32), 3));
     try std.testing.expectError(error.InvalidTabStripLayout, TabStripLayout.init(1120, 0));
     try std.testing.expectError(error.InvalidTabStripLayout, TabStripLayout.init(1120, 9));
