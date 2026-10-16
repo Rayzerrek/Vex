@@ -64,13 +64,14 @@ HRESULT TerminalRenderer::createPipeline() {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
         { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
         { "COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TYPE", 0, DXGI_FORMAT_R32_UINT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
     };
-    static_assert(sizeof(Quad) == 36);
+    static_assert(sizeof(Quad) == 40);
     D3D12_GRAPHICS_PIPELINE_STATE_DESC description = {};
     description.pRootSignature = root.Get();
     description.VS = { terminalVertexShader, sizeof(terminalVertexShader) };
     description.PS = { terminalPixelShader, sizeof(terminalPixelShader) };
-    description.InputLayout = { input, 3 };
+    description.InputLayout = { input, 4 };
     description.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     description.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     description.RasterizerState.DepthClipEnable = TRUE;
@@ -201,6 +202,41 @@ HRESULT TerminalRenderer::drawSolid(float left, float top, float right, float bo
     return appendQuad(quad);
 }
 
+HRESULT TerminalRenderer::setClip(D3D12_RECT clip) {
+    if (!passOpen || clip.left > clip.right || clip.top > clip.bottom) return E_INVALIDARG;
+    flushQuads();
+    commands->RSSetScissorRects(1, &clip);
+    return S_OK;
+}
+
+HRESULT TerminalRenderer::drawRounded(float left, float top, float right, float bottom, float radius, float stroke, uint32_t color, uint8_t alpha) {
+    if (!passOpen || !isfinite(left) || !isfinite(top) || !isfinite(right) || !isfinite(bottom) || !isfinite(radius) || !isfinite(stroke) || radius < 0 || stroke < 0) return E_INVALIDARG;
+    if (right <= left || bottom <= top) return S_OK;
+    const float pad = stroke * scale * 0.5f + 1;
+    Quad quad = { { left * scale - pad, top * scale - pad, right * scale + pad, bottom * scale + pad },
+        { radius * scale, stroke * scale, 0, 0 },
+        ((UINT)alpha << 24) | ((color & 255) << 16) | (color & 0xff00) | ((color >> 16) & 255), 1 };
+    return appendQuad(quad);
+}
+
+HRESULT TerminalRenderer::drawLine(float x1, float y1, float x2, float y2, float stroke, bool roundCaps, uint32_t color, uint8_t alpha) {
+    if (!passOpen || !isfinite(x1) || !isfinite(y1) || !isfinite(x2) || !isfinite(y2) || !isfinite(stroke) || stroke <= 0) return E_INVALIDARG;
+    const float pad = stroke * scale * 0.5f + 1;
+    Quad quad = { { fminf(x1, x2) * scale - pad, fminf(y1, y2) * scale - pad, fmaxf(x1, x2) * scale + pad, fmaxf(y1, y2) * scale + pad },
+        { x1 * scale, y1 * scale, x2 * scale, y2 * scale },
+        ((UINT)alpha << 24) | ((color & 255) << 16) | (color & 0xff00) | ((color >> 16) & 255), roundCaps ? 2u : 3u };
+    return appendQuad(quad);
+}
+
+HRESULT TerminalRenderer::drawEllipse(float cx, float cy, float rx, float ry, float stroke, uint32_t color, uint8_t alpha) {
+    if (!passOpen || !isfinite(cx) || !isfinite(cy) || !isfinite(rx) || !isfinite(ry) || !isfinite(stroke) || rx <= 0 || ry <= 0 || stroke < 0) return E_INVALIDARG;
+    const float pad = stroke * scale * 0.5f + 1;
+    Quad quad = { { (cx - rx) * scale - pad, (cy - ry) * scale - pad, (cx + rx) * scale + pad, (cy + ry) * scale + pad },
+        { stroke * scale, 0, 0, 0 },
+        ((UINT)alpha << 24) | ((color & 255) << 16) | (color & 0xff00) | ((color >> 16) & 255), 4 };
+    return appendQuad(quad);
+}
+
 HRESULT TerminalRenderer::uploadGlyph(Glyph& glyph) {
     // A copy may reuse atlas coordinates after eviction. Finish every earlier draw before the write.
     flushQuads();
@@ -234,7 +270,7 @@ HRESULT TerminalRenderer::uploadGlyph(Glyph& glyph) {
     return S_OK;
 }
 
-HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter) {
+HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha) {
     if (!passOpen || !text || !length || length > 65536 || !painter || !isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) || width <= 0 || height <= 0) return E_INVALIDARG;
     const float left = floorf(x * scale), top = floorf(y * scale);
     const UINT phaseX = (UINT)fminf(3, floorf((x * scale - left) * 4));
@@ -281,7 +317,7 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
     const auto& glyph = glyphs[slot];
     Quad quad = { { left, top, left + w, top + h },
         { (float)glyph.x / atlasSize, (float)glyph.y / atlasSize, (float)(glyph.x + w) / atlasSize, (float)(glyph.y + h) / atlasSize },
-        0xff000000 | ((color & 255) << 16) | (color & 0xff00) | ((color >> 16) & 255) };
+        ((UINT)alpha << 24) | ((color & 255) << 16) | (color & 0xff00) | ((color >> 16) & 255) };
     return appendQuad(quad);
 }
 

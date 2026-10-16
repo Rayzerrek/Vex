@@ -17,20 +17,17 @@ static WindowsRenderer renderer;
 static uint64_t rendererGeneration, rendererDebugMessages;
 static unsigned rendererRecoveryAttempts;
 static bool rendererResetOnNextResize;
-static ID2D1RenderTarget* target;
-static ID2D1SolidColorBrush* brush;
+static uint32_t uiVerificationMode;
+static UiRenderer* target;
+static UiBrush uiBrush;
+static UiBrush* brush = &uiBrush;
+static ID2D1RenderTarget* glyphTarget;
+static ID2D1SolidColorBrush* glyphBrush;
 static IDWriteTextFormat* terminalFonts[4];
 static IDWriteTextFormat* chromeFont;
 static IDWriteTextFormat* chromeBoldFont;
 static IDWriteTextFormat* badgeFont;
-static ID2D1StrokeStyle* roundStrokeStyle;
-struct IconCacheEntry {
-    uint64_t key;
-    ID2D1Bitmap* bitmap;
-};
-static IconCacheEntry iconCache[64];
-static size_t iconCacheCount;
-static size_t iconCacheClock;
+static constexpr bool roundCaps = true;
 static uint64_t activeTabIconKey, focusedPaneIconKey;
 static float cellWidth, cellHeight, clientWidth, clientHeight, gridLeft, gridTop;
 static float terminalFontSize = 14.0f;
@@ -66,14 +63,6 @@ HWND vex_native_window() { return window; }
 
 template<class T> static void releaseCom(T*& object) {
     if (object) { object->Release(); object = nullptr; }
-}
-static void clearIconCache() {
-    for (size_t i = 0; i < iconCacheCount; i++) {
-        releaseCom(iconCache[i].bitmap);
-        iconCache[i].key = 0;
-    }
-    iconCacheCount = 0;
-    iconCacheClock = 0;
 }
 static D2D1_COLOR_F rgb(uint32_t color) {
     return D2D1::ColorF((color >> 16) / 255.0f, ((color >> 8) & 255) / 255.0f, (color & 255) / 255.0f);
@@ -130,7 +119,7 @@ static bool selftestEnabled() {
     return GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) == 1 && enabled[0] == L'1';
 }
 static HRESULT releaseRenderer() {
-    clearIconCache(); releaseCom(brush); target = nullptr;
+    target = nullptr;
     rendererDebugMessages += renderer.debugErrorCount();
     return renderer.shutdown();
 }
@@ -156,7 +145,6 @@ static HRESULT createRenderTarget() {
         rendererGeneration++;
     }
     target = renderer.drawingTarget();
-    if (!brush) return target->CreateSolidColorBrush(rgb(0xe4e4e7), &brush);
     return S_OK;
 }
 static HRESULT resizeRenderer(UINT width, UINT height, float dpi) {
@@ -257,8 +245,8 @@ static void drawNewTabButton() {
     }
     const float scx = sx + 7.5f;
     brush->SetColor(rgb(hoveredShellPicker ? chromePalette.accent : chromePalette.text_muted));
-    target->DrawLine(D2D1::Point2F(scx - 3.0f, cy - 1.5f), D2D1::Point2F(scx, cy + 1.8f), brush, 1.25f, roundStrokeStyle);
-    target->DrawLine(D2D1::Point2F(scx, cy + 1.8f), D2D1::Point2F(scx + 3.0f, cy - 1.5f), brush, 1.25f, roundStrokeStyle);
+    target->DrawLine(D2D1::Point2F(scx - 3.0f, cy - 1.5f), D2D1::Point2F(scx, cy + 1.8f), brush, 1.25f, roundCaps);
+    target->DrawLine(D2D1::Point2F(scx, cy + 1.8f), D2D1::Point2F(scx + 3.0f, cy - 1.5f), brush, 1.25f, roundCaps);
 }
 
 static void drawCaptionButtons() {
@@ -272,7 +260,7 @@ static void drawCaptionButtons() {
         }
         const float cx = left + 20.0f, cy = 21.5f;
         brush->SetColor(rgb(hot ? chromePalette.text_primary : chromePalette.text_muted));
-        target->DrawLine(D2D1::Point2F(cx - 5.0f, cy), D2D1::Point2F(cx + 5.0f, cy), brush, 1.3f, roundStrokeStyle);
+        target->DrawLine(D2D1::Point2F(cx - 5.0f, cy), D2D1::Point2F(cx + 5.0f, cy), brush, 1.3f, roundCaps);
     }
     // Maximize / Restore button (button 2)
     {
@@ -284,13 +272,13 @@ static void drawCaptionButtons() {
         const float cx = left + 20.0f, cy = 21.5f;
         brush->SetColor(rgb(hot ? chromePalette.text_primary : chromePalette.text_muted));
         if (IsZoomed(window)) {
-            target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 5.0f, cy - 2.0f, cx + 2.2f, cy + 5.0f), 1.6f, 1.6f), brush, 1.25f, roundStrokeStyle);
-            target->DrawLine(D2D1::Point2F(cx - 2.2f, cy - 2.0f), D2D1::Point2F(cx - 2.2f, cy - 4.8f), brush, 1.25f, roundStrokeStyle);
-            target->DrawLine(D2D1::Point2F(cx - 2.2f, cy - 4.8f), D2D1::Point2F(cx + 4.8f, cy - 4.8f), brush, 1.25f, roundStrokeStyle);
-            target->DrawLine(D2D1::Point2F(cx + 4.8f, cy - 4.8f), D2D1::Point2F(cx + 4.8f, cy + 2.2f), brush, 1.25f, roundStrokeStyle);
-            target->DrawLine(D2D1::Point2F(cx + 2.2f, cy + 2.2f), D2D1::Point2F(cx + 4.8f, cy + 2.2f), brush, 1.25f, roundStrokeStyle);
+            target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 5.0f, cy - 2.0f, cx + 2.2f, cy + 5.0f), 1.6f, 1.6f), brush, 1.25f);
+            target->DrawLine(D2D1::Point2F(cx - 2.2f, cy - 2.0f), D2D1::Point2F(cx - 2.2f, cy - 4.8f), brush, 1.25f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx - 2.2f, cy - 4.8f), D2D1::Point2F(cx + 4.8f, cy - 4.8f), brush, 1.25f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx + 4.8f, cy - 4.8f), D2D1::Point2F(cx + 4.8f, cy + 2.2f), brush, 1.25f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx + 2.2f, cy + 2.2f), D2D1::Point2F(cx + 4.8f, cy + 2.2f), brush, 1.25f, roundCaps);
         } else {
-            target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.8f, cy - 4.8f, cx + 4.8f, cy + 4.8f), 1.8f, 1.8f), brush, 1.25f, roundStrokeStyle);
+            target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.8f, cy - 4.8f, cx + 4.8f, cy + 4.8f), 1.8f, 1.8f), brush, 1.25f);
         }
     }
     // Close button (button 3)
@@ -302,9 +290,48 @@ static void drawCaptionButtons() {
         }
         const float cx = left + 20.0f, cy = 21.5f;
         brush->SetColor(rgb(hot ? 0xffffff : chromePalette.text_muted));
-        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy + 4.5f), brush, 1.35f, roundStrokeStyle);
-        target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.35f, roundStrokeStyle);
+        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy + 4.5f), brush, 1.35f, roundCaps);
+        target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.35f, roundCaps);
     }
+}
+
+static void renderUiVerificationScene() {
+    const float unit = target->GetSize().width / renderer.width();
+    const auto rect = [unit](float l, float t, float r, float b) { return D2D1::RectF(l * unit, t * unit, r * unit, b * unit); };
+    const auto point = [unit](float x, float y) { return D2D1::Point2F(x * unit, y * unit); };
+    UiBrush paint;
+    target->Clear(rgb(0x101010));
+    paint.SetColor(rgb(0xff0000));
+    target->FillRoundedRectangle(D2D1::RoundedRect(rect(20, 60, 180, 130), 16 * unit, 16 * unit), &paint);
+    paint.SetColor(rgb(0x0000ff));
+    target->DrawRoundedRectangle(D2D1::RoundedRect(rect(220, 60, 380, 130), 16 * unit, 16 * unit), &paint, 4 * unit);
+    paint.SetColor(rgb(0x00ff00));
+    target->DrawLine(point(20, 160), point(180, 180), &paint, 8 * unit, true);
+    paint.SetColor(rgb(0xffcc00));
+    target->FillEllipse(D2D1::Ellipse(point(260, 180), 40 * unit, 20 * unit), &paint);
+    paint.SetColor(rgb(0x0000ff));
+    target->DrawEllipse(D2D1::Ellipse(point(380, 180), 40 * unit, 20 * unit), &paint, 4 * unit);
+    target->PushAxisAlignedClip(rect(20, 220, 160, 300), D2D1_ANTIALIAS_MODE_ALIASED);
+    paint.SetColor(rgb(0xff8000)); target->FillRectangle(rect(0, 200, 200, 320), &paint);
+    target->PushAxisAlignedClip(rect(60, 240, 120, 280), D2D1_ANTIALIAS_MODE_ALIASED);
+    paint.SetColor(rgb(0x00ffff)); target->FillRectangle(rect(0, 200, 200, 320), &paint);
+    target->PopAxisAlignedClip();
+    paint.SetColor(rgb(0xff0000)); target->FillRectangle(rect(140, 260, 180, 280), &paint);
+    target->PopAxisAlignedClip();
+    paint.SetColor(rgb(0x0000ff)); target->FillRectangle(rect(180, 250, 190, 260), &paint);
+    paint.SetColor(D2D1::ColorF(0xff0000, 0.5f)); target->FillRectangle(rect(220, 220, 300, 280), &paint);
+    paint.SetColor(rgb(0xffffff));
+    if (uiVerificationMode == 2) {
+        for (unsigned i = 0; i < 2300; i++) {
+            wchar_t text[16]; swprintf(text, 16, L"%04u", i);
+            target->DrawText(text, (UINT32)wcslen(text), chromeFont, rect(20, 340, 60, 374), &paint, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+        paint.SetColor(rgb(0x101010)); target->FillRectangle(rect(20, 330, 1060, 380), &paint);
+        paint.SetColor(rgb(0xffffff));
+    }
+    wchar_t text[192];
+    for (auto& ch : text) ch = L'M';
+    target->DrawText(text, 192, chromeFont, rect(20, 340, 1060, 380), &paint, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 static void renderScene() {
@@ -316,6 +343,7 @@ static void renderScene() {
     drawNewTabButton();
     callbacks.paint(callbacks.context);
     drawCaptionButtons();
+    if (uiVerificationMode) renderUiVerificationScene();
 }
 
 static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
@@ -778,7 +806,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     case WM_DPICHANGED: {
         cancelPointerGesture();
-        clearIconCache();
+        renderer.ui.batches.clearGlyphCache();
         auto bounds = reinterpret_cast<RECT*>(lparam);
         if (!SetWindowPos(hwnd, nullptr, bounds->left, bounds->top, bounds->right - bounds->left, bounds->bottom - bounds->top, SWP_NOZORDER | SWP_NOACTIVATE)) {
             DWORD error = GetLastError();
@@ -890,6 +918,16 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 15: return (LRESULT)renderer.terminal.atlasResets;
             case 16: return TerminalRenderer::atlasSize * TerminalRenderer::atlasSize;
             case 17: return (LRESULT)renderer.terminal.uploadTrims;
+            case 18: return (LRESULT)renderer.ui.batches.drawCalls;
+            case 19: return (LRESULT)renderer.ui.batches.glyphMisses;
+            case 22: return (LRESULT)renderer.ui.batches.glyphHits;
+            case 23: return (LRESULT)renderer.ui.batches.uploadAllocations;
+            case 24: return (LRESULT)renderer.ui.batches.uploadCapacity();
+            case 25: return TerminalRenderer::atlasSize * TerminalRenderer::atlasSize;
+            case 26: return (LRESULT)renderer.ui.batches.atlasResets;
+            case 40: uiVerificationMode = 1; vex_window_invalidate(); return 1;
+            case 41: uiVerificationMode = 0; vex_window_invalidate(); return 1;
+            case 42: uiVerificationMode = 2; vex_window_invalidate(); return 1;
             case 30: return (LRESULT)activeTabIconKey;
             case 31: return (LRESULT)focusedPaneIconKey;
             case 20: case 21: {
@@ -1023,11 +1061,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     HRESULT result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &drawingFactory);
     if (FAILED(result)) return (int)result;
-    D2D1_STROKE_STYLE_PROPERTIES strokeProps = D2D1::StrokeStyleProperties(
-        D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
-        D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_SOLID, 0.0f);
-    result = drawingFactory->CreateStrokeStyle(strokeProps, nullptr, 0, &roundStrokeStyle);
-    if (SUCCEEDED(result)) result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&textFactory);
+    result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&textFactory);
     const auto configureChromeFormat = [](IDWriteTextFormat* fmt) -> HRESULT {
         HRESULT hr = fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         if (FAILED(hr)) return hr;
@@ -1090,7 +1124,6 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (FAILED(shutdown) && !WindowsRenderer::deviceLost(shutdown) && !platformError) platformError = (int)shutdown;
     releaseCom(chromeFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
     for (auto& font : terminalFonts) releaseCom(font);
-    releaseCom(roundStrokeStyle);
     releaseCom(textFactory); releaseCom(drawingFactory);
     return platformError;
 }
@@ -1105,7 +1138,7 @@ static uint64_t computeIconCacheKey(VexAppIcon icon, uint32_t sizeCode) {
            (badgeWord << 48);
 }
 
-static void drawAppIconContent(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, VexAppIcon icon, float ox, float oy, float sizeDip) {
+static void drawAppIconContent(UiRenderer* rt, UiBrush* b, VexAppIcon icon, float ox, float oy, float sizeDip) {
     const float s = sizeDip / 24.0f;
     const auto pt = [&](float px, float py) -> D2D1_POINT_2F {
         return D2D1::Point2F(ox + px * s, oy + py * s);
@@ -1118,19 +1151,19 @@ static void drawAppIconContent(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, V
     };
     const float sw = fmaxf(1.25f, 2.1f * s);
     const auto line = [&](float x1, float y1, float x2, float y2) {
-        rt->DrawLine(pt(x1, y1), pt(x2, y2), b, sw, roundStrokeStyle);
+        rt->DrawLine(pt(x1, y1), pt(x2, y2), b, sw, roundCaps);
     };
     const auto thinLine = [&](float x1, float y1, float x2, float y2) {
-        rt->DrawLine(pt(x1, y1), pt(x2, y2), b, sw * 0.78f, roundStrokeStyle);
+        rt->DrawLine(pt(x1, y1), pt(x2, y2), b, sw * 0.78f, roundCaps);
     };
     const auto circle = [&](float cx, float cy, float r) {
-        rt->DrawEllipse(D2D1::Ellipse(pt(cx, cy), r * s, r * s), b, sw, roundStrokeStyle);
+        rt->DrawEllipse(D2D1::Ellipse(pt(cx, cy), r * s, r * s), b, sw);
     };
     const auto fillCircle = [&](float cx, float cy, float r) {
         rt->FillEllipse(D2D1::Ellipse(pt(cx, cy), r * s, r * s), b);
     };
     const auto box = [&](float x1, float y1, float x2, float y2, float rx) {
-        rt->DrawRoundedRectangle(rrc(x1, y1, x2, y2, rx), b, sw, roundStrokeStyle);
+        rt->DrawRoundedRectangle(rrc(x1, y1, x2, y2, rx), b, sw);
     };
     const auto fillBox = [&](float x1, float y1, float x2, float y2, float rx) {
         rt->FillRoundedRectangle(rrc(x1, y1, x2, y2, rx), b);
@@ -1351,7 +1384,7 @@ static void drawAppIconContent(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, V
         circle(12.0f, 12.0f, 8.5f);
         thinLine(3.5f, 12.0f, 20.5f, 12.0f);
         thinLine(12.0f, 3.5f, 12.0f, 20.5f);
-        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 4.2f * s, 8.5f * s), b, sw * 0.8f, roundStrokeStyle);
+        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 4.2f * s, 8.5f * s), b, sw * 0.8f);
         break;
     case 30: // shield_key (Lucide shield: ssh / gpg)
         line(12.0f, 3.0f, 19.5f, 6.0f);
@@ -1439,8 +1472,8 @@ static void drawAppIconContent(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, V
         break;
     case 42: // react_atom
         fillCircle(12.0f, 12.0f, 2.2f);
-        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 9.0f * s, 3.8f * s), b, sw * 0.85f, roundStrokeStyle);
-        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 3.8f * s, 9.0f * s), b, sw * 0.85f, roundStrokeStyle);
+        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 9.0f * s, 3.8f * s), b, sw * 0.85f);
+        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 3.8f * s, 9.0f * s), b, sw * 0.85f);
         break;
     case 43: // vue_v
         line(3.5f, 5.0f, 12.0f, 20.0f);
@@ -1485,7 +1518,7 @@ static void drawAppIconContent(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, V
         thinLine(3.0f, 9.5f, 21.0f, 9.5f);
         break;
     case 49: // php_oval
-        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 9.5f * s, 6.0f * s), b, sw, roundStrokeStyle);
+        rt->DrawEllipse(D2D1::Ellipse(pt(12.0f, 12.0f), 9.5f * s, 6.0f * s), b, sw);
         line(9.0f, 9.5f, 7.5f, 14.5f);
         line(12.5f, 9.5f, 11.0f, 14.5f);
         line(16.0f, 9.5f, 14.5f, 14.5f);
@@ -1530,46 +1563,8 @@ static void drawAppIconContent(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b, V
     }
 }
 
-static void drawCachedAppIcon(VexAppIcon icon, float x, float y, float sizeDip) {
-    if (!target || !brush) return;
-    const uint32_t sizeCode = (uint32_t)lroundf(sizeDip);
-    const uint64_t key = computeIconCacheKey(icon, sizeCode);
-    for (size_t i = 0; i < iconCacheCount; i++) {
-        if (iconCache[i].key == key && iconCache[i].bitmap) {
-            target->DrawBitmap(iconCache[i].bitmap, D2D1::RectF(x, y, x + sizeDip, y + sizeDip), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-            return;
-        }
-    }
-    ID2D1BitmapRenderTarget* bmpTarget = nullptr;
-    if (SUCCEEDED(target->CreateCompatibleRenderTarget(D2D1::SizeF(sizeDip, sizeDip), &bmpTarget)) && bmpTarget) {
-        ID2D1SolidColorBrush* bmpBrush = nullptr;
-        ID2D1Bitmap* bitmap = nullptr;
-        if (SUCCEEDED(bmpTarget->CreateSolidColorBrush(rgb(icon.color_rgb ? icon.color_rgb : 0x8f9197), &bmpBrush)) && bmpBrush) {
-            bmpTarget->BeginDraw();
-            bmpTarget->Clear(D2D1::ColorF(0, 0.0f));
-            drawAppIconContent(bmpTarget, bmpBrush, icon, 0.0f, 0.0f, sizeDip);
-            if (SUCCEEDED(bmpTarget->EndDraw())) {
-                bmpTarget->GetBitmap(&bitmap);
-            }
-        }
-        releaseCom(bmpBrush);
-        releaseCom(bmpTarget);
-        if (bitmap) {
-            size_t slot = 0;
-            if (iconCacheCount < 64) {
-                slot = iconCacheCount++;
-            } else {
-                slot = iconCacheClock;
-                iconCacheClock = (iconCacheClock + 1) % 64;
-                releaseCom(iconCache[slot].bitmap);
-            }
-            iconCache[slot].key = key;
-            iconCache[slot].bitmap = bitmap;
-            target->DrawBitmap(bitmap, D2D1::RectF(x, y, x + sizeDip, y + sizeDip), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-            return;
-        }
-    }
-    drawAppIconContent(target, brush, icon, x, y, sizeDip);
+static void drawAppIcon(VexAppIcon icon, float x, float y, float sizeDip) {
+    if (target) drawAppIconContent(target, brush, icon, x, y, sizeDip);
 }
 
 static uint64_t drawAppIconTile(VexAppIcon icon, float x, float y) {
@@ -1578,7 +1573,7 @@ static uint64_t drawAppIconTile(VexAppIcon icon, float x, float y) {
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + 18.0f, y + 18.0f), 4.0f, 4.0f), brush);
     brush->SetColor(rgb(chromePalette.border));
     target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, y + 0.5f, x + 17.5f, y + 17.5f), 3.5f, 3.5f), brush, 1.0f);
-    drawCachedAppIcon(icon, x + 3.0f, y + 3.0f, glyphSize);
+    drawAppIcon(icon, x + 3.0f, y + 3.0f, glyphSize);
     return computeIconCacheKey(icon, (uint32_t)glyphSize);
 }
 
@@ -2033,7 +2028,7 @@ extern "C" void vex_draw_shell_picker(uint8_t mode, const VexShellPickerItem* it
             icon.glyph = 1;
             icon.color_rgb = chromePalette.accent;
         }
-        drawCachedAppIcon(icon, mx + 22.0f, ry + 10.0f, 18.0f);
+        drawAppIcon(icon, mx + 22.0f, ry + 10.0f, 18.0f);
         labelUtf8WithFont(chromeFont, item.name, item.name_length, mx + 48.0f, ry + 4.0f, mw - 130.0f, item.selected ? chromePalette.text_primary : chromePalette.text_muted);
         labelUtf8WithFont(badgeFont, item.subtitle, item.subtitle_length, mx + 48.0f, ry + 21.0f, mw - 130.0f, chromePalette.text_muted);
         if (item.is_default) {
@@ -2081,7 +2076,7 @@ extern "C" void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t count) {
             icon.glyph = 1;
             icon.color_rgb = chromePalette.accent;
         }
-        drawCachedAppIcon(icon, cx + 12.0f, cy + 12.0f, 16.0f);
+        drawAppIcon(icon, cx + 12.0f, cy + 12.0f, 16.0f);
         labelUtf8OrDefault(c.title, c.title_length, cx + 34.0f, cy + 11.0f, cardW - 64.0f, chromePalette.text_primary);
         if (c.status_detail && c.status_detail_length > 0) {
             labelUtf8WithFont(badgeFont, c.status_detail, c.status_detail_length, cx + 12.0f, cy + 33.0f, cardW - 24.0f, chromePalette.text_muted);
@@ -2204,7 +2199,7 @@ extern "C" void vex_draw_close_confirm(VexCloseConfirmModal modal) {
         icon.glyph = 1;
         icon.color_rgb = dangerColor;
     }
-    drawCachedAppIcon(icon, mx + 25.0f, my + 23.0f, 18.0f);
+    drawAppIcon(icon, mx + 25.0f, my + 23.0f, 18.0f);
 
     if (modal.title && modal.title_length > 0) {
         labelUtf8WithFont(chromeFont, modal.title, modal.title_length, mx + 58.0f, my + 23.0f, mw - 78.0f, chromePalette.text_primary);
@@ -2256,8 +2251,8 @@ static float snapDip(float v) {
 
 static void rectBounds(float left, float top, float right, float bottom, uint32_t color) {
     if (right <= left || bottom <= top) return;
-    brush->SetColor(rgb(color));
-    target->FillRectangle(D2D1::RectF(left, top, right, bottom), brush);
+    glyphBrush->SetColor(rgb(color));
+    glyphTarget->FillRectangle(D2D1::RectF(left, top, right, bottom), glyphBrush);
 }
 
 static void drawBoxArms(float left, float top, float right, float bottom, float cx, float cy, float lightT, float heavyT, float gap, uint8_t l, uint8_t r, uint8_t u, uint8_t d, uint32_t color) {
@@ -2361,8 +2356,8 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
             rectBounds(snapDip(left + cw * 0.5f), top, right, bottom, foreground);
         } else if (cp >= 0x2591 && cp <= 0x2593) {
             const float alpha = cp == 0x2591 ? 0.25f : (cp == 0x2592 ? 0.50f : 0.75f);
-            brush->SetColor(D2D1::ColorF((foreground >> 16) / 255.0f, ((foreground >> 8) & 255) / 255.0f, (foreground & 255) / 255.0f, alpha));
-            target->FillRectangle(D2D1::RectF(left, top, right, bottom), brush);
+            glyphBrush->SetColor(D2D1::ColorF((foreground >> 16) / 255.0f, ((foreground >> 8) & 255) / 255.0f, (foreground & 255) / 255.0f, alpha));
+            glyphTarget->FillRectangle(D2D1::RectF(left, top, right, bottom), glyphBrush);
         } else if (cp == 0x2594) {
             rectBounds(left, top, right, snapDip(top + ch * 0.125f), foreground);
         } else if (cp == 0x2595) {
@@ -2433,17 +2428,17 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
                 }
                 sink->EndFigure(D2D1_FIGURE_END_OPEN);
                 sink->Close();
-                brush->SetColor(rgb(foreground));
-                target->DrawGeometry(path, brush, lightT);
+                glyphBrush->SetColor(rgb(foreground));
+                glyphTarget->DrawGeometry(path, glyphBrush, lightT);
             }
             releaseCom(sink);
             releaseCom(path);
             return true;
         }
         if (cp >= 0x2571 && cp <= 0x2573) {
-            brush->SetColor(rgb(foreground));
-            if (cp == 0x2571 || cp == 0x2573) target->DrawLine(D2D1::Point2F(right, top), D2D1::Point2F(left, bottom), brush, lightT);
-            if (cp == 0x2572 || cp == 0x2573) target->DrawLine(D2D1::Point2F(left, top), D2D1::Point2F(right, bottom), brush, lightT);
+            glyphBrush->SetColor(rgb(foreground));
+            if (cp == 0x2571 || cp == 0x2573) glyphTarget->DrawLine(D2D1::Point2F(right, top), D2D1::Point2F(left, bottom), glyphBrush, lightT);
+            if (cp == 0x2572 || cp == 0x2573) glyphTarget->DrawLine(D2D1::Point2F(left, top), D2D1::Point2F(right, bottom), glyphBrush, lightT);
             return true;
         }
         const uint8_t packed = boxArmsTable[cp - 0x2500];
@@ -2456,15 +2451,15 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
 
     if (cp >= 0xE0B0 && cp <= 0xE0B7) {
         const float cy = top + ch * 0.5f;
-        brush->SetColor(rgb(foreground));
+        glyphBrush->SetColor(rgb(foreground));
         if (cp == 0xE0B1) {
-            target->DrawLine(D2D1::Point2F(left, top), D2D1::Point2F(right, cy), brush, lightT);
-            target->DrawLine(D2D1::Point2F(right, cy), D2D1::Point2F(left, bottom), brush, lightT);
+            glyphTarget->DrawLine(D2D1::Point2F(left, top), D2D1::Point2F(right, cy), glyphBrush, lightT);
+            glyphTarget->DrawLine(D2D1::Point2F(right, cy), D2D1::Point2F(left, bottom), glyphBrush, lightT);
             return true;
         }
         if (cp == 0xE0B3) {
-            target->DrawLine(D2D1::Point2F(right, top), D2D1::Point2F(left, cy), brush, lightT);
-            target->DrawLine(D2D1::Point2F(left, cy), D2D1::Point2F(right, bottom), brush, lightT);
+            glyphTarget->DrawLine(D2D1::Point2F(right, top), D2D1::Point2F(left, cy), glyphBrush, lightT);
+            glyphTarget->DrawLine(D2D1::Point2F(left, cy), D2D1::Point2F(right, bottom), glyphBrush, lightT);
             return true;
         }
         ID2D1PathGeometry* path = nullptr;
@@ -2491,8 +2486,8 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
                 sink->EndFigure(filled ? D2D1_FIGURE_END_CLOSED : D2D1_FIGURE_END_OPEN);
             }
             sink->Close();
-            if (filled) target->FillGeometry(path, brush);
-            else target->DrawGeometry(path, brush, lightT);
+            if (filled) glyphTarget->FillGeometry(path, glyphBrush);
+            else glyphTarget->DrawGeometry(path, glyphBrush, lightT);
         }
         releaseCom(sink);
         releaseCom(path);
@@ -2525,15 +2520,13 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
 }
 
 static HRESULT paintAtlasGlyph(ID2D1RenderTarget* raster, ID2D1SolidColorBrush* rasterBrush, const uint8_t* utf8, size_t length, uint32_t flags, float x, float y, float width, float height) {
-    ID2D1RenderTarget* previousTarget = target;
-    ID2D1SolidColorBrush* previousBrush = brush;
-    target = raster; brush = rasterBrush;
+    glyphTarget = raster; glyphBrush = rasterBrush;
     bool custom = false;
     if (length == 3 && (utf8[0] & 0xf0) == 0xe0) {
         const uint32_t cp = ((uint32_t)(utf8[0] & 15) << 12) | ((uint32_t)(utf8[1] & 63) << 6) | (utf8[2] & 63);
         custom = drawCustomGlyph(cp, x, y, width, height, 0xffffff);
     }
-    target = previousTarget; brush = previousBrush;
+    glyphTarget = nullptr; glyphBrush = nullptr;
     if (custom) return S_OK;
     const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)utf8, (int)length, nullptr, 0);
     if (count <= 0) return HRESULT_FROM_WIN32(GetLastError());

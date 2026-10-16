@@ -17,7 +17,11 @@ public:
     HRESULT beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_RECT clip, UINT width, UINT height, float dpi);
     HRESULT endPass(ID3D12CommandQueue* queue);
     HRESULT drawSolid(float left, float top, float right, float bottom, uint32_t color, uint8_t alpha = 255);
-    HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter);
+    HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha = 255);
+    HRESULT drawRounded(float left, float top, float right, float bottom, float radius, float stroke, uint32_t color, uint8_t alpha);
+    HRESULT drawLine(float x1, float y1, float x2, float y2, float stroke, bool roundCaps, uint32_t color, uint8_t alpha);
+    HRESULT drawEllipse(float cx, float cy, float rx, float ry, float stroke, uint32_t color, uint8_t alpha);
+    HRESULT setClip(D3D12_RECT clip);
     void clearGlyphCache();
     // Caller must verify this frame slot's fence completed; never frees recently used pages.
     void trimUnusedUploads(UINT index, ULONGLONG now);
@@ -34,7 +38,7 @@ private:
         UploadPage pages[maxPages];
         UINT pageCount = 0, pageIndex = 0;
     };
-    struct Quad { float bounds[4], uv[4]; uint32_t color; };
+    struct Quad { float bounds[4], uv[4]; uint32_t color; uint32_t kind = 0; };
     struct Glyph {
         uint8_t* text = nullptr;
         UINT length = 0, x = 0, y = 0, width = 0, height = 0;

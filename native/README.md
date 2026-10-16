@@ -2,10 +2,11 @@
 
 Work on `feat/zig-native`, alongside the unchanged `../windows/` application.
 The target is Windows + WSL; native Linux/macOS ports are out of scope for now.
-Presentation uses **D3D12 + DXGI flip-discard**. Terminal cells use a shared R8
-glyph atlas and native instanced D3D12 batches; chrome/overlays still use
-Direct2D/DirectWrite through D3D11On12. See [RENDERER.md](RENDERER.md) for ownership,
-tests, measured CPU/memory tradeoffs and the remaining UI migration.
+All GPU drawing and presentation use **native D3D12 + DXGI flip-discard**:
+terminal cells, chrome, vector icons, overlays and screenshot readback. There is
+no D3D11On12/translated UI device. DirectWrite and software WIC/Direct2D remain
+for metrics/shaping and cache-miss-only font rasterization, not scene drawing.
+See [RENDERER.md](RENDERER.md) for ownership, tests and measured tradeoffs.
 This is not yet a daily-driver replacement. The full behavior/visual contract
 and remaining work are in [REWRITE.md](REWRITE.md).
 
@@ -128,7 +129,7 @@ One project, with up to **8 tabs**, each owning independent terminal panes:
   This checkpoint draws an insertion marker, not WPF's animated ghost/push preview.
 - `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down (also exits focus/zoom mode if active so the new split is visible).
 - Custom Windows DWM titlebar chrome (`#181A1F` top bar, DWM dark mode, rounded corners, border color, and bundled `app.ico`), left project pill with Lucide Folder glyph, project folder name, and live `.git/HEAD` branch name, hoverable `[ + | ▾ ]` new-tab / shell-picker split button, and native Windows Minimize / Maximize-Restore / Close (`#E81123` hover) caption buttons.
-- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge) and pane headers use the same `18×18` icon tile and `12×12` favicon as tabs, without focus-based shell recoloring; favicons are resolved from a 73-entry Lucide + SimpleIcons vector catalog (`app_icon.zig`) using per-session shell overrides, zero-allocation cached-PID ConPTY foreground process inspection (`vex_pty_foreground_process`), OSC 0/2 titles, and OSC 7501 `app` metadata, backed by a per-DPI Direct2D GPU `ID2D1Bitmap` cache.
+- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge) and pane headers use the same `18×18` icon tile and `12×12` favicon as tabs, without focus-based shell recoloring; favicons are resolved from a 73-entry Lucide + SimpleIcons vector catalog (`app_icon.zig`) using per-session shell overrides, zero-allocation cached-PID ConPTY foreground process inspection (`vex_pty_foreground_process`), OSC 0/2 titles, and OSC 7501 `app` metadata, drawn as native D3D12 analytic vector primitives, with cached grayscale text masks for fallback badges.
 - Click a pane to focus it. Drag a right/down divider to resize its two subtrees
   live, without changing terminal focus. Ratios stay in 0.1..0.9; interactive
   dragging also keeps each neighbor at least 100 DIPs. Too-small containers
@@ -213,9 +214,12 @@ circular dependency through the rendering/window adapter.
   validated window/input seams and presentation of parsed snapshots.
 - `src/windows/wsl_registry.zig`: read-only, bounded/typed default distribution
   discovery; registry unit fixtures use unique volatile keys outside Lxss.
-- `src/windows/windows_platform.cpp`: Win32 event loop and Direct2D/DirectWrite drawing adapter.
+- `src/windows/windows_platform.cpp`: Win32 event loop and native UI/terminal drawing adapter;
+  DirectWrite metrics and software raster callbacks stay at this seam.
 - `src/windows/windows_renderer.{h,cpp}`: D3D12 device/queue/fences, DXGI flip-discard,
-  Direct2D-on-12 UI targets, native-pass interop, resize/recovery and GPU capture.
+  ordered native UI/terminal passes, resize/recovery and D3D12 readback.
+- `src/windows/ui_renderer.{h,cpp}`: native analytic shapes/vector icons, intersecting
+  clips and cached text masks tiled within bounded software raster scratch.
 - `src/windows/terminal_renderer.{h,cpp}`: shared bounded glyph atlas, miss-only
   rasterization, native instanced cell drawing, reusable per-slot upload pages
   and nonblocking reclamation of unused pages, including during cursor blinking. `terminal_shaders.hlsl` has checked-in compiled bytecode.
@@ -289,9 +293,10 @@ Native limits: 1,000 columns/rows for window grids, 1 Mi cells/frame, 64 KiB per
 grapheme and 64 MiB text/frame. Oversized/malformed frames fail explicitly.
 Longer graphemes grow a reusable buffer rather than overflowing a fixed stack
 buffer. The D3D12 backend uses a hardware adapter or WARP software fallback.
-Terminal cells use native D3D12 batches and a shared glyph atlas; UI translation
-through D3D11On12 remains. Styled-text CPU and memory samples improve substantially,
-but plain-text process memory increases and latency remains unmeasured.
+Terminal cells and all UI use native D3D12 batches, with independent bounded
+terminal/UI mask atlases and no translation device. Matched samples against the
+preceding translated-UI executable show substantially lower process memory;
+CPU ranges overlap and input-to-present latency remains unmeasured.
 See [the renderer evidence](RENDERER.md#performance-evidence).
 
 Zig is not memory-safe. Pinned C ABI calls, GetProcAddress and registered callback
@@ -317,6 +322,7 @@ zig build test -Doptimize=Debug
 zig build test -Doptimize=ReleaseSafe
 zig build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeRenderer.ps1 -RequireNativeGlyphAtlas
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeUiRenderer.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeIcons.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeProcessExit.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCursorBlink.ps1
@@ -407,9 +413,18 @@ Ignored artifacts under `zig-out/verification/`:
   on allocation failure; live tests cover parent/child navigation and query retention.
 - `icons.json`, `icons-*.png`: matching tab/pane icon presentation in dark/light
   themes, synthetic current-monitor DPI, application titles and split focus.
-- `renderer.json`, `renderer-*.png`: hardware/WARP, GPU readback, graphics recreation,
+- `ui-pixels.json`, `ui-*.png` under `native-ui-pixels/`: GPU pixel assertions for
+  rounded fills/strokes, lines, ellipses, alpha, nested clips, tiled text and
+  pixel-stable 2,300-label UI atlas eviction; this is a gated diagnostic scene,
+  not visual parity with WPF/Rex.
+- `native-ui-performance/comparison.json`: alternating translated/native UI warm
+  process-CPU and memory samples using `tests/Measure-NativeRenderer.ps1`.
+- `native-ui-startup/startup-comparison.json`: seven alternating warm launch pairs
+  using `tests/Measure-NativeStartup.ps1`; OS/driver caches are not flushed.
+- `renderer.json`, `renderer-*.png`: hardware/WARP, native D3D12 readback, graphics recreation,
   resize/minimize/restore, overlays and idle-presentation checks.
-  Native atlas checks also cover warm reuse, batching, styled Unicode and eviction.
+  Native atlas checks also cover warm terminal/UI cache and allocation reuse,
+  batching, styled Unicode, eviction and absence of the D3D11On12 module.
   `-Dgraphics-debug=true` additionally enables installed D3D12 validation tools.
 - `atlas-performance/comparison.json`: alternating On12-only/native-atlas warm
   process-CPU and memory samples from `tests/Measure-NativeRenderer.ps1`.
