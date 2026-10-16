@@ -473,6 +473,27 @@ they do not describe every current implementation detail.
   no partial character and that 127 backspaces restore the full result list.
   These are synthetic UTF-16 window messages, not physical keyboard/IME evidence.
 
+## Native modal dialogs and settings checkpoint
+
+- Command palette, Theme Studio, Settings, Tab Overview, Shell Picker and close
+  confirmation are native owned dialogs (`src/windows/windows_dialog.{h,cpp,zig}`):
+  centred over the terminal window, no separate taskbar window, terminal input
+  disabled while open. Path completion stays a popup anchored to the cursor.
+- Application code receives only decoded events (cancel, choose, preview, query,
+  settings, shell mode). Native list/field state is read through the window thread
+  and never mirrored in Zig, so the command list and selection have one owner.
+- Settings (`Ctrl+,`): default shell, theme, font size 9-32, blinking cursor.
+  `src/app/user_settings.zig` validates a versioned JSON document (`%LOCALAPPDATA%\Vex\settings.json`),
+  saves atomically, and never overwrites a malformed file. A failed write or a load
+  failure is shown as a warning; runtime preferences and live ConPTY sessions are unchanged.
+- Verified by `tests/Test-NativeModals.ps1` (owned popup, modal input isolation,
+  selectable heading, Tab/Escape/Cancel, theme preview, invalid font rejection,
+  save, restart, read-only failure) and `Test-NativeCursorBlink.ps1` (palette toggle).
+  The full desktop set passes in one run on this machine: 17 fixtures.
+- Known limits: dialog pixels are native Win32 controls with owner-drawn accents, not
+  WPF's animated overlay; no animation on open/close; settings do not yet cover
+  shell arguments, WSL distribution or copy-on-select.
+
 ## Path completion ranking checkpoint
 
 - The result cap now applies the same score/name ordering as final presentation,

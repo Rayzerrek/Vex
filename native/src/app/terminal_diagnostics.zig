@@ -5,6 +5,7 @@ const platform = @import("../windows/windows_ffi.zig");
 const status = @import("../terminal/program_status.zig");
 const tab_strip = @import("../workspace/tab_strip.zig");
 const commands = @import("terminal_commands.zig");
+const dialogs = @import("../windows/windows_dialog.zig");
 
 pub fn onProbe(self: *Application, query: u32) u64 {
     if (self.health == .failed) return 0;
@@ -24,7 +25,7 @@ pub fn onProbe(self: *Application, query: u32) u64 {
             var matched: [commands.command_defs.len]commands.CommandDef = undefined;
             return commands.filterCommands(self.overlay.command_palette.query_buf[0..self.overlay.command_palette.query_len], &matched);
         },
-        102 => return if (self.overlay == .command_palette) self.overlay.command_palette.first_visible else 0,
+        102 => return if (self.overlay == .command_palette) dialogs.firstVisibleRow() else 0,
         103 => return if (self.overlay == .command_palette) self.overlay.command_palette.query_len else 0,
         104 => return @intFromBool(self.path_completion.index == .deferred and self.path_completion.index.deferred.loading),
         105 => return self.path_completion.entries.items.len,
@@ -94,6 +95,7 @@ pub fn onProbe(self: *Application, query: u32) u64 {
             .path_completion => 4,
             .close_confirm => 5,
             .shell_picker => 6,
+            .settings => 7,
         },
         54 => return @intFromFloat(@round(platform.fontSize())),
         55 => return self.path_completion.matches.items.len,

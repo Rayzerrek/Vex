@@ -123,8 +123,10 @@ and the user's requirement that a new program must not need a Vex-specific patch
 - `Test-NativeUniversalPrograms.ps1` compiles a randomly named test executable
   with its own helper. It exercises real ConPTY input, recursive path insertion
   into arbitrary stdin, unknown-app OSC 7501, close protection and stable PID.
-- `Test-NativePalette.ps1` covers action reachability, scrolling, fuzzy matching,
-  UTF-8 limits and inspected dark/light/compact GPU captures. Existing path,
+- `Test-NativePalette.ps1` drives the native command-palette dialog by keyboard (wrap,
+  Home/End, fuzzy query, UTF-8 limit) and saves dark/light/compact native captures;
+  `Test-NativeModals.ps1` covers owned-dialog input isolation, settings apply, atomic
+  persistence, restart restoration and pointer shapes. Existing path,
   icons, status presentation, process-exit, shell-picker and hardware/WARP UI
   pixel fixtures pass on their latest runs. These are synthetic desktop events,
   not physical IME/accessibility/multi-monitor evidence.

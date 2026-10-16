@@ -10,7 +10,6 @@ const TabDrag = @import("../workspace/tab_drag.zig").TabDrag;
 const tab_strip = @import("../workspace/tab_strip.zig");
 const url_detector = @import("../terminal/url_detector.zig");
 const overlays = @import("terminal_overlays.zig");
-const commands = @import("terminal_commands.zig");
 
 pub const HoveredLink = struct {
     pane_id: panes.PaneId,
@@ -58,26 +57,6 @@ pub fn onScroll(self: *Application, delta: i32, x: f32, y: f32, modifiers: u32) 
     if (self.overlay == .path_completion) {
         self.path_completion.moveSelection(if (delta < 0) -1 else 1, 8);
         platform.invalidateWindow();
-        return;
-    }
-    if (self.overlay == .command_palette) {
-        var matched: [commands.command_defs.len]commands.CommandDef = undefined;
-        var cp = &self.overlay.command_palette;
-        cp.moveSelection(if (delta < 0) -1 else 1, commands.filterCommands(cp.query_buf[0..cp.query_len], &matched));
-        platform.invalidateWindow();
-        return;
-    }
-    if (self.overlay == .shell_picker) {
-        self.discoverAvailableShells();
-        const count: usize = self.available_shell_count;
-        if (count > 0) {
-            var sp = &self.overlay.shell_picker;
-            sp.selected_index = if (delta < 0)
-                (if (sp.selected_index > 0) sp.selected_index - 1 else count - 1)
-            else
-                (sp.selected_index + 1) % count;
-            platform.invalidateWindow();
-        }
         return;
     }
     if (self.overlay != .none) return;
@@ -273,8 +252,7 @@ pub fn onPointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
 
 fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f32, modifiers: u32) !platform.PointerResponse {
     if (self.overlay != .none) {
-        try overlays.handleOverlayPointer(self, event, x, y);
-        return .normal;
+        return try overlays.handleOverlayPointer(self, event, x, y);
     }
     const model = if (self.model) |*model| model else return .normal;
     const metrics = self.metrics orelse return .normal;
@@ -498,14 +476,24 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
     if (self.pointer_drag == .pane) return if (self.pointer_drag.pane.dragging) .tab_dragging else .tab_armed;
     if (self.pointer_drag == .scrollbar) return .tab_dragging;
     if (self.pointer_drag == .selection or self.pointer_drag == .mouse) return .selection;
+    if (event == .hover and self.pointer_drag == .none and self.hovered_header_action != null) return .link;
+    if (event == .hover and self.pointer_drag == .none and self.hovered_scrollbar != null) return .link;
     if (event == .hover and self.pointer_drag == .none and self.hovered_link != null) return .link;
-    if (model.activeTab().is_focus_mode) return .normal;
-    const drag: DividerDrag = if (self.pointer_drag == .divider) self.pointer_drag.divider else .{};
-    const axis = try drag.cursorAxis(&model.activeTab().tree, bounds, x, y) orelse return .normal;
-    return switch (axis) {
-        .right => .right,
-        .down => .down,
-    };
+    if (!model.activeTab().is_focus_mode) {
+        const drag: DividerDrag = if (self.pointer_drag == .divider) self.pointer_drag.divider else .{};
+        if (try drag.cursorAxis(&model.activeTab().tree, bounds, x, y)) |axis| {
+            return switch (axis) {
+                .right => .right,
+                .down => .down,
+            };
+        }
+    }
+    if (event == .hover and self.pointer_drag == .none) {
+        for (self.placements.items) |placement| {
+            if (placement.bounds.contains(x, y) and try metrics.viewportPoint(placement.bounds, x, y, false) != null) return .text;
+        }
+    }
+    return .normal;
 }
 
 fn reportMouseEvent(

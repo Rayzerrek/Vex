@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_chrome.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/terminal_drawing.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_system.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/windows_dialog.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_pty.cpp"), .flags = native_flags });
     const renderer_flags: []const []const u8 = if (b.option(bool, "graphics-debug", "Require the installed D3D12 debug layer") orelse false)
         &(native_flags.* ++ .{"-DVEX_GRAPHICS_DEBUG=1"})
@@ -25,7 +26,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/ui_renderer.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/app_icon_renderer.cpp"), .flags = native_flags });
     module.link_libc = true;
-    for ([_][]const u8{ "user32", "kernel32", "gdi32", "d2d1", "dwrite", "d3d12", "dxgi", "dwmapi", "ole32", "windowscodecs", "uuid", "advapi32", "shell32" }) |lib| module.linkSystemLibrary(lib, .{});
+    for ([_][]const u8{ "user32", "kernel32", "gdi32", "d2d1", "dwrite", "d3d12", "dxgi", "dwmapi", "ole32", "windowscodecs", "uuid", "advapi32", "shell32", "comctl32" }) |lib| module.linkSystemLibrary(lib, .{});
     const exe = b.addExecutable(.{ .name = "vex-native", .root_module = module });
     exe.subsystem = .Windows;
     const dll = b.addInstallFileWithDir(b.path("../Vendor/libghostty/ghostty-vt.dll"), .bin, "ghostty-vt.dll");
