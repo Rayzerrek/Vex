@@ -129,12 +129,21 @@ try {
     Invoke-NativeAction $window 9
     Assert-NativeProbe $window 53 1 'command palette is open'
     Assert-CursorIdle $window
-    Send-NativeText $window 'Cursor: Toggle Blinking'
-    [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]13, [IntPtr]::Zero) | Out-Null
+    $dialog = $null
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        $popup = [VexNativeSmoke]::GetLastActivePopup($window)
+        if ($popup -ne $window -and $popup -ne [IntPtr]::Zero) { $dialog = $popup; break }
+        Start-Sleep -Milliseconds 25
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (!$dialog) { throw 'Vex cursor: native command palette dialog did not open.' }
+    [VexNativeSmoke]::SetControlText([VexNativeSmoke]::GetDlgItem($dialog, 102), 'Cursor: Toggle Blinking') | Out-Null
+    Start-Sleep -Milliseconds 100
+    [VexNativeSmoke]::PostMessageW($dialog, 0x111, [IntPtr]1, [IntPtr]::Zero) | Out-Null
     Assert-NativeProbe $window 72 0 'real palette command disables cursor animation'
     Assert-CursorIdle $window
     Invoke-NativeAction $window 17
-    Assert-NativeProbe $window 75 1 'same palette action can re-enable animation'
+    Assert-NativeProbe $window 72 1 'native dialog action can re-enable cursor animation'
 
     [VexNativeSmoke]::SendWindowMessage($window, 8, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Assert-NativeProbe $window 76 0 'focus loss disables animation'
@@ -151,6 +160,8 @@ try {
     Send-CursorMode $window '[6 q'
     Assert-NativeProbe $window 77 0 'selected split uses a steady cursor'
     Assert-CursorIdle $window
+    # Blink resumes only for a focused window; desktops may leave a fresh fixture in the background.
+    Activate-CursorWindow $window
     Invoke-NativeAction $window 3
     Assert-NativeProbe $window 75 1 'closing the steady split restores its blinking neighbor'
 
@@ -159,6 +170,7 @@ try {
     Send-CursorMode $window '[6 q'
     Assert-NativeProbe $window 77 0 'selected tab uses a steady cursor'
     Assert-CursorIdle $window
+    Activate-CursorWindow $window
     Invoke-NativeAction $window 5
     Assert-NativeProbe $window 75 1 'returning to the blinking tab restores its timer'
     Invoke-NativeAction $window 7 1

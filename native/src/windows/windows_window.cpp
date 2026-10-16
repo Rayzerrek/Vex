@@ -1,4 +1,5 @@
 #include "windows_platform.h"
+#include "windows_dialog.h"
 #include "drawing_color.h"
 #include "windows_renderer.h"
 #include "windows_chrome.h"
@@ -310,6 +311,7 @@ static void renderScene() {
     drawNewTabButton();
     callbacks.paint(callbacks.context);
     drawCaptionButtons();
+    drawTerminalDialogBackdrop(*target, *brush, dpiScale);
     if (uiVerificationMode) renderUiVerificationScene();
 }
 
@@ -484,11 +486,12 @@ static bool handleKey(uint32_t key) {
     if ((key == 'V' && mods == 3) || (key == VK_INSERT && mods == 1)) { pasteClipboard(); return true; }
     return callbacks.key(callbacks.context, key, mods);
 }
-static void setPointerCursor(uint32_t response, float y) {
+static void updateTopChromeHover(float x, float y);
+static void setPointerCursor(uint32_t response) {
+    const bool chromeButton = hoveredCaptionButton != 0 || hoveredNewTab || hoveredShellPicker || hoveredTabIndex != -1;
     uint16_t resource = response == VEX_POINTER_RIGHT ? 32644 : response == VEX_POINTER_DOWN ? 32645 :
-        response == VEX_POINTER_LINK ? 32649 :
-        response == VEX_POINTER_SELECTION ? 32513 :
-        response == VEX_POINTER_TAB_ARMED || response == VEX_POINTER_TAB_DRAGGING || y < 74 ? 32512 : 32513;
+        response == VEX_POINTER_LINK || chromeButton ? 32649 :
+        response == VEX_POINTER_SELECTION || response == VEX_POINTER_TEXT ? 32513 : 32512;
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(resource)));
 }
 static void refreshHoverCursor(HWND hwnd) {
@@ -499,7 +502,8 @@ static void refreshHoverCursor(HWND hwnd) {
     if (!GetClientRect(hwnd, &bounds) || point.x < 0 || point.y < 0 || point.x >= bounds.right || point.y >= bounds.bottom) return;
     float scale = GetDpiForWindow(hwnd) / 96.0f;
     float x = point.x / scale, y = point.y / scale;
-    setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y, currentModifiers()), y);
+    updateTopChromeHover(x, y);
+    setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y, currentModifiers()));
 }
 extern "C" int vex_window_cancel_pointer_capture() {
     if (pointerCaptureState == PointerCaptureState::none || pointerCaptureState == PointerCaptureState::cancelled) return 0;
@@ -536,7 +540,7 @@ static void beginPointerGesture(HWND hwnd, float x, float y) {
     SetFocus(hwnd);
     if (response == VEX_POINTER_TAB_ARMED) pointerCaptureState = PointerCaptureState::armed;
     else capturePointerGesture(hwnd);
-    setPointerCursor(response, y);
+    setPointerCursor(response);
 }
 static void updateTopChromeHover(float x, float y) {
     int nextCaption = 0;
@@ -629,7 +633,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             if (!GetCursorPos(&point) || !ScreenToClient(hwnd, &point)) break;
             float scale = GetDpiForWindow(hwnd) / 96.0f;
             float x = point.x / scale, y = point.y / scale;
-            setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y, currentModifiers()), y);
+            updateTopChromeHover(x, y);
+            setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y, currentModifiers()));
             return TRUE;
         }
         break;
@@ -737,9 +742,9 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         uint32_t event = pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging ? VEX_POINTER_MOVE : VEX_POINTER_HOVER;
         uint32_t response = callbacks.pointer(callbacks.context, event, x, y, currentModifiers());
         if (pointerCaptureState == PointerCaptureState::armed && response == VEX_POINTER_TAB_DRAGGING) capturePointerGesture(hwnd);
-        else if (response == VEX_POINTER_NORMAL || response == VEX_POINTER_LINK) cancelPointerGesture();
+        else if (response == VEX_POINTER_NORMAL || response == VEX_POINTER_LINK || response == VEX_POINTER_TEXT) cancelPointerGesture();
         updateTopChromeHover(x, y);
-        setPointerCursor(response, y);
+        setPointerCursor(response);
         return 0;
     }
     case WM_MOUSELEAVE:
@@ -757,6 +762,9 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_CAPTURECHANGED: case WM_CANCELMODE:
         cancelPointerGesture();
         return 0;
+    case WM_WINDOWPOSCHANGED:
+        repositionTerminalDialogs();
+        break;
     case WM_SIZE:
         callbacks.cursor_activity(callbacks.context, wparam != SIZE_MINIMIZED && IsWindowVisible(hwnd) && GetFocus() == hwnd);
         if (wparam != SIZE_MINIMIZED && window) {
@@ -794,7 +802,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
                 }
             }
         }
-        updateWindowMetrics(); InvalidateRect(hwnd, nullptr, FALSE);
+        updateWindowMetrics(); repositionTerminalDialogs(); InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
     case WM_ERASEBKGND: return 1;
@@ -825,7 +833,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) callbacks.exited(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 5:
-        if (selftestEnabled() && wparam <= 18 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
+        if (selftestEnabled() && wparam <= 19 && lparam >= 0 && (uint64_t)lparam <= UINT32_MAX) callbacks.action(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;
     case WM_APP + 6: {
         uint32_t source = (uint32_t)(wparam & 0xff), operation = (uint32_t)(wparam >> 8);
@@ -954,7 +962,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_CLOSE: cancelPointerGesture(); DestroyWindow(hwnd); return 0;
-    case WM_DESTROY: cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); cursorWakeArmed = false; PostQuitMessage(0); return 0;
+    case WM_DESTROY: destroyTerminalDialogs(); cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); cursorWakeArmed = false; PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
@@ -1054,7 +1062,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
         WNDCLASSEXW klass = {};
         klass.cbSize = sizeof(klass); klass.style = CS_DBLCLKS; klass.lpfnWndProc = windowProcedure;
         klass.hInstance = GetModuleHandleW(nullptr); klass.lpszClassName = L"VexNativeTerminal";
-        klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32513));
+        klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         klass.hIcon = iconBig ? iconBig : LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
         klass.hIconSm = iconSmall ? iconSmall : klass.hIcon;
         if (!RegisterClassExW(&klass)) platformError = (int)GetLastError();
@@ -1064,6 +1072,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 CW_USEDEFAULT, CW_USEDEFAULT, (int)(1120 * initialScale), (int)(700 * initialScale), nullptr, nullptr, klass.hInstance, nullptr);
             if (!window) platformError = (int)GetLastError();
             else {
+                initializeTerminalDialogs(window, callbacks);
                 if (iconBig) SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconBig));
                 if (iconSmall) SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
                 MARGINS margins = { 1, 1, 1, 1 };
@@ -1078,6 +1087,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 ShowWindow(window, SW_SHOW); UpdateWindow(window);
                 MSG message; BOOL status;
                 while ((status = GetMessageW(&message, nullptr, 0, 0)) > 0) {
+                    if (routeTerminalDialogMessage(message)) continue;
                     if (message.message == WM_KEYDOWN || message.message == WM_SYSKEYDOWN) {
                         // Do not TranslateMessage a consumed workspace chord into terminal control bytes.
                         if (DispatchMessageW(&message) != 1) TranslateMessage(&message);
@@ -1087,6 +1097,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
             }
         }
     } else platformError = (int)result;
+    destroyTerminalDialogs();
     if (iconBig) DestroyIcon(iconBig);
     if (iconSmall) DestroyIcon(iconSmall);
     HRESULT shutdown = releaseRenderer();

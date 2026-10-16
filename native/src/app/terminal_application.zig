@@ -22,10 +22,14 @@ const pointer = @import("terminal_pointer.zig");
 const overlays = @import("terminal_overlays.zig");
 const commands = @import("terminal_commands.zig");
 const diagnostics = @import("terminal_diagnostics.zig");
+const modals = @import("terminal_modals.zig");
+const dialogs = @import("../windows/windows_dialog.zig");
+const preferences = @import("user_settings.zig");
 
 /// Owns stable sessions on the window thread; feature modules borrow this owner, never copy it.
 pub const TerminalApplication = struct {
     pub const onProbe = diagnostics.onProbe;
+    pub const onDialogEvent = modals.onDialogEvent;
     pub const onKey = keyboard.onKey;
     pub const onText = keyboard.onText;
     pub const onPaste = keyboard.onPaste;
@@ -39,6 +43,9 @@ pub const TerminalApplication = struct {
     machine_name: []u8,
     launch: shell.ShellLaunch,
     default_shell_kind: shell.ShellKind,
+    settings: preferences.UserSettings,
+    settings_path: []u8,
+    startup_preferences: union(enum) { font_pending: ?anyerror, warning_pending: anyerror, applied },
     shell_launches: std.ArrayList(*shell.ShellLaunch) = .empty,
     available_shells: [6]shell.ShellKind = undefined,
     available_shell_count: u8 = 0,
@@ -74,11 +81,26 @@ pub const TerminalApplication = struct {
         const path = try std.process.getCwdAlloc(allocator);
         errdefer allocator.free(path);
         const parsed = try directory.DirectoryPath.parse(path);
+        const settings_path = try preferences.userSettingsPathAlloc(allocator);
+        errdefer allocator.free(settings_path);
+        var settings_load_error: ?anyerror = null;
+        const settings = preferences.loadUserSettings(allocator, settings_path) catch |err| blk: {
+            if (err == error.OutOfMemory) return err;
+            settings_load_error = err;
+            break :blk preferences.UserSettings{};
+        };
         const machine_name = try platform.machineNameAlloc(allocator);
         errdefer allocator.free(machine_name);
         const argv = try std.process.argsAlloc(allocator);
         defer std.process.argsFree(allocator, argv);
-        const parsed_request = try shell.ShellRequest.parseArguments(if (argv.len > 0) argv[1..] else &.{});
+        var parsed_request = try shell.ShellRequest.parseArguments(if (argv.len > 0) argv[1..] else &.{});
+        if (argv.len <= 1) {
+            parsed_request = switch (settings.default_shell) {
+                .startup => parsed_request,
+                .wsl => .{ .wsl = .{ .distribution = .automatic, .command = .default } },
+                else => .{ .builtin = std.meta.stringToEnum(shell.BuiltinShellProfile, @tagName(settings.default_shell)) orelse return error.InvalidDefaultShell },
+            };
+        }
         var request = try parsed_request.forWorkingDirectory(parsed);
         const default_distribution = if (request == .wsl and request.wsl.distribution == .automatic) try wsl_registry.readDefaultWslDistributionAlloc(allocator) else null;
         defer if (default_distribution) |name| allocator.free(name.bytes);
@@ -95,7 +117,7 @@ pub const TerminalApplication = struct {
         errdefer launch.deinit();
         const default_kind = launch.kind;
         try platform.setShellName(launch.shellName());
-        platform.setChromePalette(terminal_theme.themes[terminal_theme.default_dark_index].chromePalette());
+        platform.setChromePalette(terminal_theme.themes[settings.theme_index].chromePalette());
         return .{
             .allocator = allocator,
             .api = api,
@@ -103,6 +125,13 @@ pub const TerminalApplication = struct {
             .machine_name = machine_name,
             .launch = launch,
             .default_shell_kind = default_kind,
+            .settings = settings,
+            .settings_path = settings_path,
+            .startup_preferences = .{ .font_pending = settings_load_error },
+            .theme_index = settings.theme_index,
+            .last_dark_theme = if (terminal_theme.themes[settings.theme_index].is_dark) settings.theme_index else terminal_theme.default_dark_index,
+            .last_light_theme = if (!terminal_theme.themes[settings.theme_index].is_dark) settings.theme_index else terminal_theme.default_light_index,
+            .cursor_blink_enabled = settings.cursor_blink,
             .path_completion = path_completion.PathCompletion.init(allocator),
             .cursor_clock = try std.time.Timer.start(),
         };
@@ -117,6 +146,7 @@ pub const TerminalApplication = struct {
         self.path_completion.deinit();
         self.allocator.free(self.startup_directory.bytes);
         self.allocator.free(self.machine_name);
+        self.allocator.free(self.settings_path);
         for (self.shell_launches.items) |cached| {
             cached.deinit();
             self.allocator.destroy(cached);
@@ -207,6 +237,37 @@ pub const TerminalApplication = struct {
         for (self.sessions.items) |session| {
             try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
         }
+        platform.invalidateWindow();
+    }
+    /// Captures runtime values without serializing any live session or launch command.
+    pub fn currentPreferences(self: *TerminalApplication) preferences.UserSettings {
+        return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .default_shell = self.settings.default_shell };
+    }
+    /// Writes atomically before applying; storage failure never closes running terminals.
+    pub fn commitPreferences(self: *TerminalApplication, settings: preferences.UserSettings) !void {
+        try settings.validate();
+        const kind: shell.ShellKind = if (settings.default_shell == .startup) self.launch.kind else std.meta.intToEnum(shell.ShellKind, @intFromEnum(settings.default_shell)) catch return error.InvalidDefaultShell;
+        if (settings.default_shell != .startup) {
+            self.discoverAvailableShells();
+            var available = false;
+            for (self.available_shells[0..self.available_shell_count]) |candidate| if (candidate == kind) {
+                available = true;
+            };
+            if (!available) return error.UnavailableShellSelection;
+        }
+        preferences.saveUserSettings(self.allocator, self.settings_path, settings) catch |err| {
+            dialogs.showSettingsFailure(err);
+            platform.invalidateWindow();
+            return;
+        };
+        self.settings = settings;
+        try self.applyTheme(settings.theme_index);
+        if (platform.fontSize() != @as(f32, @floatFromInt(settings.font_size))) _ = try platform.setFontSize(@floatFromInt(settings.font_size));
+        self.cursor_blink_enabled = settings.cursor_blink;
+        self.cursor_blink.synchronize(null, self.cursorNowMs());
+        self.default_shell_kind = kind;
+        try platform.setShellName(if (settings.default_shell == .startup) self.launch.shellName() else kind.displayName());
+        try self.syncAnimationWake();
         platform.invalidateWindow();
     }
     fn toggleDarkLightTheme(self: *TerminalApplication) !void {
@@ -362,6 +423,7 @@ pub const TerminalApplication = struct {
             self.overlay = .none;
         }
         if (self.overlay == .close_confirm and self.overlay.close_confirm.target == .pane and self.overlay.close_confirm.target.pane == id) {
+            dialogs.closeDialog();
             self.overlay = .none;
         }
         for (self.sessions.items, 0..) |session, index| if (session.id == id) {
@@ -401,6 +463,13 @@ pub const TerminalApplication = struct {
     }
     pub fn onResize(self: *TerminalApplication, metrics: platform.WindowMetrics) void {
         if (self.health == .failed) return;
+        if (self.startup_preferences == .font_pending) {
+            self.startup_preferences = if (self.startup_preferences.font_pending) |err| .{ .warning_pending = err } else .applied;
+            if (self.settings.font_size != 14) {
+                _ = platform.setFontSize(@floatFromInt(self.settings.font_size)) catch |err| self.fail(err);
+                return;
+            }
+        }
         _ = pointer.cancelPointerDrag(self) catch |err| {
             self.fail(err);
             return;
@@ -462,6 +531,11 @@ pub const TerminalApplication = struct {
     }
     pub fn onTick(self: *TerminalApplication) void {
         if (self.health == .failed) return;
+        if (self.startup_preferences == .warning_pending) {
+            const err = self.startup_preferences.warning_pending;
+            self.startup_preferences = .applied;
+            dialogs.showSettingsLoadFailure(err);
+        }
         self.syncPathIndex() catch |err| {
             self.fail(err);
             return;
@@ -570,9 +644,8 @@ pub const TerminalApplication = struct {
             self.overlay = .{ .close_confirm = .{
                 .target = .{ .pane = pane_id },
                 .confirmation = confirmation,
-                .selected_button = 1,
-                .hovered_button = 0,
             } };
+            try modals.presentTerminalModal(self);
             platform.invalidateWindow();
             return;
         }
@@ -591,9 +664,8 @@ pub const TerminalApplication = struct {
             self.overlay = .{ .close_confirm = .{
                 .target = .{ .tab = model.tabs.items[index].id },
                 .confirmation = confirmation,
-                .selected_button = 1,
-                .hovered_button = 0,
             } };
+            try modals.presentTerminalModal(self);
             platform.invalidateWindow();
             return;
         }
@@ -613,6 +685,7 @@ pub const TerminalApplication = struct {
     }
     pub fn confirmCloseOverlay(self: *TerminalApplication) !void {
         if (self.overlay != .close_confirm) return;
+        dialogs.closeDialog();
         const target = self.overlay.close_confirm.target;
         self.overlay = .none;
         const model = if (self.model) |*model| model else return;
@@ -722,23 +795,21 @@ pub const TerminalApplication = struct {
     }
     fn openThemePicker(self: *TerminalApplication) void {
         self.commitTabRename();
-        const slot_info = overlays.themeSlotForIndex(self.theme_index);
-        self.overlay = .{ .theme_picker = .{
-            .dark_mode = slot_info.dark_mode,
-            .selected_slot = slot_info.slot,
-            .initial_theme_index = self.theme_index,
-        } };
+        self.overlay = .{ .theme_picker = .{ .initial_theme_index = self.theme_index } };
+        modals.presentTerminalModal(self) catch |err| self.fail(err);
         platform.invalidateWindow();
     }
     fn openCommandPalette(self: *TerminalApplication) void {
         self.commitTabRename();
         self.overlay = .{ .command_palette = .{} };
+        modals.presentTerminalModal(self) catch |err| self.fail(err);
         platform.invalidateWindow();
     }
     fn openTabPeek(self: *TerminalApplication) void {
         self.commitTabRename();
         const model = if (self.model) |*model| model else return;
         self.overlay = .{ .tab_peek = .{ .selected_index = model.selected_tab } };
+        modals.presentTerminalModal(self) catch |err| self.fail(err);
         platform.invalidateWindow();
     }
     fn openShellPicker(self: *TerminalApplication, mode: overlays.ShellPickerMode) void {
@@ -755,18 +826,19 @@ pub const TerminalApplication = struct {
         self.overlay = .{ .shell_picker = .{
             .mode = mode,
             .selected_index = selected,
-            .hovered_index = null,
         } };
+        modals.presentTerminalModal(self) catch |err| self.fail(err);
         platform.invalidateWindow();
     }
     pub fn executeShellPickerChoice(self: *TerminalApplication, mode: overlays.ShellPickerMode, kind: shell.ShellKind) !void {
+        if (mode != .set_default) dialogs.closeDialog();
         self.overlay = .none;
         const model = if (self.model) |*model| model else return;
         switch (mode) {
             .set_default => {
-                self.default_shell_kind = kind;
-                try platform.setShellName(kind.displayName());
-                platform.invalidateWindow();
+                var settings = self.currentPreferences();
+                settings.default_shell = std.meta.intToEnum(preferences.DefaultShell, @intFromEnum(kind)) catch return error.InvalidDefaultShell;
+                try self.commitPreferences(settings);
             },
             .new_tab => {
                 if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) {
@@ -795,6 +867,7 @@ pub const TerminalApplication = struct {
         switch (id) {
             .open_path_completion => try self.openPathCompletion(),
             .open_theme_picker => self.openThemePicker(),
+            .open_settings => try self.applyAction(.settings, 0),
             .toggle_dark_light => try self.toggleDarkLightTheme(),
             .open_tab_peek => self.openTabPeek(),
             .new_tab => try self.applyAction(.new_tab, 0),
@@ -901,6 +974,13 @@ pub const TerminalApplication = struct {
     pub fn applyAction(self: *TerminalApplication, action: platform.WorkspaceAction, index: u32) !void {
         if (try pointer.cancelPointerDrag(self)) try self.updateLayout();
         switch (action) {
+            .settings => {
+                self.commitTabRename();
+                self.overlay = .settings;
+                try modals.presentTerminalModal(self);
+                platform.invalidateWindow();
+                return;
+            },
             .toggle_cursor_blink => {
                 self.cursor_blink_enabled = !self.cursor_blink_enabled;
                 self.cursor_blink.synchronize(null, self.cursorNowMs());
@@ -910,6 +990,7 @@ pub const TerminalApplication = struct {
             },
             .command_palette => {
                 if (index > 0) {
+                    dialogs.closeDialog();
                     self.overlay = .none;
                     platform.invalidateWindow();
                     return;
@@ -931,6 +1012,7 @@ pub const TerminalApplication = struct {
             },
             .tab_peek => {
                 if (index > 0) {
+                    dialogs.closeDialog();
                     self.overlay = .none;
                     platform.invalidateWindow();
                     return;
@@ -976,6 +1058,7 @@ pub const TerminalApplication = struct {
                 }
                 if (index == 98) {
                     if (self.overlay == .close_confirm) {
+                        dialogs.closeDialog();
                         self.overlay = .none;
                         platform.invalidateWindow();
                     }
@@ -991,6 +1074,7 @@ pub const TerminalApplication = struct {
             .shell_picker => {
                 if (index == 0) {
                     if (self.overlay == .shell_picker) {
+                        dialogs.closeDialog();
                         self.overlay = .none;
                         platform.invalidateWindow();
                     } else {
@@ -1000,6 +1084,7 @@ pub const TerminalApplication = struct {
                 }
                 if (index == 99) {
                     if (self.overlay == .shell_picker) {
+                        dialogs.closeDialog();
                         self.overlay = .none;
                         platform.invalidateWindow();
                     }
@@ -1062,7 +1147,7 @@ pub const TerminalApplication = struct {
                 if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
-            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink, .shell_picker => unreachable,
+            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink, .shell_picker, .settings => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
@@ -1072,6 +1157,10 @@ pub const TerminalApplication = struct {
     fn closeTab(self: *TerminalApplication, index: usize) !void {
         const model = if (self.model) |*model| model else return;
         if (index >= model.tabs.items.len or model.tabs.items.len <= 1) return;
+        if (self.overlay == .close_confirm and self.overlay.close_confirm.target == .tab and self.overlay.close_confirm.target.tab == model.tabs.items[index].id) {
+            dialogs.closeDialog();
+            self.overlay = .none;
+        }
         var closing: std.ArrayList(panes.PanePlacement) = .empty;
         defer closing.deinit(self.allocator);
         try model.tabs.items[index].tree.layout(self.allocator, &closing, .{ .x = 0, .y = 0, .width = 1, .height = 1 });
@@ -1100,7 +1189,10 @@ pub const TerminalApplication = struct {
                 .pane => |pane_id| pane_id == id,
                 .tab => |target_tab| target_tab == tab_id,
             };
-            if (targets_exit) self.overlay = .none;
+            if (targets_exit) {
+                dialogs.closeDialog();
+                self.overlay = .none;
+            }
         }
         switch (model.closeExitedPane(id)) {
             .stale => return error.MissingPaneSession,
@@ -1118,7 +1210,7 @@ pub const TerminalApplication = struct {
                     }
                     if (self.overlay == .tab_peek) {
                         self.overlay.tab_peek.selected_index = @min(self.overlay.tab_peek.selected_index, model.tabs.items.len - 1);
-                        self.overlay.tab_peek.hovered_index = null;
+                        try modals.presentTerminalModal(self);
                     }
                 }
                 self.removeSession(id);

@@ -166,8 +166,16 @@ focus outline. Font/cell metrics come from DirectWrite. Initial window size is
 
 ## Command palette and path autocomplete
 
-- `Ctrl+Shift+P`: fuzzy action search; Up/Down, wheel, Home/End and Page keys reach
-  every action, not just the first visible page. Geometry adapts to window height.
+- `Ctrl+Shift+P`: fuzzy action search in a native modal dialog owned by the terminal
+  window (centred over it, no taskbar entry, terminal input blocked while open).
+  Up/Down, Home/End and Page keys reach every action; Enter runs the highlighted one.
+- `Ctrl+Shift+M`: Theme Studio, the same kind of modal. Selecting a card previews the
+  theme in the real terminal; Enter applies and saves it, Escape/Cancel restores the
+  previous theme.
+- `Ctrl+,`: Settings modal with General (default shell), Appearance (theme) and
+  Terminal (font size 9-32, blinking cursor) pages. Save writes
+  `%LOCALAPPDATA%\Vex\settings.json` atomically; a failed write is reported and leaves
+  the running terminals and the previous file untouched. Existing sessions keep their shell.
 - `Ctrl+Shift+F`: cursor-anchored recursive path search. Indexing starts lazily on
   a background worker; typing remains available, stale navigation is cancelled
   between filesystem operations, and only the newest revision is published.
@@ -286,8 +294,15 @@ only for the focused, visible, running pane when VT requests blinking. Hidden
 or steady cursors, overlays, inactive windows and minimization stop it; input
 reveals the cursor immediately. `Cursor: Toggle Blinking` in the command palette
 disables animation for the current app lifetime without changing VT modes or
-writing the WPF profile. The existing metadata/idle-upload maintenance timer
-does not repaint unless chrome changes.
+writing the WPF profile.
+
+Pointer shapes follow what the pointer can do: the I-beam over the terminal viewport
+and text fields (palette/path query, settings values, dialog text); the hand over
+clickable controls such as dialog buttons, tabs, palette rows, theme cards and
+shell rows; the arrow everywhere else, including empty dialog areas. Dialog cursors
+are verified by `Test-NativeModals.ps1` through the real native controls.
+
+The existing metadata/idle-upload maintenance timer does not repaint unless chrome changes.
 
 Directory reports use the synchronous native PWD callback: each report is parsed
 before a later one in the same read can replace it. There is no per-output-block
@@ -376,6 +391,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCursorBli
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShellPickerAndStatusOrigin.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativePathCompletion.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativePalette.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeModals.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeUniversalPrograms.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCloseConfirmation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1

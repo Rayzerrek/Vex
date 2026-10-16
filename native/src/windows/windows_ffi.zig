@@ -8,17 +8,18 @@ const shell = @import("../shell/shell_launch.zig");
 const tab_strip = @import("../workspace/tab_strip.zig");
 const app_icon = @import("../terminal/app_icon.zig");
 const terminal_theme = @import("../workspace/terminal_theme.zig");
+const dialogs = @import("windows_dialog.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
 pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18, settings = 19 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
-pub const PointerResponse = enum(u32) { normal = c.VEX_POINTER_NORMAL, right = c.VEX_POINTER_RIGHT, down = c.VEX_POINTER_DOWN, tab_armed = c.VEX_POINTER_TAB_ARMED, tab_dragging = c.VEX_POINTER_TAB_DRAGGING, selection = c.VEX_POINTER_SELECTION, link = c.VEX_POINTER_LINK };
+pub const PointerResponse = enum(u32) { normal = c.VEX_POINTER_NORMAL, right = c.VEX_POINTER_RIGHT, down = c.VEX_POINTER_DOWN, tab_armed = c.VEX_POINTER_TAB_ARMED, tab_dragging = c.VEX_POINTER_TAB_DRAGGING, selection = c.VEX_POINTER_SELECTION, link = c.VEX_POINTER_LINK, text = c.VEX_POINTER_TEXT };
 /// Span of cells within a single viewport row highlighted as a clickable URL.
 pub const HoveredLinkSpan = struct { row: u16, start_col: u16, end_col: u16 };
 /// Viewport cell coordinate and physical surface position relative to a pane's terminal grid.
@@ -206,6 +207,7 @@ pub fn workspaceShortcut(key: u32, modifiers: u32) ?WorkspaceAction {
         0xBB, 0x6B => .zoom_in,
         0xBD, 0x6D => .zoom_out,
         '0', 0x60 => .zoom_reset,
+        0xBC => .settings,
         else => null,
     };
     return null;
@@ -323,12 +325,24 @@ pub fn runWindow(owner: anytype) !void {
         fn cursorActivity(context: ?*anyopaque, active: bool) callconv(.c) void {
             if (recover(context)) |app| app.onCursorActivity(active);
         }
+        fn dialog(context: ?*anyopaque, event: u32, value: u32, bytes: [*c]const u8, length: usize, settings: c.VexUserSettings) callconv(.c) void {
+            const app = recover(context) orelse return;
+            if (length > 128 or (length != 0 and bytes == null)) {
+                app.fail(error.InvalidDialogInput);
+                return;
+            }
+            const parsed = dialogs.decodeDialogEvent(event, value, if (length == 0) &.{} else bytes[0..length], settings) catch |err| {
+                app.fail(err);
+                return;
+            };
+            app.onDialogEvent(parsed);
+        }
         fn probe(context: ?*anyopaque, query: u32) callconv(.c) u64 {
             const app = recover(context) orelse return 0;
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .probe = Adapter.probe });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .probe = Adapter.probe, .dialog = Adapter.dialog });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
@@ -452,7 +466,11 @@ pub fn nativeProgramStatus(summary: status.ProgramStatusSummary, phase: u32) c.V
 }
 /// Updates native window chrome colors to match the active dark or light theme.
 pub fn setChromePalette(palette: terminal_theme.ChromePalette) void {
-    c.vex_window_set_chrome_palette(.{
+    c.vex_window_set_chrome_palette(nativeChromePalette(palette));
+}
+/// Projects the same palette into the main window and its owned dialog controls.
+pub fn nativeChromePalette(palette: terminal_theme.ChromePalette) c.VexChromePalette {
+    return .{
         .window_bg = palette.window_bg,
         .titlebar_bg = palette.titlebar_bg,
         .border = palette.border,
@@ -465,26 +483,7 @@ pub fn setChromePalette(palette: terminal_theme.ChromePalette) void {
         .text_muted = palette.text_muted,
         .accent = palette.accent,
         .is_dark = palette.is_dark,
-    });
-}
-/// Draws the Theme Studio modal overlay with live Dark/Light mode toggle and theme cards.
-pub fn drawThemePicker(dark_mode: bool, cards: []const c.VexThemeCard) void {
-    if (cards.len == 0) return;
-    c.vex_draw_theme_picker(dark_mode, cards.ptr, cards.len);
-}
-/// Draws the Command Palette modal overlay with search query and filtered command items.
-pub fn drawCommandPalette(query: []const u8, items: []const c.VexCommandItem, bounds: panes.PaneRect, first: usize, total: usize) void {
-    c.vex_draw_command_palette(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, if (query.len == 0) null else query.ptr, query.len, if (items.len == 0) null else items.ptr, items.len, first, total);
-}
-/// Draws the Shell Picker overlay with action mode selector and available shell rows.
-pub fn drawShellPicker(mode: u8, items: []const c.VexShellPickerItem) void {
-    if (items.len == 0) return;
-    c.vex_draw_shell_picker(mode, items.ptr, items.len);
-}
-/// Draws the Tab Peek modal overview grid.
-pub fn drawTabPeek(cards: []const c.VexTabPeekCard) void {
-    if (cards.len == 0) return;
-    c.vex_draw_tab_peek(cards.ptr, cards.len);
+    };
 }
 /// Draws the cursor-anchored inline path completion popup.
 pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: []const u8, items: []const c.VexPathCompletionItem, scan_error: bool, loading: bool, truncated: bool) void {
@@ -498,29 +497,6 @@ pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: [
         items.len,
         @as(u32, @intFromBool(scan_error)) | (@as(u32, @intFromBool(loading)) << 1) | (@as(u32, @intFromBool(truncated)) << 2),
     );
-}
-/// Draws the Close Confirmation modal for tabs or panes with active foreground processes or unsaved buffers.
-pub fn drawCloseConfirm(
-    title: []const u8,
-    message: []const u8,
-    confirm_label: []const u8,
-    icon: app_icon.AppIcon,
-    kind: u8,
-    selected_button: u8,
-    hovered_button: u8,
-) void {
-    c.vex_draw_close_confirm(.{
-        .title = if (title.len == 0) null else title.ptr,
-        .title_length = title.len,
-        .message = if (message.len == 0) null else message.ptr,
-        .message_length = message.len,
-        .confirm_label = if (confirm_label.len == 0) null else confirm_label.ptr,
-        .confirm_label_length = confirm_label.len,
-        .icon = nativeAppIcon(icon),
-        .kind = kind,
-        .selected_button = selected_button,
-        .hovered_button = hovered_button,
-    });
 }
 /// Dynamically updates the terminal font size in DIPs [9.0, 32.0] and triggers a grid layout resize.
 pub fn setFontSize(size: f32) !void {
