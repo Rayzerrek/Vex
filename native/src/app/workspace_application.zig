@@ -2794,9 +2794,34 @@ fn themeSlotForIndex(theme_index: usize) struct { dark_mode: bool, slot: usize }
 
 fn filterCommands(query: []const u8, out: *[command_defs.len]CommandDef) usize {
     const trimmed = std.mem.trim(u8, query, " \t");
+    if (trimmed.len == 0) {
+        @memcpy(out[0..command_defs.len], &command_defs);
+        return command_defs.len;
+    }
+    var tokens: [8][]const u8 = undefined;
+    var token_count: usize = 0;
+    var it = std.mem.tokenizeScalar(u8, trimmed, ' ');
+    while (it.next()) |token| {
+        if (token_count < tokens.len) {
+            tokens[token_count] = token;
+            token_count += 1;
+        }
+    }
+    if (token_count == 0) {
+        @memcpy(out[0..command_defs.len], &command_defs);
+        return command_defs.len;
+    }
+
     var count: usize = 0;
     for (command_defs) |cmd| {
-        if (trimmed.len == 0 or containsAsciiIgnoreCase(cmd.title, trimmed) or containsAsciiIgnoreCase(cmd.shortcut, trimmed)) {
+        var matches_all = true;
+        for (tokens[0..token_count]) |tok| {
+            if (!containsAsciiIgnoreCase(cmd.title, tok) and !containsAsciiIgnoreCase(cmd.shortcut, tok)) {
+                matches_all = false;
+                break;
+            }
+        }
+        if (matches_all) {
             out[count] = cmd;
             count += 1;
         }
@@ -2873,4 +2898,24 @@ pub fn runApplication(allocator: std.mem.Allocator) !void {
         return err;
     };
     if (app.health == .failed) return app.health.failed;
+}
+
+test "filterCommands matches empty query, case-insensitive substrings, and multi-token queries" {
+    var matched: [command_defs.len]CommandDef = undefined;
+    const all = filterCommands("", &matched);
+    try std.testing.expectEqual(command_defs.len, all);
+
+    const theme = filterCommands("theme", &matched);
+    try std.testing.expect(theme >= 2);
+
+    const tab_new = filterCommands("tab new", &matched);
+    try std.testing.expect(tab_new >= 2);
+
+    const dark_mode = filterCommands("theme dark", &matched);
+    try std.testing.expectEqual(@as(usize, 1), dark_mode);
+    try std.testing.expectEqual(CommandId.toggle_dark_light, matched[0].id);
+
+    const ctrl_r = filterCommands("Ctrl+Shift+R", &matched);
+    try std.testing.expectEqual(@as(usize, 1), ctrl_r);
+    try std.testing.expectEqual(CommandId.split_right, matched[0].id);
 }
