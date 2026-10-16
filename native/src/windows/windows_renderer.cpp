@@ -63,20 +63,6 @@ HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, b
     fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!fenceEvent) return HRESULT_FROM_WIN32(GetLastError());
 
-    IUnknown* queues[] = { queue.Get() };
-    result = D3D11On12CreateDevice(device.Get(), D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
-        queues, 1, 0, &translationDevice, &translationContext, nullptr);
-    if (FAILED(result)) return result;
-    result = translationDevice.As(&interop);
-    if (FAILED(result)) return result;
-    ComPtr<IDXGIDevice> dxgiDevice;
-    result = translationDevice.As(&dxgiDevice);
-    if (FAILED(result)) return result;
-    result = factory->CreateDevice(dxgiDevice.Get(), &drawingDevice);
-    if (FAILED(result)) return result;
-    result = drawingDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context);
-    if (FAILED(result)) return result;
-
     RECT bounds;
     if (!GetClientRect(window, &bounds)) return HRESULT_FROM_WIN32(GetLastError());
     pixelWidth = bounds.right > 0 ? (UINT)bounds.right : 1;
@@ -103,16 +89,13 @@ HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, b
     result = device->CreateDescriptorHeap(&views, IID_PPV_ARGS(&renderViews));
     if (FAILED(result)) return result;
     result = terminal.initialize(device.Get(), factory);
+    if (SUCCEEDED(result)) result = ui.batches.initialize(device.Get(), factory);
     if (FAILED(result)) return result;
     return createBuffers((float)GetDpiForWindow(window));
 }
 
 HRESULT WindowsRenderer::createBuffers(float dpi) {
     targetDpi = dpi;
-    context->SetDpi(dpi, dpi);
-    const auto properties = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), dpi, dpi);
     for (UINT index = 0; index < bufferCount; index++) {
         auto& frame = frames[index];
         HRESULT result = swapChain->GetBuffer(index, IID_PPV_ARGS(&frame.buffer));
@@ -120,17 +103,6 @@ HRESULT WindowsRenderer::createBuffers(float dpi) {
         frame.rtv = renderViews->GetCPUDescriptorHandleForHeapStart();
         frame.rtv.ptr += (SIZE_T)index * device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
         device->CreateRenderTargetView(frame.buffer.Get(), nullptr, frame.rtv);
-        D3D11_RESOURCE_FLAGS flags = {};
-        flags.BindFlags = D3D11_BIND_RENDER_TARGET;
-        // No native D3D12 draw pass yet: 11On12 transitions PRESENT into its drawing states.
-        result = interop->CreateWrappedResource(frame.buffer.Get(), &flags,
-            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_PRESENT, IID_PPV_ARGS(&frame.wrapped));
-        if (FAILED(result)) return result;
-        ComPtr<IDXGISurface> surface;
-        result = frame.wrapped.As(&surface);
-        if (FAILED(result)) return result;
-        result = context->CreateBitmapFromDxgiSurface(surface.Get(), &properties, &frame.bitmap);
-        if (FAILED(result)) return result;
     }
     return S_OK;
 }
@@ -157,7 +129,6 @@ HRESULT WindowsRenderer::waitIdle() {
     if (!queue || !fence || !fenceEvent) return S_OK;
     HRESULT result = device->GetDeviceRemovedReason();
     if (FAILED(result)) return result;
-    if (translationContext) translationContext->Flush();
     if (nextFence == UINT64_MAX) return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
     const UINT64 value = nextFence++;
     result = queue->Signal(fence.Get(), value);
@@ -166,14 +137,6 @@ HRESULT WindowsRenderer::waitIdle() {
 }
 
 void WindowsRenderer::releaseBuffers() {
-    if (context) context->SetTarget(nullptr);
-    if (translationContext) translationContext->ClearState();
-    for (auto& frame : frames) {
-        frame.bitmap.Reset();
-        frame.wrapped.Reset();
-    }
-    // Wrapped resources use deferred destruction. Flush only after dropping every view/reference.
-    if (translationContext) translationContext->Flush();
     for (auto& frame : frames) { frame.buffer.Reset(); frame.fenceValue = 0; }
 }
 
@@ -182,7 +145,7 @@ HRESULT WindowsRenderer::resize(UINT width, UINT height, float dpi) {
     if (width == pixelWidth && height == pixelHeight && dpi == targetDpi) return S_OK;
     HRESULT result = waitIdle();
     if (FAILED(result)) return result;
-    if (dpi != targetDpi) terminal.clearGlyphCache();
+    if (dpi != targetDpi) { terminal.clearGlyphCache(); ui.batches.clearGlyphCache(); }
     releaseBuffers();
     if (width != pixelWidth || height != pixelHeight) {
         result = swapChain->ResizeBuffers(bufferCount, width, height, DXGI_FORMAT_UNKNOWN, 0);
@@ -200,13 +163,13 @@ HRESULT WindowsRenderer::beginFrame() {
     auto& frame = frames[frameIndex];
     HRESULT result = waitForFence(frame.fenceValue);
     if (SUCCEEDED(result)) result = terminal.beginFrame(frameIndex);
+    if (SUCCEEDED(result)) result = ui.batches.beginFrame(frameIndex);
     if (FAILED(result)) return result;
-    ID3D11Resource* resources[] = { frame.wrapped.Get() };
-    interop->AcquireWrappedResources(resources, 1);
-    context->SetTarget(frame.bitmap.Get());
-    context->BeginDraw();
-    phase = FramePhase::ui;
-    return S_OK;
+    ui.resetFrame(pixelWidth, pixelHeight, targetDpi);
+    const D3D12_RECT clip = { 0, 0, (LONG)pixelWidth, (LONG)pixelHeight };
+    result = ui.batches.beginPass(frame.buffer.Get(), frame.rtv, clip, pixelWidth, pixelHeight, targetDpi);
+    if (SUCCEEDED(result)) phase = FramePhase::ui;
+    return result;
 }
 
 HRESULT WindowsRenderer::terminalResult(HRESULT result) {
@@ -216,11 +179,8 @@ HRESULT WindowsRenderer::terminalResult(HRESULT result) {
 
 HRESULT WindowsRenderer::beginTerminalPass(D3D12_RECT clip) {
     if (phase != FramePhase::ui) return terminalResult(E_UNEXPECTED);
-    HRESULT result = context->EndDraw();
-    context->SetTarget(nullptr);
-    ID3D11Resource* resources[] = { frames[frameIndex].wrapped.Get() };
-    interop->ReleaseWrappedResources(resources, 1);
-    translationContext->Flush();
+    HRESULT result = ui.batches.endPass(queue.Get());
+    if (SUCCEEDED(result)) result = ui.result();
     phase = FramePhase::none;
     if (SUCCEEDED(result)) result = terminal.beginPass(frames[frameIndex].buffer.Get(), frames[frameIndex].rtv, clip, pixelWidth, pixelHeight, targetDpi);
     if (SUCCEEDED(result)) phase = FramePhase::terminal;
@@ -232,54 +192,80 @@ HRESULT WindowsRenderer::endTerminalPass() {
     HRESULT result = terminal.endPass(queue.Get());
     phase = FramePhase::none;
     if (SUCCEEDED(result)) {
-        ID3D11Resource* resources[] = { frames[frameIndex].wrapped.Get() };
-        interop->AcquireWrappedResources(resources, 1);
-        context->SetTarget(frames[frameIndex].bitmap.Get());
-        context->BeginDraw();
-        phase = FramePhase::ui;
+        const D3D12_RECT clip = { 0, 0, (LONG)pixelWidth, (LONG)pixelHeight };
+        result = ui.batches.beginPass(frames[frameIndex].buffer.Get(), frames[frameIndex].rtv, clip, pixelWidth, pixelHeight, targetDpi);
+        if (SUCCEEDED(result)) { phase = FramePhase::ui; result = ui.restoreClip(); }
     }
     return terminalResult(result);
 }
 
 HRESULT WindowsRenderer::readPixels(void* pixels, UINT stride) {
     if (!pixels || stride != pixelWidth * 4) return E_INVALIDARG;
-    ComPtr<ID3D11Texture2D> source;
-    HRESULT result = frames[frameIndex].wrapped.As(&source);
+    auto& frame = frames[frameIndex];
+    const auto description = frame.buffer->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT64 bytes = 0;
+    device->GetCopyableFootprints(&description, 0, 1, 0, &footprint, nullptr, nullptr, &bytes);
+    if (!bytes || bytes > SIZE_MAX || footprint.Footprint.RowPitch < stride) return E_UNEXPECTED;
+    D3D12_HEAP_PROPERTIES heap = {}; heap.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC buffer = {};
+    buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; buffer.Width = bytes;
+    buffer.Height = 1; buffer.DepthOrArraySize = 1; buffer.MipLevels = 1;
+    buffer.SampleDesc.Count = 1; buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    ComPtr<ID3D12Resource> staging;
+    HRESULT result = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer,
+        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&staging));
     if (FAILED(result)) return result;
-    D3D11_TEXTURE2D_DESC description;
-    source->GetDesc(&description);
-    description.Usage = D3D11_USAGE_STAGING;
-    description.BindFlags = 0;
-    description.MiscFlags = 0;
-    description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    ComPtr<ID3D11Texture2D> staging;
-    result = translationDevice->CreateTexture2D(&description, nullptr, &staging);
+    ComPtr<ID3D12CommandAllocator> allocator;
+    result = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
     if (FAILED(result)) return result;
-    translationContext->CopyResource(staging.Get(), source.Get());
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    result = translationContext->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    ComPtr<ID3D12GraphicsCommandList> copy;
+    result = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&copy));
     if (FAILED(result)) return result;
-    if (mapped.RowPitch < stride) { translationContext->Unmap(staging.Get(), 0); return E_UNEXPECTED; }
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = frame.buffer.Get();
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    copy->ResourceBarrier(1, &barrier);
+    D3D12_TEXTURE_COPY_LOCATION from = {}, to = {};
+    from.pResource = frame.buffer.Get(); from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    to.pResource = staging.Get(); to.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; to.PlacedFootprint = footprint;
+    copy->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+    copy->ResourceBarrier(1, &barrier);
+    result = copy->Close();
+    if (FAILED(result)) return result;
+    ID3D12CommandList* lists[] = { copy.Get() }; queue->ExecuteCommandLists(1, lists);
+    result = waitIdle();
+    if (FAILED(result)) {
+        // Capture-local buffers cannot be released while a live GPU may still reference them.
+        if (!deviceLost(result)) RaiseFailFastException(nullptr, nullptr, 0);
+        return result;
+    }
+    void* mapped = nullptr;
+    const D3D12_RANGE read = { 0, (SIZE_T)bytes };
+    result = staging->Map(0, &read, &mapped);
+    if (FAILED(result)) return result;
+    if (!mapped) return E_UNEXPECTED;
     for (UINT row = 0; row < pixelHeight; row++) {
         memcpy(static_cast<uint8_t*>(pixels) + (size_t)(pixelHeight - row - 1) * stride,
-            static_cast<const uint8_t*>(mapped.pData) + (size_t)row * mapped.RowPitch, stride);
+            static_cast<const uint8_t*>(mapped) + footprint.Offset + (size_t)row * footprint.Footprint.RowPitch, stride);
     }
-    translationContext->Unmap(staging.Get(), 0);
+    const D3D12_RANGE noWrites = { 0, 0 }; staging->Unmap(0, &noWrites);
     return S_OK;
 }
 
 HRESULT WindowsRenderer::endFrame(void* pixels, UINT stride) {
     if (phase == FramePhase::terminal) endTerminalPass();
     if (phase != FramePhase::ui) return FAILED(frameError) ? frameError : E_UNEXPECTED;
-    HRESULT result = context->EndDraw();
-    if (SUCCEEDED(result)) result = frameError;
-    context->SetTarget(nullptr);
-    if (SUCCEEDED(result) && pixels) result = readPixels(pixels, stride);
-    ID3D11Resource* resources[] = { frames[frameIndex].wrapped.Get() };
-    interop->ReleaseWrappedResources(resources, 1);
-    translationContext->Flush();
+    HRESULT result = ui.batches.endPass(queue.Get());
     phase = FramePhase::none;
-    // Always release the acquired resource, including failed EndDraw/readback paths.
+    if (SUCCEEDED(result)) result = frameError;
+    if (SUCCEEDED(result)) result = ui.result();
+    if (SUCCEEDED(result) && pixels) result = readPixels(pixels, stride);
     if (FAILED(result)) return result;
     if (nextFence == UINT64_MAX) return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
     const UINT64 value = nextFence++;
@@ -298,7 +284,10 @@ HRESULT WindowsRenderer::trimUnusedTerminalUploads() {
     const ULONGLONG now = GetTickCount64();
     // Maintenance never waits on the GPU or treats cursor-only presents as upload activity.
     for (UINT index = 0; index < bufferCount; index++) {
-        if (completed >= frames[index].fenceValue) terminal.trimUnusedUploads(index, now);
+        if (completed >= frames[index].fenceValue) {
+            terminal.trimUnusedUploads(index, now);
+            ui.batches.trimUnusedUploads(index, now);
+        }
     }
     return S_OK;
 }
@@ -351,11 +340,9 @@ UINT64 WindowsRenderer::debugErrorCount() const {
 }
 
 void WindowsRenderer::releaseDevice() {
-    terminal.shutdown();
+    terminal.shutdown(); ui.batches.shutdown();
     releaseBuffers();
     renderViews.Reset();
-    context.Reset(); drawingDevice.Reset(); interop.Reset();
-    translationContext.Reset(); translationDevice.Reset();
     swapChain.Reset(); fence.Reset(); queue.Reset(); device.Reset(); dxgiFactory.Reset();
     if (fenceEvent) { CloseHandle(fenceEvent); fenceEvent = nullptr; }
     pixelWidth = 0; pixelHeight = 0; nextFence = 1; phase = FramePhase::none;

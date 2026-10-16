@@ -56,7 +56,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Workspace shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
 | Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; automatic pane/tab exit close, final-tab retention, captured-gesture cancellation and stable-ID close confirmations implemented; Win32 failure injection pending |
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache, ConPTY-stripped DCS filter (`+q` XTGETTCAP / `$qm` DECRQSS), disabled resize scrollback pull, DEC 2048 in-band resize reports (`\x1b[48;...t`), DEC 2026 synchronized output frame batching (100 ms starvation cap), default bar cursor and ConPTY-compatible key encoder options implemented |
-| Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | D3D12 queue/fences + DXGI flip-discard presentation, native instanced cell drawing with a shared bounded R8 glyph atlas, Direct2D/DirectWrite UI via D3D11On12 (see `RENDERER.md`), themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented, plus VT-aware cursor blinking with conditional one-shot wakes; full pixel/caret comparisons, custom box/Powerline glyphs and color emoji pending |
+| Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | D3D12 queue/fences + DXGI flip-discard presentation, native instanced terminal drawing and analytic UI shapes/vector icons with independent bounded R8 terminal/UI text caches, native D3D12 screenshot readback and no D3D11On12 device (see `RENDERER.md`), themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented, plus VT-aware cursor blinking with conditional one-shot wakes; full pixel/caret comparisons, custom box/Powerline glyphs and color emoji pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys, `Ctrl+Backspace`, primary-screen viewport scroll shortcuts (`Shift+PageUp/PageDown`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+Home/End`), mouse selection (cell, word double-click, line triple-click, captured outside-pane drag clamping, copy-on-select), keyboard selection (`Shift+Left/Right/Home/End`, `Ctrl+Shift+Left/Right/Home/End`), selection highlight rendering, `Ctrl+C` (smart copy when selected) / `Ctrl+Shift+C` copy, `Ctrl+Shift+X` cut and `Backspace` cursor-end selection deletion, `Ctrl+Shift+V` / `Shift+Insert` / right-click paste with newline normalization and DEC 2004 bracketed paste, wheel scroll, TUI mouse reporting (`DEC 1000/1002/1003` + SGR/SGR-pixels/UTF-8/urxvt encoding with `Shift` override), and write-only OSC 52 / OSC 1337 clipboard sequences implemented; IME and click-to-move-cursor pending |
 | Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash, absolute custom executables and project/default/explicit-distribution WSL/Linux programs; cmd/PS/Nu integration, runtime Shell Picker overlay (`New Tab`, `Split Right`, `Split Down`, `Set Default`), top-bar `[ + | ▾ ]` split button, Command Palette shell actions, and per-pane shell overrides implemented; profile persistence pending |
 | Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local/selected-distribution Linux OSC 7 ownership/inheritance and WSL UNC project startup implemented; cross-distribution/Windows-shell mismatches reject; project UI and Linux process metadata pending |
@@ -64,7 +64,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Saved layouts | `SavedTerminalLayout.cs`, `MainWindow.SavedLayouts.cs` | Pending; opening explicitly executes commands once; restore must never replay commands |
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts and runtime 12-theme switcher first; persisted theme/font settings pending |
 | Palette, tab peek, overlays/popups | `CommandPalette*`, `TabPeek*`, `MainWindow.Overlays.cs` | Command Palette (`Ctrl+Shift+P`), Tab Peek (`Ctrl+Shift+O` with multi-pane status origin details and `• Pane N` badge), Shortcuts (`Ctrl+/`), Theme Picker (`Ctrl+Shift+M`), Shell Picker (`[ + | ▾ ]` / palette), inline Tab Rename (`F2`), and running-program Close Confirmation modal implemented |
-| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, pane/tab priority status pills, progress, BEL (`\x07`) / background attention indicators, acknowledgement, multi-pane status origin formatting (`Pane N - ...`) and attention-origin focus routing (`focusTabAttentionOrigin`), sanitized OSC 0/2 terminal title formatting (`terminal_title.zig`), 73-entry curated Lucide + SimpleIcons vector icon catalog (`app_icon.zig`) with per-session shell brand icons and zero-allocation cached-PID foreground process detection (`vex_pty_foreground_process`), per-DPI Direct2D GPU `ID2D1Bitmap` icon cache, overlapping `TabIconStack` (with `+N` overflow badge), pane header favicons, and custom Windows DWM titlebar chrome (project pill with git branch, `[ + | ▾ ]` new-tab/shell-picker split button, caption buttons, and `app.ico`) implemented; status hover tooltips and multi-project switcher menu pending; raw terminal titles must not become trusted UI controls |
+| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, pane/tab priority status pills, progress, BEL (`\x07`) / background attention indicators, acknowledgement, multi-pane status origin formatting (`Pane N - ...`) and attention-origin focus routing (`focusTabAttentionOrigin`), sanitized OSC 0/2 terminal title formatting (`terminal_title.zig`), 73-entry curated Lucide + SimpleIcons vector icon catalog (`app_icon.zig`) with per-session shell brand icons and zero-allocation cached-PID foreground process detection (`vex_pty_foreground_process`), native D3D12 vector icon batches, overlapping `TabIconStack` (with `+N` overflow badge), pane header favicons, and custom Windows DWM titlebar chrome (project pill with git branch, `[ + | ▾ ]` new-tab/shell-picker split button, caption buttons, and `app.ico`) implemented; status hover tooltips and multi-project switcher menu pending; raw terminal titles must not become trusted UI controls |
 | Links/path completion/search | `*Links*`, `*PathCompletion*` | URL detection/Ctrl+Click and inline path picker implemented; best-fifty ranking uses bounded scratch space and deterministic score/name ties, with a real-shell insertion fixture. Scanning is synchronous and capped at 16,384 entries; background indexing and terminal search remain pending |
 | UI Automation / accessibility / installer / crash log | Windows UI and packaging | Pending |
 
@@ -347,6 +347,42 @@ These are behavioral contracts, not opportunities to redesign the app.
   in that historical checkpoint. The upload reclamation checkpoint below removes
   that dependency.
 
+## Complete native D3D12 GPU drawing checkpoint
+
+- All GPU scene paths are native: terminal cells, chrome, vector icons, text-mask
+  quads, popups/modals, clip stacks and screenshot readback. D3D11 imports,
+  wrapped buffers, translated device/context and GPU Direct2D targets are removed.
+  DirectWrite metrics/shaping and software cache-miss-only font rasterization
+  remain intentionally; this is not a C++-to-Zig port or full WPF/Rex parity.
+- The UI owns a separate bounded text atlas through the existing native batcher;
+  analytic rounded fills/strokes, lines and ellipses share its instance pipeline.
+  Immutable font identity/full text/layout/phase keys govern mask reuse. Large
+  labels tile with non-overlapping pixel clips; errors latch before presentation.
+- Native UI/terminal passes keep painter order on the same queue. Slot fences
+  protect both upload owners; resize/recovery retain sessions. Screenshot-only
+  READBACK resources use explicit barriers, aligned footprints and fence waits,
+  never the old D3D11 staging path or a CPU redraw of the scene.
+- All 118 Zig tests pass in Debug/ReleaseSafe. Renderer and new UI pixel fixtures
+  pass on hardware/WARP in ReleaseSafe and graphics-debug builds, with no D3D12
+  warnings/errors in these validation logs. They verify warm UI reuse, no loaded
+  D3D11On12 module, native capture, nested clips/alpha/shape pixels, tiled text and
+  byte-identical output after 2,300-label mid-pass cache eviction.
+- Icon, process-exit, cursor, shell-picker, path-completion, tab, divider,
+  workspace, five installed Windows shell and Ubuntu WSL desktop fixtures pass
+  on their latest runs. GPU captures were inspected. One workspace zero-paint
+  sample saw one paint and one debug renderer run missed a clear marker; isolated
+  reruns passed without proving the causes. Desktop tests still need a quiet
+  interactive session. No physical GPU-loss/multi-monitor/Windows-10 evidence,
+  native allocation-failure injection or input-to-present latency is claimed.
+- Three alternating warm samples per text workload against `3d49acc` reduce
+  process working set from ~178–192 to ~53–56 MiB. CPU medians improve but ranges
+  overlap. Seven alternating warm launches give Zig-main-to-first-present median
+  142.420 -> 136.956 ms; they are not cold starts or a WPF comparison. Full method,
+  budgets, raw artifact paths and limitations are in `RENDERER.md`.
+- WPF code and production profiles remain unchanged. Following this renderer
+  commit, remaining .NET feature parity and UI work use the ledger above; visual
+  references include the user's screenshots and creator posts under Desktop/rex.
+
 ## Path directory transaction checkpoint
 
 - Directory changes construct a complete replacement owner before freeing the
@@ -423,7 +459,7 @@ These are behavioral contracts, not opportunities to redesign the app.
   Debug/ReleaseSafe and the cursor desktop fixture pass. No startup/latency or
   whole-process memory improvement is inferred from the upload-capacity check.
 
-## Native D3D12 terminal draw checkpoint
+## Native D3D12 terminal draw checkpoint (historical translated UI)
 
 - `windows/terminal_renderer.{h,cpp}` adds a native instanced terminal pass with
   a shared 1 MiB R8 atlas, bounded collision-checked UTF-8 keys and miss-only
@@ -454,7 +490,7 @@ These are behavioral contracts, not opportunities to redesign the app.
 - All files remain under `native/`; the sibling WPF implementation/profile are
   untouched. The earlier presentation-only checkpoint below is historical.
 
-## D3D12 presentation checkpoint
+## D3D12 presentation checkpoint (historical translated drawing)
 
 - `windows/windows_renderer.{h,cpp}` replaces the HWND render target with a scoped
   D3D12 device/direct queue/fence owner, two BGRA flip-discard buffers and

@@ -2,15 +2,21 @@
 
 ## Current architecture
 
-D3D12 owns presentation on Windows 10 1809+ / Windows 11. Terminal cells now use
-a **native instanced D3D12 draw pass and a shared grayscale glyph atlas**. Chrome
-and overlays still use Direct2D/DirectWrite through D3D11On12.
+D3D12 owns all GPU drawing, capture and presentation on Windows 10 1809+ /
+Windows 11. Terminal cells, window chrome, vector icons and every overlay use
+**native instanced D3D12 batches**. There is no D3D11 device, wrapped back buffer,
+D3D11On12 translation context or GPU Direct2D drawing target.
+
+DirectWrite still supplies font metrics/shaping. Software WIC/Direct2D targets
+rasterize terminal graphemes and UI text masks on cache misses only; these are
+CPU font-rasterization resources, not an alternative scene/presentation backend.
 
 ```text
 Zig workspace / parsed terminal snapshots
   -> Win32 drawing adapter
-       UI: Direct2D + DirectWrite -> D3D11On12
-       terminal: cached R8 glyph masks + instanced quads -> native D3D12
+       UI: analytic shapes/vector icons + cached R8 text masks
+       terminal: cached R8 grapheme masks + solid/decorative quads
+       both: instanced native D3D12 batches
   -> one D3D12 direct queue
   -> two BGRA back buffers / DXGI FLIP_DISCARD / Present(1, 0)
 ```
@@ -20,8 +26,10 @@ native Win32/COM seam, not `../windows/Vex.App`. Application/session/emulator
 ownership remains in Zig. The rendering seam stays C++ without STL, exceptions,
 RTTI, a C++ runtime, new packages or a separately installed C++ toolchain.
 
-This is an incremental renderer migration, not complete removal of D3D11On12,
-full WPF parity, a full C++-to-Zig port, or a promise that every workload improves.
+The native GPU drawing migration is complete, including the formerly translated
+UI and screenshot path. This does not mean full WPF/Rex visual or functional
+parity, a C++-to-Zig port, completed color-emoji support, or improved performance
+on every machine/workload.
 
 ## Shared glyph atlas and batching
 
@@ -53,12 +61,13 @@ and new draws on the same queue; eviction never overwrites still-needed upload
 memory. The desktop fixture exercises more unique visible CJK graphemes than
 cache entries.
 
-Each instance is 36 bytes: physical bounds, UVs and packed color. Solid cell
+Each instance is 40 bytes: physical bounds, UVs/shape parameters, packed color
+and a shape-kind tag. Solid cell
 backgrounds, glyphs, decorations and cursors share the same pipeline and preserve
 painter order. Warm single-pane text normally fits in one DrawInstanced call;
 cache-miss copies and upload-page boundaries split batches explicitly.
-Scissors enforce pane clipping. UI drawing resumes above terminal content, so
-scrollbars, split previews and modals retain their ordering.
+Scissors enforce pane clipping. Native UI drawing resumes above terminal content,
+so scrollbars, split previews and modals retain their ordering.
 
 Upload pages are persistently mapped, 256 KiB each, and reused only after the
 owning back buffer's fence completes. Each of two slots is capped at 64 MiB;
@@ -78,28 +87,55 @@ not compile shaders at startup. Regeneration on Windows:
 python tools/compile_terminal_shaders.py
 ```
 
+## Native UI
+
+`src/windows/ui_renderer.{h,cpp}` owns UI paint values, a bounded intersecting
+clip stack and text-mask keys. It reuses the native batch/atlas implementation
+with its own cache, so terminal atlas churn cannot evict stable chrome labels.
+Rounded fills/strokes, flat/round-capped lines and ellipses use pixel-shader
+coverage; vector icons are native primitives, not GPU Direct2D bitmap tiles.
+Masks are independent of UI colors, opacity and theme.
+
+Text keys include the complete UTF-16 string, immutable font-format identity,
+layout bounds, tile origin and the batcher's DPI/quarter-pixel phase information.
+Warm labels neither create text layouts nor rasterize. Wide/tall labels tile
+within the fixed scratch bitmap while retaining full-label shaping and trimming.
+Integer tile scissors prevent raster padding from blending twice at boundaries;
+outer clips are restored after labels and across terminal/UI pass transitions.
+The UI font formats remain alive and immutable until both caches are destroyed.
+
+Each of the terminal/UI owners has a 1 MiB R8 atlas, at most 2,048 keys/4,096
+hash slots, 1 MiB of key bytes and a 1 MiB BGRA scratch bitmap. Uploads are bounded
+separately at 64 MiB per slot per owner (256 MiB combined theoretical maximum),
+allocated only on demand; warmed ordinary UI uses much less. Cache exhaustion
+flushes earlier native draws before reusing texture coordinates. No full-scene
+CPU rasterization, startup shader compilation or automatic atlas growth exists.
+
 ## Device and frame ownership
 
 `src/windows/windows_renderer.{h,cpp}` owns the D3D12 device/direct queue/fence,
-event, DXGI factory/swap chain, translation device/context, Direct2D device/context,
-RTV descriptors and two back-buffer/wrapper/bitmap sets. Failed initialization
-rolls back owned resources; all rendering runs on the window thread.
+event, DXGI factory/swap chain, RTV descriptors and two native back buffers.
+Failed initialization rolls back owned resources; rendering is window-thread-only.
 
 A frame selects GetCurrentBackBufferIndex and waits for that slot's previous work
-before resetting its native command allocator and upload cursors. UI EndDraw,
-wrapped-resource release and Flush precede each native terminal pass. That pass
-transitions PRESENT -> RENDER_TARGET -> PRESENT and submits to the shared queue;
-UI then reacquires the wrapper. The final UI release/Flush precedes the frame
-fence signal and Present. Failed draws are latched and cannot become a successfully
-presented partial frame. There is no guessed buffer rotation or continuously
-running presentation loop. Minimized/zero-size windows skip GPU drawing/present.
+before resetting the UI/terminal allocators and upload cursors. Native UI and
+terminal passes preserve scene order, each transitioning PRESENT -> RENDER_TARGET
+-> PRESENT and submitting to the same queue. The final submission precedes the
+slot fence signal and Present. UI and terminal errors are latched; a failed draw
+cannot become a successfully presented partial frame. Minimized/zero-size windows
+skip drawing/present; there is no guessed rotation or continuously running loop.
 
-Resize drains the queue, unbinds targets, drops all bitmap/wrapper views, flushes
-deferred 11On12 destruction and releases native buffer references before
-ResizeBuffers. A DPI-only change also rebuilds bitmap targets and invalidates
-rasterized glyphs. Ordinary resizing does not recreate terminal sessions.
+Resize drains the queue and releases native buffer references before ResizeBuffers.
+DPI-only changes invalidate both raster caches. Sessions remain alive and resize
+through the same Zig/ConPTY path.
 
-Removed/reset/hung devices and D2D target loss rebuild graphics only. Consecutive
+Screenshots allocate a capture-only READBACK buffer using GetCopyableFootprints,
+copy the actual back buffer through explicit COPY_SOURCE/PRESENT barriers, wait
+for queue completion and map its aligned rows into a bottom-up BGRA image. Normal
+presentation never allocates or maps a screenshot buffer. A live-GPU timeout
+fails fast before capture-local resources could be released while still in use.
+
+Removed/reset/hung devices or software raster-target loss rebuild graphics only. Consecutive
 unsuccessful recoveries are capped at three. Recovery during WM_SIZE still updates
 Zig layout/ConPTY geometry. Shells are not restarted and input is not replayed.
 Fence waits have a five-second timeout. If shutdown cannot drain a still-live
@@ -118,10 +154,12 @@ zig build test -Doptimize=Debug
 zig build test -Doptimize=ReleaseSafe
 zig build
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/Test-NativeRenderer.ps1 -RequireNativeGlyphAtlas
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Test-NativeUiRenderer.ps1
 
 # Requires installed Windows Graphics Tools; absence is an error, not a downgrade.
 zig build -Dgraphics-debug=true
-powershell -NoProfile -ExecutionPolicy Bypass -File tests/Test-NativeRenderer.ps1 -RequireGraphicsDebug -RequireNativeGlyphAtlas -OutputDirectory zig-out/verification/atlas-debug
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Test-NativeRenderer.ps1 -RequireGraphicsDebug -RequireNativeGlyphAtlas -OutputDirectory zig-out/verification/native-ui-debug
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Test-NativeUiRenderer.ps1 -RequireGraphicsDebug -OutputDirectory zig-out/verification/native-ui-pixels-debug
 zig build
 ```
 
@@ -130,7 +168,12 @@ healthy-device recreation, preserved ConPTY PID/viewport, reset during resize,
 minimize/restore, idle suppression, three panes, overlays/themes/font zoom,
 warm glyph hits with no new misses/upload allocations, batched warm frames,
 styled Unicode/wide/combining/custom glyphs and mid-pass cache eviction.
-Captures read the actual GPU-backed scene via staging, not a software redraw.
+The fixture also verifies UI text-mask hits, no new warm UI allocations and absence
+of the D3D11On12 module. A separate UI pixel fixture checks rounded fill/stroke,
+diagonal lines, ellipses, alpha, nested clipping/restoration, text across atlas
+tiles and byte-identical final pixels after 2,300-label mid-pass cache eviction.
+Its opt-in scene calls production drawing primitives and keeps a real shell alive.
+Captures read the actual GPU-backed scene through D3D12, not a software redraw.
 No framebuffer staging allocation/readback occurs in ordinary presentation.
 
 `WM_APP + 8` diagnostics/injection and forced WARP (`VEX_NATIVE_WARP=1`) require
@@ -139,13 +182,21 @@ allocations/capacity/trims, process working set/private bytes and DXGI local/sha
 video-memory usage when available. Unsupported video-memory queries return an
 explicit unavailable result, not a fabricated successful zero.
 
-Latest verification on this Windows 11 desktop: 103 Zig tests in both modes,
-ReleaseSafe build, all five pre-existing desktop suites (workspace, tabs,
-dividers, installed Windows shells and Ubuntu WSL), and the extended renderer
-fixture in normal and graphics-debug builds pass. GPU captures were inspected.
-D3D12 validation reports zero errors/corruption, including atlas eviction. Logged
-performance warnings 820 (clear without optimized clear value) and 1328 (buffer
-initial state ignored) remain; this is not a warning-free result.
+Windows 11 verification for the native UI checkpoint: all 118 Zig tests pass in
+Debug/ReleaseSafe. Renderer and UI pixel fixtures pass on hardware/WARP, with and
+without graphics debugging. Desktop icon, process-exit, cursor, shell-picker,
+path-completion, tab, divider, workspace, installed Windows shell and Ubuntu WSL
+fixtures pass on their latest runs. GPU captures were inspected. The native UI
+validation logs contain no D3D12 warnings/errors/corruption; the former translated
+backend's 820/1328 warnings are not reproduced in these runs.
+
+One workspace run saw one paint in its zero-hidden-output-paint sample; its
+isolated rerun passed, without a proven cause. One graphics-debug renderer run
+missed the clear-marker assertion; its rerun passed. The upload peak probe now
+samples immediately after a forced paint, before slow PNG generation can allow
+maintenance to trim it. Startup input waits 300 ms after recording first frame
+so shell initialization does not discard the round-trip fixture. These changes
+are test timing/diagnostics, not production rendering exceptions.
 
 Physical GPU loss/TDR, physical multi-monitor DPI, Windows 10 execution, native
 allocation-failure injection, input-to-present latency and full visual parity
@@ -155,7 +206,37 @@ WPF source and production profiles remain untouched.
 
 ## Performance evidence
 
-### Native terminal pass versus the preceding On12-only checkpoint
+### Complete native UI versus `3d49acc` (native terminal + translated UI)
+
+Three alternating trials per plain/styled workload use the same existing warm
+180-paint fixture, executable settings, cwd, raw cmd and 1120x720 window. Both
+versions already have the terminal atlas. Candidate samples retain the script's
+historical `atlas` label; all builds are ReleaseSafe without graphics debugging.
+
+| Workload | Translated UI CPU ms/frame | Native UI CPU ms/frame | Translated UI active working set | Native UI active working set |
+| --- | ---: | ---: | ---: | ---: |
+| Plain, 28x96 | median 1.649 (0.868–2.517) | median 1.215 (0.434–1.389) | 178.3–192.2 MiB | 53.1–54.5 MiB |
+| Styled, 28x96 | median 1.215 (0.955–1.215) | median 0.781 (0.434–1.302) | 181.4–185.4 MiB | 55.9–56.4 MiB |
+
+Memory falls substantially in these samples. CPU ranges overlap and are coarse,
+so they do not establish a universal speedup or GPU/input-to-present latency.
+
+Seven alternating warm startup trials per version, with identical milestone
+logging, give Zig-main-to-first-present median 142.420 -> 136.956 ms (ranges
+136.915–149.424 and 131.686–140.419). Idle one-pane working set after a shell round
+trip is 114.7–116.1 -> 51.6–52.3 MiB. OS/driver caches were not flushed; window
+observation is 20 ms polling and is not a first-present timestamp. This is not
+cold startup, a WPF comparison or total GPU/child memory.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Measure-NativeRenderer.ps1 -BaselineExecutable C:\absolute\pre-native-ui\vex-native.exe -OutputDirectory zig-out/verification/native-ui-performance
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Measure-NativeStartup.ps1 -BaselineExecutable C:\absolute\pre-native-ui\vex-native.exe -OutputDirectory zig-out/verification/native-ui-startup
+```
+
+Local raw results: `native-ui-performance/comparison.json` and
+`native-ui-startup/startup-comparison.json` under `zig-out/verification/`.
+
+### Historical native terminal pass versus On12-only drawing
 
 `tests/Measure-NativeRenderer.ps1` compares saved executables in alternating order
 across trials, with the same cwd, raw cmd, 1120x720 window and real ConPTY fixture.
@@ -194,11 +275,11 @@ HWND target at b9f099e with D3D12 + On12-only drawing: one-pane working set
 main-entry-to-first-frame log 97.515 -> 123.339 ms. That was a one-off smoke,
 not benchmark distributions, and showed the cost of the transitional stack.
 
-The new atlas does **not** restore the old ~53.5 MB baseline. Chrome/overlays and
-their On12 device still carry translation/driver overhead. The next memory-focused
-migration is native/cached UI drawing that permits removing the translation device,
-followed by matched CPU/GPU memory and latency measurements. Choosing D3D12 alone
-was not, and is not, evidence of an optimization.
+The terminal-atlas-only checkpoint did **not** restore the old ~53.5 MB baseline;
+its UI still carried translation/driver overhead. The completed native UI drawing
+checkpoint above removes that stack and records fresh comparisons. These earlier
+measurements are historical, not descriptions of the current architecture.
+Choosing D3D12 alone was not, and is not, evidence of an optimization.
 
 ## API references
 

@@ -1,12 +1,12 @@
 #pragma once
 #include "windows_com.h"
 #include "terminal_renderer.h"
+#include "ui_renderer.h"
 #include <d2d1_1.h>
-#include <d3d11on12.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
 
-// Window-thread owner. D3D12 owns presentation; Direct2D uses the same queue via 11On12.
+// Window-thread owner. UI, terminal, capture and presentation use one native D3D12 queue.
 class WindowsRenderer final {
 public:
     WindowsRenderer() = default;
@@ -24,7 +24,8 @@ public:
     HRESULT endTerminalPass();
     HRESULT terminalResult(HRESULT result);
     TerminalRenderer terminal;
-    ID2D1RenderTarget* drawingTarget() const { return context.Get(); }
+    UiRenderer ui;
+    UiRenderer* drawingTarget() { return &ui; }
     bool ready() const { return swapChain.Get() != nullptr; }
     bool software() const { return usesWarp; }
     UINT width() const { return pixelWidth; }
@@ -41,8 +42,6 @@ private:
     static constexpr UINT bufferCount = 2;
     struct Frame {
         ComPtr<ID3D12Resource> buffer;
-        ComPtr<ID3D11Resource> wrapped;
-        ComPtr<ID2D1Bitmap1> bitmap;
         D3D12_CPU_DESCRIPTOR_HANDLE rtv = {};
         UINT64 fenceValue = 0;
     };
@@ -52,11 +51,6 @@ private:
     ComPtr<ID3D12Fence> fence;
     ComPtr<IDXGISwapChain3> swapChain;
     ComPtr<ID3D12DescriptorHeap> renderViews;
-    ComPtr<ID3D11Device> translationDevice;
-    ComPtr<ID3D11DeviceContext> translationContext;
-    ComPtr<ID3D11On12Device> interop;
-    ComPtr<ID2D1Device> drawingDevice;
-    ComPtr<ID2D1DeviceContext> context;
     Frame frames[bufferCount];
     HANDLE fenceEvent = nullptr;
     UINT64 nextFence = 1;

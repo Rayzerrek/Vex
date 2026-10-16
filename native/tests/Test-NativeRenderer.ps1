@@ -87,6 +87,22 @@ try {
         $shellPid = Get-NativeProbe $window 14
         Start-Sleep -Milliseconds 400
         $before = Save-RendererCapture $window "renderer-$driver"
+        Assert-RendererProbe $window 25 (1024 * 1024)
+        Save-RendererCapture $window "renderer-$driver-ui-warmup" | Out-Null
+        $uiMisses = Get-RendererProbe $window 19
+        $uiAllocations = Get-RendererProbe $window 23
+        $uiHits = Get-RendererProbe $window 22
+        $uiDraws = Get-RendererProbe $window 18
+        if ($uiMisses -le 0) { throw 'Vex renderer: native UI text cache did not rasterize labels.' }
+        Save-RendererCapture $window "renderer-$driver-ui-warm" | Out-Null
+        Assert-RendererProbe $window 19 $uiMisses
+        Assert-RendererProbe $window 23 $uiAllocations
+        if ((Get-RendererProbe $window 22) -le $uiHits -or (Get-RendererProbe $window 18) -le $uiDraws) {
+            throw 'Vex renderer: native UI did not submit batches and reuse text masks.'
+        }
+        $process.Refresh()
+        $loadedModules = @($process.Modules | ForEach-Object { $_.ModuleName.ToLowerInvariant() })
+        if ($loadedModules -contains 'd3d11on12.dll') { throw 'Vex renderer: the removed translation stack is still loaded.' }
         if ($RequireNativeGlyphAtlas) {
             Assert-RendererProbe $window 16 (1024 * 1024)
             Save-RendererCapture $window "renderer-$driver-warmup" | Out-Null
@@ -188,10 +204,11 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
             Assert-NativeProbe $window 0 0 'clear the old marker before atlas churn'
             Send-NativeText $window ('@"' + $env:WINDIR + '\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -EncodedCommand ' + $encoded + "`r")
             Assert-NativeProbe $window 0 1 'more unique CJK graphemes than cache entries'
+            [VexNativeSmoke]::SendWindowMessage($window, 0xf, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            $peakUploadCapacity = Get-RendererProbe $window 14
             Save-RendererCapture $window "renderer-$driver-eviction" | Out-Null
             if ((Get-RendererProbe $window 15) -le $resets) { throw 'Vex renderer: the bounded glyph cache did not exercise eviction.' }
             Assert-NativeProbe $window 14 $shellPid 'atlas eviction preserves the shell'
-            $peakUploadCapacity = Get-RendererProbe $window 14
             if ($peakUploadCapacity -le 1024 * 1024) { throw 'Vex renderer: atlas churn did not grow uploads beyond the warm reserve.' }
             Invoke-NativeAction $window 17
             [VexNativeSmoke]::SendWindowMessage($window, 0x7, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
@@ -236,6 +253,9 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
             PrivateBytes = $process.PrivateMemorySize64
             LocalVideoMemoryBytes = if ($localVideoMemory -ge 0) { $localVideoMemory } else { $null }
             SharedVideoMemoryBytes = if ($sharedVideoMemory -ge 0) { $sharedVideoMemory } else { $null }
+            UiTextHits = Get-RendererProbe $window 22; UiTextMisses = Get-RendererProbe $window 19
+            UiDrawCalls = Get-RendererProbe $window 18; UiUploadCapacityBytes = Get-RendererProbe $window 24
+            TranslationModuleLoaded = $loadedModules -contains 'd3d11on12.dll'
             GlyphHits = Get-RendererProbe $window 11; GlyphMisses = Get-RendererProbe $window 12
             DrawCalls = Get-RendererProbe $window 10
             UploadAllocations = Get-RendererProbe $window 13; UploadCapacityBytes = Get-RendererProbe $window 14
@@ -247,18 +267,25 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
     $env:VEX_NATIVE_SELFTEST = $null
     $instance = Start-NativeInstance
     $process = $instance.Process
-    foreach ($query in @(0, 3, 7)) { Assert-RendererProbe $instance.Window $query 0 }
+    foreach ($query in @(0, 3, 7, 40, 41, 42)) { Assert-RendererProbe $instance.Window $query 0 }
     Close-NativeInstance $process $instance.Window
     $process = $null
     $report = [pscustomobject]@{
         Result = 'PASS'
         Drivers = $results
-        Checks = @('D3D12 presentation', 'hardware/default and forced WARP', 'GPU BGRA readback', 'pixel-identical healthy-device recreation', 'same live shell/viewport after recreation', 'resize including injected device reset/layout refresh', 'synthetic same-monitor DPI', 'no presents while minimized or idle', 'restore', 'three panes', 'palette/theme/tab-peek overlays', 'light theme/font zoom', 'debug-layer errors when enabled', 'unused upload reclamation during cursor animation', 'selftest-only diagnostics')
+        Checks = @('D3D12 presentation', 'native UI shapes/icons and cached text masks', 'no D3D11On12 module', 'warm UI cache/allocation reuse', 'hardware/default and forced WARP', 'native D3D12 BGRA readback', 'pixel-identical healthy-device recreation', 'same live shell/viewport after recreation', 'resize including injected device reset/layout refresh', 'synthetic same-monitor DPI', 'no presents while minimized or idle', 'restore', 'three panes', 'palette/theme/tab-peek overlays', 'light theme/font zoom', 'debug-layer errors when enabled', 'unused upload reclamation during cursor animation', 'selftest-only diagnostics')
         NativeGlyphAtlasChecks = [bool]$RequireNativeGlyphAtlas
         Limitations = @('recreation is injected, not physical GPU removal', 'no physical multi-monitor DPI or Windows 10 run', 'not a latency/performance comparison')
     }
     $report | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $OutputDirectory 'renderer.json')
     $report | ConvertTo-Json -Depth 5
+} catch {
+    $failure = $_
+    if ($process -and !$process.HasExited) {
+        try { Save-RendererCapture $window 'renderer-failure' | Out-Null }
+        catch { Write-Warning "Vex renderer: failure capture unavailable: $_" }
+    }
+    throw $failure
 } finally {
     if ($process -and !$process.HasExited) { $process.Kill(); $process.WaitForExit() }
     $env:VEX_NATIVE_SELFTEST = $oldSelftest
