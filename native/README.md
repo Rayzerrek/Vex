@@ -321,6 +321,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeIcons.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeProcessExit.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCursorBlink.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShellPickerAndStatusOrigin.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativePathCompletion.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeDividers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeWorkspace.ps1
@@ -398,6 +399,10 @@ Ignored artifacts under `zig-out/verification/`:
 - `shell-picker-status-origin.json`, `native-shell-picker.png`, `native-tab-peek-origin.png`:
   top-bar `[ + | ▾ ]` Shell Picker overlay, per-pane shell overrides, default shell switching,
   Tab Peek multi-pane status origin/detail cards, and attention-origin focus routing.
+- `path-completion.json`, `path-completion.bmp`: real-shell insertion from the
+  bounded fifty-result picker, filtering beyond the initial limit, empty-query
+  recovery, and Unicode/spaced paths. Ranking fixtures compare all retained
+  results with a full sort over 16,384 entries; warm queries reuse output storage.
 - `icons.json`, `icons-*.png`: matching tab/pane icon presentation in dark/light
   themes, synthetic current-monitor DPI, application titles and split focus.
 - `renderer.json`, `renderer-*.png`: hardware/WARP, GPU readback, graphics recreation,
@@ -420,7 +425,7 @@ profile/session compatibility and persistence, saved layouts,
 settings/themes persistence, tab drag ghost/push animations and strip scrolling,
 final divider styling,
 status hover tooltips,
-hyperlinks/path completion,
+terminal search and background path indexing,
 IME/click-to-move-cursor/extended key protocols, custom glyphs/color
 emoji, full caret visual parity, accessibility and packaging. Process-exit closing
 and running-program close confirmations are implemented; native failure injection

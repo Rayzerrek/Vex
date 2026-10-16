@@ -65,7 +65,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts and runtime 12-theme switcher first; persisted theme/font settings pending |
 | Palette, tab peek, overlays/popups | `CommandPalette*`, `TabPeek*`, `MainWindow.Overlays.cs` | Command Palette (`Ctrl+Shift+P`), Tab Peek (`Ctrl+Shift+O` with multi-pane status origin details and `• Pane N` badge), Shortcuts (`Ctrl+/`), Theme Picker (`Ctrl+Shift+M`), Shell Picker (`[ + | ▾ ]` / palette), inline Tab Rename (`F2`), and running-program Close Confirmation modal implemented |
 | Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, pane/tab priority status pills, progress, BEL (`\x07`) / background attention indicators, acknowledgement, multi-pane status origin formatting (`Pane N - ...`) and attention-origin focus routing (`focusTabAttentionOrigin`), sanitized OSC 0/2 terminal title formatting (`terminal_title.zig`), 73-entry curated Lucide + SimpleIcons vector icon catalog (`app_icon.zig`) with per-session shell brand icons and zero-allocation cached-PID foreground process detection (`vex_pty_foreground_process`), per-DPI Direct2D GPU `ID2D1Bitmap` icon cache, overlapping `TabIconStack` (with `+N` overflow badge), pane header favicons, and custom Windows DWM titlebar chrome (project pill with git branch, `[ + | ▾ ]` new-tab/shell-picker split button, caption buttons, and `app.ico`) implemented; status hover tooltips and multi-project switcher menu pending; raw terminal titles must not become trusted UI controls |
-| Links/path completion/search | `*Links*`, `*PathCompletion*` | Pending |
+| Links/path completion/search | `*Links*`, `*PathCompletion*` | URL detection/Ctrl+Click and inline path picker implemented; best-fifty ranking uses bounded scratch space and deterministic score/name ties, with a real-shell insertion fixture. Scanning is synchronous and capped at 16,384 entries; background indexing and terminal search remain pending |
 | UI Automation / accessibility / installer / crash log | Windows UI and packaging | Pending |
 
 The reference keeps the last tab and caps each project at 8 tabs. Splitting
@@ -346,6 +346,34 @@ These are behavioral contracts, not opportunities to redesign the app.
   is claimed. Existing upload trimming requires two seconds without presentation,
   in that historical checkpoint. The upload reclamation checkpoint below removes
   that dependency.
+
+## Path completion ranking checkpoint
+
+- The result cap now applies the same score/name ordering as final presentation,
+  rather than retaining arbitrary equal-score entries from enumeration order.
+  Case-insensitive name ties use exact bytes, then entry index for stability.
+- A standard-library priority queue retains fifty candidates in bounded stack
+  scratch space: O(entries × log(50)) selection instead of scanning all fifty
+  retained results for every candidate. Warm output storage is reused; failed
+  output allocation preserves the previous visible match list.
+- A regression first fails on the previous ranking, then compares retained
+  matches against a full sort over 16,384 reverse-ordered entries and seven
+  queries. Fixtures cover case ties, allocation failure and warm queries under
+  an allocator that rejects every allocation. All 113 tests pass in Debug and
+  ReleaseSafe; the ReleaseSafe application builds.
+- The live cmd fixture checks actual inserted/filtered file contents, fifty-result
+  bounds, no-match/backspace recovery and Unicode/spaced path quoting. Its GPU
+  popup capture was inspected. This does not make directory scanning asynchronous,
+  establish physical keyboard/IME parity or measure end-to-end query latency.
+- Local ReleaseSafe microbenchmark against `14c2011`: three alternating warm
+  samples, 280 refreshes each (40 repetitions of the seven fixture queries over
+  16,384 reverse-ordered `file-{d:0>5}` names, every seventh entry a directory).
+  A monotonic timer excludes setup, filesystem enumeration and output IO;
+  output storage is warmed first. Baseline: 663.355/671.581/641.730 ms; bounded
+  heap: 625.001/615.621/613.723 ms. Median falls about 7.2%, including unchanged
+  scoring and final sorting. Baseline results are incorrect for tied candidates;
+  this is not a startup, filesystem or interactive-latency benchmark. Raw local
+  samples: `zig-out/verification/path-ranking-benchmark.txt`.
 
 ## Upload reclamation checkpoint
 
