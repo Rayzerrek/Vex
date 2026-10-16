@@ -562,6 +562,24 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, cu
     var cached_fg: u32 = theme.foreground;
     var cached_bg: u32 = theme.background;
     var cached_corrected_fg: u32 = theme.foreground;
+    const ContrastCache = struct {
+        fg: [16]u32 = [_]u32{0xFFFFFFFF} ** 16,
+        bg: [16]u32 = [_]u32{0xFFFFFFFF} ** 16,
+        corrected: [16]u32 = [_]u32{0} ** 16,
+
+        fn get(self: *@This(), fg_val: u32, bg_val: u32) u32 {
+            const slot = (fg_val ^ (bg_val *% 2654435761)) & 15;
+            if (self.fg[slot] == fg_val and self.bg[slot] == bg_val) {
+                return self.corrected[slot];
+            }
+            const res = ensureMinimumContrast(fg_val, bg_val);
+            self.fg[slot] = fg_val;
+            self.bg[slot] = bg_val;
+            self.corrected[slot] = res;
+            return res;
+        }
+    };
+    var contrast_cache = ContrastCache{};
 
     for (0..frame.rows) |row| {
         const cells = frame.cells.items[row * frame.columns ..][0..frame.columns];
@@ -592,7 +610,7 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, cu
                 if (cell_style.foreground != cached_fg or cell_style.background != cached_bg) {
                     cached_fg = cell_style.foreground;
                     cached_bg = cell_style.background;
-                    cached_corrected_fg = ensureMinimumContrast(cached_fg, cached_bg);
+                    cached_corrected_fg = contrast_cache.get(cached_fg, cached_bg);
                 }
                 cell_style.foreground = cached_corrected_fg;
             }

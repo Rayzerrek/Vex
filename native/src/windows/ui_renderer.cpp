@@ -50,11 +50,16 @@ void UiRenderer::Clear(D2D1_COLOR_F color) {
 }
 
 void UiRenderer::FillRectangle(D2D1_RECT_F rect, const UiBrush* brush) {
-    record(batches.drawRounded(rect.left, rect.top, rect.right, rect.bottom, 0, 0, colorRgb(brush->color), colorAlpha(brush->color)));
+    record(batches.drawSolid(rect.left, rect.top, rect.right, rect.bottom, colorRgb(brush->color), colorAlpha(brush->color)));
 }
 
 void UiRenderer::FillRoundedRectangle(D2D1_ROUNDED_RECT rect, const UiBrush* brush) {
-    record(batches.drawRounded(rect.rect.left, rect.rect.top, rect.rect.right, rect.rect.bottom, fminf(rect.radiusX, rect.radiusY), 0, colorRgb(brush->color), colorAlpha(brush->color)));
+    const float r = fminf(rect.radiusX, rect.radiusY);
+    if (r <= 0.0f) {
+        record(batches.drawSolid(rect.rect.left, rect.rect.top, rect.rect.right, rect.rect.bottom, colorRgb(brush->color), colorAlpha(brush->color)));
+        return;
+    }
+    record(batches.drawRounded(rect.rect.left, rect.rect.top, rect.rect.right, rect.rect.bottom, r, 0, colorRgb(brush->color), colorAlpha(brush->color)));
 }
 
 void UiRenderer::DrawRoundedRectangle(D2D1_ROUNDED_RECT rect, const UiBrush* brush, float stroke) {
