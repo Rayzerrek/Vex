@@ -1,5 +1,6 @@
 const std = @import("std");
 const wsl_paths = @import("../shell/wsl_paths.zig");
+const directory = @import("../shell/directory.zig");
 
 pub const ShellQuoteKind = enum {
     pwsh,
@@ -68,33 +69,30 @@ pub const PathCompletion = struct {
         return self.query_buf[0..self.query_len];
     }
 
+    /// Replaces the path picker atomically; inputs may borrow the current directory or query.
+    /// Empty paths clear indexing; unavailable directories produce an explicit scan-error view.
     pub fn openDirectory(self: *PathCompletion, dir_path: []const u8, initial_query: []const u8) !void {
         const prefix = try boundedQueryPrefix(initial_query, self.query_buf.len);
-        var query_copy: [128]u8 = undefined;
-        @memcpy(query_copy[0..prefix.len], prefix);
+        if (dir_path.len > 0) _ = try directory.DirectoryPath.parse(dir_path);
         const trimmed = std.mem.trimRight(u8, dir_path, "\\/");
         const effective = if (trimmed.len == 0 and dir_path.len > 0) dir_path else if (trimmed.len == 2 and trimmed[1] == ':') dir_path[0..3] else trimmed;
-        const owned_dir = try self.allocator.dupe(u8, effective);
-        if (self.directory.len > 0) self.allocator.free(self.directory);
-        self.directory = owned_dir;
+        var next = PathCompletion.init(self.allocator);
+        errdefer next.deinit();
+        next.directory = try self.allocator.dupe(u8, effective);
+        @memcpy(next.query_buf[0..prefix.len], prefix);
+        next.query_len = prefix.len;
+        try next.scanCurrentDirectory();
+        try next.refreshMatches();
 
-        @memcpy(self.query_buf[0..prefix.len], query_copy[0..prefix.len]);
-        self.query_len = prefix.len;
-        self.selected_index = 0;
-        self.hovered_index = null;
-        self.first_visible = 0;
-
-        try self.scanCurrentDirectory();
-        try self.refreshMatches();
+        self.deinit();
+        self.* = next;
     }
 
     pub fn navigateParent(self: *PathCompletion) !bool {
         if (self.directory.len == 0) return false;
         const parent = std.fs.path.dirname(self.directory) orelse return false;
         if (std.mem.eql(u8, parent, self.directory)) return false;
-        const keep_query = try self.allocator.dupe(u8, self.query());
-        defer self.allocator.free(keep_query);
-        try self.openDirectory(parent, keep_query);
+        try self.openDirectory(parent, self.query());
         return true;
     }
 
@@ -225,7 +223,8 @@ pub const PathCompletion = struct {
         var it = dir.iterate();
         while (true) {
             const next_entry = it.next() catch {
-                self.scan_error = self.entries.items.len == 0;
+                self.scan_error = true;
+                self.clearEntries();
                 break;
             };
             const item = next_entry orelse break;
@@ -546,6 +545,94 @@ pub fn readPromptDirectory(line: []const u8) ?[]const u8 {
         if (c < 0x20 or c == 0x7f) return null;
     }
     return candidate;
+}
+
+test "path directory replacement rolls back every allocation failure" {
+    var fixture = std.testing.tmpDir(.{});
+    defer fixture.cleanup();
+    try fixture.dir.makeDir("child");
+    for ([_][]const u8{ "old-a.txt", "old-b.txt", "child/new.txt" }) |name| {
+        const file = try fixture.dir.createFile(name, .{});
+        file.close();
+    }
+    const root = try fixture.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    const child = try fixture.dir.realpathAlloc(std.testing.allocator, "child");
+    defer std.testing.allocator.free(child);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkPathDirectoryReplacement, .{ root, child });
+}
+
+fn checkPathDirectoryReplacement(allocator: std.mem.Allocator, root: []const u8, child: []const u8) !void {
+    var completion = PathCompletion.init(allocator);
+    defer completion.deinit();
+    try completion.openDirectory(root, "old");
+    try std.testing.expectEqual(@as(usize, 2), completion.matches.items.len);
+    completion.selected_index = 1;
+    completion.hovered_index = 1;
+    completion.first_visible = 1;
+    const previous = completion;
+    const previous_matches = completion.matches.items[0..2].*;
+    completion.openDirectory(child, "new") catch |err| {
+        try std.testing.expectEqual(previous.directory.ptr, completion.directory.ptr);
+        try std.testing.expectEqualStrings(root, completion.directory);
+        try std.testing.expectEqualStrings("old", completion.query());
+        try std.testing.expectEqual(previous.entries.items.ptr, completion.entries.items.ptr);
+        try std.testing.expectEqual(previous.entries.items.len, completion.entries.items.len);
+        try std.testing.expectEqual(previous.matches.items.ptr, completion.matches.items.ptr);
+        try std.testing.expectEqualSlices(Match, &previous_matches, completion.matches.items);
+        try std.testing.expectEqual(@as(usize, 1), completion.selected_index);
+        try std.testing.expectEqual(@as(?usize, 1), completion.hovered_index);
+        try std.testing.expectEqual(@as(usize, 1), completion.first_visible);
+        return err;
+    };
+    try std.testing.expectEqualStrings(child, completion.directory);
+    try std.testing.expectEqualStrings("new", completion.query());
+    try std.testing.expectEqual(@as(usize, 1), completion.matches.items.len);
+    try std.testing.expectEqual(@as(usize, 0), completion.selected_index);
+    try std.testing.expectEqual(@as(?usize, null), completion.hovered_index);
+    try std.testing.expectEqual(@as(usize, 0), completion.first_visible);
+}
+
+test "path directory inputs reject relative, drive-relative and malformed paths before mutation" {
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    try completion.openDirectory("", "keep");
+    for ([_][]const u8{ "C:", "relative", "C:relative", "\\\\server", "C:\\bad\x00path", "C:\\bad\xffpath" }) |invalid| {
+        try std.testing.expectError(error.InvalidDirectoryPath, completion.openDirectory(invalid, "replace"));
+        try std.testing.expectEqualStrings("", completion.directory);
+        try std.testing.expectEqualStrings("keep", completion.query());
+    }
+}
+
+test "path directory navigation accepts borrowed paths and queries and marks inaccessible scans explicitly" {
+    var fixture = std.testing.tmpDir(.{});
+    defer fixture.cleanup();
+    try fixture.dir.makeDir("child");
+    const root = try fixture.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    const child = try fixture.dir.realpathAlloc(std.testing.allocator, "child");
+    defer std.testing.allocator.free(child);
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    try completion.openDirectory(child, "keep");
+    try completion.openDirectory(completion.directory, completion.query());
+    try std.testing.expectEqualStrings(child, completion.directory);
+    try std.testing.expectEqualStrings("keep", completion.query());
+    try std.testing.expect(try completion.navigateParent());
+    try std.testing.expectEqualStrings(root, completion.directory);
+    try std.testing.expectEqualStrings("keep", completion.query());
+    try completion.clearQuery();
+    try std.testing.expect(try completion.enterSelectedDirectory());
+    try std.testing.expectEqualStrings(child, completion.directory);
+    try std.testing.expectEqualStrings("", completion.query());
+    try std.testing.expect(!completion.scan_error);
+
+    const missing = try std.fs.path.join(std.testing.allocator, &.{ root, "missing" });
+    defer std.testing.allocator.free(missing);
+    try completion.openDirectory(missing, "");
+    try std.testing.expect(completion.scan_error);
+    try std.testing.expectEqual(@as(usize, 0), completion.entries.items.len);
+    try std.testing.expectEqual(@as(usize, 0), completion.matches.items.len);
 }
 
 test "path query limits never split a UTF-8 codepoint and backspace removes one codepoint" {

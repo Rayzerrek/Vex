@@ -59,13 +59,32 @@ try {
     }
     Assert-NativeProbe $window 55 50 'query limit rejects a whole emoji rather than leaving a partial UTF-8 character'
     Invoke-NativeAction $window 12 99
-    [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]27, [IntPtr]::Zero) | Out-Null
+
+    $child = Join-Path $NativeWorkingDirectory ('child ' + [char]0x017b)
+    New-Item -ItemType Directory $child | Out-Null
+    [IO.File]::WriteAllText((Join-Path $child 'inside.txt'), "VEX_NATIVE_PANE_C`r`n", [Text.Encoding]::ASCII)
+    Invoke-NativeAction $window 12
+    [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]9, [IntPtr]::Zero) | Out-Null
+    Assert-NativeProbe $window 53 4 'Tab enters the selected directory without closing the picker'
+    Assert-NativeProbe $window 55 1 'child directory replaces the root listing'
+    Send-NativeText $window 'inside'
+    [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]37, [IntPtr]::Zero) | Out-Null
+    Assert-NativeProbe $window 55 0 'parent navigation preserves the filter from the child directory'
+    for ($i = 0; $i -lt 6; $i++) {
+        [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]8, [IntPtr]::Zero) | Out-Null
+    }
+    Assert-NativeProbe $window 55 50 'clearing the retained filter restores parent results'
+    [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]9, [IntPtr]::Zero) | Out-Null
+    Assert-NativeProbe $window 55 1 'Tab can reenter after parent navigation'
+    [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]13, [IntPtr]::Zero) | Out-Null
+    Send-NativeText $window "`r"
+    Assert-NativeProbe $window 6 1 'navigation inserts the selected child file path into the live shell'
 
     Close-NativeInstance $process $window
     $process = $null
     $report = [pscustomobject]@{
         Result = 'PASS'
-        Checks = @('live cmd completion', 'bounded fifty results', 'alphabetical default selection', 'empty matches and backspace recovery', 'filter beyond initial result limit', 'Unicode and spaced full-path insertion', 'whole-codepoint query limit and backspace recovery', 'GPU popup capture')
+        Checks = @('live cmd completion', 'bounded fifty results', 'alphabetical default selection', 'empty matches and backspace recovery', 'filter beyond initial result limit', 'Unicode and spaced full-path insertion', 'whole-codepoint query limit and backspace recovery', 'child and parent navigation with retained query', 'child file insertion', 'GPU popup capture')
         Limitations = @('synthetic keyboard messages, not physical keyboard or IME', 'directory scanning remains synchronous and bounded, not background indexing')
     }
     $report | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $OutputDirectory 'path-completion.json')
