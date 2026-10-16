@@ -1908,24 +1908,49 @@ extern "C" void vex_draw_theme_picker(bool dark_mode, const VexThemeCard* cards,
     const float my = roundf(fmaxf(48.0f, (win.height - mh) * 0.44f));
     drawOverlayBackdropAndCard(mx, my, mw, mh);
 
-    label(L"Theme Studio", mx + 20.0f, my + 14.0f, 220.0f, chromePalette.text_primary);
-    labelWithFont(badgeFont, L"Live preview \x2022 Curated dark & light palettes", mx + 20.0f, my + 32.0f, 280.0f, chromePalette.text_muted);
+    // Rex Appearance category tab pills along the modal header.
+    const struct { const wchar_t* title; bool active; } navTabs[] = {
+        { L"Server", false },
+        { L"Appearance", true },
+        { L"Terminal", false },
+        { L"Remote Hosts", false },
+        { L"Updates", false }
+    };
+    float navX = mx + 16.0f;
+    const float navY = my + 10.0f;
+    const uint32_t activeAccent = chromePalette.is_dark ? 0x2dd4bf : 0x2563eb;
+    for (const auto& tab : navTabs) {
+        const float tw = tab.active ? 82.0f : 66.0f;
+        if (tab.active) {
+            const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(navX, navY, navX + tw, navY + 20.0f), 4.5f, 4.5f);
+            brush->SetColor(rgba(activeAccent, 0.12f));
+            target->FillRoundedRectangle(pill, brush);
+            brush->SetColor(rgb(activeAccent));
+            target->DrawRoundedRectangle(pill, brush, 1.0f);
+            labelWithFont(badgeFont, tab.title, navX + 10.0f, navY + 2.0f, tw - 12.0f, activeAccent);
+        } else {
+            labelWithFont(badgeFont, tab.title, navX + 6.0f, navY + 2.0f, tw - 12.0f, chromePalette.text_muted);
+        }
+        navX += tw + 6.0f;
+    }
 
-    const float toggleX = mx + mw - 148.0f, toggleY = my + 15.0f;
-    const D2D1_ROUNDED_RECT toggleTrack = D2D1::RoundedRect(D2D1::RectF(toggleX, toggleY, toggleX + 128.0f, toggleY + 26.0f), 6.0f, 6.0f);
+    labelWithFont(chromeBoldFont, L"Color scheme", mx + 20.0f, my + 34.0f, 130.0f, chromePalette.text_primary);
+
+    const float toggleX = mx + mw - 148.0f, toggleY = my + 32.0f;
+    const D2D1_ROUNDED_RECT toggleTrack = D2D1::RoundedRect(D2D1::RectF(toggleX, toggleY, toggleX + 128.0f, toggleY + 22.0f), 5.0f, 5.0f);
     brush->SetColor(rgb(chromePalette.pane_header_bg));
     target->FillRoundedRectangle(toggleTrack, brush);
     brush->SetColor(rgb(chromePalette.border));
     target->DrawRoundedRectangle(toggleTrack, brush, 1.0f);
 
     const float activeHalfX = dark_mode ? (toggleX + 2.0f) : (toggleX + 64.0f);
-    const D2D1_ROUNDED_RECT activePill = D2D1::RoundedRect(D2D1::RectF(activeHalfX, toggleY + 2.0f, activeHalfX + 62.0f, toggleY + 24.0f), 4.5f, 4.5f);
+    const D2D1_ROUNDED_RECT activePill = D2D1::RoundedRect(D2D1::RectF(activeHalfX, toggleY + 2.0f, activeHalfX + 62.0f, toggleY + 20.0f), 4.0f, 4.0f);
     brush->SetColor(rgb(chromePalette.active_tab_bg));
     target->FillRoundedRectangle(activePill, brush);
     brush->SetColor(rgb(chromePalette.active_tab_border));
     target->DrawRoundedRectangle(activePill, brush, 1.0f);
-    labelWithFont(badgeFont, L"\x263E Dark", toggleX + 12.0f, toggleY + 5.0f, 52.0f, dark_mode ? chromePalette.text_primary : chromePalette.text_muted);
-    labelWithFont(badgeFont, L"\x2600 Light", toggleX + 74.0f, toggleY + 5.0f, 52.0f, !dark_mode ? chromePalette.text_primary : chromePalette.text_muted);
+    labelWithFont(badgeFont, L"\x263E Dark", toggleX + 12.0f, toggleY + 3.0f, 52.0f, dark_mode ? chromePalette.text_primary : chromePalette.text_muted);
+    labelWithFont(badgeFont, L"\x2600 Light", toggleX + 74.0f, toggleY + 3.0f, 52.0f, !dark_mode ? chromePalette.text_primary : chromePalette.text_muted);
 
     const float gridX = mx + 20.0f, gridY = my + 58.0f;
     const float colGap = 12.0f, rowGap = 10.0f;
@@ -1935,38 +1960,49 @@ extern "C" void vex_draw_theme_picker(bool dark_mode, const VexThemeCard* cards,
         const VexThemeCard& c = cards[i];
         const float cx = gridX + (float)(i % 2) * (cardW + colGap);
         const float cy = gridY + (float)(i / 2) * (cardH + rowGap);
-        const D2D1_ROUNDED_RECT cardRect = D2D1::RoundedRect(D2D1::RectF(cx, cy, cx + cardW, cy + cardH), 7.0f, 7.0f);
+        const D2D1_ROUNDED_RECT cardRect = D2D1::RoundedRect(D2D1::RectF(cx, cy, cx + cardW, cy + cardH), 8.0f, 8.0f);
         brush->SetColor(rgb(c.bg_rgb));
         target->FillRoundedRectangle(cardRect, brush);
-        brush->SetColor(rgb(c.selected ? c.accent_rgb : (c.hovered ? chromePalette.text_muted : chromePalette.border)));
+
+        // Rex card selection ring: vibrant teal/blue outline.
+        brush->SetColor(rgb(c.selected ? activeAccent : (c.hovered ? chromePalette.text_muted : chromePalette.border)));
         target->DrawRoundedRectangle(cardRect, brush, c.selected ? 2.0f : 1.0f);
 
+        // Rex-style theme preview elements: "Aa", prompt capsule "~/", and accent cursor bar.
+        labelWithFont(chromeBoldFont, L"Aa", cx + 12.0f, cy + 12.0f, 26.0f, c.fg_rgb);
+
+        const D2D1_ROUNDED_RECT promptPill = D2D1::RoundedRect(D2D1::RectF(cx + 42.0f, cy + 14.0f, cx + 70.0f, cy + 30.0f), 4.0f, 4.0f);
+        brush->SetColor(rgba(c.fg_rgb, c.is_dark ? 0.14f : 0.08f));
+        target->FillRoundedRectangle(promptPill, brush);
+        labelWithFont(badgeFont, L"~/", cx + 49.0f, cy + 15.0f, 20.0f, c.fg_rgb);
+
+        const D2D1_ROUNDED_RECT cursorBar = D2D1::RoundedRect(D2D1::RectF(cx + 76.0f, cy + 14.0f, cx + 85.0f, cy + 30.0f), 4.0f, 4.0f);
+        brush->SetColor(rgb(c.accent_rgb));
+        target->FillRoundedRectangle(cursorBar, brush);
+
         const uint32_t subColor = c.is_dark ? 0x8b93a6 : 0x68645e;
-        labelUtf8WithFont(chromeFont, c.name, c.name_length, cx + 12.0f, cy + 9.0f, cardW - 64.0f, c.fg_rgb);
-        labelUtf8WithFont(badgeFont, c.subtitle, c.subtitle_length, cx + 12.0f, cy + 28.0f, cardW - 24.0f, subColor);
+        labelUtf8WithFont(chromeBoldFont, c.name, c.name_length, cx + 94.0f, cy + 10.0f, cardW - 146.0f, c.fg_rgb);
+        labelUtf8WithFont(badgeFont, c.subtitle, c.subtitle_length, cx + 94.0f, cy + 28.0f, cardW - 106.0f, subColor);
 
         if (c.active) {
-            const D2D1_ROUNDED_RECT badge = D2D1::RoundedRect(D2D1::RectF(cx + cardW - 54.0f, cy + 9.0f, cx + cardW - 10.0f, cy + 25.0f), 4.0f, 4.0f);
+            const D2D1_ROUNDED_RECT badge = D2D1::RoundedRect(D2D1::RectF(cx + cardW - 48.0f, cy + 9.0f, cx + cardW - 10.0f, cy + 23.0f), 4.0f, 4.0f);
             brush->SetColor(D2D1::ColorF(c.accent_rgb, 0.20f));
             target->FillRoundedRectangle(badge, brush);
             brush->SetColor(rgb(c.accent_rgb));
             target->DrawRoundedRectangle(badge, brush, 1.0f);
-            labelWithFont(badgeFont, L"Active", cx + cardW - 48.0f, cy + 10.0f, 40.0f, c.fg_rgb);
+            labelWithFont(badgeFont, L"Active", cx + cardW - 43.0f, cy + 9.0f, 36.0f, c.fg_rgb);
         }
 
-        const float swY = cy + cardH - 24.0f;
-        const D2D1_ROUNDED_RECT termPreview = D2D1::RoundedRect(D2D1::RectF(cx + 12.0f, swY - 2.0f, cx + cardW - 12.0f, swY + 14.0f), 4.0f, 4.0f);
-        brush->SetColor(D2D1::ColorF(c.is_dark ? 0x000000 : 0xffffff, c.is_dark ? 0.28f : 0.55f));
-        target->FillRoundedRectangle(termPreview, brush);
-
+        // Rex palette swatches: horizontal row of smooth capsule dots.
+        const float swY = cy + cardH - 22.0f;
         uint32_t dots[6] = { c.accent_rgb, c.swatches[0], c.swatches[1], c.swatches[2], c.swatches[3], c.swatches[4] };
         for (int s = 0; s < 6; s++) {
-            const float sx = cx + 20.0f + (float)s * 22.0f;
+            const float sx = cx + 12.0f + (float)s * 18.0f;
             brush->SetColor(rgb(dots[s]));
-            target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sx, swY + 2.0f, sx + 16.0f, swY + 10.0f), 3.0f, 3.0f), brush);
+            target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sx, swY, sx + 14.0f, swY + 9.0f), 4.0f, 4.0f), brush);
         }
     }
-    labelWithFont(badgeFont, L"\x2190\x2191\x2193\x2192 Preview    Tab: Dark / Light    Enter: Apply    Esc: Revert", mx + 20.0f, my + mh - 24.0f, mw - 40.0f, chromePalette.text_muted);
+    labelWithFont(badgeFont, L"\x2190\x2191\x2193\x2192 Preview    Tab: Dark / Light    Enter: Apply    Esc: Revert", mx + 20.0f, my + mh - 22.0f, mw - 40.0f, chromePalette.text_muted);
 }
 extern "C" void vex_draw_command_palette(const uint8_t* query, size_t query_length, const VexCommandItem* items, size_t count) {
     if (!target || !brush) return;
