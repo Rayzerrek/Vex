@@ -48,6 +48,7 @@ static int hoveredCaptionButton;
 static int pressedCaptionButton;
 static bool hoveredNewTab;
 static bool hoveredShellPicker;
+static bool hoveredCommandPalette;
 static int hoveredTabIndex = -1;
 static bool hoveredTabClose;
 static bool trackingMouseLeave;
@@ -206,31 +207,53 @@ extern "C" int vex_window_schedule_cursor_wake(uint32_t delay_ms) {
 }
 
 static void drawProjectPill() {
-    const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(8.0f, 7.0f, 134.0f, 37.0f), 6.0f, 6.0f);
+    const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(8.0f, 6.0f, 134.0f, 38.0f), 8.0f, 8.0f);
     brush->SetColor(rgb(chromePalette.active_tab_bg));
     target->FillRoundedRectangle(pill, brush);
     brush->SetColor(rgb(chromePalette.active_tab_border));
-    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(8.5f, 7.5f, 133.5f, 36.5f), 5.5f, 5.5f), brush, 1.0f);
-    // Lucide Folder glyph on the left of the project pill.
+    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(8.5f, 6.5f, 133.5f, 37.5f), 7.5f, 7.5f), brush, 1.0f);
+    // Rex-style host/machine glyph on the left.
     brush->SetColor(rgb(chromePalette.accent));
-    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(15.5f, 18.0f, 28.5f, 27.5f), 1.5f, 1.5f), brush, 1.25f);
-    target->DrawLine(D2D1::Point2F(15.5f, 18.5f), D2D1::Point2F(15.5f, 15.5f), brush, 1.25f);
-    target->DrawLine(D2D1::Point2F(15.5f, 15.5f), D2D1::Point2F(20.5f, 15.5f), brush, 1.25f);
-    target->DrawLine(D2D1::Point2F(20.5f, 15.5f), D2D1::Point2F(22.0f, 18.0f), brush, 1.25f);
+    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(14.5f, 15.0f, 26.5f, 24.0f), 1.6f, 1.6f), brush, 1.25f);
+    target->DrawLine(D2D1::Point2F(20.5f, 24.0f), D2D1::Point2F(20.5f, 27.0f), brush, 1.25f, roundCaps);
+    target->DrawLine(D2D1::Point2F(17.5f, 27.0f), D2D1::Point2F(23.5f, 27.0f), brush, 1.25f, roundCaps);
     if (projectBranch[0] != 0) {
-        labelWithFont(chromeBoldFont, projectName, 34.0f, 8.5f, 82.0f, chromePalette.text_primary);
-        labelWithFont(badgeFont, projectBranch, 34.0f, 22.0f, 82.0f, chromePalette.git_branch);
+        labelWithFont(chromeBoldFont, projectName, 33.0f, 8.5f, 84.0f, chromePalette.text_primary);
+        labelWithFont(badgeFont, projectBranch, 33.0f, 22.0f, 84.0f, chromePalette.git_branch);
     } else {
-        labelWithFont(chromeBoldFont, projectName, 34.0f, 13.0f, 82.0f, chromePalette.text_primary);
+        labelWithFont(chromeBoldFont, projectName, 33.0f, 13.0f, 84.0f, chromePalette.text_primary);
     }
     brush->SetColor(rgb(chromePalette.text_muted));
-    target->DrawLine(D2D1::Point2F(119.5f, 20.5f), D2D1::Point2F(122.5f, 23.5f), brush, 1.2f);
-    target->DrawLine(D2D1::Point2F(122.5f, 23.5f), D2D1::Point2F(125.5f, 20.5f), brush, 1.2f);
+    target->DrawLine(D2D1::Point2F(121.5f, 20.5f), D2D1::Point2F(124.5f, 23.5f), brush, 1.2f, roundCaps);
+    target->DrawLine(D2D1::Point2F(124.5f, 23.5f), D2D1::Point2F(127.5f, 20.5f), brush, 1.2f, roundCaps);
+}
+
+static void drawCommandGlyph(float cx, float cy, float size, uint32_t color) {
+    brush->SetColor(rgb(color));
+    const float r = size * 0.26f;
+    const float d = size * 0.32f;
+    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx - d, cy - d), r, r), brush, 1.25f);
+    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx + d, cy - d), r, r), brush, 1.25f);
+    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx - d, cy + d), r, r), brush, 1.25f);
+    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx + d, cy + d), r, r), brush, 1.25f);
+    target->DrawLine(D2D1::Point2F(cx - d, cy - d + r), D2D1::Point2F(cx - d, cy + d - r), brush, 1.25f);
+    target->DrawLine(D2D1::Point2F(cx + d, cy - d + r), D2D1::Point2F(cx + d, cy + d - r), brush, 1.25f);
+    target->DrawLine(D2D1::Point2F(cx - d + r, cy - d), D2D1::Point2F(cx + d - r, cy - d), brush, 1.25f);
+    target->DrawLine(D2D1::Point2F(cx - d + r, cy + d), D2D1::Point2F(cx + d - r, cy + d), brush, 1.25f);
 }
 
 static void drawNewTabButton() {
-    const float bx = plusLeft() + 1.0f;
     const float by = 8.0f;
+    // Rex Command Palette button [ ⌘ ]
+    const float cx_cmd = plusLeft() + 1.0f;
+    if (hoveredCommandPalette) {
+        brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx_cmd, by, cx_cmd + 22.0f, by + 28.0f), 5.0f, 5.0f), brush);
+    }
+    drawCommandGlyph(cx_cmd + 11.0f, by + 14.0f, 11.0f, hoveredCommandPalette ? chromePalette.accent : chromePalette.text_muted);
+
+    // New Tab button [ + ]
+    const float bx = plusLeft() + 24.0f;
     const bool enabled = tabStripCount < 8;
     if (enabled && hoveredNewTab) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
@@ -242,7 +265,8 @@ static void drawNewTabButton() {
     target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.35f);
     target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.35f);
 
-    const float sx = plusLeft() + 23.0f;
+    // Shell Picker dropdown caret [ v ]
+    const float sx = plusLeft() + 47.0f;
     if (hoveredShellPicker) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sx, by, sx + 15.0f, by + 28.0f), 4.0f, 4.0f), brush);
@@ -577,6 +601,7 @@ static void beginPointerGesture(HWND hwnd, float x, float y) {
 }
 static void updateTopChromeHover(float x, float y) {
     int nextCaption = 0;
+    bool nextCommandPalette = false;
     bool nextNewTab = false;
     bool nextShellPicker = false;
     int nextTab = -1;
@@ -584,9 +609,11 @@ static void updateTopChromeHover(float x, float y) {
     if (pointerCaptureState == PointerCaptureState::none && y >= 0.0f && y < 44.0f) {
         if (x >= clientWidth - 120.0f && x < clientWidth) {
             nextCaption = (x >= clientWidth - 40.0f) ? 3 : (x >= clientWidth - 80.0f) ? 2 : 1;
-        } else if (x >= plusLeft() && x < plusLeft() + 23.0f && y >= 7.0f && y <= 37.0f) {
+        } else if (x >= plusLeft() && x < plusLeft() + 24.0f && y >= 7.0f && y <= 37.0f) {
+            nextCommandPalette = true;
+        } else if (x >= plusLeft() + 24.0f && x < plusLeft() + 47.0f && y >= 7.0f && y <= 37.0f) {
             nextNewTab = true;
-        } else if (x >= plusLeft() + 23.0f && x < plusLeft() + 38.0f && y >= 7.0f && y <= 37.0f) {
+        } else if (x >= plusLeft() + 47.0f && x < plusLeft() + 63.0f && y >= 7.0f && y <= 37.0f) {
             nextShellPicker = true;
         } else if (x >= 140.0f && x < plusLeft() && y >= 7.0f && y <= 37.0f) {
             uint32_t idx = (uint32_t)((x - 140.0f) / (tabWidthDip + 4.0f));
@@ -597,9 +624,11 @@ static void updateTopChromeHover(float x, float y) {
             }
         }
     }
-    if (nextCaption != hoveredCaptionButton || nextNewTab != hoveredNewTab ||
-        nextShellPicker != hoveredShellPicker || nextTab != hoveredTabIndex || nextTabClose != hoveredTabClose) {
+    if (nextCaption != hoveredCaptionButton || nextCommandPalette != hoveredCommandPalette ||
+        nextNewTab != hoveredNewTab || nextShellPicker != hoveredShellPicker ||
+        nextTab != hoveredTabIndex || nextTabClose != hoveredTabClose) {
         hoveredCaptionButton = nextCaption;
+        hoveredCommandPalette = nextCommandPalette;
         hoveredNewTab = nextNewTab;
         hoveredShellPicker = nextShellPicker;
         hoveredTabIndex = nextTab;
@@ -645,7 +674,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = point.x / scale;
-        if (point.y / scale < 44 && x < clientWidth - 120 && (x < 140 || x > plusLeft() + 38)) return HTCAPTION;
+        if (point.y / scale < 44 && x < clientWidth - 120 && (x < 140 || x > plusLeft() + 63)) return HTCAPTION;
         return HTCLIENT;
     }
     case WM_GETMINMAXINFO: {
@@ -701,8 +730,9 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             bool close = message == WM_MBUTTONDOWN || local > tabWidthDip - 22;
             if (close) callbacks.action(callbacks.context, 16, index);
             else beginPointerGesture(hwnd, x, y);
-        } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 23) callbacks.action(callbacks.context, 0, 0);
-        else if (y < 44 && x >= plusLeft() + 23 && x < plusLeft() + 38) callbacks.action(callbacks.context, 18, 0);
+        } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 24) callbacks.action(callbacks.context, 9, 0);
+        else if (y < 44 && x >= plusLeft() + 24 && x < plusLeft() + 47) callbacks.action(callbacks.context, 0, 0);
+        else if (y < 44 && x >= plusLeft() + 47 && x < plusLeft() + 63) callbacks.action(callbacks.context, 18, 0);
         else if (y >= 44) {
             if (message != WM_MBUTTONDOWN) {
                 beginPointerGesture(hwnd, x, y);
