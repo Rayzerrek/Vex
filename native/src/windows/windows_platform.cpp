@@ -1790,7 +1790,7 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
     const uint32_t baseColor = (focused || hovered) ? chromePalette.text_muted : chromePalette.border;
     const auto drawButtonPill = [&](float bx, uint32_t fill) {
         brush->SetColor(rgb(fill));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, top, bx + 20.0f, top + 20.0f), 4.0f, 4.0f), brush);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, top, bx + 20.0f, top + 20.0f), 5.0f, 5.0f), brush);
     };
     if (can_focus) {
         const float bx = right - 86.0f, cx = bx + 10.0f, cy = top + 10.0f;
@@ -1798,52 +1798,59 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
         else if (hovered_action == 1) drawButtonPill(bx, chromePalette.inactive_tab_hover_bg);
         brush->SetColor(rgb(zoomed ? chromePalette.accent : (hovered_action == 1 ? chromePalette.text_primary : baseColor)));
         if (!zoomed) {
-            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 1.0f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx + 1.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 1.5f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 1.0f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx - 1.5f, cy + 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx - 4.5f, cy + 4.5f), D2D1::Point2F(cx - 4.5f, cy + 1.5f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 1.0f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx + 1.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 1.5f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 1.0f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx - 1.5f, cy + 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx - 4.5f, cy + 4.5f), D2D1::Point2F(cx - 4.5f, cy + 1.5f), brush, 1.2f, roundCaps);
         } else {
-            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 1.0f, cy - 1.0f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 4.0f), D2D1::Point2F(cx + 1.0f, cy - 1.0f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 1.0f), D2D1::Point2F(cx + 4.0f, cy - 1.0f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx - 4.5f, cy + 4.5f), D2D1::Point2F(cx - 1.0f, cy + 1.0f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 4.0f), D2D1::Point2F(cx - 1.0f, cy + 1.0f), brush, 1.15f);
-            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 1.0f), D2D1::Point2F(cx - 4.0f, cy + 1.0f), brush, 1.15f);
+            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 1.0f, cy - 1.0f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 4.0f), D2D1::Point2F(cx + 1.0f, cy - 1.0f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 1.0f), D2D1::Point2F(cx + 4.0f, cy - 1.0f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx - 4.5f, cy + 4.5f), D2D1::Point2F(cx - 1.0f, cy + 1.0f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 4.0f), D2D1::Point2F(cx - 1.0f, cy + 1.0f), brush, 1.2f, roundCaps);
+            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 1.0f), D2D1::Point2F(cx - 4.0f, cy + 1.0f), brush, 1.2f, roundCaps);
         }
     }
     {
         const float bx = right - 64.0f, cx = bx + 10.0f, cy = top + 10.0f;
         if (hovered_action == 2) drawButtonPill(bx, chromePalette.inactive_tab_hover_bg);
         brush->SetColor(rgb(hovered_action == 2 ? chromePalette.text_primary : baseColor));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), 1.5f, 1.5f), brush, 1.1f);
-        target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.1f);
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), 1.6f, 1.6f), brush, 1.15f);
+        target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.15f, roundCaps);
     }
     {
         const float bx = right - 42.0f, cx = bx + 10.0f, cy = top + 10.0f;
         if (hovered_action == 3) drawButtonPill(bx, chromePalette.inactive_tab_hover_bg);
         brush->SetColor(rgb(hovered_action == 3 ? chromePalette.text_primary : baseColor));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), 1.5f, 1.5f), brush, 1.1f);
-        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.1f);
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), 1.6f, 1.6f), brush, 1.15f);
+        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.15f, roundCaps);
     }
     {
         const float bx = right - 20.0f, cx = bx + 10.0f, cy = top + 10.0f;
         if (hovered_action == 4) drawButtonPill(bx, chromePalette.is_dark ? 0x4d2b31 : 0xfad2d8);
         brush->SetColor(rgb(hovered_action == 4 ? (chromePalette.is_dark ? 0xffb4be : 0xb42336) : baseColor));
-        target->DrawLine(D2D1::Point2F(cx - 3.5f, cy - 3.5f), D2D1::Point2F(cx + 3.5f, cy + 3.5f), brush, 1.2f);
-        target->DrawLine(D2D1::Point2F(cx + 3.5f, cy - 3.5f), D2D1::Point2F(cx - 3.5f, cy + 3.5f), brush, 1.2f);
+        target->DrawLine(D2D1::Point2F(cx - 3.5f, cy - 3.5f), D2D1::Point2F(cx + 3.5f, cy + 3.5f), brush, 1.25f, roundCaps);
+        target->DrawLine(D2D1::Point2F(cx + 3.5f, cy - 3.5f), D2D1::Point2F(cx - 3.5f, cy + 3.5f), brush, 1.25f, roundCaps);
     }
 }
 extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status) {
-    rectangle(bounds.x, bounds.y, bounds.width, bounds.height, chromePalette.pane_bg);
+    const D2D1_ROUNDED_RECT paneCard = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), 6.0f, 6.0f);
+    brush->SetColor(rgb(chromePalette.pane_bg));
+    target->FillRoundedRectangle(paneCard, brush);
     if (bounds.height >= 28.0f) {
-        rectangle(bounds.x, bounds.y, bounds.width, 26.0f, chromePalette.pane_header_bg);
+        brush->SetColor(rgb(chromePalette.pane_header_bg));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + 26.0f), 6.0f, 6.0f), brush);
+        rectangle(bounds.x, bounds.y + 18.0f, bounds.width, 8.0f, chromePalette.pane_header_bg);
         rectangle(bounds.x, bounds.y + 26.0f, bounds.width, 1.0f, chromePalette.border);
         if (can_focus && !zoomed && focused) {
-            rectangle(bounds.x, bounds.y, bounds.width, 2.0f, chromePalette.accent);
+            brush->SetColor(rgb(chromePalette.accent));
+            target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + 2.5f), 1.5f, 1.5f), brush);
         }
     }
+    brush->SetColor(rgb(focused ? (chromePalette.is_dark ? chromePalette.active_tab_border : chromePalette.border) : chromePalette.border));
+    target->DrawRoundedRectangle(paneCard, brush, focused ? 1.25f : 1.0f);
     if (can_focus && !zoomed) {
         if (bounds.x > 1.0f) rectangle(bounds.x - 3.5f, bounds.y, 1.0f, bounds.height, chromePalette.border);
         if (bounds.y > 45.0f) rectangle(bounds.x, bounds.y - 3.5f, bounds.width, 1.0f, chromePalette.border);
