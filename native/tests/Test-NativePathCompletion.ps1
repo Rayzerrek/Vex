@@ -64,12 +64,14 @@ try {
     New-Item -ItemType Directory $child | Out-Null
     [IO.File]::WriteAllText((Join-Path $child 'inside.txt'), "VEX_NATIVE_PANE_C`r`n", [Text.Encoding]::ASCII)
     Invoke-NativeAction $window 12
+    Assert-NativeProbe $window 104 0 'background root indexing completes before directory navigation'
     [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]9, [IntPtr]::Zero) | Out-Null
     Assert-NativeProbe $window 53 4 'Tab enters the selected directory without closing the picker'
     Assert-NativeProbe $window 55 1 'child directory replaces the root listing'
     Send-NativeText $window 'inside'
     [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]37, [IntPtr]::Zero) | Out-Null
-    Assert-NativeProbe $window 55 0 'parent navigation preserves the filter from the child directory'
+    Assert-NativeProbe $window 104 0 'background parent indexing completes'
+    Assert-NativeProbe $window 55 1 'parent navigation preserves the filter and includes recursive matches'
     for ($i = 0; $i -lt 6; $i++) {
         [VexNativeSmoke]::SendWindowMessage($window, 0x100, [IntPtr]8, [IntPtr]::Zero) | Out-Null
     }
@@ -85,7 +87,7 @@ try {
     $report = [pscustomobject]@{
         Result = 'PASS'
         Checks = @('live cmd completion', 'bounded fifty results', 'alphabetical default selection', 'empty matches and backspace recovery', 'filter beyond initial result limit', 'Unicode and spaced full-path insertion', 'whole-codepoint query limit and backspace recovery', 'child and parent navigation with retained query', 'child file insertion', 'GPU popup capture')
-        Limitations = @('synthetic keyboard messages, not physical keyboard or IME', 'directory scanning remains synchronous and bounded, not background indexing')
+        Limitations = @('synthetic keyboard messages, not physical keyboard or IME', 'recursive indexing is bounded at 16,384 entries; native filesystem IO cancellation remains unverified')
     }
     $report | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $OutputDirectory 'path-completion.json')
     $report | ConvertTo-Json -Depth 3

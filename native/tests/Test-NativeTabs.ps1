@@ -9,7 +9,7 @@ $NativeLaunchArguments = '--program "' + $env:WINDIR + '\System32\cmd.exe" --arg
 
 function Get-NativeTabBodyX([IntPtr]$Window, [int]$Index) {
     $width = (Get-NativeProbe $Window 48) / 1000.0
-    return 140 + $Index * ($width + 4) + [Math]::Min(40, ($width - 22) / 2)
+    return 8 + $Index * ($width + 4) + [Math]::Min(40, ($width - 22) / 2)
 }
 function Assert-NativeTabOrder([IntPtr]$Window, [long[]]$Ids) {
     Assert-NativeProbe $Window 10 $Ids.Length 'tab count'
@@ -44,6 +44,12 @@ try {
     Assert-NativeProbe $window 5 1 'tab B marker'
     Invoke-NativeAction $window 0
     Assert-NativeTabOrder $window @(1, 3, 4)
+
+    Send-NativePointer $window 0x201 18 20 1
+    Send-NativePointer $window 0x202 18 20
+    Assert-NativeProbe $window 47 0 'first tab occupies the former project chrome area'
+    Assert-NativeProbe $window 14 $pidA 'left-edge tab click preserves its terminal process'
+    Assert-NativeTabDragEnded $window
 
     $result = Invoke-NativeTabGesture $window 1 ((Get-NativeTabBodyX $window 1) + 3)
     Assert-NativeTabGesture $result 3 1
@@ -136,6 +142,7 @@ try {
     Assert-NativeProbe $window 54 14 'zoom reset restores font size to 14pt'
     Invoke-NativeAction $window 12 0
     Assert-NativeProbe $window 53 4 'path completion overlay opens'
+    Assert-NativeProbe $window 104 0 'background path index publishes before checking matches'
     if ((Get-NativeProbe $window 55) -le 0) { throw 'Vex native tabs: path completion returned zero matches.' }
     Invoke-NativeAction $window 12 99
     Assert-NativeProbe $window 53 0 'path completion overlay closes cleanly'

@@ -6,6 +6,11 @@ Reference implementation: `../windows/`, especially `docs/architecture.md`,
 functional and visual parity is demonstrated. This is a staged rewrite, not a
 claim that a reduced-feature terminal replaces Vex already.
 Current platform scope is Windows + WSL; native Linux/macOS ports are not planned in this stage.
+Native product scope is a plain terminal multiplexer: window -> tabs -> split panes.
+Projects, named workspaces, project switching and Git-aware project chrome are
+intentionally excluded, not missing parity work. WPF remains a reference for
+terminal behavior, not a requirement to reproduce its project hierarchy.
+Historical checkpoint terminology below describes earlier scope only.
 
 ## Safety rules
 
@@ -29,6 +34,10 @@ Current platform scope is Windows + WSL; native Linux/macOS ports are not planne
   Tests include active-output teardown and switching/closing background panes.
 - Retain cached terminal snapshots on clean frames; hidden tabs still parse
   output but do not walk/draw their viewports. Optimize only measured paths.
+- Program names must not gate behavior. Use protocol/process facts, generic
+  unknown-program fallbacks and bounded lazy IO. Shell/runtime grammars and brand
+  artwork are adapters/data, not execution/status/close-protection allowlists.
+  Include unfamiliar-program fixtures in subsequent milestones; see `UNIVERSALITY.md`.
 
 ## Zig quality reference
 
@@ -51,28 +60,39 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 
 | Area | Reference | Native milestone / remaining evidence |
 | --- | --- | --- |
-| Project -> tabs -> split tree, active leaf | `Model/Project.cs`, `WorkspaceTab.cs`, `PaneNode.cs` | One project, up to 8 tabs, recursive splits, focus, per-tab pane focus/zoom toggle, interactive pane header buttons (Focus/Zoom, Split Right, Split Down, Close), close and captured tab reorder; multiple projects, pane moves and tab ghost/push/scroll preview still pending |
+| Window -> tabs -> split tree, active leaf | `WorkspaceTab.cs`, `PaneNode.cs` | Up to 8 tabs per window, recursive splits, focus, per-tab pane focus/zoom toggle, interactive pane header buttons (Focus/Zoom, Split Right, Split Down, Close), close and captured tab reorder; pane moves and tab ghost/push/scroll preview still pending |
 | Split orientation/ratio | `SplitPaneView.xaml.cs` | Right/down at 0.5; ratio clamping 0.1..0.9; live captured divider dragging, 100-DIP interactive minimum and rollback implemented; final divider styling/physical multi-monitor DPI evidence pending; split directories use the last valid local OSC 7 report, otherwise the pane's launch directory |
-| Workspace shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
+| Multiplexer shortcuts | `MainWindow.Keyboard.cs`, `docs/shortcuts.md` | T/R/D/W, Ctrl+Tab, Ctrl+Shift+Tab first; all others pending |
 | Process lifetime / ConPTY | `Vex.Terminal/TerminalSession.cs`, `ProcessTree.cs` | Per-pane ownership, bounded queues, process-exit observer and job-object teardown; automatic pane/tab exit close, final-tab retention, captured-gesture cancellation and stable-ID close confirmations implemented; Win32 failure injection pending |
 | Terminal core / feed filtering | `Vex.Libghostty/*`, `FeedFilterTests` | Same DLL, typed public API; UTF-8, color, wide/grapheme, modes, responses, snapshot cache, ConPTY-stripped DCS filter (`+q` XTGETTCAP / `$qm` DECRQSS), disabled resize scrollback pull, DEC 2048 in-band resize reports (`\x1b[48;...t`), DEC 2026 synchronized output frame batching (100 ms starvation cap), default bar cursor and ConPTY-compatible key encoder options implemented |
-| Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | D3D12 queue/fences + DXGI flip-discard presentation, native instanced terminal drawing and analytic UI shapes/vector icons with independent bounded R8 terminal/UI text caches, native D3D12 screenshot readback and no D3D11On12 device (see `RENDERER.md`), themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented, plus VT-aware cursor blinking with conditional one-shot wakes; full pixel/caret comparisons, custom box/Powerline glyphs and color emoji pending |
+| Renderer / glyphs / DPI / caret | `Terminal/Native/*Rendering*`, `*Glyphs*`, `*Layout*`, `*Scrollbar*` | D3D12 queue/fences + DXGI flip-discard presentation, native instanced terminal drawing and analytic UI shapes/vector icons with independent bounded R8 terminal/UI text caches, native D3D12 screenshot readback and no D3D11On12 device (see `RENDERER.md`), themed chrome, and interactive per-pane scrollback scrollbar overlay (proportional thumb, hover/drag expansion, thumb drag and track page jump) implemented, plus VT-aware cursor blinking with conditional one-shot wakes; procedural box/block/Braille/Powerline raster paths retained; full pixel/caret comparisons and color emoji pending |
 | Input / mouse / selection / clipboard | `*Input*`, `*Selection*`, `*Clipboard*`, `*Mouse*` | Basic keys, `Ctrl+Backspace`, primary-screen viewport scroll shortcuts (`Shift+PageUp/PageDown`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+Home/End`), mouse selection (cell, word double-click, line triple-click, captured outside-pane drag clamping, copy-on-select), keyboard selection (`Shift+Left/Right/Home/End`, `Ctrl+Shift+Left/Right/Home/End`), selection highlight rendering, `Ctrl+C` (smart copy when selected) / `Ctrl+Shift+C` copy, `Ctrl+Shift+X` cut and `Backspace` cursor-end selection deletion, `Ctrl+Shift+V` / `Shift+Insert` / right-click paste with newline normalization and DEC 2004 bracketed paste, wheel scroll, TUI mouse reporting (`DEC 1000/1002/1003` + SGR/SGR-pixels/UTF-8/urxvt encoding with `Shift` override), and write-only OSC 52 / OSC 1337 clipboard sequences implemented; IME and click-to-move-cursor pending |
-| Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash, absolute custom executables and project/default/explicit-distribution WSL/Linux programs; cmd/PS/Nu integration, runtime Shell Picker overlay (`New Tab`, `Split Right`, `Split Down`, `Set Default`), top-bar `[ + | ▾ ]` split button, Command Palette shell actions, and per-pane shell overrides implemented; profile persistence pending |
-| Windows/WSL projects and directories | `Model/Workspace.cs`, `Model/Wsl*`, `MainWindow.Projects.cs` | Local/selected-distribution Linux OSC 7 ownership/inheritance and WSL UNC project startup implemented; cross-distribution/Windows-shell mismatches reject; project UI and Linux process metadata pending |
+| Shell profiles and integration | `Model/Shell*`, `ShellIntegration/*` | Startup selection/resolution for cmd/system, Windows PowerShell, pwsh, nu, Git Bash, absolute custom executables and directory/default/explicit-distribution WSL/Linux programs; cmd/PS/Nu integration, runtime Shell Picker overlay (`New Tab`, `Split Right`, `Split Down`, `Set Default`), top-bar `[ + | ▾ ]` split button, Command Palette shell actions, and per-pane shell overrides implemented; profile persistence pending |
+| Windows/WSL working directories | `Model/Wsl*` | Local/selected-distribution Linux OSC 7 ownership/inheritance and WSL UNC directory startup implemented; cross-distribution/Windows-shell mismatches reject; Linux process metadata pending |
 | Settings and session persistence | `Model/AppSettings.cs`, `Session*`, `VexJsonContext.cs` | Pending; native currently does not read/write the production profile |
 | Saved layouts | `SavedTerminalLayout.cs`, `MainWindow.SavedLayouts.cs` | Pending; opening explicitly executes commands once; restore must never replay commands |
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts and runtime 12-theme switcher first; persisted theme/font settings pending |
-| Palette, tab peek, overlays/popups | `CommandPalette*`, `TabPeek*`, `MainWindow.Overlays.cs` | Command Palette (`Ctrl+Shift+P`), Tab Peek (`Ctrl+Shift+O` with multi-pane status origin details and `• Pane N` badge), Shortcuts (`Ctrl+/`), Theme Picker (`Ctrl+Shift+M`), Shell Picker (`[ + | ▾ ]` / palette), inline Tab Rename (`F2`), and running-program Close Confirmation modal implemented |
-| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, plain pane status/progress and two-line horizontal task/activity tabs, BEL (`\x07`) / background attention indicators, acknowledgement, multi-pane status origin formatting (`Pane N - ...`) and attention-origin focus routing (`focusTabAttentionOrigin`), sanitized OSC 0/2 terminal title formatting (`terminal_title.zig`), 73-entry curated Lucide + SimpleIcons vector icon catalog (`app_icon.zig`) with per-session shell brand icons and zero-allocation cached-PID foreground process detection (`vex_pty_foreground_process`), native D3D12 vector icon batches, overlapping `TabIconStack` (with `+N` overflow badge), pane header favicons, and custom Windows DWM titlebar chrome (project pill with git branch, `[ + | ▾ ]` new-tab/shell-picker split button, caption buttons, and `app.ico`) implemented; status hover tooltips and multi-project switcher menu pending; raw terminal titles must not become trusted UI controls |
-| Links/path completion/search | `*Links*`, `*PathCompletion*` | URL detection/Ctrl+Click and inline path picker implemented; best-fifty ranking uses bounded scratch space and deterministic score/name ties, with a real-shell insertion fixture. Scanning is synchronous and capped at 16,384 entries; background indexing and terminal search remain pending |
+| Palette, tab peek, overlays/popups | `CommandPalette*`, `TabPeek*`, `MainWindow.Overlays.cs` | Full-list fuzzy Command Palette (`Ctrl+Shift+P`, scrolling, Home/End/Page navigation and shared DIP hit testing), Tab Peek (`Ctrl+Shift+O` with multi-pane status origin details and `• Pane N` badge), Shortcuts (`Ctrl+/`), Theme Picker (`Ctrl+Shift+M`), Shell Picker (`[ + | ▾ ]` / palette), inline Tab Rename (`F2`), and running-program Close Confirmation modal implemented |
+| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, plain pane status/progress and two-line horizontal task/activity tabs, BEL (`\x07`) / background attention indicators, acknowledgement, multi-pane status origin formatting (`Pane N - ...`) and attention-origin focus routing (`focusTabAttentionOrigin`), sanitized OSC 0/2 terminal title formatting (`terminal_title.zig`), 73-entry curated Lucide + SimpleIcons vector icon catalog (`app_icon.zig`) with per-session shell brand icons and zero-allocation cached-PID foreground process detection (`vex_pty_foreground_process`), native D3D12 vector icon batches, overlapping `TabIconStack` (with `+N` overflow badge), pane header favicons, and custom Windows DWM titlebar chrome (tabs, `[ + | ▾ ]` new-tab/shell-picker split button, caption buttons, and `app.ico`) implemented; status hover tooltips pending; raw terminal titles must not become trusted UI controls |
+| Links/path completion/search | `*Links*`, `*PathCompletion*` | URL detection/Ctrl+Click and inline path picker implemented; best-fifty ranking uses bounded scratch space and deterministic score/name ties, with a real-shell insertion fixture. Recursive indexing uses a lazy background worker, revisioned cancellation/publication and 16,384-entry/8-MiB name budgets; shell-prompt quoting and arbitrary-stdin literal insertion share the picker. Terminal search remains pending |
 | UI Automation / accessibility / installer / crash log | Windows UI and packaging | Pending |
 
-The reference keeps the last tab and caps each project at 8 tabs. Splitting
+Native keeps the last tab and caps each window at 8 tabs. Splitting
 selects the new pane; closing the active split selects the first remaining
 leaf; closing an active tab selects its left neighbor, or the right one for
 the first tab. Plain Ctrl chords belong to the terminal, except Ctrl+Tab.
 These are behavioral contracts, not opportunities to redesign the app.
+
+## Universal programs and picker checkpoint
+
+Current audit, invariants, Rex references, evidence and remaining limitations are
+recorded in [UNIVERSALITY.md](UNIVERSALITY.md). UI priority is command palette and
+path autocomplete before further status tooltips. Unknown application names no
+longer change title parsing, worker ownership or close protection. The optional
+brand subset is not a supported-program whitelist. Brand paths use cache-miss
+software masks in the native D3D12 UI atlas, not the removed numeric drawing switch.
+The historical checkpoint sections below retain their original evidence/counts;
+they do not describe every current implementation detail.
 
 ## Completion gates
 
@@ -83,8 +103,9 @@ These are behavioral contracts, not opportunities to redesign the app.
    background output, focus, resize, close races, active-output shutdown and
    malformed/oversized input. Screenshots are inspected, not equated to visual
    parity simply because a PNG exists.
-3. Production-profile compatibility and crash-safe persistence are validated
-   using isolated copies, never by overwriting the user's WPF session.
+3. Terminal settings/session persistence is crash-safe and tested using isolated
+   profiles, never by overwriting the user's WPF session. Project hierarchy
+   compatibility is outside native scope.
 4. Matched cold/warm startup, frame-time/input-to-present, process/child/GPU
    memory benchmarks show the improvement. A smoke startup number is not this
    benchmark, and low idle CPU with blink missing is not a parity result.
@@ -140,8 +161,8 @@ These are behavioral contracts, not opportunities to redesign the app.
   unavailable), while the animation test passes on isolated rerun. The suite
   therefore cannot be reported fully passing in this desktop session.
 - OSC 9;4 progress fallback and OSC 133 lifecycle are covered by the later shell
-  checkpoint below. Full tooltip/message presentation, project aggregation and
-  attention-origin navigation remain pending.
+  checkpoint below. Full tooltip/message presentation and attention-origin
+  navigation remained pending at this checkpoint; project aggregation is out of scope.
 
 ## Shell integration checkpoint verification
 
@@ -354,9 +375,10 @@ These are behavioral contracts, not opportunities to redesign the app.
   Its status list is a vertical tabbar variant, **not a separate activity bar**.
   Per user preference this change retains horizontal tabs; vertical tabs are
   deferred and no remote-host/session navigation is introduced.
-- Task/app names and quiet secondary activity text replace the old colored
-  program-status pills. Working uses static ellipsis dots, done a muted check,
-  and blocked/error retain restrained warning colors. Progress remains visible.
+- Tabs show only the task/app name; the secondary activity text was removed.
+  Working uses an animated three-dot icon on inactive tabs only (Rex shows its
+  spinner on unfocused tabs), done a muted check, and blocked/error a restrained
+  glyph in warning colors on any tab. Pane headers show only the status icon.
   Manual tab titles take precedence. The favicon stack's tiles, overlap/stride,
   shell coloring and `+N` logic are unchanged; tabs can grow to 200 DIPs to give
   two-line labels room, using the same geometry for painting and pointer/drag hits.
@@ -557,13 +579,21 @@ These are behavioral contracts, not opportunities to redesign the app.
 ## Source structure checkpoint
 
 - `src/main.zig` is the allocator/error entrypoint and explicit test-module root.
-- `src/app/` separates workspace orchestration from the stable session owner.
+- `src/app/terminal_application.zig` owns the window-thread lifecycle and stable
+  sessions. Keyboard, pointer, overlay, command registry and selftest diagnostics
+  are concrete feature modules borrowing that owner, not independent controllers.
 - `src/workspace/` is pure tab/tree state; `src/terminal/` owns emulator/ABI/feed
   parsing; `src/shell/` owns launch/directory state plus integration scripts.
-- `src/windows/` contains the Windows event/render/process seams. ABI symbol
-  resolution no longer depends on the entire rendering/window adapter.
+- `src/windows/windows_window.cpp` owns the Win32 loop, fonts and frame setup;
+  `windows_chrome.cpp` paints terminal chrome/popups; `terminal_drawing.cpp` submits
+  cells/cursors and rasterizes cache misses; `windows_system.cpp` provides bounded
+  OS lookups, clipboard writes and DLL symbol loading. Paint modules borrow frame
+  values, never own the window or fonts. ABI symbol resolution does not depend on
+  the rendering/window adapter.
 - Live tests are in `tests/` with one shared desktop harness. Unit tests stay
-  beside the implementation, and the full 52-test suite is retained after moves.
+  beside the implementation. The current suite retains the 128 tests after extraction and adds a
+  tab-close regression (129 total), passing in Debug and ReleaseSafe. Earlier
+  checkpoints record historical counts, not additional current suites.
 - Built-in shell IDs are presets, not an execution whitelist. Custom launch
   accepts any available absolute ConPTY-compatible executable and raw arguments;
   no universal cross-platform backend was claimed at that structural checkpoint.

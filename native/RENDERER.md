@@ -8,12 +8,12 @@ Windows 11. Terminal cells, window chrome, vector icons and every overlay use
 D3D11On12 translation context or GPU Direct2D drawing target.
 
 DirectWrite still supplies font metrics/shaping. Software WIC/Direct2D targets
-rasterize terminal graphemes and UI text masks on cache misses only; these are
-CPU font-rasterization resources, not an alternative scene/presentation backend.
+rasterize terminal graphemes, UI text and generated brand paths on cache misses
+only; these are CPU mask resources, not an alternative scene/presentation backend.
 
 ```text
-Zig workspace / parsed terminal snapshots
-  -> Win32 drawing adapter
+Zig terminal application / parsed terminal snapshots
+  -> window chrome + terminal drawing adapters
        UI: analytic shapes/vector icons + cached R8 text masks
        terminal: cached R8 grapheme masks + solid/decorative quads
        both: instanced native D3D12 batches
@@ -30,6 +30,13 @@ The native GPU drawing migration is complete, including the formerly translated
 UI and screenshot path. This does not mean full WPF/Rex visual or functional
 parity, a C++-to-Zig port, completed color-emoji support, or improved performance
 on every machine/workload.
+
+The window/font lifetime owner is `windows_window.cpp`. `windows_chrome.cpp`
+paints tabs, pane headers and popups; `terminal_drawing.cpp` owns pane clipping,
+cell/cursor submission and procedural/software glyph callbacks. Their frame
+contexts borrow the current renderer/fonts/metrics; no window/session owner or
+per-frame heap object is introduced. Renderer cache invalidation remains with
+font/DPI changes in the window owner.
 
 ## Shared glyph atlas and batching
 
@@ -92,9 +99,11 @@ python tools/compile_terminal_shaders.py
 `src/windows/ui_renderer.{h,cpp}` owns UI paint values, a bounded intersecting
 clip stack and text-mask keys. It reuses the native batch/atlas implementation
 with its own cache, so terminal atlas churn cannot evict stable chrome labels.
-Rounded fills/strokes, flat/round-capped lines and ellipses use pixel-shader
-coverage; vector icons are native primitives, not GPU Direct2D bitmap tiles.
-Masks are independent of UI colors, opacity and theme.
+Rounded fills/strokes, flat/round-capped lines, ellipses and generic shell/folder
+symbols use pixel-shader coverage. Brand artwork uses generated bounded geometry
+and cache-miss-only software masks in this same UI atlas, rather than a numeric
+per-brand drawing switch. There are still no GPU Direct2D bitmap tiles. Masks are
+independent of UI colors, opacity and theme.
 
 Text keys include the complete UTF-16 string, immutable font-format identity,
 layout bounds, tile origin and the batcher's DPI/quarter-pixel phase information.

@@ -19,7 +19,7 @@ typedef struct { uint8_t kind, glyph, badge_len, reserved; uint32_t color_rgb; u
 typedef struct {
     uint32_t window_bg, titlebar_bg, border, pane_bg, pane_header_bg;
     uint32_t active_tab_bg, active_tab_border, inactive_tab_hover_bg;
-    uint32_t text_primary, text_muted, accent, git_branch;
+    uint32_t text_primary, text_muted, accent;
     bool is_dark;
 } VexChromePalette;
 typedef struct {
@@ -115,7 +115,6 @@ int vex_window_tab_strip(uint32_t count, float tab_width);
 int vex_draw_tab_insertion_marker(float x);
 void vex_window_error(const char* message);
 int vex_window_shell_name(const uint8_t* bytes, size_t length);
-int vex_window_project_info(const uint8_t* name, size_t name_length, const uint8_t* branch, size_t branch_length);
 /* Tokens are nonzero, never reused, and cannot be interpreted as heap pointers. */
 int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPtyLaunch launch, VexPty** output);
 int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length);
@@ -137,10 +136,10 @@ void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active);
 void vex_draw_split_preview(VexPaneRect bounds);
 void vex_draw_theme_picker(bool dark_mode, const VexThemeCard* cards, size_t card_count);
-void vex_draw_command_palette(const uint8_t* query, size_t query_length, const VexCommandItem* items, size_t item_count);
+void vex_draw_command_palette(VexPaneRect bounds, const uint8_t* query, size_t query_length, const VexCommandItem* items, size_t item_count, size_t first, size_t total);
 void vex_draw_shell_picker(uint8_t mode, const VexShellPickerItem* items, size_t item_count);
 void vex_draw_tab_peek(const VexTabPeekCard* cards, size_t card_count);
-void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, bool scan_error);
+void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, uint32_t flags);
 void vex_draw_close_confirm(VexCloseConfirmModal modal);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);
 void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color);

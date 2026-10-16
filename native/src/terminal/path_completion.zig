@@ -3,6 +3,7 @@ const wsl_paths = @import("../shell/wsl_paths.zig");
 const directory = @import("../shell/directory.zig");
 
 pub const ShellQuoteKind = enum {
+    literal,
     pwsh,
     cmd,
     nu,
@@ -16,7 +17,8 @@ pub const ShellQuoteKind = enum {
         if (std.ascii.eqlIgnoreCase(stem, "nu")) return .nu;
         if (std.ascii.eqlIgnoreCase(stem, "bash") or std.ascii.eqlIgnoreCase(stem, "git-bash")) return .gitbash;
         if (std.ascii.eqlIgnoreCase(stem, "wsl")) return .wsl;
-        return .cmd;
+        if (std.ascii.eqlIgnoreCase(stem, "cmd")) return .cmd;
+        return .literal;
     }
 };
 
@@ -32,6 +34,7 @@ pub const Match = struct {
 
 pub const max_entries: usize = 16_384;
 pub const max_matches: usize = 50;
+pub const max_index_bytes: usize = 8 * 1024 * 1024;
 
 pub const PathCompletion = struct {
     allocator: std.mem.Allocator,
@@ -45,6 +48,10 @@ pub const PathCompletion = struct {
     first_visible: usize = 0,
     scan_error: bool = false,
     is_truncated: bool = false,
+    index: union(enum) { synchronous, deferred: struct { revision: u64 = 0, loading: bool = false } } = .synchronous,
+    recursive: bool = false,
+    indexed_name_bytes: usize = 0,
+    scan_revision: ?struct { latest: *const std.atomic.Value(u64), expected: u64 } = null,
 
     pub fn init(allocator: std.mem.Allocator) PathCompletion {
         return .{ .allocator = allocator };
@@ -63,6 +70,7 @@ pub const PathCompletion = struct {
             self.allocator.free(entry.name);
         }
         self.entries.clearRetainingCapacity();
+        self.indexed_name_bytes = 0;
     }
 
     pub fn query(self: *const PathCompletion) []const u8 {
@@ -79,9 +87,15 @@ pub const PathCompletion = struct {
         var next = PathCompletion.init(self.allocator);
         errdefer next.deinit();
         next.directory = try self.allocator.dupe(u8, effective);
+        next.recursive = self.recursive;
+        next.scan_revision = self.scan_revision;
+        next.index = switch (self.index) {
+            .synchronous => .synchronous,
+            .deferred => |state| .{ .deferred = .{ .revision = try std.math.add(u64, state.revision, 1), .loading = true } },
+        };
         @memcpy(next.query_buf[0..prefix.len], prefix);
         next.query_len = prefix.len;
-        try next.scanCurrentDirectory();
+        if (next.index == .synchronous) try next.scanCurrentDirectory();
         try next.refreshMatches();
 
         self.deinit();
@@ -203,8 +217,10 @@ pub const PathCompletion = struct {
         const norm = normalized_buf[0..prefix.len];
         const candidate = try std.fs.path.resolve(self.allocator, &.{ self.directory, norm });
         errdefer self.allocator.free(candidate);
-        var dir = try std.fs.openDirAbsolute(candidate, .{});
-        dir.close();
+        if (self.index == .synchronous) {
+            var dir = try std.fs.openDirAbsolute(candidate, .{});
+            dir.close();
+        }
         return candidate;
     }
 
@@ -213,6 +229,7 @@ pub const PathCompletion = struct {
         self.scan_error = false;
         self.is_truncated = false;
         if (self.directory.len == 0) return;
+        try self.checkScanRevision();
 
         var dir = std.fs.openDirAbsolute(self.directory, .{ .iterate = true }) catch {
             self.scan_error = true;
@@ -220,8 +237,28 @@ pub const PathCompletion = struct {
         };
         defer dir.close();
 
+        if (self.recursive) {
+            var walker = try dir.walk(self.allocator);
+            defer walker.deinit();
+            while (true) {
+                try self.checkScanRevision();
+                const entry = walker.next() catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    self.scan_error = true;
+                    self.clearEntries();
+                    break;
+                } orelse break;
+                if (!try self.appendIndexedEntry(entry.path, entry.kind == .directory)) break;
+                if (self.entries.items.len >= max_entries) {
+                    self.is_truncated = true;
+                    break;
+                }
+            }
+            return;
+        }
         var it = dir.iterate();
         while (true) {
+            try self.checkScanRevision();
             const next_entry = it.next() catch {
                 self.scan_error = true;
                 self.clearEntries();
@@ -229,18 +266,49 @@ pub const PathCompletion = struct {
             };
             const item = next_entry orelse break;
             if (item.name.len == 0) continue;
-            const is_dir = item.kind == .directory;
-            const owned_name = try self.allocator.dupe(u8, item.name);
-            errdefer self.allocator.free(owned_name);
-            try self.entries.append(self.allocator, .{
-                .name = owned_name,
-                .is_directory = is_dir,
-            });
+            if (!try self.appendIndexedEntry(item.name, item.kind == .directory)) break;
             if (self.entries.items.len >= max_entries) {
                 self.is_truncated = true;
                 break;
             }
         }
+    }
+
+    fn checkScanRevision(self: *const PathCompletion) !void {
+        if (self.scan_revision) |revision| {
+            if (revision.latest.load(.acquire) != revision.expected) return error.StalePathIndex;
+        }
+    }
+    fn appendIndexedEntry(self: *PathCompletion, name: []const u8, is_directory: bool) !bool {
+        if (!std.unicode.utf8ValidateSlice(name)) {
+            self.scan_error = true;
+            self.clearEntries();
+            return false;
+        }
+        if (name.len > max_index_bytes - self.indexed_name_bytes) {
+            self.is_truncated = true;
+            return false;
+        }
+        const owned = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned);
+        try self.entries.append(self.allocator, .{ .name = owned, .is_directory = is_directory });
+        self.indexed_name_bytes += name.len;
+        return true;
+    }
+
+    /// Adopts a completed index transactionally while retaining text typed during background scanning.
+    pub fn applyDeferredIndex(self: *PathCompletion, result: *PathCompletion) !void {
+        const state = switch (self.index) {
+            .synchronous => return error.NotDeferredPathIndex,
+            .deferred => |value| value,
+        };
+        @memcpy(result.query_buf[0..self.query_len], self.query());
+        result.query_len = self.query_len;
+        try result.refreshMatches();
+        result.index = .{ .deferred = .{ .revision = state.revision, .loading = false } };
+        self.deinit();
+        self.* = result.*;
+        result.* = PathCompletion.init(self.allocator);
     }
 
     /// Retains the best fifty path matches using bounded scratch space; warm queries reuse output storage.
@@ -436,10 +504,9 @@ pub fn formatPathAlloc(
 
     if (shell_kind == .wsl) {
         if (wsl_paths.networkDistribution(full_path) catch null) |distro| {
-            if (wsl_paths.linuxDirectoryFromNetworkAlloc(allocator, full_path, distro) catch null) |linux_path| {
-                allocator.free(converted);
-                converted = linux_path;
-            }
+            const linux_path = try wsl_paths.linuxDirectoryFromNetworkAlloc(allocator, full_path, distro);
+            allocator.free(converted);
+            converted = linux_path;
         } else if (full_path.len >= 3 and std.ascii.isAlphabetic(full_path[0]) and full_path[1] == ':' and (full_path[2] == '\\' or full_path[2] == '/')) {
             var list: std.ArrayList(u8) = .empty;
             errdefer list.deinit(allocator);
@@ -448,8 +515,9 @@ pub fn formatPathAlloc(
             for (full_path[2..]) |ch| {
                 try list.append(allocator, if (ch == '\\') '/' else ch);
             }
+            const replacement = try list.toOwnedSlice(allocator);
             allocator.free(converted);
-            converted = try list.toOwnedSlice(allocator);
+            converted = replacement;
         }
     } else if (shell_kind == .gitbash) {
         var list: std.ArrayList(u8) = .empty;
@@ -465,8 +533,9 @@ pub fn formatPathAlloc(
                 try list.append(allocator, if (ch == '\\') '/' else ch);
             }
         }
+        const replacement = try list.toOwnedSlice(allocator);
         allocator.free(converted);
-        converted = try list.toOwnedSlice(allocator);
+        converted = replacement;
     }
 
     if (raw or isSafeUnquotedPath(converted)) {
@@ -477,6 +546,7 @@ pub fn formatPathAlloc(
     errdefer out.deinit(allocator);
 
     switch (shell_kind) {
+        .literal => try out.appendSlice(allocator, converted),
         .pwsh => {
             try out.append(allocator, '\'');
             for (converted) |ch| {
@@ -518,6 +588,39 @@ pub fn formatPathAlloc(
     return try out.toOwnedSlice(allocator);
 }
 
+test "path formatting allocation failures release converted buffers and unknown shells remain literal" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkPathFormattingAllocations, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkWslNetworkPathFormattingAllocations, .{});
+    const kind = ShellQuoteKind.fromProgram("C:\\tools\\future-shell.exe");
+    try std.testing.expectEqual(ShellQuoteKind.literal, kind);
+    const literal = try formatPathAlloc(std.testing.allocator, "C:\\A Folder\\future.txt", kind, false);
+    defer std.testing.allocator.free(literal);
+    try std.testing.expectEqualStrings("C:\\A Folder\\future.txt", literal);
+}
+fn checkWslNetworkPathFormattingAllocations(allocator: std.mem.Allocator) !void {
+    const formatted = try formatPathAlloc(allocator, "\\\\wsl.localhost\\Ubuntu\\home\\future user", .wsl, false);
+    allocator.free(formatted);
+}
+fn checkPathFormattingAllocations(allocator: std.mem.Allocator) !void {
+    for ([_]ShellQuoteKind{ .gitbash, .wsl, .pwsh, .literal }) |kind| {
+        const formatted = try formatPathAlloc(allocator, "C:\\A Folder\\future.txt", kind, false);
+        allocator.free(formatted);
+    }
+}
+test "index budget and stale revisions stop scanning without replacing current state" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.indexed_name_bytes = max_index_bytes - 2;
+    try std.testing.expect(!try model.appendIndexedEntry("long-name", false));
+    try std.testing.expect(model.is_truncated);
+    try std.testing.expectEqual(@as(usize, 0), model.entries.items.len);
+    model.clearEntries();
+    var latest = std.atomic.Value(u64).init(2);
+    model.scan_revision = .{ .latest = &latest, .expected = 1 };
+    try std.testing.expectError(error.StalePathIndex, model.openDirectory("C:\\unopened-future-directory", "query"));
+    try std.testing.expectEqualStrings("", model.query());
+}
+
 fn isSafeUnquotedPath(path: []const u8) bool {
     if (path.len == 0) return false;
     for (path) |c| {
@@ -528,23 +631,6 @@ fn isSafeUnquotedPath(path: []const u8) bool {
         }
     }
     return true;
-}
-
-pub fn readPromptDirectory(line: []const u8) ?[]const u8 {
-    var trimmed = std.mem.trimLeft(u8, line, " \t");
-    if (std.mem.startsWith(u8, trimmed, "PS ")) {
-        trimmed = trimmed[3..];
-    }
-    const gt = std.mem.indexOfScalar(u8, trimmed, '>') orelse return null;
-    const candidate = trimmed[0..gt];
-    if (candidate.len < 3) return null;
-    if (!std.ascii.isAlphabetic(candidate[0]) or candidate[1] != ':' or (candidate[2] != '\\' and candidate[2] != '/')) {
-        return null;
-    }
-    for (candidate) |c| {
-        if (c < 0x20 or c == 0x7f) return null;
-    }
-    return candidate;
 }
 
 test "path directory replacement rolls back every allocation failure" {
@@ -801,16 +887,4 @@ test "formatPathAlloc quotes per shell dialect and rejects control characters" {
         error.ControlCharacterInPath,
         formatPathAlloc(allocator, "C:\\bad\npath", .cmd, false),
     );
-}
-
-test "readPromptDirectory extracts cmd and PowerShell prompt directories" {
-    try std.testing.expectEqualStrings(
-        "C:\\Users\\Ziut\\code\\vex",
-        readPromptDirectory("PS C:\\Users\\Ziut\\code\\vex> git status").?,
-    );
-    try std.testing.expectEqualStrings(
-        "D:\\work\\project",
-        readPromptDirectory("D:\\work\\project>dir").?,
-    );
-    try std.testing.expectEqual(@as(?[]const u8, null), readPromptDirectory("user@host:~/code$ "));
 }

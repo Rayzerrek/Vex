@@ -36,7 +36,6 @@ pub const ChromePalette = struct {
     text_primary: u32,
     text_muted: u32,
     accent: u32,
-    git_branch: u32,
     is_dark: bool,
 
     pub fn fromTheme(theme: TerminalTheme) ChromePalette {
@@ -57,7 +56,6 @@ pub const ChromePalette = struct {
                 .text_primary = fg,
                 .text_muted = mix(fg, bg, 0.44),
                 .accent = accent,
-                .git_branch = theme.ansi[6],
                 .is_dark = true,
             };
         } else {
@@ -74,7 +72,6 @@ pub const ChromePalette = struct {
                 .text_primary = darken(fg, 0.08),
                 .text_muted = mix(fg, bg, 0.40),
                 .accent = accent,
-                .git_branch = theme.ansi[6],
                 .is_dark = false,
             };
         }
