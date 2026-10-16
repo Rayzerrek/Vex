@@ -9,6 +9,7 @@ const app_icon = @import("../terminal/app_icon.zig");
 const close_confirmation = @import("../workspace/close_confirmation.zig");
 
 const terminal_title = @import("../terminal/terminal_title.zig");
+const status_presentation = @import("../terminal/status_presentation.zig");
 
 const SessionState = union(enum) { running, exited: u32 };
 /// Stable-address owner of one emulator, ConPTY process and directory; borrows the application API/hostname.
@@ -74,9 +75,9 @@ pub const TerminalSession = struct {
     /// User input acknowledges completed results; emulator replies deliberately bypass this path.
     pub fn writeUserInput(self: *TerminalSession, bytes: []const u8) !void {
         self.last_icon_probe_ms = 0;
-        const previous = platform.statusBadgeKey(self.terminal.program_status.programStatus());
+        const previous = status_presentation.statusPresentationKey(self.terminal.program_status.programStatus());
         self.terminal.program_status.acknowledgeProgramStatus();
-        if (previous != platform.statusBadgeKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
+        if (previous != status_presentation.statusPresentationKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
         try self.pty.write(bytes);
     }
     /// Normalizes clipboard newlines and applies bracketed paste when the active shell/TUI requested DEC 2004.
@@ -234,4 +235,3 @@ fn resolveForegroundProcessTitle(proc_name: ?[]const u8, proc_cmd: ?[]const u8) 
     }
     return stem;
 }
-

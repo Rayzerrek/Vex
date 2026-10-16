@@ -64,7 +64,7 @@ vendored sources and DLL filenames; do not add aliases just to hide C type names
 | Saved layouts | `SavedTerminalLayout.cs`, `MainWindow.SavedLayouts.cs` | Pending; opening explicitly executes commands once; restore must never replay commands |
 | Themes/appearance/font editor | `ChromePalette.cs`, `Model/TerminalTheme.cs`, settings overlay | Vex Dark/default fonts and runtime 12-theme switcher first; persisted theme/font settings pending |
 | Palette, tab peek, overlays/popups | `CommandPalette*`, `TabPeek*`, `MainWindow.Overlays.cs` | Command Palette (`Ctrl+Shift+P`), Tab Peek (`Ctrl+Shift+O` with multi-pane status origin details and `• Pane N` badge), Shortcuts (`Ctrl+/`), Theme Picker (`Ctrl+Shift+M`), Shell Picker (`[ + | ▾ ]` / palette), inline Tab Rename (`F2`), and running-program Close Confirmation modal implemented |
-| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, pane/tab priority status pills, progress, BEL (`\x07`) / background attention indicators, acknowledgement, multi-pane status origin formatting (`Pane N - ...`) and attention-origin focus routing (`focusTabAttentionOrigin`), sanitized OSC 0/2 terminal title formatting (`terminal_title.zig`), 73-entry curated Lucide + SimpleIcons vector icon catalog (`app_icon.zig`) with per-session shell brand icons and zero-allocation cached-PID foreground process detection (`vex_pty_foreground_process`), native D3D12 vector icon batches, overlapping `TabIconStack` (with `+N` overflow badge), pane header favicons, and custom Windows DWM titlebar chrome (project pill with git branch, `[ + | ▾ ]` new-tab/shell-picker split button, caption buttons, and `app.ico`) implemented; status hover tooltips and multi-project switcher menu pending; raw terminal titles must not become trusted UI controls |
+| Status, attention, icons, titles | `ProgramStatusTracker.cs`, `ProgramStatusPresentation.cs`, `AppIcon*` | OSC 7501 records/capability replies, plain pane status/progress and two-line horizontal task/activity tabs, BEL (`\x07`) / background attention indicators, acknowledgement, multi-pane status origin formatting (`Pane N - ...`) and attention-origin focus routing (`focusTabAttentionOrigin`), sanitized OSC 0/2 terminal title formatting (`terminal_title.zig`), 73-entry curated Lucide + SimpleIcons vector icon catalog (`app_icon.zig`) with per-session shell brand icons and zero-allocation cached-PID foreground process detection (`vex_pty_foreground_process`), native D3D12 vector icon batches, overlapping `TabIconStack` (with `+N` overflow badge), pane header favicons, and custom Windows DWM titlebar chrome (project pill with git branch, `[ + | ▾ ]` new-tab/shell-picker split button, caption buttons, and `app.ico`) implemented; status hover tooltips and multi-project switcher menu pending; raw terminal titles must not become trusted UI controls |
 | Links/path completion/search | `*Links*`, `*PathCompletion*` | URL detection/Ctrl+Click and inline path picker implemented; best-fifty ranking uses bounded scratch space and deterministic score/name ties, with a real-shell insertion fixture. Scanning is synchronous and capped at 16,384 entries; background indexing and terminal search remain pending |
 | UI Automation / accessibility / installer / crash log | Windows UI and packaging | Pending |
 
@@ -346,6 +346,39 @@ These are behavioral contracts, not opportunities to redesign the app.
   is claimed. Existing upload trimming requires two seconds without presentation,
   in that historical checkpoint. The upload reclamation checkpoint below removes
   that dependency.
+
+## Rex-inspired horizontal status presentation checkpoint
+
+- The visual reference is [almonk's Activity Mode demo](https://x.com/almonk/status/2109262000165437943),
+  including inspected video frames, plus the user's Desktop/rex screenshots.
+  Its status list is a vertical tabbar variant, **not a separate activity bar**.
+  Per user preference this change retains horizontal tabs; vertical tabs are
+  deferred and no remote-host/session navigation is introduced.
+- Task/app names and quiet secondary activity text replace the old colored
+  program-status pills. Working uses static ellipsis dots, done a muted check,
+  and blocked/error retain restrained warning colors. Progress remains visible.
+  Manual tab titles take precedence. The favicon stack's tiles, overlap/stride,
+  shell coloring and `+N` logic are unchanged; tabs can grow to 200 DIPs to give
+  two-line labels room, using the same geometry for painting and pointer/drag hits.
+- `terminal/status_presentation.zig` owns view policy, UTF-8-safe 256-byte prefixes
+  and value-based repaint keys. Report absence never fabricates idle or elapsed
+  time. Message-only updates to hidden tabs now repaint their visible subtitles;
+  snapshots for those hidden terminal grids are still not materialized.
+- The new live fixture first fails against the saved preceding executable on
+  hidden-message repaint, then passes with the new UI. It exercises real ConPTY
+  working/idle/blocked/done/error reports, stable process identity, four distinct
+  favicons with overflow, incoming metadata after manual rename, and dark/light/
+  compact GPU captures. Captures were inspected. It replays protocol reports
+  from PowerShell, not a claim of end-to-end testing every installed AI agent.
+- All 121 Zig tests pass in Debug/ReleaseSafe. Native desktop regression fixtures
+  pass on their latest runs. The status and renderer fixtures also pass with
+  D3D12 validation. One full workspace pass saw one unexpected hidden-output
+  paint; the isolated rerun passed (this sample has also failed at earlier
+  checkpoints). One debug status fixture exceeded the five-second shutdown
+  deadline; its isolated rerun passed without a proven cause. Physical keyboard,
+  multi-monitor DPI, accessibility and full Rex/macOS pixel parity remain unverified.
+- No separate sidebar, Activity eye button, new keyboard capture mode, remote
+  features or production-profile write is part of this change. WPF is untouched.
 
 ## Complete native D3D12 GPU drawing checkpoint
 

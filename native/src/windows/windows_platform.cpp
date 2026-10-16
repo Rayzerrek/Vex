@@ -29,6 +29,7 @@ static IDWriteTextFormat* chromeBoldFont;
 static IDWriteTextFormat* badgeFont;
 static constexpr bool roundCaps = true;
 static uint64_t activeTabIconKey, focusedPaneIconKey;
+static size_t activeTabIconCount;
 static float cellWidth, cellHeight, clientWidth, clientHeight, gridLeft, gridTop;
 static float terminalFontSize = 14.0f;
 static float dpiScale = 1.0f;
@@ -80,7 +81,7 @@ static void label(const wchar_t* text, float x, float y, float width, uint32_t c
 }
 static float plusLeft() { return 140 + tabStripCount * (tabWidthDip + 4); }
 extern "C" int vex_window_tab_strip(uint32_t count, float tab_width) {
-    if (!count || count > 8 || !isfinite(tab_width) || tab_width < 24 || tab_width > 160) return ERROR_INVALID_PARAMETER;
+    if (!count || count > 8 || !isfinite(tab_width) || tab_width < 24 || tab_width > 200) return ERROR_INVALID_PARAMETER;
     tabStripCount = count; tabWidthDip = tab_width;
     return 0;
 }
@@ -335,7 +336,7 @@ static void renderUiVerificationScene() {
 }
 
 static void renderScene() {
-    activeTabIconKey = 0; focusedPaneIconKey = 0;
+    activeTabIconKey = 0; focusedPaneIconKey = 0; activeTabIconCount = 0;
     target->Clear(rgb(chromePalette.pane_bg));
     rectangle(0.0f, 0.0f, clientWidth, 44.0f, chromePalette.titlebar_bg);
     rectangle(0.0f, 43.0f, clientWidth, 1.0f, chromePalette.border);
@@ -930,6 +931,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 42: uiVerificationMode = 2; vex_window_invalidate(); return 1;
             case 30: return (LRESULT)activeTabIconKey;
             case 31: return (LRESULT)focusedPaneIconKey;
+            case 32: return (LRESULT)activeTabIconCount;
             case 20: case 21: {
                 UINT64 bytes = 0;
                 return SUCCEEDED(renderer.videoMemoryUsage(wparam == 20, bytes)) ? (LRESULT)bytes : -1;
@@ -1577,41 +1579,33 @@ static uint64_t drawAppIconTile(VexAppIcon icon, float x, float y) {
     return computeIconCacheKey(icon, (uint32_t)glyphSize);
 }
 
+static void labelUtf8WithFont(IDWriteTextFormat* format, const uint8_t* bytes, size_t length, float x, float y, float width, uint32_t color);
+static uint32_t programStatusColor(VexProgramStatus status) {
+    if (status.state == 4) return chromePalette.is_dark ? 0xe8c98d : 0x8b6019;
+    if (status.state == 5) return chromePalette.is_dark ? 0xe99ba4 : 0xaa3040;
+    return chromePalette.text_muted;
+}
 static void drawProgramStatus(VexProgramStatus status, float x, float y, float width, bool iconOnly) {
-    if (status.state < 2 || status.state > 5) return;
-    const wchar_t* icon = L"\x25CC";
-    const wchar_t* text = L"Working";
-    const bool dark = chromePalette.is_dark;
-    uint32_t color = chromePalette.text_muted;
-    uint32_t pillFill = chromePalette.inactive_tab_hover_bg;
-    uint32_t pillBorder = chromePalette.border;
-    switch (status.state) {
-        case 3:
-            icon = L"\x2713"; text = L"Done"; color = dark ? 0x87d9b7 : 0x1c7c54;
-            pillFill = dark ? 0x162925 : 0xdff5ec; pillBorder = dark ? 0x264a40 : 0x99d9bd;
-            break;
-        case 4:
-            icon = status.kind == 1 ? L"\x25C7" : status.kind == 3 ? L"\x21AA" : L"?";
-            text = status.kind == 1 ? L"Needs permission" : status.kind == 3 ? L"Needs sign-in" : L"Needs input";
-            color = dark ? 0xf2cd83 : 0x9a6700;
-            pillFill = dark ? 0x2b261c : 0xfdf3d7; pillBorder = dark ? 0x4d4128 : 0xe3c376;
-            break;
-        case 5:
-            icon = L"!"; text = L"Error"; color = dark ? 0xeb8b97 : 0xb42336;
-            pillFill = dark ? 0x2b1c21 : 0xfce6e9; pillBorder = dark ? 0x4d2b34 : 0xe8a5b0;
-            break;
+    if (status.state < 1 || status.state > 5) return;
+    const uint32_t color = programStatusColor(status);
+    if (iconOnly) {
+        brush->SetColor(rgb(color));
+        if (status.state == 2) {
+            for (unsigned i = 0; i < 3; i++) target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + 2 + i * 4, y + 10), 1, 1), brush);
+        } else if (status.state == 1) {
+            target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x + 6, y + 10), 2.5f, 2.5f), brush, 1);
+        } else {
+            labelWithFont(badgeFont, status.state == 3 ? L"\x2713" : status.state == 4 ? L"\x25C7" : L"!", x, y + 2, width, color);
+        }
+        return;
     }
-    if (iconOnly) { label(icon, x, y, width, color); return; }
-    wchar_t caption[64];
-    if (status.progress >= 0 && status.progress <= 100 && (status.state == 2 || status.state == 4))
-        swprintf(caption, 64, L"%ls %ls %d%%", icon, text, status.progress);
-    else swprintf(caption, 64, L"%ls %ls", icon, text);
-    const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(x, y + 1.0f, x + width, y + 19.0f), 4.0f, 4.0f);
-    brush->SetColor(rgb(pillFill));
-    target->FillRoundedRectangle(pill, brush);
-    brush->SetColor(rgb(pillBorder));
-    target->DrawRoundedRectangle(pill, brush, 1.0f);
-    labelWithFont(badgeFont, caption, x + 6.0f, y + 2.5f, fmaxf(0.0f, width - 10.0f), color);
+    const bool progress = status.progress >= 0 && status.progress <= 100 && (status.state == 2 || status.state == 4);
+    const float reserve = progress ? 32.0f : 0;
+    labelUtf8WithFont(badgeFont, status.detail, status.detail_length, x + 4, y + 2, fmaxf(0, width - reserve - 8), color);
+    if (progress) {
+        wchar_t caption[8]; swprintf(caption, 8, L"%d%%", status.progress);
+        labelWithFont(badgeFont, caption, x + width - 30, y + 2, 30, color);
+    }
 }
 static wchar_t shellName[64] = L"Command Prompt";
 static void labelUtf8WithFont(IDWriteTextFormat* format, const uint8_t* bytes, size_t length, float x, float y, float width, uint32_t color) {
@@ -1663,15 +1657,16 @@ extern "C" int vex_window_project_info(const uint8_t* name, size_t name_length, 
 extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool editing, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention) {
     if (count != tabStripCount || index >= count) return;
     float width = tabWidthDip, x = 140 + index * (width + 4);
+    if (active) activeTabIconCount = icon_count;
     const bool isHovered = (int)index == hoveredTabIndex;
     if (active) {
         brush->SetColor(rgb(chromePalette.active_tab_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 7, x + width, 37), 5, 5), brush);
-        brush->SetColor(rgb(chromePalette.active_tab_border));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, 7.5f, x + width - 0.5f, 36.5f), 4.5f, 4.5f), brush, 1.0f);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5, x + width, 39), 17, 17), brush);
+        brush->SetColor(rgb(chromePalette.border));
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, 5.5f, x + width - 0.5f, 38.5f), 16.5f, 16.5f), brush, 1.0f);
     } else if (isHovered) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 7, x + width, 37), 5, 5), brush);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5, x + width, 39), 17, 17), brush);
     }
     float inset = 8.0f;
     if (width >= 68.0f && icons && icon_count > 0) {
@@ -1727,7 +1722,9 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool e
                 }
             }
         } else {
-            labelUtf8OrDefault(title, title_length, x + inset, 13.0f, textW, active ? chromePalette.text_primary : chromePalette.text_muted);
+            const bool detail = status.state >= 1 && status.state <= 5 && status.detail_length > 0;
+            labelUtf8OrDefault(title, title_length, x + inset, detail ? 6.5f : 13.0f, textW, active ? chromePalette.text_primary : chromePalette.text_muted);
+            if (detail) drawProgramStatus(status, x + inset - 4, 21.0f, textW + 8, false);
         }
     } else if (width < 68.0f) {
         wchar_t number[12]; swprintf(number, 12, L"%u", index + 1);

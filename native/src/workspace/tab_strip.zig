@@ -22,10 +22,10 @@ pub const TabStripLayout = struct {
     /// A parsed tab hit always has a live strip index; body excludes the close region.
     pub const TabHit = struct { index: usize, part: enum { body, close } };
 
-    /// Preserves existing compact chrome geometry; terminal/client width is in DIPs, not physical pixels.
+    /// Allows two-line activity labels when space permits; compact slots still preserve close/drag hit regions.
     pub fn init(width: f32, count: usize) !TabStripLayout {
         if (!std.math.isFinite(width) or width <= 0 or width > 65536 or count == 0 or count > workspace.WorkspaceModel.max_tabs) return error.InvalidTabStripLayout;
-        return .{ .count = count, .tab_width = @min(160, @max(24, (width - left - 120 - 38) / @as(f32, @floatFromInt(count)) - gap)) };
+        return .{ .count = count, .tab_width = @min(200, @max(24, (width - left - 120 - 38) / @as(f32, @floatFromInt(count)) - gap)) };
     }
     /// Tab slots include their trailing gap for insertion, but gap clicks never select or close a tab.
     pub fn slotWidth(self: TabStripLayout) f32 {
@@ -65,20 +65,20 @@ pub const TabStripLayout = struct {
 
 test "tab strip shares bounded geometry with body/close/gap and insertion hit testing" {
     const layout = try TabStripLayout.init(1120, 3);
-    try std.testing.expectEqual(@as(f32, 160), layout.tab_width);
-    try std.testing.expectEqual(@as(f32, 632), layout.plusLeft());
+    try std.testing.expectEqual(@as(f32, 200), layout.tab_width);
+    try std.testing.expectEqual(@as(f32, 752), layout.plusLeft());
     const body = try layout.hitTab(.{ .x = 150, .y = 20 }) orelse return error.TestExpectedTab;
     try std.testing.expectEqual(@as(usize, 0), body.index);
     try std.testing.expect(body.part == .body);
-    const close = try layout.hitTab(.{ .x = 299, .y = 20 }) orelse return error.TestExpectedTab;
+    const close = try layout.hitTab(.{ .x = 339, .y = 20 }) orelse return error.TestExpectedTab;
     try std.testing.expect(close.part == .close);
-    for ([_]TabPointer{ .{ .x = 300, .y = 20 }, .{ .x = 139, .y = 20 }, .{ .x = 632, .y = 20 }, .{ .x = 150, .y = 44 } }) |point| try std.testing.expectEqual(@as(?TabStripLayout.TabHit, null), try layout.hitTab(point));
-    try std.testing.expectEqual(@as(?usize, null), try layout.insertionSlot(0, .{ .x = 304, .y = 20 }));
-    try std.testing.expectEqual(@as(?usize, 1), try layout.insertionSlot(0, .{ .x = 305, .y = 20 }));
+    for ([_]TabPointer{ .{ .x = 340, .y = 20 }, .{ .x = 139, .y = 20 }, .{ .x = 752, .y = 20 }, .{ .x = 150, .y = 44 } }) |point| try std.testing.expectEqual(@as(?TabStripLayout.TabHit, null), try layout.hitTab(point));
+    try std.testing.expectEqual(@as(?usize, null), try layout.insertionSlot(0, .{ .x = 344, .y = 20 }));
+    try std.testing.expectEqual(@as(?usize, 1), try layout.insertionSlot(0, .{ .x = 345, .y = 20 }));
     try std.testing.expectEqual(@as(?usize, 2), try layout.insertionSlot(0, .{ .x = 3000, .y = 52 }));
     try std.testing.expectEqual(@as(?usize, 0), try layout.insertionSlot(2, .{ .x = -300, .y = -8 }));
     try std.testing.expectEqual(@as(?usize, null), try layout.insertionSlot(2, .{ .x = -300, .y = -9 }));
-    try std.testing.expectEqual(@as(f32, 468), try layout.markerX(2));
+    try std.testing.expectEqual(@as(f32, 548), try layout.markerX(2));
     const single = try TabStripLayout.init(640, 1);
     try std.testing.expectEqual(@as(?usize, null), try single.insertionSlot(0, .{ .x = 3000, .y = 20 }));
     const compact = try TabStripLayout.init(640, 8);

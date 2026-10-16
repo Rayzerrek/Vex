@@ -19,6 +19,7 @@ test {
     _ = application;
     _ = @import("terminal/terminal.zig");
     _ = @import("terminal/terminal_title.zig");
+    _ = @import("terminal/status_presentation.zig");
     _ = @import("terminal/app_icon.zig");
     _ = @import("terminal/url_detector.zig");
     _ = @import("terminal/path_completion.zig");
