@@ -48,7 +48,6 @@ static int hoveredCaptionButton;
 static int pressedCaptionButton;
 static bool hoveredNewTab;
 static bool hoveredShellPicker;
-static bool hoveredCommandPalette;
 static int hoveredTabIndex = -1;
 static bool hoveredTabClose;
 static bool trackingMouseLeave;
@@ -228,32 +227,10 @@ static void drawProjectPill() {
     target->DrawLine(D2D1::Point2F(124.5f, 23.5f), D2D1::Point2F(127.5f, 20.5f), brush, 1.2f, roundCaps);
 }
 
-static void drawCommandGlyph(float cx, float cy, float size, uint32_t color) {
-    brush->SetColor(rgb(color));
-    const float r = size * 0.26f;
-    const float d = size * 0.32f;
-    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx - d, cy - d), r, r), brush, 1.25f);
-    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx + d, cy - d), r, r), brush, 1.25f);
-    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx - d, cy + d), r, r), brush, 1.25f);
-    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx + d, cy + d), r, r), brush, 1.25f);
-    target->DrawLine(D2D1::Point2F(cx - d, cy - d + r), D2D1::Point2F(cx - d, cy + d - r), brush, 1.25f);
-    target->DrawLine(D2D1::Point2F(cx + d, cy - d + r), D2D1::Point2F(cx + d, cy + d - r), brush, 1.25f);
-    target->DrawLine(D2D1::Point2F(cx - d + r, cy - d), D2D1::Point2F(cx + d - r, cy - d), brush, 1.25f);
-    target->DrawLine(D2D1::Point2F(cx - d + r, cy + d), D2D1::Point2F(cx + d - r, cy + d), brush, 1.25f);
-}
-
 static void drawNewTabButton() {
     const float by = 8.0f;
-    // Rex Command Palette button [ ⌘ ]
-    const float cx_cmd = plusLeft() + 1.0f;
-    if (hoveredCommandPalette) {
-        brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx_cmd, by, cx_cmd + 22.0f, by + 28.0f), 5.0f, 5.0f), brush);
-    }
-    drawCommandGlyph(cx_cmd + 11.0f, by + 14.0f, 11.0f, hoveredCommandPalette ? chromePalette.accent : chromePalette.text_muted);
-
     // New Tab button [ + ]
-    const float bx = plusLeft() + 24.0f;
+    const float bx = plusLeft() + 1.0f;
     const bool enabled = tabStripCount < 8;
     if (enabled && hoveredNewTab) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
@@ -262,11 +239,11 @@ static void drawNewTabButton() {
     const float cx = bx + 11.0f;
     const float cy = by + 14.0f;
     brush->SetColor(rgb(enabled ? (hoveredNewTab ? chromePalette.accent : chromePalette.text_primary) : chromePalette.text_muted));
-    target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.35f);
-    target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.35f);
+    target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.35f, roundCaps);
+    target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.35f, roundCaps);
 
     // Shell Picker dropdown caret [ v ]
-    const float sx = plusLeft() + 47.0f;
+    const float sx = plusLeft() + 24.0f;
     if (hoveredShellPicker) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sx, by, sx + 15.0f, by + 28.0f), 4.0f, 4.0f), brush);
@@ -601,7 +578,6 @@ static void beginPointerGesture(HWND hwnd, float x, float y) {
 }
 static void updateTopChromeHover(float x, float y) {
     int nextCaption = 0;
-    bool nextCommandPalette = false;
     bool nextNewTab = false;
     bool nextShellPicker = false;
     int nextTab = -1;
@@ -610,10 +586,8 @@ static void updateTopChromeHover(float x, float y) {
         if (x >= clientWidth - 120.0f && x < clientWidth) {
             nextCaption = (x >= clientWidth - 40.0f) ? 3 : (x >= clientWidth - 80.0f) ? 2 : 1;
         } else if (x >= plusLeft() && x < plusLeft() + 24.0f && y >= 7.0f && y <= 37.0f) {
-            nextCommandPalette = true;
-        } else if (x >= plusLeft() + 24.0f && x < plusLeft() + 47.0f && y >= 7.0f && y <= 37.0f) {
             nextNewTab = true;
-        } else if (x >= plusLeft() + 47.0f && x < plusLeft() + 63.0f && y >= 7.0f && y <= 37.0f) {
+        } else if (x >= plusLeft() + 24.0f && x < plusLeft() + 42.0f && y >= 7.0f && y <= 37.0f) {
             nextShellPicker = true;
         } else if (x >= 140.0f && x < plusLeft() && y >= 7.0f && y <= 37.0f) {
             uint32_t idx = (uint32_t)((x - 140.0f) / (tabWidthDip + 4.0f));
@@ -624,11 +598,10 @@ static void updateTopChromeHover(float x, float y) {
             }
         }
     }
-    if (nextCaption != hoveredCaptionButton || nextCommandPalette != hoveredCommandPalette ||
+    if (nextCaption != hoveredCaptionButton ||
         nextNewTab != hoveredNewTab || nextShellPicker != hoveredShellPicker ||
         nextTab != hoveredTabIndex || nextTabClose != hoveredTabClose) {
         hoveredCaptionButton = nextCaption;
-        hoveredCommandPalette = nextCommandPalette;
         hoveredNewTab = nextNewTab;
         hoveredShellPicker = nextShellPicker;
         hoveredTabIndex = nextTab;
@@ -674,7 +647,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = point.x / scale;
-        if (point.y / scale < 44 && x < clientWidth - 120 && (x < 140 || x > plusLeft() + 63)) return HTCAPTION;
+        if (point.y / scale < 44 && x < clientWidth - 120 && (x < 140 || x > plusLeft() + 42)) return HTCAPTION;
         return HTCLIENT;
     }
     case WM_GETMINMAXINFO: {
@@ -730,9 +703,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             bool close = message == WM_MBUTTONDOWN || local > tabWidthDip - 22;
             if (close) callbacks.action(callbacks.context, 16, index);
             else beginPointerGesture(hwnd, x, y);
-        } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 24) callbacks.action(callbacks.context, 9, 0);
-        else if (y < 44 && x >= plusLeft() + 24 && x < plusLeft() + 47) callbacks.action(callbacks.context, 0, 0);
-        else if (y < 44 && x >= plusLeft() + 47 && x < plusLeft() + 63) callbacks.action(callbacks.context, 18, 0);
+        } else if (y < 44 && x >= plusLeft() && x < plusLeft() + 24) callbacks.action(callbacks.context, 0, 0);
+        else if (y < 44 && x >= plusLeft() + 24 && x < plusLeft() + 42) callbacks.action(callbacks.context, 18, 0);
         else if (y >= 44) {
             if (message != WM_MBUTTONDOWN) {
                 beginPointerGesture(hwnd, x, y);
@@ -1702,13 +1674,24 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool e
     if (active) activeTabIconCount = icon_count;
     const bool isHovered = (int)index == hoveredTabIndex;
     if (active) {
+        // Rex-style soft drop shadow under active tab
+        brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? 0.30f : 0.08f));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 6.0f, x + width, 40.5f), 10.0f, 10.0f), brush);
         brush->SetColor(rgb(chromePalette.active_tab_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5, x + width, 39), 17, 17), brush);
-        brush->SetColor(rgb(chromePalette.border));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, 5.5f, x + width - 0.5f, 38.5f), 16.5f, 16.5f), brush, 1.0f);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5.0f, x + width, 39.0f), 10.0f, 10.0f), brush);
+        brush->SetColor(rgb(chromePalette.active_tab_border));
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, 5.5f, x + width - 0.5f, 38.5f), 9.5f, 9.5f), brush, 1.0f);
     } else if (isHovered) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5, x + width, 39), 17, 17), brush);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5.0f, x + width, 39.0f), 10.0f, 10.0f), brush);
+    }
+    // Rex running agent / status accent line along the bottom of the tab card
+    if (status.state >= 2 && status.state <= 5 && width >= 48.0f) {
+        brush->SetColor(rgb(programStatusColor(status)));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 10.0f, 37.0f, x + width - 10.0f, 38.5f), 1.0f, 1.0f), brush);
+    } else if (active && width >= 48.0f) {
+        brush->SetColor(rgba(chromePalette.accent, 0.70f));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 14.0f, 37.2f, x + width - 14.0f, 38.4f), 0.8f, 0.8f), brush);
     }
     float inset = 8.0f;
     if (width >= 68.0f && icons && icon_count > 0) {
@@ -1780,8 +1763,8 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool e
     }
     const float cx = closeX + 8.0f, cy = closeY + 8.0f;
     brush->SetColor(rgb(closeHot ? chromePalette.text_primary : chromePalette.text_muted));
-    target->DrawLine(D2D1::Point2F(cx - 3.0f, cy - 3.0f), D2D1::Point2F(cx + 3.0f, cy + 3.0f), brush, 1.15f);
-    target->DrawLine(D2D1::Point2F(cx + 3.0f, cy - 3.0f), D2D1::Point2F(cx - 3.0f, cy + 3.0f), brush, 1.15f);
+    target->DrawLine(D2D1::Point2F(cx - 3.0f, cy - 3.0f), D2D1::Point2F(cx + 3.0f, cy + 3.0f), brush, 1.2f, roundCaps);
+    target->DrawLine(D2D1::Point2F(cx + 3.0f, cy - 3.0f), D2D1::Point2F(cx - 3.0f, cy + 3.0f), brush, 1.2f, roundCaps);
 }
 static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action) {
     if (bounds.width < 180.0f || bounds.height < 28.0f) return;
