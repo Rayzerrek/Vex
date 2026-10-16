@@ -2009,9 +2009,14 @@ extern "C" void vex_draw_command_palette(const uint8_t* query, size_t query_leng
     target->FillRoundedRectangle(searchBox, brush);
     brush->SetColor(rgb(chromePalette.active_tab_border));
     target->DrawRoundedRectangle(searchBox, brush, 1.1f);
-    label(L">", mx + 22.0f, my + 19.0f, 16.0f, chromePalette.accent);
+    brush->SetColor(rgb(chromePalette.accent));
+    target->DrawLine(D2D1::Point2F(mx + 22.0f, my + 23.0f), D2D1::Point2F(mx + 26.0f, my + 28.0f), brush, 1.4f, roundCaps);
+    target->DrawLine(D2D1::Point2F(mx + 26.0f, my + 28.0f), D2D1::Point2F(mx + 22.0f, my + 33.0f), brush, 1.4f, roundCaps);
     if (query && query_length > 0) {
         labelUtf8WithFont(chromeFont, query, query_length, mx + 36.0f, my + 19.0f, mw - 60.0f, chromePalette.text_primary);
+        const float curX = fminf(mx + 36.0f + (float)query_length * 7.5f, mx + mw - 20.0f);
+        brush->SetColor(rgb(chromePalette.accent));
+        target->DrawLine(D2D1::Point2F(curX, my + 20.0f), D2D1::Point2F(curX, my + 36.0f), brush, 1.5f, roundCaps);
     } else {
         label(L"Type a command or action...", mx + 36.0f, my + 19.0f, mw - 60.0f, chromePalette.text_muted);
     }
@@ -2031,6 +2036,8 @@ extern "C" void vex_draw_command_palette(const uint8_t* query, size_t query_leng
             if (item.selected) {
                 brush->SetColor(rgb(chromePalette.active_tab_border));
                 target->DrawRoundedRectangle(rowRect, brush, 1.0f);
+                brush->SetColor(rgb(chromePalette.accent));
+                target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx + 11.0f, ry + 6.0f, mx + 14.0f, ry + 25.0f), 1.5f, 1.5f), brush);
             }
         }
         labelUtf8WithFont(chromeFont, item.title, item.title_length, mx + 22.0f, ry + 7.0f, mw - 160.0f, item.selected ? chromePalette.text_primary : chromePalette.text_muted);
@@ -2038,11 +2045,11 @@ extern "C" void vex_draw_command_palette(const uint8_t* query, size_t query_leng
             const float sw = (float)item.shortcut_length * 6.8f + 14.0f;
             const float sx = mx + mw - 20.0f - sw;
             const D2D1_ROUNDED_RECT kbd = D2D1::RoundedRect(D2D1::RectF(sx, ry + 5.5f, sx + sw, ry + 25.5f), 4.0f, 4.0f);
-            brush->SetColor(rgb(chromePalette.pane_header_bg));
+            brush->SetColor(rgb(item.selected ? chromePalette.pane_bg : chromePalette.pane_header_bg));
             target->FillRoundedRectangle(kbd, brush);
-            brush->SetColor(rgb(chromePalette.border));
+            brush->SetColor(rgb(item.selected ? chromePalette.accent : chromePalette.border));
             target->DrawRoundedRectangle(kbd, brush, 1.0f);
-            labelUtf8WithFont(badgeFont, item.shortcut, item.shortcut_length, sx + 7.0f, ry + 8.0f, sw - 10.0f, chromePalette.text_muted);
+            labelUtf8WithFont(badgeFont, item.shortcut, item.shortcut_length, sx + 7.0f, ry + 8.0f, sw - 10.0f, item.selected ? chromePalette.accent : chromePalette.text_muted);
         }
     }
 }
