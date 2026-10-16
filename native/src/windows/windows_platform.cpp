@@ -68,12 +68,15 @@ template<class T> static void releaseCom(T*& object) {
 static D2D1_COLOR_F rgb(uint32_t color) {
     return D2D1::ColorF((color >> 16) / 255.0f, ((color >> 8) & 255) / 255.0f, (color & 255) / 255.0f);
 }
+static D2D1_COLOR_F rgba(uint32_t color, float alpha) {
+    return D2D1::ColorF((color >> 16) / 255.0f, ((color >> 8) & 255) / 255.0f, (color & 255) / 255.0f, alpha);
+}
 static void rectangle(float x, float y, float width, float height, uint32_t color) {
     brush->SetColor(rgb(color));
     target->FillRectangle(D2D1::RectF(x, y, x + width, y + height), brush);
 }
-static void labelWithFont(IDWriteTextFormat* font, const wchar_t* text, float x, float y, float width, uint32_t color) {
-    brush->SetColor(rgb(color));
+static void labelWithFont(IDWriteTextFormat* font, const wchar_t* text, float x, float y, float width, uint32_t color, float alpha = 1.0f) {
+    brush->SetColor(alpha < 1.0f ? rgba(color, alpha) : rgb(color));
     target->DrawText(text, (UINT32)wcslen(text), font ? font : chromeFont, D2D1::RectF(x, y, x + width, y + 24), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 static void label(const wchar_t* text, float x, float y, float width, uint32_t color) {
@@ -1588,14 +1591,23 @@ static uint32_t programStatusColor(VexProgramStatus status) {
 static void drawProgramStatus(VexProgramStatus status, float x, float y, float width, bool iconOnly) {
     if (status.state < 1 || status.state > 5) return;
     const uint32_t color = programStatusColor(status);
+    const uint32_t phase = status.phase % 3;
     if (iconOnly) {
-        brush->SetColor(rgb(color));
         if (status.state == 2) {
-            for (unsigned i = 0; i < 3; i++) target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + 2 + i * 4, y + 10), 1, 1), brush);
+            // Three-dot wave: the lit dot advances once per shared icon phase step.
+            for (uint32_t i = 0; i < 3; ++i) {
+                const bool lit = (phase + 3 - i) % 3 == 0;
+                const float radius = lit ? 1.6f : 1.0f;
+                brush->SetColor(rgba(color, lit ? 1.0f : 0.38f));
+                target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + 2.0f + (float)i * 4.0f, y + 10.0f), radius, radius), brush);
+            }
         } else if (status.state == 1) {
+            brush->SetColor(rgb(color));
             target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x + 6, y + 10), 2.5f, 2.5f), brush, 1);
         } else {
-            labelWithFont(badgeFont, status.state == 3 ? L"\x2713" : status.state == 4 ? L"\x25C7" : L"!", x, y + 2, width, color);
+            // Blocked breathes for attention; done and error stay static.
+            const float alpha = status.state == 4 ? (phase == 0 ? 1.0f : (phase == 1 ? 0.62f : 0.84f)) : 1.0f;
+            labelWithFont(badgeFont, status.state == 3 ? L"\x2713" : status.state == 4 ? L"\x25C7" : L"!", x, y + 2, width, color, alpha);
         }
         return;
     }

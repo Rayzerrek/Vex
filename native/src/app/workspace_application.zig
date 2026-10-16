@@ -19,6 +19,7 @@ const terminal_theme = @import("../workspace/terminal_theme.zig");
 const path_completion = @import("../terminal/path_completion.zig");
 const close_confirmation = @import("../workspace/close_confirmation.zig");
 const cursor_blink = @import("../workspace/cursor_blink.zig");
+const status_pulse = @import("../workspace/status_pulse.zig");
 
 const HoveredLink = struct {
     pane_id: panes.PaneId,
@@ -191,6 +192,7 @@ const WorkspaceApplication = struct {
     path_completion: path_completion.PathCompletion,
     cursor_clock: std.time.Timer,
     cursor_blink: cursor_blink.CursorBlink = .{},
+    status_pulse: status_pulse.StatusPulse = .{},
     cursor_blink_enabled: bool = true,
     cursor_window_active: bool = false,
     theme_index: usize = terminal_theme.default_dark_index,
@@ -270,20 +272,47 @@ const WorkspaceApplication = struct {
     fn cursorNowMs(self: *WorkspaceApplication) u64 {
         return self.cursor_clock.read() / std.time.ns_per_ms;
     }
-    fn stopCursorBlink(self: *WorkspaceApplication) !void {
-        self.cursor_blink.synchronize(null, self.cursorNowMs());
-        try platform.scheduleCursorWake(null);
+    fn cursorBlinkEligible(self: *WorkspaceApplication) bool {
+        const session = self.activeSession() orelse return false;
+        return self.cursor_blink_enabled and self.cursor_window_active and self.overlay == .none and
+            self.editing_tab == null and self.cursor_blink.state == .blinking and session.state == .running and
+            self.cursor_blink.state.blinking.key.pane == session.id;
+    }
+    /// Animated status dots repaint every visible tab; hidden terminal grids stay unmaterialized.
+    fn anyAnimatedStatus(self: *WorkspaceApplication) bool {
+        const model = if (self.model) |*model| model else return false;
+        if (!self.cursor_window_active or self.overlay != .none or self.editing_tab != null) return false;
+        for (model.tabs.items) |tab| {
+            const presentation = self.tabProgramStatus(tab.tree.root) catch return false;
+            if (status_pulse.StatusPulse.animates(@intFromEnum(presentation.summary.state))) return true;
+        }
+        for (self.placements.items) |placement| {
+            if (self.findSession(placement.id)) |session| {
+                const summary = session.terminal.program_status.programStatus();
+                if (status_pulse.StatusPulse.animates(@intFromEnum(summary.state))) return true;
+            }
+        }
+        return false;
+    }
+    /// Cursor blink and status pulse share one Win32 wake, armed to the earliest pending step.
+    fn syncAnimationWake(self: *WorkspaceApplication) !void {
+        const now = self.cursorNowMs();
+        self.status_pulse.synchronize(self.anyAnimatedStatus(), now);
+        const blink_delay = self.cursor_blink.nextDelayMs(now);
+        const pulse_delay = self.status_pulse.nextDelayMs(now);
+        const delay: ?u32 = if (blink_delay) |bd| (if (pulse_delay) |pd| @min(bd, pd) else bd) else pulse_delay;
+        try platform.scheduleCursorWake(delay);
     }
     fn resetCursorOnInput(self: *WorkspaceApplication) !void {
-        if (self.cursor_blink.state == .stopped) return;
         const now = self.cursorNowMs();
         if (self.cursor_blink.resetOnInput(now)) platform.invalidateWindow();
-        try platform.scheduleCursorWake(self.cursor_blink.nextDelayMs(now));
+        try self.syncAnimationWake();
     }
     pub fn onCursorActivity(self: *WorkspaceApplication, active: bool) void {
         if (self.health == .failed or self.cursor_window_active == active) return;
         self.cursor_window_active = active;
-        self.stopCursorBlink() catch |err| {
+        self.cursor_blink.synchronize(null, self.cursorNowMs());
+        self.syncAnimationWake() catch |err| {
             self.fail(err);
             return;
         };
@@ -291,21 +320,16 @@ const WorkspaceApplication = struct {
     }
     pub fn onCursorWake(self: *WorkspaceApplication) void {
         if (self.health == .failed) return;
-        const session = self.activeSession();
-        if (!self.cursor_blink_enabled or !self.cursor_window_active or self.overlay != .none or self.editing_tab != null or
-            session == null or self.cursor_blink.state != .blinking)
-        {
-            self.stopCursorBlink() catch |err| self.fail(err);
-            return;
-        }
-        const active = session orelse return;
-        if (active.state != .running or self.cursor_blink.state.blinking.key.pane != active.id) {
-            self.stopCursorBlink() catch |err| self.fail(err);
-            return;
-        }
         const now = self.cursorNowMs();
-        if (self.cursor_blink.advance(now)) platform.invalidateWindow();
-        platform.scheduleCursorWake(self.cursor_blink.nextDelayMs(now)) catch |err| self.fail(err);
+        var repaint = false;
+        if (self.cursorBlinkEligible()) {
+            if (self.cursor_blink.advance(now)) repaint = true;
+        } else {
+            self.cursor_blink.synchronize(null, now);
+        }
+        if (self.status_pulse.advance(now)) repaint = true;
+        if (repaint) platform.invalidateWindow();
+        self.syncAnimationWake() catch |err| self.fail(err);
     }
     fn currentTheme(self: *const WorkspaceApplication) terminal_theme.TerminalTheme {
         return terminal_theme.themes[@min(self.theme_index, terminal_theme.themes.len - 1)];
@@ -646,7 +670,7 @@ const WorkspaceApplication = struct {
             const reported_title = status_presentation.statusTitle(presentation.summary, active_session.displayTitle());
             const default_title = tab.customTitle() orelse reported_title;
             const tab_title = if (self.editing_tab) |*edit| (if (edit.tab_id == tab.id) edit.buf[0..edit.len] else default_title) else default_title;
-            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, is_editing, tab_title, tab_icons[0..icon_count], presentation.summary, presentation.attention);
+            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, is_editing, tab_title, tab_icons[0..icon_count], presentation.summary, self.status_pulse.phaseIndex(), presentation.attention);
         }
         if (self.pointer_drag == .tab) {
             const metrics = self.metrics orelse return;
@@ -673,7 +697,7 @@ const WorkspaceApplication = struct {
             const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
             {
                 const summary = session.terminal.program_status.programStatus();
-                platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary);
+                platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex());
                 defer platform.endPane();
                 try platform.drawTerminalFrame(frame, focused, self.cursor_blink.isShown(), pane_link, active_theme);
             }
@@ -690,7 +714,7 @@ const WorkspaceApplication = struct {
             }
         }
         if (!saw_active_pane) self.cursor_blink.synchronize(null, self.cursorNowMs());
-        try platform.scheduleCursorWake(self.cursor_blink.nextDelayMs(self.cursorNowMs()));
+        try self.syncAnimationWake();
         try self.drawActiveOverlay();
     }
     fn drawActiveOverlay(self: *WorkspaceApplication) !void {
@@ -766,7 +790,7 @@ const WorkspaceApplication = struct {
                         .index = @intCast(idx),
                         .pane_count = @intCast(pane_count),
                         .icon = platform.nativeAppIcon(active_session.icon),
-                        .status = platform.nativeProgramStatus(presentation.summary),
+                        .status = platform.nativeProgramStatus(presentation.summary, self.status_pulse.phaseIndex()),
                         .active = idx == model.selected_tab,
                         .selected = idx == tpk.selected_index,
                         .hovered = if (tpk.hovered_index) |hi| hi == idx else false,
@@ -2366,7 +2390,8 @@ const WorkspaceApplication = struct {
         switch (action) {
             .toggle_cursor_blink => {
                 self.cursor_blink_enabled = !self.cursor_blink_enabled;
-                try self.stopCursorBlink();
+                self.cursor_blink.synchronize(null, self.cursorNowMs());
+                try self.syncAnimationWake();
                 platform.invalidateWindow();
                 return;
             },
@@ -2616,6 +2641,13 @@ const WorkspaceApplication = struct {
             82 => return if (self.activeSession()) |session| session.terminal.frame.cursor.row else 0,
             83 => return if (self.metrics) |metrics| @intFromFloat(@round(metrics.cell_width * 1000)) else 0,
             84 => return if (self.metrics) |metrics| @intFromFloat(@round(metrics.cell_height * 1000)) else 0,
+            90 => return self.status_pulse.phaseIndex(),
+            91 => return @intFromBool(self.status_pulse.state == .pulsing),
+            92 => return if (self.activeSession()) |session| @intFromEnum(session.icon.kind) else 0,
+            93 => return if (self.activeSession()) |session| if (session.icon.badge_len > 0) session.icon.badge_text[0] else 0 else 0,
+            94 => return if (self.activeSession()) |session| session.active_process_title_len else 0,
+            95 => return probeBytes(if (self.activeSession()) |session| session.active_process_title[0..session.active_process_title_len] else "", 0),
+            96 => return probeBytes(if (self.activeSession()) |session| session.active_process_title[0..session.active_process_title_len] else "", 8),
             85 => return if (self.activeSession()) |session| @intFromEnum(session.shell_kind) else 0,
             86 => return (self.tabProgramStatus(model.activeTab().tree.root) catch return 0).origin_pane_number,
             87 => return if ((self.tabProgramStatus(model.activeTab().tree.root) catch return 0).origin_pane_id) |id| @intFromEnum(id) else 0,
@@ -2708,8 +2740,18 @@ const WorkspaceApplication = struct {
     }
 };
 
-fn extractCursorLine(frame: *const terminal.TerminalFrame, buf: []u8) []const u8 {
-    if (!frame.cursor.visible or frame.cursor.row >= frame.rows or frame.columns == 0) return &.{};
+/// Packs up to eight ASCII bytes of a diagnostic probe string without allocating.
+fn probeBytes(text: []const u8, offset: usize) u64 {
+    var word: u64 = 0;
+    if (offset >= text.len) return 0;
+    const slice = text[offset..@min(text.len, offset + 8)];
+    for (slice, 0..) |byte, index| {
+        word |= @as(u64, byte) << @intCast(index * 8);
+    }
+    return word;
+}
+
+fn extractCursorLine(frame: *const terminal.TerminalFrame, buf: []u8) []const u8 {    if (!frame.cursor.visible or frame.cursor.row >= frame.rows or frame.columns == 0) return &.{};
     const row_offset = @as(usize, frame.cursor.row) * @as(usize, frame.columns);
     if (row_offset + frame.columns > frame.cells.items.len) return &.{};
     const cells = frame.cells.items[row_offset .. row_offset + frame.columns];

@@ -11,7 +11,8 @@ typedef struct VexPty VexPty;
 typedef struct { float x, y, width, height; } VexPaneRect;
 /* State: none/idle/working/done/blocked/error. Kind: none/permission/question/auth. */
 /* Detail is borrowed only for the synchronous draw call; no native UI object retains it. */
-typedef struct { uint32_t state, kind; int32_t progress; const uint8_t* detail; size_t detail_length; } VexProgramStatus;
+/* State: none/idle/working/done/blocked/error. Kind: none/permission/question/auth. Phase: 0..2 icon wave step. */
+typedef struct { uint32_t state, kind; int32_t progress; const uint8_t* detail; size_t detail_length; uint32_t phase; } VexProgramStatus;
 /* Kind: 0 = shell (> _), 1 = vector glyph, 2 = letter badge. */
 typedef struct { uint8_t kind, glyph, badge_len, reserved; uint32_t color_rgb; uint8_t badge[4]; } VexAppIcon;
 /* Theme-derived window, tab strip, and pane chrome palette. */
