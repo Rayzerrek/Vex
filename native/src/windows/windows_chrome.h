@@ -10,6 +10,7 @@ struct WindowChromeFrame {
     IDWriteTextFormat* normalFont;
     IDWriteTextFormat* boldFont;
     IDWriteTextFormat* badgeFont;
+    IDWriteTextFormat* paneTitleFont;
     VexChromePalette palette;
     float tabWidth;
     uint32_t tabCount;

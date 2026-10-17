@@ -10,6 +10,15 @@ $oldSelftest = $env:VEX_NATIVE_SELFTEST
 $process = $null
 $fixtureSettingsPath = $null
 $previousDpi = [VexNativeSmoke]::SetThreadDpiAwarenessContext([IntPtr](-4))
+function Assert-ThemeCollection([IntPtr]$Dialog, [int]$ControlId, [int]$FirstTheme) {
+    $list = [VexNativeSmoke]::GetDlgItem($Dialog, $ControlId)
+    $count = [VexNativeSmoke]::SendWindowMessage($list, 0x18B, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64()
+    if ($count -ne 6) { throw "Vex theme picker: expected six appearance-matched cards, got $count." }
+    for ($i = 0; $i -lt $count; $i++) {
+        $value = [VexNativeSmoke]::SendWindowMessage($list, 0x199, [IntPtr]$i, [IntPtr]::Zero).ToInt64()
+        if ($value -ne $FirstTheme + $i) { throw 'Vex theme picker: opposite appearance or remapped theme index leaked into the collection.' }
+    }
+}
 try {
     New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
     $OutputDirectory = (Resolve-Path $OutputDirectory).Path
@@ -31,30 +40,34 @@ try {
     if ([VexNativeSmoke]::SendWindowMessage($title, 0xB0, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64() -eq 0) { throw 'Vex modal: heading text cannot be selected.' }
     Assert-DialogCursor $dialog $title 'Text'
     Assert-DialogCursor $dialog ([VexNativeSmoke]::GetDlgItem($dialog, 103)) 'Hand'
+    Assert-ThemeCollection $dialog 103 0
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'appearance.png')
     Post-DialogKey $window 0x28
     Assert-NativeProbe $window 51 1 'native theme selection previews the real terminal palette'
     Post-DialogKey $window 0x1B
     Assert-NativeProbe $window 53 0 'Cancel closes the appearance dialog'
+    Assert-NativeProbe $window 51 0 'Cancel restores the theme before live preview'
     if (![VexNativeSmoke]::IsWindowEnabled($window)) { throw 'Vex modal: terminal stays disabled after cancellation.' }
     Invoke-NativeAction $window 19
     $dialog = Get-OwnedModal $window
+    if ([VexNativeSmoke]::GetDlgItem($dialog, 1) -ne [IntPtr]::Zero -or [VexNativeSmoke]::GetDlgItem($dialog, 2) -ne [IntPtr]::Zero) { throw 'Vex settings: Save/Cancel footer must not exist.' }
     Assert-DialogCursor $dialog ([VexNativeSmoke]::GetDlgItem($dialog, 132)) 'Hand'
     [VexNativeSmoke]::MoveCursorClient($dialog, 24, 500)
     [VexNativeSmoke]::SendWindowMessage($dialog, 0x20, $dialog, [IntPtr]1) | Out-Null
     if (![VexNativeSmoke]::IsArrowCursor()) { throw 'Vex modal cursor: empty settings background must use the arrow.' }
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-general.png')
     [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]131, [IntPtr]::Zero) | Out-Null
+    Assert-ThemeCollection $dialog 115 0
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-appearance.png')
     [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]132, [IntPtr]::Zero) | Out-Null
     Assert-DialogCursor $dialog ([VexNativeSmoke]::GetDlgItem($dialog, 111)) 'Text'
     Assert-DialogCursor $dialog ([VexNativeSmoke]::GetDlgItem($dialog, 112)) 'Hand'
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-terminal.png')
     [VexNativeSmoke]::SetControlText([VexNativeSmoke]::GetDlgItem($dialog, 111), '99') | Out-Null
-    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]1, [IntPtr]::Zero) | Out-Null
     if (![VexNativeSmoke]::IsWindow($dialog) -or (Test-Path $fixtureSettingsPath)) { throw 'Vex modal: invalid font size was accepted or closed the settings dialog.' }
     if (![VexNativeSmoke]::SetControlText([VexNativeSmoke]::GetDlgItem($dialog, 111), '19')) { throw 'Vex modal: font field is not editable.' }
     if ([VexNativeSmoke]::ControlText([VexNativeSmoke]::GetDlgItem($dialog, 111)) -ne '19') { throw 'Vex modal: font edit did not retain the entered value.' }
+    Assert-NativeProbe $window 54 19 'font edits apply immediately without Save'
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-edited.png')
     [VexNativeSmoke]::SetWindowPos($window, [IntPtr]::Zero, 100, 100, 820, 520, 0x0014) | Out-Null
     Start-Sleep -Milliseconds 100
@@ -64,9 +77,15 @@ try {
     [VexNativeSmoke]::GetWindowRect($dialog, [ref]$modalBounds) | Out-Null
     if ($modalBounds.Left -lt $ownerBounds.Left -or $modalBounds.Top -lt $ownerBounds.Top -or $modalBounds.Right -gt $ownerBounds.Right -or $modalBounds.Bottom -gt $ownerBounds.Bottom) { throw 'Vex modal: owned popup escaped its terminal window after resizing.' }
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-compact.png')
+    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]131, [IntPtr]::Zero) | Out-Null
+    Assert-ThemeCollection $dialog 115 0
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-appearance-compact.png')
+    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]132, [IntPtr]::Zero) | Out-Null
     [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]112, [IntPtr]::Zero) | Out-Null
-    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]1, [IntPtr]::Zero) | Out-Null
-    Assert-NativeProbe $window 54 19 'settings apply terminal font size'
+    Assert-NativeProbe $window 72 1 'cursor toggle applies immediately'
+    Post-DialogKey $window 0x1B
+    Assert-NativeProbe $window 53 0 'Escape closes settings without undoing applied changes'
+    Assert-NativeProbe $window 54 19 'settings retain terminal font size'
     Assert-NativeProbe $window 14 $terminalPid 'settings preserve the live ConPTY owner'
     if (!(Test-Path $fixtureSettingsPath)) { throw 'Vex modal: preferences were not saved.' }
     Invoke-NativeAction $window 18
@@ -94,7 +113,7 @@ try {
     [VexNativeSmoke]::SetControlText([VexNativeSmoke]::GetDlgItem($dialog, 102), 'splr') | Out-Null
     $filteredBounds = New-Object VexNativeSmoke+Rect
     [VexNativeSmoke]::GetWindowRect($dialog, [ref]$filteredBounds) | Out-Null
-    if (($filteredBounds.Bottom - $filteredBounds.Top) -ge ($fullPaletteBounds.Bottom - $fullPaletteBounds.Top)) { throw 'Vex palette: filtered popup must shrink to its results.' }
+    if ($filteredBounds.Left -ne $fullPaletteBounds.Left -or $filteredBounds.Top -ne $fullPaletteBounds.Top -or $filteredBounds.Right -ne $fullPaletteBounds.Right -or $filteredBounds.Bottom -ne $fullPaletteBounds.Bottom) { throw 'Vex palette: filtering must keep the popup position and size stable.' }
     if ((Get-NativeProbe $window 101) -eq 0) { throw 'Vex modal: fuzzy command query lost its results.' }
     Assert-DialogCursor $dialog ([VexNativeSmoke]::GetDlgItem($dialog, 103)) 'Hand'
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'command-palette.png')
@@ -131,14 +150,28 @@ try {
     $savedBytes = [IO.File]::ReadAllText($fixtureSettingsPath)
     Invoke-NativeAction $window 19
     $dialog = Get-OwnedModal $window
-    [VexNativeSmoke]::SetControlText([VexNativeSmoke]::GetDlgItem($dialog, 111), '20') | Out-Null
-    [VexNativeSmoke]::PostMessageW($dialog, 0x111, [IntPtr]1, [IntPtr]::Zero) | Out-Null
-    $warning = Get-OwnedModal $window 'Vex settings'
+    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]132, [IntPtr]::Zero) | Out-Null
+    $fontField = [VexNativeSmoke]::GetDlgItem($dialog, 111)
+    Send-NativePointer $fontField 0x0201 12 12 1
+    Send-NativePointer $fontField 0x0202 12 12 0
+    [VexNativeSmoke]::SendWindowMessage($fontField, 0xB1, [IntPtr]::Zero, [IntPtr](-1)) | Out-Null
+    [VexNativeSmoke]::PostMessageW($fontField, 0x102, [IntPtr]50, [IntPtr]::Zero) | Out-Null
+    [VexNativeSmoke]::PostMessageW($fontField, 0x102, [IntPtr]48, [IntPtr]::Zero) | Out-Null
+    $warning = Get-OwnedModal $dialog 'Vex settings' -RootOwner $window
     if ([VexNativeSmoke]::ControlText($warning) -ne 'Vex settings') { throw 'Vex modal: failed preference write was not reported.' }
-    [VexNativeSmoke]::SendWindowMessage($warning, 0x111, [IntPtr]1, [IntPtr]::Zero) | Out-Null
+    Save-DialogImage $warning (Join-Path $OutputDirectory 'settings-warning.png')
+    $dismiss = [VexNativeSmoke]::GetDlgItem($warning, 1)
+    if ($dismiss -eq [IntPtr]::Zero) { $dismiss = [VexNativeSmoke]::GetDlgItem($warning, 2) }
+    if ($dismiss -eq [IntPtr]::Zero) { throw 'Vex settings: warning dismiss button is missing.' }
+    [VexNativeSmoke]::PostMessageW($dismiss, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Assert-NativeProbe $window 54 19 'failed save leaves runtime preferences unchanged'
     if ([IO.File]::ReadAllText($fixtureSettingsPath) -ne $savedBytes) { throw 'Vex modal: failed save damaged prior preferences.' }
     [IO.File]::SetAttributes($fixtureSettingsPath, [IO.FileAttributes]::Normal)
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    while ([VexNativeSmoke]::ControlText($fontField) -ne '19' -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+    if ([VexNativeSmoke]::ControlText($fontField) -ne '19') { throw "Vex settings: failed live save did not restore the applied font value (field=$([VexNativeSmoke]::ControlText($fontField)) runtime=$(Get-NativeProbe $window 54) overlay=$(Get-NativeProbe $window 53))." }
+    Post-DialogKey $window 0x1B
+    Assert-NativeProbe $window 53 0 'settings remain usable after failed live save'
     Close-NativeInstance $process $window
     $process = $null
     $lightSettings = [IO.File]::ReadAllText($fixtureSettingsPath) | ConvertFrom-Json
@@ -150,10 +183,40 @@ try {
     Invoke-NativeAction $window 19
     $dialog = Get-OwnedModal $window
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-light.png')
+    $shellCombo = [VexNativeSmoke]::GetDlgItem($dialog, 113)
+    $shellRows = [VexNativeSmoke]::SendWindowMessage($shellCombo, 0x146, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64()
+    $shellRow = -1
+    for ($row = 0; $row -lt $shellRows; $row++) {
+        if ([VexNativeSmoke]::SendWindowMessage($shellCombo, 0x150, [IntPtr]$row, [IntPtr]::Zero).ToInt64() -eq 2) { $shellRow = $row; break }
+    }
+    if ($shellRow -lt 0) { throw 'Vex settings: Windows PowerShell is missing from default-shell choices.' }
+    [VexNativeSmoke]::SendWindowMessage($shellCombo, 0x14E, [IntPtr]$shellRow, [IntPtr]::Zero) | Out-Null
+    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr](0x10000 + 113), $shellCombo) | Out-Null
+    Assert-NativeProbe $window 34 2 'default shell applies immediately without Save'
+    $liveSettings = [IO.File]::ReadAllText($fixtureSettingsPath) | ConvertFrom-Json
+    if ($liveSettings.default_shell -ne 'powershell') { throw 'Vex settings: default shell was not saved automatically.' }
     [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]131, [IntPtr]::Zero) | Out-Null
+    Assert-ThemeCollection $dialog 115 6
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-appearance-light.png')
     Post-DialogKey $window 0x1B
     Assert-NativeProbe $window 53 0 'light settings cancel restores terminal input'
+    Invoke-NativeAction $window 10
+    $dialog = Get-OwnedModal $window
+    Assert-ThemeCollection $dialog 103 6
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'appearance-light.png')
+    Post-DialogKey $window 0x28
+    Assert-NativeProbe $window 51 7 'light card retains its global palette index during preview'
+    Assert-NativeProbe $window 52 0 'light preview does not change application appearance'
+    Post-DialogKey $window 0x1B
+    Assert-NativeProbe $window 51 6 'light Cancel restores the original palette'
+    Invoke-NativeAction $window 10
+    $dialog = Get-OwnedModal $window
+    Post-DialogKey $window 0x28
+    Assert-NativeProbe $window 51 7 'light palette can be previewed again'
+    Post-DialogKey $window 0x0D
+    Assert-NativeProbe $window 53 0 'Enter applies and closes Theme Studio'
+    $savedTheme = [IO.File]::ReadAllText($fixtureSettingsPath) | ConvertFrom-Json
+    if ($savedTheme.theme -ne 'Vex Linen') { throw 'Vex theme picker: Apply did not save the selected custom palette.' }
     Invoke-NativeAction $window 9
     $dialog = Get-OwnedModal $window
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'command-palette-light.png')
@@ -161,7 +224,7 @@ try {
     Assert-NativeProbe $window 53 0 'light palette Escape restores terminal input'
     Close-NativeInstance $process $window
     $process = $null
-    @{ Result = 'PASS'; Checks = @('owned popup', 'modal input isolation', 'selectable title', 'cancel restores input', 'settings apply', 'atomic persistence', 'restart restoration', 'stable ConPTY', 'segmented shell modes', 'palette shrinks after filtering', 'empty search', 'one-click commands', 'close cancellation', 'dark and light modal screenshots') } | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'modals.json')
+    @{ Result = 'PASS'; Checks = @('owned popup', 'modal input isolation', 'selectable title', 'cancel restores input', 'settings apply automatically without Save/Cancel', 'atomic persistence and live-save rollback', 'restart restoration', 'stable ConPTY', 'segmented shell modes', 'palette stays stable while filtering', 'empty search', 'one-click commands', 'close cancellation', 'dark and light modal screenshots', 'appearance-filtered theme collections', 'light theme global indices', 'theme preview rollback', 'theme Apply persistence', 'compact theme cards') } | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'modals.json')
 } finally {
     if ($process -and !$process.HasExited) { $process.Kill(); $process.WaitForExit() }
     if ($fixtureSettingsPath -and (Test-Path $fixtureSettingsPath)) { [IO.File]::SetAttributes($fixtureSettingsPath, [IO.FileAttributes]::Normal) }

@@ -261,7 +261,7 @@ pub const TerminalApplication = struct {
             return;
         };
         self.settings = settings;
-        try self.applyTheme(settings.theme_index);
+        if (self.theme_index != settings.theme_index) try self.applyTheme(settings.theme_index);
         if (platform.fontSize() != @as(f32, @floatFromInt(settings.font_size))) _ = try platform.setFontSize(@floatFromInt(settings.font_size));
         self.cursor_blink_enabled = settings.cursor_blink;
         self.cursor_blink.synchronize(null, self.cursorNowMs());

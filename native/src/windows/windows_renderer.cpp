@@ -89,7 +89,7 @@ HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, b
     result = device->CreateDescriptorHeap(&views, IID_PPV_ARGS(&renderViews));
     if (FAILED(result)) return result;
     result = terminal.initialize(device.Get(), factory);
-    if (SUCCEEDED(result)) result = ui.batches.initialize(device.Get(), factory);
+    if (SUCCEEDED(result)) result = ui.batches.initialize(device.Get(), factory, &terminal);
     if (FAILED(result)) return result;
     return createBuffers((float)GetDpiForWindow(window));
 }

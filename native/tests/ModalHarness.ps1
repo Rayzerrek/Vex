@@ -1,9 +1,9 @@
 . "$PSScriptRoot\DesktopHarness.ps1"
 
-function Get-OwnedModal([IntPtr]$Owner, [string]$ExpectedTitle = '') {
+function Get-OwnedModal([IntPtr]$Owner, [string]$ExpectedTitle = '', [IntPtr]$RootOwner = $Owner) {
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     do {
-        $dialog = [VexNativeSmoke]::GetLastActivePopup($Owner)
+        $dialog = [VexNativeSmoke]::GetLastActivePopup($RootOwner)
         if ($dialog -ne $Owner -and $dialog -ne [IntPtr]::Zero) {
             if ([VexNativeSmoke]::GetWindow($dialog, 4) -ne $Owner) { throw 'Vex native modal: dialog has the wrong owner.' }
             if ([VexNativeSmoke]::IsWindowEnabled($Owner)) { throw 'Vex native modal: terminal input is not blocked.' }

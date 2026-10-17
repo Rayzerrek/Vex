@@ -368,7 +368,7 @@ they do not describe every current implementation detail.
   in that historical checkpoint. The upload reclamation checkpoint below removes
   that dependency.
 
-## Rex-inspired horizontal status presentation checkpoint
+## Horizontal status presentation checkpoint
 
 - The visual reference is [almonk's Activity Mode demo](https://x.com/almonk/status/2109262000165437943),
   including inspected video frames, plus the user's Desktop/rex screenshots.
@@ -482,17 +482,27 @@ they do not describe every current implementation detail.
 - Application code receives only decoded events (cancel, choose, preview, query,
   settings, shell mode). Native list/field state is read through the window thread
   and never mirrored in Zig, so the command list and selection have one owner.
-- Settings (`Ctrl+,`): default shell, theme, font size 9-32, blinking cursor.
-  `src/app/user_settings.zig` validates a versioned JSON document (`%LOCALAPPDATA%\Vex\settings.json`),
-  saves atomically, and never overwrites a malformed file. A failed write or a load
-  failure is shown as a warning; runtime preferences and live ConPTY sessions are unchanged.
-- Verified by `tests/Test-NativeModals.ps1` (owned popup, modal input isolation,
-  selectable heading, Tab/Escape/Cancel, theme preview, invalid font rejection,
-  save, restart, read-only failure) and `Test-NativeCursorBlink.ps1` (palette toggle).
-  The full desktop set passes in one run on this machine: 17 fixtures.
-- Known limits: dialog pixels are native Win32 controls with owner-drawn accents, not
-  WPF's animated overlay; no animation on open/close; settings do not yet cover
-  shell arguments, WSL distribution or copy-on-select.
+- Settings (`Ctrl+,`): default shell, appearance-filtered theme cards, font size 9-32,
+  blinking cursor. Changes apply and persist immediately; Escape/× closes without a
+  rollback and there is no Save/Cancel footer. Invalid font input is not applied and
+  resets on field exit. `src/app/user_settings.zig` validates versioned
+  `%LOCALAPPDATA%\Vex\settings.json`, saves atomically and never overwrites a
+  malformed file. Write/load failures show a warning; a failed live save retains
+  runtime preferences and the previous file and restores the affected control.
+- Owned modal descendants use `WS_EX_COMPOSITED`; owner-draw callbacks restore their
+  GDI state. Settings prepares cached theme-card images before first display. The
+  command palette stays uncomposited to avoid repainting its stable surface per
+  query; changed result rows are updated separately. `Test-NativeShellPainting.ps1`
+  verifies incremental versus full-repaint pixels for dark/light shell picker rows,
+  scroll and segmented-mode updates; `Test-NativeThemeHover.ps1` verifies no hover
+  paints and GDI state preservation; `Test-NativeModalUpdates.ps1` checks query
+  invalidation and page-switch timing.
+- Verified by `Test-NativeModals.ps1` (owned popup, modal input isolation, immediate
+  theme/font/cursor/default-shell changes, invalid font rejection, restart persistence
+  and read-only write failure) and `Test-NativeCursorBlink.ps1`. See `PERFORMANCE.md`
+  for local results and limits; this does not claim perfect scanout timing.
+- Known limits: native Win32 surfaces do not animate on open/close; settings do not yet
+  cover shell arguments, WSL distribution or copy-on-select.
 
 ## Path completion ranking checkpoint
 

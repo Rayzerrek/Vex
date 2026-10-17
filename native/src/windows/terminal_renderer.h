@@ -11,7 +11,8 @@ using TerminalGlyphPainter = HRESULT (*)(ID2D1RenderTarget*, ID2D1SolidColorBrus
 // One bounded glyph atlas shared by every pane; uploads belong to fence-protected frame slots.
 class TerminalRenderer final {
 public:
-    HRESULT initialize(ID3D12Device* device, ID2D1Factory* factory);
+    // The optional source shares only immutable GPU pipeline state; atlases and frame uploads stay independent.
+    HRESULT initialize(ID3D12Device* device, ID2D1Factory* factory, const TerminalRenderer* sharedPipeline = nullptr);
     void shutdown();
     HRESULT beginFrame(UINT index);
     HRESULT beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_RECT clip, UINT width, UINT height, float dpi);
@@ -63,7 +64,8 @@ private:
     float scale = 1;
     bool apartmentOwned = false, passOpen = false;
     ID3D12Resource* passBuffer = nullptr;
-    HRESULT createPipeline();
+    HRESULT createPipeline(const TerminalRenderer* sharedPipeline);
+    HRESULT createPipelineState();
     HRESULT allocateUpload(UINT bytes, UINT alignment, UINT& page, UINT& offset);
     HRESULT appendQuad(const Quad& quad);
     void flushQuads();
