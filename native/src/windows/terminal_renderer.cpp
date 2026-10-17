@@ -13,7 +13,7 @@ static D3D12_RESOURCE_BARRIER terminalTransition(ID3D12Resource* resource, D3D12
     return barrier;
 }
 
-HRESULT TerminalRenderer::initialize(ID3D12Device* device, ID2D1Factory* factory) {
+HRESULT TerminalRenderer::initialize(ID3D12Device* device, ID2D1Factory* factory, const TerminalRenderer* sharedPipeline) {
     if (!device || !factory || deviceOwner) return E_INVALIDARG;
     HRESULT result = device->QueryInterface(IID_PPV_ARGS(&deviceOwner));
     if (FAILED(result)) return result;
@@ -31,10 +31,10 @@ HRESULT TerminalRenderer::initialize(ID3D12Device* device, ID2D1Factory* factory
     rasterTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     result = rasterTarget->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &rasterBrush);
     if (FAILED(result)) return result;
-    return createPipeline();
+    return createPipeline(sharedPipeline);
 }
 
-HRESULT TerminalRenderer::createPipeline() {
+HRESULT TerminalRenderer::createPipelineState() {
     D3D12_DESCRIPTOR_RANGE range = {};
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; range.NumDescriptors = 1;
     D3D12_ROOT_PARAMETER parameters[2] = {};
@@ -84,7 +84,16 @@ HRESULT TerminalRenderer::createPipeline() {
     description.SampleMask = UINT_MAX; description.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     description.NumRenderTargets = 1; description.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
     description.SampleDesc.Count = 1;
-    result = deviceOwner->CreateGraphicsPipelineState(&description, IID_PPV_ARGS(&pipeline));
+    return deviceOwner->CreateGraphicsPipelineState(&description, IID_PPV_ARGS(&pipeline));
+}
+
+HRESULT TerminalRenderer::createPipeline(const TerminalRenderer* sharedPipeline) {
+    HRESULT result;
+    if (sharedPipeline) {
+        if (sharedPipeline->deviceOwner.Get() != deviceOwner.Get() || !sharedPipeline->root || !sharedPipeline->pipeline) return E_INVALIDARG;
+        result = sharedPipeline->root.As(&root);
+        if (SUCCEEDED(result)) result = sharedPipeline->pipeline.As(&pipeline);
+    } else result = createPipelineState();
     if (FAILED(result)) return result;
     D3D12_DESCRIPTOR_HEAP_DESC heap = {};
     heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heap.NumDescriptors = 1;

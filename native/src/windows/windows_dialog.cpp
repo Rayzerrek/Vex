@@ -7,10 +7,11 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <wctype.h>
 
 namespace {
 constexpr int titleId = 100, descriptionId = 101, queryId = 102, listId = 103;
-constexpr int themeId = 110, sizeId = 111, blinkId = 112, shellId = 113, themeGridId = 115;
+constexpr int sizeId = 111, blinkId = 112, shellId = 113, themeGridId = 115;
 constexpr int pageTitleId = 104, pageDetailId = 105, closeId = 125, firstPageId = 130, firstModeId = 140;
 enum class SettingsPage { general, appearance, terminal, about };
 constexpr size_t itemLimit = 64, shellLimit = 8;
@@ -28,6 +29,11 @@ struct DialogModel {
     VexChromePalette palette;
 };
 struct ControlLayout { HWND window; float x, y, width, height; };
+struct ThemeCardCache {
+    HBITMAP images[2] = {};
+    int width = 0, height = 0;
+    float scale = 0;
+};
 struct DialogHost {
     HWND owner, window, previousFocus;
     ULONG_PTR graphicsToken = 0;
@@ -35,8 +41,7 @@ struct DialogHost {
     DialogModel model;
     HFONT font, heading, symbols;
     HBRUSH background, field;
-    HWND hovered = nullptr;
-    int hotRow = -1;
+    uint64_t themeCardPaintCount = 0, dialogPaintCount = 0, surfacePaintCount = 0;
     enum class Phase { closed, creating, active, closing } phase = Phase::closed;
     bool synchronizing = false;
     SettingsPage page = SettingsPage::general;
@@ -44,8 +49,34 @@ struct DialogHost {
     float scale = 1, width = 600, height = 470, baseWidth = 600, baseHeight = 470;
     ControlLayout controls[40];
     size_t controlCount = 0;
+    ThemeCardCache themeCards[itemLimit];
 };
 DialogHost host;
+struct DialogPaintBuffer {
+    HDC dc, destination, memory = nullptr;
+    HBITMAP bitmap = nullptr;
+    HGDIOBJ previous = nullptr;
+    RECT bounds;
+    DialogPaintBuffer(HDC target, RECT area) : dc(target), destination(target), bounds(area) {
+        memory = CreateCompatibleDC(target);
+        if (memory) bitmap = CreateCompatibleBitmap(target, area.right - area.left, area.bottom - area.top);
+        if (bitmap) {
+            previous = SelectObject(memory, bitmap);
+            SetWindowOrgEx(memory, area.left, area.top, nullptr);
+            dc = memory;
+        }
+    }
+    DialogPaintBuffer(const DialogPaintBuffer&) = delete;
+    DialogPaintBuffer& operator=(const DialogPaintBuffer&) = delete;
+    ~DialogPaintBuffer() {
+        if (bitmap) {
+            BitBlt(destination, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, memory, bounds.left, bounds.top, SRCCOPY);
+            SelectObject(memory, previous);
+            DeleteObject(bitmap);
+        }
+        if (memory) DeleteDC(memory);
+    }
+};
 COLORREF color(uint32_t rgb) { return RGB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255); }
 int px(float dip) { return (int)lroundf(dip * host.scale); }
 COLORREF blend(COLORREF a, COLORREF b, float amount) {
@@ -57,7 +88,11 @@ COLORREF surfaceColor() { return blend(color(host.model.palette.pane_bg), color(
 COLORREF fieldColor() { return blend(surfaceColor(), color(host.model.palette.text_primary), 0.055f); }
 COLORREF selectionColor() { return blend(surfaceColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.44f : 0.20f); }
 int listRowHeight() { return host.model.kind == 2 ? 34 : 58; }
-int themeRowHeight() { return host.model.kind == 4 && host.height < 430 ? 104 : 120; }
+int themeRowHeight() {
+    const float available = host.model.kind == 4 ? host.height - (host.height < 430 ? 198 : 246) : host.height - 170;
+    return (int)fmaxf(104, floorf(available / 2));
+}
+int themeColumnWidth() { return (int)floorf((host.width - 32) / 3); }
 void roundedFill(HDC dc, RECT bounds, COLORREF fill, COLORREF border, int radius);
 void acceptDialog();
 void drawSymbol(HDC dc, const wchar_t* symbol, RECT bounds, COLORREF ink) {
@@ -87,7 +122,13 @@ bool copyItems(const VexDialogItem* input, size_t count, DialogItem* output, siz
     }
     return true;
 }
+void clearThemeCardCache() {
+    for (auto& card : host.themeCards) for (auto& image : card.images) {
+        if (image) { DeleteObject(image); image = nullptr; }
+    }
+}
 void releasePaint() {
+    clearThemeCardCache();
     if (host.font) { DeleteObject(host.font); host.font = nullptr; }
     if (host.heading) { DeleteObject(host.heading); host.heading = nullptr; }
     if (host.symbols) { DeleteObject(host.symbols); host.symbols = nullptr; }
@@ -106,8 +147,6 @@ void closeDialog(bool restoreFocus) {
     releasePaint();
     host.phase = DialogHost::Phase::closed;
     host.controlCount = 0;
-    host.hovered = nullptr;
-    host.hotRow = -1;
     if (IsWindow(host.owner)) {
         EnableWindow(host.owner, TRUE);
         if (restoreFocus) {
@@ -116,9 +155,9 @@ void closeDialog(bool restoreFocus) {
         }
     }
 }
-void finish(uint32_t event, uint32_t value = 0, VexUserSettings settings = {}) {
+void finish(uint32_t event, uint32_t value = 0) {
     closeDialog(true);
-    notify(event, value, nullptr, 0, settings);
+    notify(event, value);
 }
 bool navigateCommandList(WPARAM key) {
     if (host.model.kind != 2 || GetKeyState(VK_CONTROL) < 0 || GetKeyState(VK_MENU) < 0) return false;
@@ -140,29 +179,29 @@ bool navigateCommandList(WPARAM key) {
     if (value >= 0 && (uint64_t)value <= UINT32_MAX) notify(2, (uint32_t)value);
     return true;
 }
-LRESULT CALLBACK dialogControlFeedback(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+LRESULT CALLBACK dialogControlInput(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    if (message == WM_ERASEBKGND) return 1;
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint;
+        HDC dc = BeginPaint(control, &paint);
+        if (dc) {
+            RECT bounds; GetClientRect(control, &bounds);
+            DialogPaintBuffer buffer(dc, bounds);
+            FillRect(buffer.dc, &bounds, host.background);
+            DefSubclassProc(control, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(buffer.dc), PRF_CLIENT);
+        }
+        EndPaint(control, &paint);
+        return 0;
+    }
     if (message == WM_KEYDOWN && GetDlgCtrlID(control) == listId && navigateCommandList(wparam)) return 0;
-    if (message == WM_MOUSEMOVE) {
-        TRACKMOUSEEVENT tracking = { sizeof(tracking), TME_LEAVE, control, 0 }; TrackMouseEvent(&tracking);
-        HWND previous = host.hovered;
-        host.hovered = control;
-        int row = -1;
-        if (GetDlgCtrlID(control) == listId) {
-            LRESULT hit = SendMessageW(control, LB_ITEMFROMPOINT, 0, lparam);
-            if (!HIWORD(hit)) row = LOWORD(hit);
-        }
-        if (previous != control || host.hotRow != row) {
-            host.hotRow = row;
-            if (IsWindow(previous)) InvalidateRect(previous, nullptr, FALSE);
-            InvalidateRect(control, nullptr, FALSE);
-        }
-    }
-    if (message == WM_MOUSELEAVE && host.hovered == control) {
-        host.hovered = nullptr; host.hotRow = -1; InvalidateRect(control, nullptr, FALSE);
-    }
+    // Owner-drawn controls have no hover state; preserve native dragging, not hot tracking.
+    if ((message == WM_MOUSEMOVE && !(wparam & MK_LBUTTON)) || message == WM_MOUSELEAVE) return 0;
     if (message == WM_LBUTTONUP && GetDlgCtrlID(control) == listId && (host.model.kind == 2 || host.model.kind == 5)) {
         LRESULT hit = SendMessageW(control, LB_ITEMFROMPOINT, 0, lparam);
-        if (!HIWORD(hit) && LOWORD(hit) < host.model.count) {
+        RECT item;
+        POINT point = { (short)LOWORD(lparam), (short)HIWORD(lparam) };
+        if (!HIWORD(hit) && LOWORD(hit) < host.model.count &&
+            SendMessageW(control, LB_GETITEMRECT, LOWORD(hit), reinterpret_cast<LPARAM>(&item)) != LB_ERR && PtInRect(&item, point)) {
             SendMessageW(control, LB_SETCURSEL, LOWORD(hit), 0);
             acceptDialog();
             return 0;
@@ -171,10 +210,12 @@ LRESULT CALLBACK dialogControlFeedback(HWND control, UINT message, WPARAM wparam
     return DefSubclassProc(control, message, wparam, lparam);
 }
 LRESULT CALLBACK themedCombo(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    if ((message == WM_MOUSEMOVE && !(wparam & MK_LBUTTON)) || message == WM_MOUSELEAVE) return 0;
     if (message == WM_PAINT || message == WM_PRINTCLIENT) {
         PAINTSTRUCT paint = {};
         HDC dc = message == WM_PAINT ? BeginPaint(control, &paint) : reinterpret_cast<HDC>(wparam);
         if (dc) {
+            const int saved = SaveDC(dc);
             RECT bounds; GetClientRect(control, &bounds);
             FillRect(dc, &bounds, host.field);
             RECT field = bounds; InflateRect(&field, -1, -1);
@@ -186,6 +227,7 @@ LRESULT CALLBACK themedCombo(HWND control, UINT message, WPARAM wparam, LPARAM l
             DrawTextW(dc, text, -1, &label, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
             RECT arrow = field; arrow.left = arrow.right - px(30);
             drawSymbol(dc, L"\xE70D", arrow, color(host.model.palette.text_muted));
+            if (saved) RestoreDC(dc, saved);
         }
         if (message == WM_PAINT) EndPaint(control, &paint);
         return 0;
@@ -195,6 +237,23 @@ LRESULT CALLBACK themedCombo(HWND control, UINT message, WPARAM wparam, LPARAM l
     return result;
 }
 LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    // Classic Win32 edits insert DEL for Ctrl+Backspace instead of deleting a word.
+    if (GetDlgCtrlID(control) == queryId && message == WM_CHAR && wparam == 127) {
+        DWORD start = 0, end = 0;
+        SendMessageW(control, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
+        if (start == end && start > 0) {
+            wchar_t text[129];
+            const int length = GetWindowTextW(control, text, 129);
+            if (start > (DWORD)length) start = (DWORD)length;
+            while (start > 0 && iswspace(text[start - 1])) --start;
+            while (start > 0 && !iswspace(text[start - 1])) --start;
+        }
+        if (start != end) {
+            SendMessageW(control, EM_SETSEL, start, end);
+            SendMessageW(control, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L""));
+        }
+        return 0;
+    }
     if (message == WM_KEYDOWN && GetDlgCtrlID(control) == queryId && navigateCommandList(wparam)) return 0;
     if (message == WM_KEYDOWN && wparam == 'A' && GetKeyState(VK_CONTROL) < 0) {
         SendMessageW(control, EM_SETSEL, 0, -1);
@@ -205,8 +264,10 @@ LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARA
         HDC dc = message == WM_PAINT ? GetDC(control) : reinterpret_cast<HDC>(wparam);
         if (dc) {
             RECT bounds; GetClientRect(control, &bounds);
+            const int saved = SaveDC(dc);
             SelectObject(dc, host.font); SetBkMode(dc, TRANSPARENT); SetTextColor(dc, color(host.model.palette.text_muted));
             DrawTextW(dc, L"Search commands...", -1, &bounds, DT_SINGLELINE | DT_NOPREFIX);
+            if (saved) RestoreDC(dc, saved);
             if (message == WM_PAINT) ReleaseDC(control, dc);
         }
     }
@@ -218,7 +279,7 @@ HWND control(const wchar_t* klass, const wchar_t* text, DWORD style, int id, flo
     if (!result) return nullptr;
     SendMessageW(result, WM_SETFONT, reinterpret_cast<WPARAM>(id == pageTitleId || (id == titleId && host.model.kind != 4) ? host.heading : host.font), FALSE);
     if (wcscmp(klass, L"EDIT") == 0 && !SetWindowSubclass(result, selectableText, 1, 0)) { DestroyWindow(result); return nullptr; }
-    if ((wcscmp(klass, L"LISTBOX") == 0 || wcscmp(klass, L"BUTTON") == 0) && !SetWindowSubclass(result, dialogControlFeedback, 1, 0)) { DestroyWindow(result); return nullptr; }
+    if ((wcscmp(klass, L"LISTBOX") == 0 || wcscmp(klass, L"BUTTON") == 0) && !SetWindowSubclass(result, dialogControlInput, 1, 0)) { DestroyWindow(result); return nullptr; }
     if (wcscmp(klass, L"LISTBOX") == 0 || wcscmp(klass, L"COMBOBOX") == 0)
         SetWindowTheme(result, host.model.palette.is_dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     if (wcscmp(klass, L"COMBOBOX") == 0) {
@@ -256,7 +317,7 @@ void fillList(int id = listId) {
     }
     SendMessageW(list, LB_SETCURSEL, selected, 0);
     SendMessageW(list, WM_SETREDRAW, TRUE, 0);
-    if (host.model.kind == 2) ShowWindow(list, host.model.count ? SW_SHOW : SW_HIDE);
+    if (host.model.kind == 2) SetWindowPos(list, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | (host.model.count ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
     InvalidateRect(list, nullptr, FALSE);
 }
 bool listSelection(uint32_t& value, int id = listId) {
@@ -277,37 +338,55 @@ bool comboSelection(int id, uint32_t& value) {
     value = (uint32_t)item;
     return true;
 }
-void showPage();
+void applySettingsFontSize(bool restoreInvalid) {
+    BOOL valid = FALSE;
+    const UINT size = GetDlgItemInt(host.window, sizeId, &valid, FALSE);
+    if (!valid || size < 9 || size > 32) {
+        if (restoreInvalid) {
+            wchar_t text[8]; swprintf(text, 8, L"%u", host.draft.font_size);
+            host.synchronizing = true;
+            SetDlgItemTextW(host.window, sizeId, text);
+            host.synchronizing = false;
+        }
+        if (host.page == SettingsPage::terminal) SetDlgItemTextW(host.window, pageDetailId, L"Enter a font size between 9 and 32.");
+        return;
+    }
+    if (host.page == SettingsPage::terminal) SetDlgItemTextW(host.window, pageDetailId, L"Font size and cursor behavior.");
+    if (size != host.draft.font_size) {
+        host.draft.font_size = size;
+        notify(4, 0, nullptr, 0, host.draft);
+    }
+}
 void acceptDialog() {
-    if (host.model.kind == 4) {
-        VexUserSettings settings = host.model.settings;
-        BOOL valid = FALSE;
-        settings.font_size = GetDlgItemInt(host.window, sizeId, &valid, FALSE);
-        if (!valid || settings.font_size < 9 || settings.font_size > 32) {
-            host.page = SettingsPage::terminal;
-            showPage();
-            SetDlgItemTextW(host.window, pageDetailId, L"Enter a font size between 9 and 32. Preferences have not been saved.");
-            SetFocus(GetDlgItem(host.window, sizeId));
-            return;
-        }
-        if (!comboSelection(themeId, settings.theme) || !comboSelection(shellId, settings.shell)) {
-            host.page = SettingsPage::general;
-            showPage();
-            SetDlgItemTextW(host.window, pageDetailId, L"Choose an available shell before saving preferences.");
-            SetFocus(GetDlgItem(host.window, shellId));
-            return;
-        }
-        settings.cursor_blink = host.draft.cursor_blink;
-        finish(4, 0, settings);
-    } else if (host.model.kind == 6) finish(1);
+    if (host.model.kind == 4) applySettingsFontSize(false);
+    else if (host.model.kind == 6) finish(1);
     else {
         uint32_t value;
         if (listSelection(value)) finish(1, value);
     }
 }
 void queryChanged() {
-    wchar_t wide[129];
-    GetDlgItemTextW(host.window, queryId, wide, 129);
+    wchar_t wide[129], normalized[129];
+    const int count = GetDlgItemTextW(host.window, queryId, wide, 129);
+    DWORD selectionStart = 0, selectionEnd = 0, normalizedStart = 0, normalizedEnd = 0;
+    SendDlgItemMessageW(host.window, queryId, EM_GETSEL, reinterpret_cast<WPARAM>(&selectionStart), reinterpret_cast<LPARAM>(&selectionEnd));
+    int normalizedUnits = 0;
+    for (int i = 0; i < count; ++i) {
+        const wchar_t ch = wide[i];
+        if (ch == L'\r' || ch == L'\n' || ch == L'\t') {
+            if (ch != L'\n' || i == 0 || wide[i - 1] != L'\r') normalized[normalizedUnits++] = L' ';
+        } else if (ch >= 32 && ch != 127) normalized[normalizedUnits++] = ch;
+        if ((DWORD)i < selectionStart) normalizedStart = (DWORD)normalizedUnits;
+        if ((DWORD)i < selectionEnd) normalizedEnd = (DWORD)normalizedUnits;
+    }
+    normalized[normalizedUnits] = 0;
+    if (wcscmp(wide, normalized) != 0) {
+        host.synchronizing = true;
+        SetDlgItemTextW(host.window, queryId, normalized);
+        SendDlgItemMessageW(host.window, queryId, EM_SETSEL, normalizedStart, normalizedEnd);
+        host.synchronizing = false;
+        memcpy(wide, normalized, ((size_t)normalizedUnits + 1) * sizeof(wchar_t));
+    }
     uint8_t bytes[512];
     int length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, -1, reinterpret_cast<char*>(bytes), sizeof(bytes), nullptr, nullptr);
     if (!length) return;
@@ -349,41 +428,120 @@ void roundedFill(HDC dc, RECT bounds, COLORREF fill, COLORREF border, int diamet
         graphics.DrawPath(&pen, &path);
     }
 }
+void drawThemeCard(const DRAWITEMSTRUCT& draw, const DialogItem& item, bool selected) {
+    ++host.themeCardPaintCount;
+    const COLORREF ink = color(host.model.palette.text_primary);
+    RECT card = draw.rcItem; InflateRect(&card, -px(5), -px(5));
+    const COLORREF border = color(selected ? host.model.palette.accent : host.model.palette.border);
+    roundedFill(draw.hDC, card, selected ? border : surfaceColor(), border, px(22));
+    RECT inner = card; InflateRect(&inner, -px(2), -px(2));
+    roundedFill(draw.hDC, inner, surfaceColor(), surfaceColor(), px(19));
+    RECT art = inner; InflateRect(&art, -px(5), -px(5)); art.bottom -= px(45);
+    if (art.bottom > art.top) {
+        Gdiplus::Graphics graphics(draw.hDC);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        const float x = (float)art.left, y = (float)art.top;
+        const float w = (float)(art.right - art.left), h = (float)(art.bottom - art.top);
+        const float arc = fminf((float)px(14), fminf(w, h));
+        Gdiplus::GraphicsPath path;
+        path.AddArc(x, y, arc, arc, 180, 90);
+        path.AddArc(x + w - arc, y, arc, arc, 270, 90);
+        path.AddArc(x + w - arc, y + h - arc, arc, arc, 0, 90);
+        path.AddArc(x, y + h - arc, arc, arc, 90, 90); path.CloseFigure();
+        const bool dark = host.model.palette.is_dark;
+        const COLORREF start = blend(item.background, item.accent, dark ? 0.22f : 0.12f);
+        const COLORREF end = blend(item.background, item.swatches[4], dark ? 0.48f : 0.26f);
+        Gdiplus::LinearGradientBrush gradient(Gdiplus::PointF(x, y), Gdiplus::PointF(x + w, y + h),
+            Gdiplus::Color(255, GetRValue(start), GetGValue(start), GetBValue(start)),
+            Gdiplus::Color(255, GetRValue(end), GetGValue(end), GetBValue(end)));
+        graphics.FillPath(&gradient, &path);
+    }
+    if (art.bottom - art.top >= px(62)) {
+        RECT terminal = art; terminal.left += px(13); terminal.right -= px(13); terminal.top += px(12); terminal.bottom -= px(10);
+        roundedFill(draw.hDC, terminal, item.background, blend(item.background, item.foreground, 0.18f), px(10));
+        for (int i = 0; i < 3; ++i) {
+            RECT dot = { terminal.left + px(9 + i * 8), terminal.top + px(8), terminal.left + px(13 + i * 8), terminal.top + px(12) };
+            COLORREF tint = blend(item.background, item.foreground, 0.28f);
+            roundedFill(draw.hDC, dot, tint, tint, px(4));
+        }
+        RECT prompt = terminal; prompt.left += px(9); prompt.top += px(21); prompt.right -= px(6);
+        SetTextColor(draw.hDC, item.accent);
+        DrawTextW(draw.hDC, L"❯  ~/vex", -1, &prompt, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+    RECT name = inner; name.left += px(10); name.right -= px(25); name.top = art.bottom + px(7); name.bottom = name.top + px(20);
+    SetTextColor(draw.hDC, ink);
+    DrawTextW(draw.hDC, item.label, -1, &name, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    RECT detail = name; detail.top += px(20); detail.bottom += px(20); detail.right = inner.right - px(10);
+    SetTextColor(draw.hDC, color(host.model.palette.text_muted));
+    DrawTextW(draw.hDC, item.detail, -1, &detail, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    if (selected) {
+        RECT check = name; check.left = inner.right - px(24); check.right = inner.right - px(6);
+        drawSymbol(draw.hDC, L"\xE73E", check, color(host.model.palette.accent));
+    }
+}
+HBITMAP themeCardImage(const DRAWITEMSTRUCT& draw, const DialogItem& item, bool selected) {
+    auto& cached = host.themeCards[draw.itemID];
+    const int width = draw.rcItem.right - draw.rcItem.left, height = draw.rcItem.bottom - draw.rcItem.top;
+    if (cached.width != width || cached.height != height || cached.scale != host.scale) {
+        for (auto& image : cached.images) if (image) { DeleteObject(image); image = nullptr; }
+        cached.width = width; cached.height = height; cached.scale = host.scale;
+    }
+    HBITMAP& image = cached.images[selected ? 1 : 0];
+    if (image) return image;
+    HDC memory = CreateCompatibleDC(draw.hDC);
+    if (memory) {
+        image = CreateCompatibleBitmap(draw.hDC, width, height);
+        if (image) {
+            HGDIOBJ previous = SelectObject(memory, image);
+            DRAWITEMSTRUCT frame = draw; frame.hDC = memory; frame.rcItem = { 0, 0, width, height };
+            FillRect(memory, &frame.rcItem, host.background);
+            SetBkMode(memory, TRANSPARENT); SelectObject(memory, host.font);
+            drawThemeCard(frame, item, selected);
+            SelectObject(memory, previous);
+        }
+        DeleteDC(memory);
+    }
+    return image;
+}
+void prepareSettingsThemeCards() {
+    HWND grid = GetDlgItem(host.window, themeGridId);
+    HDC dc = GetDC(grid);
+    if (!dc) return;
+    for (size_t i = 0; i < host.model.count; ++i) {
+        DRAWITEMSTRUCT draw = {}; draw.itemID = (UINT)i; draw.hDC = dc;
+        if (SendMessageW(grid, LB_GETITEMRECT, i, reinterpret_cast<LPARAM>(&draw.rcItem)) != LB_ERR)
+            themeCardImage(draw, host.model.items[i], host.model.items[i].value == host.draft.theme);
+    }
+    ReleaseDC(grid, dc);
+}
 void drawListItem(const DRAWITEMSTRUCT& draw) {
     if (draw.itemID == (UINT)-1 || draw.itemID >= host.model.count) return;
     const DialogItem& item = host.model.items[draw.itemID];
     const bool selected = (draw.itemState & ODS_SELECTED) != 0;
     const bool theme = host.model.kind == 1 || draw.CtlID == themeGridId;
-    FillRect(draw.hDC, &draw.rcItem, draw.CtlID == themeGridId ? host.field : host.background);
-    SetBkMode(draw.hDC, TRANSPARENT);
-    SelectObject(draw.hDC, host.font);
     if (theme) {
-        RECT card = draw.rcItem; card.left += px(5); card.right -= px(9); card.top += px(4); card.bottom = card.top + px(themeRowHeight() - 34);
-        roundedFill(draw.hDC, card, selected ? color(host.model.palette.accent) : color(host.model.palette.border), selected ? color(host.model.palette.accent) : color(host.model.palette.border), px(26));
-        RECT inner = card; InflateRect(&inner, -px(selected ? 3 : 1), -px(selected ? 3 : 1));
-        roundedFill(draw.hDC, inner, item.background, item.background, px(22));
-        RECT preview = card; preview.left += px(14); preview.top += px(14); preview.bottom -= px(30);
-        SelectObject(draw.hDC, host.heading); SetTextColor(draw.hDC, item.foreground);
-        DrawTextW(draw.hDC, L"Aa", 2, &preview, DT_SINGLELINE | DT_NOPREFIX);
-        SelectObject(draw.hDC, host.font);
-        for (int i = 0; i < 5; ++i) {
-            int x = card.left + px(14 + i * 23), y = card.bottom - px(27);
-            RECT dot = { x, y, x + px(17), y + px(17) };
-            roundedFill(draw.hDC, dot, item.swatches[i], item.swatches[i], px(17));
+        HBITMAP image = themeCardImage(draw, item, selected);
+        const int width = draw.rcItem.right - draw.rcItem.left, height = draw.rcItem.bottom - draw.rcItem.top;
+        HDC memory = image ? CreateCompatibleDC(draw.hDC) : nullptr;
+        if (memory) {
+            HGDIOBJ previous = SelectObject(memory, image);
+            BitBlt(draw.hDC, draw.rcItem.left, draw.rcItem.top, width, height, memory, 0, 0, SRCCOPY);
+            SelectObject(memory, previous);
+        } else {
+            DialogPaintBuffer buffer(draw.hDC, draw.rcItem);
+            DRAWITEMSTRUCT frame = draw; frame.hDC = buffer.dc;
+            FillRect(frame.hDC, &frame.rcItem, host.background);
+            SetBkMode(frame.hDC, TRANSPARENT); SelectObject(frame.hDC, host.font);
+            drawThemeCard(frame, item, selected);
         }
-        RECT name = draw.rcItem; name.top = card.bottom + px(5); name.bottom -= px(2);
-        SetTextColor(draw.hDC, color(selected ? host.model.palette.text_primary : host.model.palette.text_muted));
-        DrawTextW(draw.hDC, item.label, -1, &name, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-        RECT sample = card; sample.left = sample.right - px(54); sample.right -= px(14); sample.top += px(14); sample.bottom = sample.top + px(30);
-        COLORREF sampleFill = blend(item.background, item.accent, 0.20f);
-        roundedFill(draw.hDC, sample, sampleFill, sampleFill, px(10));
-        SetTextColor(draw.hDC, item.foreground);
-        DrawTextW(draw.hDC, L"~/", -1, &sample, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        if (memory) DeleteDC(memory);
         return;
     }
+    FillRect(draw.hDC, &draw.rcItem, host.background);
+    SetBkMode(draw.hDC, TRANSPARENT);
+    SelectObject(draw.hDC, host.font);
     RECT row = draw.rcItem; row.top += px(2); row.bottom -= px(2); row.left += px(2); row.right -= px(3);
-    const bool hot = host.hovered == draw.hwndItem && host.hotRow == (int)draw.itemID;
-    COLORREF fill = selected ? selectionColor() : hot ? fieldColor() : surfaceColor();
+    COLORREF fill = selected ? selectionColor() : surfaceColor();
     roundedFill(draw.hDC, row, fill, fill, px(14));
     RECT text = row; text.left += px(12); text.right -= px(12);
     if (host.model.kind == 2) {
@@ -423,15 +581,14 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     const bool pressed = (draw.itemState & ODS_SELECTED) != 0;
     RECT bounds = draw.rcItem; InflateRect(&bounds, -1, -1);
     FillRect(draw.hDC, &draw.rcItem, id == blinkId ? host.field : host.background);
-    const bool hot = host.hovered == draw.hwndItem;
-    COLORREF surface = checked || pressed ? fieldColor() : hot ? fieldColor() : surfaceColor();
+    COLORREF surface = checked || pressed ? fieldColor() : surfaceColor();
     if (id == blinkId) surface = color(host.model.palette.pane_bg);
     COLORREF border = navigation && checked ? color(host.model.palette.border) : surface;
     if (GetFocus() == draw.hwndItem) border = color(host.model.palette.accent);
     const bool primary = id == IDOK;
     if (primary) {
         surface = host.model.kind == 6 ? RGB(174, 66, 48) : selectionColor();
-        if (hot || pressed) surface = blend(surface, color(host.model.palette.text_primary), pressed ? 0.16f : 0.08f);
+        if (pressed) surface = blend(surface, color(host.model.palette.text_primary), 0.16f);
         border = surface;
     }
     roundedFill(draw.hDC, bounds, surface, border, px(navigation ? 22 : 14));
@@ -469,31 +626,59 @@ void drawComboItem(const DRAWITEMSTRUCT& draw) {
 }
 float dialogWidth() { return host.model.kind == 4 ? 760.0f : host.model.kind == 1 ? 580.0f : host.model.kind == 6 ? 460.0f : 480.0f; }
 float dialogHeight() {
-    if (host.model.kind == 2) return 112.0f + (float)(host.model.count < 2 ? 2 : host.model.count > 14 ? 14 : host.model.count) * 34.0f;
+    if (host.model.kind == 2) return 112.0f + 14.0f * (float)px(listRowHeight()) / host.scale;
+    if (host.model.kind == 5) {
+        const size_t rows = host.model.count > shellLimit ? shellLimit : host.model.count;
+        return 212.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
+    }
     return host.model.kind == 6 ? 240.0f : host.model.kind == 4 ? 620.0f : 520.0f;
 }
-void showPage() {
+void setPageControlVisibility(int id, bool visible) {
+    HWND child = GetDlgItem(host.window, id);
+    const bool wasVisible = (GetWindowLongPtrW(child, GWL_STYLE) & WS_VISIBLE) != 0;
+    if (wasVisible != visible) SetWindowPos(child, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+}
+void showPage(SettingsPage previousPage) {
     const bool general = host.page == SettingsPage::general, appearance = host.page == SettingsPage::appearance, terminal = host.page == SettingsPage::terminal;
-    const int generalIds[] = { shellId, 122, 123 };
-    const int appearanceIds[] = { themeGridId, 124 };
-    const int terminalIds[] = { sizeId, blinkId, 121, 126 };
-    for (int id : generalIds) ShowWindow(GetDlgItem(host.window, id), general ? SW_SHOW : SW_HIDE);
-    for (int id : appearanceIds) ShowWindow(GetDlgItem(host.window, id), appearance ? SW_SHOW : SW_HIDE);
-    for (int id : terminalIds) ShowWindow(GetDlgItem(host.window, id), terminal ? SW_SHOW : SW_HIDE);
-    const wchar_t* names[] = { L"General", L"Appearance", L"Terminal", L"About" };
-    const wchar_t* descriptions[] = { L"Defaults for new terminal sessions.", L"Color themes for every terminal pane.", L"Font size and cursor behavior.", L"Vex native terminal\r\nWindows + WSL · ConPTY · libghostty" };
+    const struct PageControl { int id; bool visible; } controls[] = {
+        { shellId, general }, { 122, general }, { 123, general }, { themeGridId, appearance },
+        { sizeId, terminal }, { blinkId, terminal }, { 121, terminal }, { 126, terminal },
+    };
+    constexpr UINT visibilityFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
+    HDWP batch = BeginDeferWindowPos(8);
+    for (const auto& entry : controls) {
+        HWND child = GetDlgItem(host.window, entry.id);
+        if (batch && ((GetWindowLongPtrW(child, GWL_STYLE) & WS_VISIBLE) != 0) != entry.visible)
+            batch = DeferWindowPos(batch, child, nullptr, 0, 0, 0, 0, visibilityFlags | (entry.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+    }
+    if (!batch || !EndDeferWindowPos(batch)) for (const auto& entry : controls) setPageControlVisibility(entry.id, entry.visible);
+    const wchar_t* names[] = { L"General", L"Theme Studio", L"Terminal", L"About" };
+    const wchar_t* descriptions[] = { L"Defaults for new terminal sessions.", host.model.palette.is_dark ? L"Dark collection · Click a theme to apply. Changes save automatically." : L"Light collection · Click a theme to apply. Changes save automatically.", L"Font size and cursor behavior.", L"Vex native terminal\r\nWindows + WSL · ConPTY · libghostty" };
+    const bool active = host.phase == DialogHost::Phase::active;
+    if (active) {
+        SendDlgItemMessageW(host.window, pageTitleId, WM_SETREDRAW, FALSE, 0);
+        SendDlgItemMessageW(host.window, pageDetailId, WM_SETREDRAW, FALSE, 0);
+    }
     SetDlgItemTextW(host.window, pageTitleId, names[(int)host.page]);
     SetDlgItemTextW(host.window, pageDetailId, descriptions[(int)host.page]);
-    for (int i = 0; i < 4; ++i) InvalidateRect(GetDlgItem(host.window, firstPageId + i), nullptr, FALSE);
-    InvalidateRect(host.window, nullptr, TRUE);
+    if (active) {
+        SendDlgItemMessageW(host.window, pageTitleId, WM_SETREDRAW, TRUE, 0);
+        SendDlgItemMessageW(host.window, pageDetailId, WM_SETREDRAW, TRUE, 0);
+        if (previousPage != host.page) {
+            InvalidateRect(GetDlgItem(host.window, firstPageId + (int)previousPage), nullptr, FALSE);
+            InvalidateRect(GetDlgItem(host.window, firstPageId + (int)host.page), nullptr, FALSE);
+        }
+        RECT content = { 0, px(host.height < 430 ? 92 : 136), px(host.width), px(host.height - 16) };
+        RedrawWindow(host.window, &content, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    }
 }
 void paintDialogSurface(HDC dc) {
     RECT bounds; GetClientRect(host.window, &bounds);
     FillRect(dc, &bounds, host.background);
     roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(24));
-    if (host.model.kind == 4 && host.page != SettingsPage::about) {
+    if (host.model.kind == 4 && (host.page == SettingsPage::general || host.page == SettingsPage::terminal)) {
         const bool compact = host.height < 430;
-        RECT card = { px(28), px(compact ? (host.page == SettingsPage::appearance ? 152 : 176) : 222), bounds.right - px(28), host.page == SettingsPage::appearance ? bounds.bottom - px(70) : px((host.page == SettingsPage::terminal ? 362 : 310) - (compact ? 46 : 0)) };
+        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 362 : 310) - (compact ? 46 : 0)) };
         roundedFill(dc, card, color(host.model.palette.pane_bg), color(host.model.palette.pane_bg), px(28));
     }
     if (host.model.kind == 2) {
@@ -533,13 +718,9 @@ bool createControls(float width, float height) {
         for (int i = 0; i < 4; ++i) ok = control(L"BUTTON", pages[i], BS_OWNERDRAW | WS_TABSTOP, firstPageId + i, (width - 448) / 2 + i * 112.0f, 56, 108, 68) && ok;
         ok = control(L"EDIT", L"General", ES_READONLY | ES_AUTOHSCROLL, pageTitleId, 32, 146, width - 64, 28) && ok;
         ok = control(L"EDIT", L"Defaults for new terminal sessions.", ES_READONLY | ES_MULTILINE, pageDetailId, 32, 181, width - 64, 32) && ok;
-        HWND theme = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, themeId, 205, 100, width - 229, 220);
-        ok = theme && ok;
-        if (theme) { fillCombo(theme, host.model.items, host.model.count, host.model.settings.theme); ShowWindow(theme, SW_HIDE); }
-        ok = control(L"STATIC", L"Color theme", 0, 124, 46, 238, width - 92, 24) && ok;
-        HWND grid = control(L"LISTBOX", L"", WS_TABSTOP | WS_HSCROLL | LBS_MULTICOLUMN | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, themeGridId, 40, 276, width - 80, height - 356);
+        HWND grid = control(L"LISTBOX", L"", WS_TABSTOP | WS_HSCROLL | LBS_MULTICOLUMN | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, themeGridId, 16, 222, width - 32, height - 246);
         ok = grid && ok;
-        if (grid) { SendMessageW(grid, LB_SETITEMHEIGHT, 0, px(themeRowHeight())); SendMessageW(grid, LB_SETCOLUMNWIDTH, px(160), 0); fillList(themeGridId); }
+        if (grid) { SendMessageW(grid, LB_SETITEMHEIGHT, 0, px(themeRowHeight())); SendMessageW(grid, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0); fillList(themeGridId); }
         ok = control(L"STATIC", L"Font size", 0, 121, 46, 242, 180, 24) && ok;
         ok = control(L"STATIC", L"Terminal text size · 9–32 pt", 0, 126, 46, 268, 300, 24) && ok;
         wchar_t size[8]; swprintf(size, 8, L"%u", host.model.settings.font_size);
@@ -552,7 +733,7 @@ bool createControls(float width, float height) {
         HWND shell = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, shellId, width - 300, 244, 248, 220);
         ok = shell && ok;
         if (shell) fillCombo(shell, host.model.shells, host.model.shellCount, host.model.settings.shell);
-        showPage();
+        showPage(host.page);
     } else {
         if (!commands) ok = control(L"EDIT", host.model.description, ES_READONLY | ES_MULTILINE, descriptionId, closing ? 82 : 24, closing ? 68 : 58, closing ? width - 110 : width - 48, closing ? height - 144 : 38) && ok;
     }
@@ -576,16 +757,18 @@ bool createControls(float width, float height) {
         ok = list && ok;
         if (list) {
             SendMessageW(list, LB_SETITEMHEIGHT, 0, px(themes ? themeRowHeight() : listRowHeight()));
-            if (themes) SendMessageW(list, LB_SETCOLUMNWIDTH, px(160), 0);
+            if (themes) SendMessageW(list, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0);
             fillList();
         }
     }
     if (!commands) {
         if (!closing) ok = control(L"BUTTON", L"×", BS_OWNERDRAW | WS_TABSTOP, closeId, width - 42, 12, 28, 28) && ok;
-        ok = control(L"BUTTON", L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL, width - 244, height - 52, 96, 34) && ok;
-        ok = control(L"BUTTON", host.model.accept, WS_TABSTOP | BS_OWNERDRAW, IDOK, width - 136, height - 52, 112, 34) && ok;
+        if (!settings) {
+            ok = control(L"BUTTON", L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL, width - 244, height - 52, 96, 34) && ok;
+            ok = control(L"BUTTON", host.model.accept, WS_TABSTOP | BS_OWNERDRAW, IDOK, width - 136, height - 52, 112, 34) && ok;
+        }
     }
-    SendMessageW(host.window, DM_SETDEFID, host.model.kind == 6 ? IDCANCEL : IDOK, 0);
+    if (!settings) SendMessageW(host.window, DM_SETDEFID, host.model.kind == 6 ? IDCANCEL : IDOK, 0);
     return ok;
 }
 INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -618,10 +801,35 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
     case WM_COMMAND:
         if (host.phase != DialogHost::Phase::active || host.synchronizing) return TRUE;
         if (LOWORD(wparam) == IDCANCEL || LOWORD(wparam) == closeId) { finish(0); return TRUE; }
-        if (LOWORD(wparam) >= firstPageId && LOWORD(wparam) < firstPageId + 4) { host.page = (SettingsPage)(LOWORD(wparam) - firstPageId); showPage(); return TRUE; }
-        if (LOWORD(wparam) == blinkId) { host.draft.cursor_blink = !host.draft.cursor_blink; InvalidateRect(GetDlgItem(window, blinkId), nullptr, FALSE); return TRUE; }
+        if (LOWORD(wparam) >= firstPageId && LOWORD(wparam) < firstPageId + 4) {
+            const auto page = (SettingsPage)(LOWORD(wparam) - firstPageId);
+            if (page != host.page) { const auto previousPage = host.page; host.page = page; showPage(previousPage); }
+            return TRUE;
+        }
+        if (LOWORD(wparam) == blinkId) {
+            host.draft.cursor_blink = !host.draft.cursor_blink;
+            notify(4, 0, nullptr, 0, host.draft);
+            InvalidateRect(GetDlgItem(window, blinkId), nullptr, FALSE);
+            return TRUE;
+        }
+        if (LOWORD(wparam) == sizeId && (HIWORD(wparam) == EN_CHANGE || HIWORD(wparam) == EN_KILLFOCUS)) {
+            applySettingsFontSize(HIWORD(wparam) == EN_KILLFOCUS);
+            return TRUE;
+        }
+        if (LOWORD(wparam) == shellId && HIWORD(wparam) == CBN_SELCHANGE) {
+            uint32_t value;
+            if (comboSelection(shellId, value) && value != host.draft.shell) {
+                host.draft.shell = value;
+                notify(4, 0, nullptr, 0, host.draft);
+            }
+            return TRUE;
+        }
         if (LOWORD(wparam) == themeGridId && HIWORD(wparam) == LBN_SELCHANGE) {
-            uint32_t value; if (listSelection(value, themeGridId)) { host.draft.theme = value; fillCombo(GetDlgItem(window, themeId), host.model.items, host.model.count, value); }
+            uint32_t value;
+            if (listSelection(value, themeGridId) && value != host.draft.theme) {
+                host.draft.theme = value;
+                notify(4, 0, nullptr, 0, host.draft);
+            }
             return TRUE;
         }
         if (LOWORD(wparam) == IDOK) { acceptDialog(); return TRUE; }
@@ -635,18 +843,93 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         if (LOWORD(wparam) == listId && HIWORD(wparam) == LBN_DBLCLK) { acceptDialog(); return TRUE; }
         if (LOWORD(wparam) == listId && HIWORD(wparam) == LBN_SELCHANGE) { uint32_t value; if (listSelection(value)) notify(2, value); return TRUE; }
         break;
-    case WM_PAINT: { PAINTSTRUCT paint; HDC dc = BeginPaint(window, &paint); paintDialogSurface(dc); EndPaint(window, &paint); return TRUE; }
-    case WM_PRINTCLIENT: if (wparam) { paintDialogSurface(reinterpret_cast<HDC>(wparam)); return TRUE; } break;
+    case WM_APP + 2: case WM_APP + 3: {
+        wchar_t enabled[2];
+        if (GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) != 1 || enabled[0] != L'1') return FALSE;
+        if (message == WM_APP + 2) {
+            SetWindowLongPtrW(window, DWLP_MSGRESULT, (LONG_PTR)(wparam == 2 ? host.surfacePaintCount : wparam == 1 ? host.dialogPaintCount : host.themeCardPaintCount));
+            return TRUE;
+        }
+        HWND child = GetDlgItem(window, (int)wparam);
+        if (!child || !IsWindowVisible(child)) { SetWindowLongPtrW(window, DWLP_MSGRESULT, -1); return TRUE; }
+        // Replay atomically so desktop focus and real pointer messages cannot interleave the measurement.
+        UpdateWindow(window); UpdateWindow(child);
+        const uint64_t before = host.dialogPaintCount;
+        for (int i = 0; i < 20; ++i) {
+            SendMessageW(child, WM_MOUSEMOVE, 0, MAKELPARAM(px(12 + i), px(12)));
+            UpdateWindow(child); UpdateWindow(window);
+        }
+        RECT bounds; GetClientRect(child, &bounds);
+        SendMessageW(child, WM_MOUSEMOVE, 0, MAKELPARAM(bounds.right / 2, px(12)));
+        UpdateWindow(child); UpdateWindow(window);
+        SendMessageW(child, WM_MOUSELEAVE, 0, 0);
+        UpdateWindow(child); UpdateWindow(window);
+        SetWindowLongPtrW(window, DWLP_MSGRESULT, (LONG_PTR)(host.dialogPaintCount - before));
+        return TRUE;
+    }
+    case WM_APP + 4: {
+        wchar_t enabled[2];
+        if (GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) != 1 || enabled[0] != L'1') return FALSE;
+        RedrawWindow(window, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
+        SetWindowLongPtrW(window, DWLP_MSGRESULT, 1);
+        return TRUE;
+    }
+    case WM_APP + 5: {
+        wchar_t enabled[2];
+        if (GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) != 1 || enabled[0] != L'1') return FALSE;
+        HWND child = GetDlgItem(window, (int)wparam);
+        if (!child || !IsWindowVisible(child)) { SetWindowLongPtrW(window, DWLP_MSGRESULT, -1); return TRUE; }
+        wchar_t klass[32] = {}; GetClassNameW(child, klass, 32);
+        if (wcscmp(klass, L"ListBox") != 0 && wcscmp(klass, L"ComboBox") != 0 && wcscmp(klass, L"Button") != 0) { SetWindowLongPtrW(window, DWLP_MSGRESULT, -1); return TRUE; }
+        DRAWITEMSTRUCT draw = {}; draw.CtlID = (UINT)wparam; draw.hwndItem = child;
+        draw.CtlType = wcscmp(klass, L"ListBox") == 0 ? ODT_LISTBOX : wcscmp(klass, L"ComboBox") == 0 ? ODT_COMBOBOX : ODT_BUTTON;
+        draw.itemAction = ODA_DRAWENTIRE; draw.itemState = ODS_SELECTED | ODS_FOCUS;
+        if (draw.CtlType == ODT_LISTBOX) SendMessageW(child, LB_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&draw.rcItem));
+        else GetClientRect(child, &draw.rcItem);
+        HDC reference = GetDC(window);
+        HDC dc = reference ? CreateCompatibleDC(reference) : nullptr;
+        HBITMAP bitmap = dc ? CreateCompatibleBitmap(reference, draw.rcItem.right, draw.rcItem.bottom) : nullptr;
+        if (reference) ReleaseDC(window, reference);
+        if (!bitmap) { if (dc) DeleteDC(dc); SetWindowLongPtrW(window, DWLP_MSGRESULT, -1); return TRUE; }
+        HGDIOBJ previous = SelectObject(dc, bitmap);
+        HGDIOBJ font = GetStockObject(SYSTEM_FONT); SelectObject(dc, font);
+        SetBkMode(dc, OPAQUE); SetTextColor(dc, RGB(12, 34, 56)); SetBkColor(dc, RGB(78, 90, 123));
+        draw.hDC = dc;
+        SendMessageW(window, WM_DRAWITEM, wparam, reinterpret_cast<LPARAM>(&draw));
+        const bool restored = GetCurrentObject(dc, OBJ_FONT) == font && GetBkMode(dc) == OPAQUE &&
+            GetTextColor(dc) == RGB(12, 34, 56) && GetBkColor(dc) == RGB(78, 90, 123);
+        SelectObject(dc, previous); DeleteObject(bitmap); DeleteDC(dc);
+        SetWindowLongPtrW(window, DWLP_MSGRESULT, restored ? 1 : 0);
+        return TRUE;
+    }
+    case WM_ERASEBKGND: return TRUE;
+    case WM_PAINT: {
+        ++host.surfacePaintCount; ++host.dialogPaintCount;
+        PAINTSTRUCT paint; HDC dc = BeginPaint(window, &paint);
+        if (dc) { DialogPaintBuffer buffer(dc, paint.rcPaint); paintDialogSurface(buffer.dc); }
+        EndPaint(window, &paint);
+        return TRUE;
+    }
+    case WM_PRINTCLIENT: if (wparam) {
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        const int saved = SaveDC(dc);
+        paintDialogSurface(dc);
+        if (saved) RestoreDC(dc, saved);
+        return TRUE;
+    } break;
     case DM_GETDEFID:
-        SetWindowLongPtrW(window, DWLP_MSGRESULT, MAKELRESULT(host.model.kind == 6 ? IDCANCEL : IDOK, DC_HASDEFID));
+        SetWindowLongPtrW(window, DWLP_MSGRESULT, host.model.kind == 4 ? 0 : MAKELRESULT(host.model.kind == 6 ? IDCANCEL : IDOK, DC_HASDEFID));
         return TRUE;
     case DM_SETDEFID: SetWindowLongPtrW(window, DWLP_MSGRESULT, TRUE); return TRUE;
     case WM_DRAWITEM:
         if (lparam) {
+            ++host.dialogPaintCount;
             const auto& draw = *reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
+            const int saved = SaveDC(draw.hDC);
             if (draw.CtlType == ODT_LISTBOX) drawListItem(draw);
             else if (draw.CtlType == ODT_BUTTON) drawDialogButton(draw);
             else if (draw.CtlType == ODT_COMBOBOX) drawComboItem(draw);
+            if (saved) RestoreDC(draw.hDC, saved);
             return TRUE;
         }
         break;
@@ -659,7 +942,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
         const bool muted = id == descriptionId || id == pageDetailId || id == 123 || id == 126;
         SetTextColor(dc, color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
-        const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == themeGridId || id == 121 || id == 122 || id == 123 || id == 124 || id == 126);
+        const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == 121 || id == 122 || id == 123 || id == 126);
         if (id == queryId) {
             SetBkColor(dc, fieldColor());
             SetDCBrushColor(dc, fieldColor());
@@ -697,8 +980,6 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
 
 void initializeTerminalDialogs(HWND owner, VexWindowCallbacks callbacks) {
     host.owner = owner; host.callbacks = callbacks;
-    Gdiplus::GdiplusStartupInput startup;
-    if (Gdiplus::GdiplusStartup(&host.graphicsToken, &startup, nullptr) != Gdiplus::Ok) host.graphicsToken = 0;
 }
 HWND terminalDialogWindow() { return host.window; }
 bool routeTerminalDialogMessage(MSG& message) { return host.window && IsDialogMessageW(host.window, &message); }
@@ -760,16 +1041,20 @@ void repositionTerminalDialogs() {
             if (id >= firstPageId && id < firstPageId + 4) { y = 44; h = 44; }
             if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == blinkId) y -= 46;
             if (id == pageDetailId) h = 30;
-            if (id == 124) y = 166;
-            if (id == themeGridId) { y = 198; h = host.height - 276; }
+            if (id == themeGridId) { y = 174; h = host.height - 198; }
+        }
+        if (id == listId && host.model.kind != 1) {
+            const int rowPixels = px(listRowHeight());
+            const int rows = px(h) / rowPixels;
+            if (rows > 0) h = (float)(rows * rowPixels) / host.scale;
         }
         MoveWindow(c.window, px(x), px(y), px(fmaxf(w, 1)), px(fmaxf(h, 1)), FALSE);
         if (oldFont) SendMessageW(c.window, WM_SETFONT, reinterpret_cast<WPARAM>(id == pageTitleId || (id == titleId && host.model.kind != 4) ? host.heading : host.font), FALSE);
         if (id == listId || id == themeGridId) {
             SendMessageW(c.window, LB_SETITEMHEIGHT, 0, px(host.model.kind == 1 || id == themeGridId ? themeRowHeight() : listRowHeight()));
-            if (host.model.kind == 1 || id == themeGridId) SendMessageW(c.window, LB_SETCOLUMNWIDTH, px(160), 0);
+            if (host.model.kind == 1 || id == themeGridId) SendMessageW(c.window, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0);
         }
-        if (id == shellId || id == themeId) {
+        if (id == shellId) {
             SendMessageW(c.window, CB_SETITEMHEIGHT, (WPARAM)-1, px(30));
             SendMessageW(c.window, CB_SETITEMHEIGHT, 0, px(30));
         }
@@ -791,8 +1076,14 @@ extern "C" void vex_dialog_warning(VexDialogText message) {
     if (decodeText(message, text, 512)) MessageBoxW(host.window ? host.window : host.owner, text, L"Vex settings", MB_OK | MB_ICONWARNING);
 }
 extern "C" int vex_dialog_open(VexDialogRequest request) {
-    if (!host.graphicsToken) return ERROR_NOT_READY;
     if (!IsWindow(host.owner) || request.kind < 1 || request.kind > 6 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
+    if (!host.graphicsToken) {
+        Gdiplus::GdiplusStartupInput startup;
+        if (Gdiplus::GdiplusStartup(&host.graphicsToken, &startup, nullptr) != Gdiplus::Ok) {
+            host.graphicsToken = 0;
+            return ERROR_NOT_READY;
+        }
+    }
     static DialogModel next;
     memset(&next, 0, sizeof(next));
     if (!decodeText(request.title, next.title, 128) || !decodeText(request.description, next.description, 512) || !decodeText(request.accept_label, next.accept, 64) ||
@@ -803,16 +1094,58 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     }
     if (host.phase == DialogHost::Phase::active) {
         host.synchronizing = true;
+        const auto& oldPalette = host.model.palette;
+        const auto& newPalette = next.palette;
+        const bool appearanceChanged = oldPalette.is_dark != newPalette.is_dark;
+        const bool paletteChanged = oldPalette.pane_bg != newPalette.pane_bg || oldPalette.text_primary != newPalette.text_primary ||
+            oldPalette.text_muted != newPalette.text_muted || oldPalette.border != newPalette.border || oldPalette.accent != newPalette.accent || appearanceChanged;
+        bool itemsChanged = host.model.count != next.count;
+        for (size_t i = 0; !itemsChanged && i < next.count; ++i) {
+            const auto& oldItem = host.model.items[i];
+            const auto& newItem = next.items[i];
+            itemsChanged = oldItem.value != newItem.value || wcscmp(oldItem.label, newItem.label) != 0 || wcscmp(oldItem.detail, newItem.detail) != 0 ||
+                oldItem.background != newItem.background || oldItem.foreground != newItem.foreground || oldItem.accent != newItem.accent || memcmp(oldItem.swatches, newItem.swatches, sizeof(oldItem.swatches)) != 0;
+        }
+        const bool emptyChanged = (host.model.count == 0) != (next.count == 0);
+        const bool blinkChanged = host.model.settings.cursor_blink != next.settings.cursor_blink;
+        if (itemsChanged || paletteChanged) clearThemeCardCache();
         host.model = next;
-        HBRUSH background = CreateSolidBrush(surfaceColor());
-        HBRUSH field = CreateSolidBrush(color(host.model.palette.pane_bg));
-        if (background && field) { DeleteObject(host.background); DeleteObject(host.field); host.background = background; host.field = field; }
-        else { if (background) DeleteObject(background); if (field) DeleteObject(field); }
-        fillList();
-        HWND list = GetDlgItem(host.window, listId);
-        if (list) SetWindowTheme(list, host.model.palette.is_dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
-        if (host.model.kind == 2) repositionTerminalDialogs();
-        RedrawWindow(host.window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+        if (host.model.kind == 4) {
+            host.draft = next.settings;
+            BOOL valid = FALSE;
+            const UINT size = GetDlgItemInt(host.window, sizeId, &valid, FALSE);
+            if (!valid || size != host.draft.font_size) {
+                wchar_t text[8]; swprintf(text, 8, L"%u", host.draft.font_size);
+                SetDlgItemTextW(host.window, sizeId, text);
+            }
+            uint32_t selectedShell;
+            if (!comboSelection(shellId, selectedShell) || selectedShell != host.draft.shell)
+                fillCombo(GetDlgItem(host.window, shellId), host.model.shells, host.model.shellCount, host.draft.shell);
+            if (blinkChanged) InvalidateRect(GetDlgItem(host.window, blinkId), nullptr, FALSE);
+        }
+        const int listControlId = host.model.kind == 4 ? themeGridId : listId;
+        HWND list = GetDlgItem(host.window, listControlId);
+        if (paletteChanged) {
+            HBRUSH background = CreateSolidBrush(surfaceColor());
+            HBRUSH field = CreateSolidBrush(color(host.model.palette.pane_bg));
+            if (background && field) { DeleteObject(host.background); DeleteObject(host.field); host.background = background; host.field = field; }
+            else { if (background) DeleteObject(background); if (field) DeleteObject(field); }
+            if (appearanceChanged && list) SetWindowTheme(list, host.model.palette.is_dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+        }
+        if (itemsChanged || paletteChanged) fillList(listControlId);
+        else if (list) {
+            uint32_t selected;
+            if (!listSelection(selected, listControlId) || selected != host.model.selected) {
+                for (size_t i = 0; i < host.model.count; ++i) {
+                    if (host.model.items[i].value == host.model.selected) { SendMessageW(list, LB_SETCURSEL, i, 0); break; }
+                }
+            }
+        }
+        if (paletteChanged) RedrawWindow(host.window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+        else if (host.model.kind == 2 && emptyChanged) {
+            RECT results = { px(10), px(62), px(host.width - 10), px(host.height - 48) };
+            InvalidateRect(host.window, &results, FALSE);
+        }
         host.synchronizing = false;
         return 0;
     }
@@ -825,15 +1158,19 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     struct Template { DLGTEMPLATE dialog; WORD menu, klass, title; } layout = {};
     layout.dialog.style = WS_POPUP | WS_CLIPCHILDREN;
     layout.dialog.dwExtendedStyle = WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT;
+    // Page/control transitions need one composed surface; command search keeps its cheaper, stable-layout dirty list.
+    if (request.kind != 2) layout.dialog.dwExtendedStyle |= WS_EX_COMPOSITED;
     HWND result = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), &layout.dialog, host.owner, dialogProcedure, 0);
     if (!result || !IsWindow(result)) { closeDialog(false); return ERROR_NOT_ENOUGH_MEMORY; }
     host.window = result;
     host.phase = DialogHost::Phase::active;
     repositionTerminalDialogs();
+    if (request.kind == 4) prepareSettingsThemeCards();
     EnableWindow(host.owner, FALSE);
     ShowWindow(result, SW_SHOW);
     SetActiveWindow(result);
     HWND focus = GetDlgItem(result, request.kind == 4 ? shellId : request.kind == 6 ? IDCANCEL : request.kind == 2 ? queryId : listId);
     SetFocus(focus);
+    RedrawWindow(result, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     return 0;
 }

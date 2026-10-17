@@ -12,6 +12,7 @@ UiBrush* brush = &paint;
 IDWriteTextFormat* chromeFont;
 IDWriteTextFormat* chromeBoldFont;
 IDWriteTextFormat* badgeFont;
+IDWriteTextFormat* paneTitleFont;
 VexChromePalette chromePalette;
 float tabWidthDip;
 uint32_t tabStripCount;
@@ -39,6 +40,7 @@ void beginWindowChromeFrame(const WindowChromeFrame& frame) {
     chromeFont = frame.normalFont;
     chromeBoldFont = frame.boldFont;
     badgeFont = frame.badgeFont;
+    paneTitleFont = frame.paneTitleFont;
     chromePalette = frame.palette;
     tabWidthDip = frame.tabWidth;
     tabStripCount = frame.tabCount;
@@ -163,17 +165,17 @@ static void labelUtf8WithFont(IDWriteTextFormat* format, const uint8_t* bytes, s
         }
     }
 }
-static void labelUtf8OrDefault(const uint8_t* bytes, size_t length, float x, float y, float width, uint32_t color) {
+static void labelUtf8OrDefault(const uint8_t* bytes, size_t length, float x, float y, float width, uint32_t color, IDWriteTextFormat* font = nullptr) {
     if (bytes && length > 0 && length <= 256) {
         wchar_t text[257];
         int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(bytes), (int)length, text, 256);
         if (count > 0) {
             text[count] = 0;
-            label(text, x, y, width, color);
+            labelWithFont(font, text, x, y, width, color);
             return;
         }
     }
-    label(shellName, x, y, width, color);
+    labelWithFont(font, shellName, x, y, width, color);
 }
 extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
     if (!bytes || !length || length > 128 || memchr(bytes, 0, length)) return ERROR_INVALID_PARAMETER;
@@ -296,15 +298,15 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
         const float bx = right - 64.0f, cx = bx + 10.0f, cy = top + 10.0f;
         if (hovered_action == 2) drawButtonPill(bx, chromePalette.inactive_tab_hover_bg);
         brush->SetColor(rgb(hovered_action == 2 ? chromePalette.text_primary : baseColor));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), 1.6f, 1.6f), brush, 1.15f);
-        target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.15f, roundCaps);
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 6.0f, cy - 6.0f, cx + 6.0f, cy + 6.0f), 1.8f, 1.8f), brush, 1.4f);
+        target->DrawLine(D2D1::Point2F(cx, cy - 6.0f), D2D1::Point2F(cx, cy + 6.0f), brush, 1.4f, roundCaps);
     }
     {
         const float bx = right - 42.0f, cx = bx + 10.0f, cy = top + 10.0f;
         if (hovered_action == 3) drawButtonPill(bx, chromePalette.inactive_tab_hover_bg);
         brush->SetColor(rgb(hovered_action == 3 ? chromePalette.text_primary : baseColor));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f), 1.6f, 1.6f), brush, 1.15f);
-        target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.15f, roundCaps);
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 6.0f, cy - 6.0f, cx + 6.0f, cy + 6.0f), 1.8f, 1.8f), brush, 1.4f);
+        target->DrawLine(D2D1::Point2F(cx - 6.0f, cy), D2D1::Point2F(cx + 6.0f, cy), brush, 1.4f, roundCaps);
     }
     {
         const float bx = right - 20.0f, cx = bx + 10.0f, cy = top + 10.0f;
@@ -330,11 +332,11 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
     if (statusWidth > 0) drawProgramStatus(status, bounds.x + remainingWidth - statusWidth - 4, bounds.y + 4, statusWidth, true);
     float titleInset = 10.0f;
     if (bounds.width >= 90.0f && bounds.height >= 28.0f) {
-        const uint64_t iconKey = drawAppIconTile(icon, bounds.x + 8.0f, bounds.y + 4.0f);
-        if (focused) focusedPaneIconKey = iconKey;
+        drawAppIcon(icon, bounds.x + 11.0f, bounds.y + 7.0f, 12.0f);
+        if (focused) focusedPaneIconKey = computeIconCacheKey(icon, 12);
         titleInset = 30.0f;
     }
-    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 5.0f, fmaxf(0, remainingWidth - statusWidth - titleInset - 8), focused ? chromePalette.text_primary : chromePalette.text_muted);
+    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4.0f, fmaxf(0, remainingWidth - statusWidth - titleInset - 8), focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont);
     beginTerminalPane(bounds);
 }
 extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active) {

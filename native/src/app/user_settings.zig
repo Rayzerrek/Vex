@@ -23,7 +23,7 @@ pub const UserSettings = struct {
         if (parsed.value.version != 1) return error.UnsupportedSettingsVersion;
         var index: ?u8 = null;
         for (themes.themes, 0..) |theme, i| {
-            if (std.mem.eql(u8, theme.name, parsed.value.theme)) index = @intCast(i);
+            if (std.mem.eql(u8, theme.name, parsed.value.theme) or std.mem.eql(u8, legacy_theme_names[i], parsed.value.theme)) index = @intCast(i);
         }
         const result: UserSettings = .{
             .theme_index = index orelse return error.UnknownSettingsTheme,
@@ -46,6 +46,24 @@ pub const UserSettings = struct {
         }, .{ .whitespace = .indent_2 });
     }
 };
+
+// Preserve existing native profiles while replacing the original third-party collection.
+const legacy_theme_names = [_][]const u8{
+    "Vex Obsidian",  "Tokyo Night Storm", "Kanagawa Wave",   "Catppuccin Mocha", "Rosé Pine",      "Gruvbox Material",
+    "Vex Alabaster", "Flexoki Paper",     "Tokyo Night Day", "Catppuccin Latte", "Rosé Pine Dawn", "Kanagawa Lotus",
+};
+
+test "legacy theme names migrate to the matching appearance and encode the new collection" {
+    for (legacy_theme_names, 0..) |name, i| {
+        const bytes = try std.json.Stringify.valueAlloc(std.testing.allocator, Document{ .theme = name }, .{});
+        defer std.testing.allocator.free(bytes);
+        const settings = try UserSettings.decode(std.testing.allocator, bytes);
+        try std.testing.expectEqual(i, settings.theme_index);
+        const encoded = try settings.encodeAlloc(std.testing.allocator);
+        defer std.testing.allocator.free(encoded);
+        try std.testing.expect(std.mem.indexOf(u8, encoded, themes.themes[i].name) != null);
+    }
+}
 
 const Document = struct {
     version: u8 = 1,

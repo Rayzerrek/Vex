@@ -40,6 +40,34 @@ try {
     Assert-NativeProbe $window 103 4 'fuzzy query text reaches the terminal owner'
     if ((Get-NativeProbe $window 101) -eq 0) { throw 'Vex palette: fuzzy query has no matches.' }
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'palette-fuzzy.png')
+    $list = [VexNativeSmoke]::GetDlgItem($dialog, 103)
+    Send-NativePointer $list 0x0201 20 300 1
+    Send-NativePointer $list 0x0202 20 300 0
+    Assert-NativeProbe $window 53 1 'blank result space never executes the nearest command'
+    $query = [VexNativeSmoke]::GetDlgItem($dialog, 102)
+    [VexNativeSmoke]::SetControlText($query, 'split right') | Out-Null
+    [VexNativeSmoke]::SendWindowMessage($query, 0xB1, [IntPtr]11, [IntPtr]11) | Out-Null
+    [VexNativeSmoke]::SendWindowMessage($query, 0x102, [IntPtr]127, [IntPtr]::Zero) | Out-Null
+    if ([VexNativeSmoke]::ControlText($query) -ne 'split ') { throw 'Vex palette: Ctrl+Backspace inserted DEL or failed to delete the previous query word.' }
+    Assert-NativeProbe $window 103 6 'Ctrl+Backspace leaves a valid query'
+    [VexNativeSmoke]::SendWindowMessage($query, 0x304, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    if ([VexNativeSmoke]::ControlText($query) -ne 'split right') { throw 'Vex palette: word deletion broke native Undo.' }
+    [VexNativeSmoke]::SendWindowMessage($query, 0xB1, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    [VexNativeSmoke]::SendWindowMessage($query, 0x102, [IntPtr]127, [IntPtr]::Zero) | Out-Null
+    if ([VexNativeSmoke]::ControlText($query) -ne 'split right') { throw 'Vex palette: Ctrl+Backspace at the start changed the query.' }
+    [VexNativeSmoke]::SendWindowMessage($query, 0xB1, [IntPtr]6, [IntPtr]11) | Out-Null
+    [VexNativeSmoke]::SendWindowMessage($query, 0x102, [IntPtr]127, [IntPtr]::Zero) | Out-Null
+    if ([VexNativeSmoke]::ControlText($query) -ne 'split ') { throw 'Vex palette: Ctrl+Backspace did not remove the selected text.' }
+    [VexNativeSmoke]::SetControlText($query, ('split ' + [char]::ConvertFromUtf32(0x1F600))) | Out-Null
+    [VexNativeSmoke]::SendWindowMessage($query, 0xB1, [IntPtr]8, [IntPtr]8) | Out-Null
+    [VexNativeSmoke]::SendWindowMessage($query, 0x102, [IntPtr]127, [IntPtr]::Zero) | Out-Null
+    if ([VexNativeSmoke]::ControlText($query) -ne 'split ') { throw 'Vex palette: word deletion split a Unicode surrogate pair.' }
+    Assert-NativeProbe $window 14 $pidBefore 'query editing preserves the live PTY'
+    [VexNativeSmoke]::SetControlText($query, ('split' + [char]1 + ' right' + [char]127)) | Out-Null
+    if ([VexNativeSmoke]::ControlText($query) -ne 'split right') { throw 'Vex palette: control characters were not removed at the native input boundary.' }
+    [VexNativeSmoke]::SetControlText($query, "split`r`nright`t") | Out-Null
+    if ([VexNativeSmoke]::ControlText($query) -ne 'split right ') { throw 'Vex palette: pasted query whitespace was not normalized.' }
+    Assert-NativeProbe $window 103 12 'normalized pasted query reaches the owner'
     [VexNativeSmoke]::SetControlText([VexNativeSmoke]::GetDlgItem($dialog, 102), ('x' * 126) + [char]::ConvertFromUtf32(0x1F600)) | Out-Null
     Assert-NativeProbe $window 103 126 'query limit keeps complete UTF-8 characters'
     Post-DialogKey $window 0x1B
@@ -56,7 +84,7 @@ try {
     Post-DialogKey $window 0x1B
     Close-NativeInstance $process $window
     $process = $null
-    [pscustomobject]@{ Result = 'PASS'; Checks = @('every action reachable with keyboard', 'Up/Home/End wrap and scroll', 'native fuzzy query', 'UTF-8 query limit', 'stable PTY', 'dark/light/compact native captures') } | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'result.json')
+    [pscustomobject]@{ Result = 'PASS'; Checks = @('every action reachable with keyboard', 'Up/Home/End wrap and scroll', 'native fuzzy query', 'Ctrl+Backspace word/selection deletion and Unicode', 'native Undo after word deletion', 'control character filtering', 'pasted whitespace normalization', 'UTF-8 query limit', 'stable PTY', 'dark/light/compact native captures') } | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'result.json')
 } finally {
     if ($process -and !$process.HasExited) { $process.Kill(); $process.WaitForExit() }
     $env:VEX_NATIVE_SELFTEST = $previousSelftest

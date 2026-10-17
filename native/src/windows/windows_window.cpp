@@ -27,6 +27,7 @@ static UiBrush uiBrush;
 static UiBrush* brush = &uiBrush;
 static IDWriteTextFormat* terminalFonts[4];
 static IDWriteTextFormat* chromeFont;
+static IDWriteTextFormat* paneTitleFont;
 static IDWriteTextFormat* chromeBoldFont;
 static IDWriteTextFormat* badgeFont;
 static constexpr bool roundCaps = true;
@@ -35,13 +36,18 @@ static float terminalFontSize = 14.0f;
 static float dpiScale = 1.0f;
 static uint32_t tabStripCount = 1;
 static float tabWidthDip = 160;
-static bool frameScheduled, firstOutput, firstFrame;
+enum class FrameSchedule { none, posted, synchronized };
+static FrameSchedule frameSchedule = FrameSchedule::none;
+static bool firstOutput, firstFrame;
 static bool cursorWakeArmed;
 static ULONGLONG frameDeadline;
 static int platformError;
 static LARGE_INTEGER startupCounter, counterFrequency;
 static uint16_t pendingSurrogate;
 static uint64_t paintCount;
+static LARGE_INTEGER frameRequestCounter;
+static UINT64 frameRequestDelayUs, sceneDurationUs;
+static bool measureFrameTiming;
 static int hoveredCaptionButton;
 static int pressedCaptionButton;
 static bool hoveredNewTab;
@@ -153,25 +159,27 @@ static void updateWindowMetrics() {
     callbacks.resize(callbacks.context, clientWidth, clientHeight, cellWidth, cellHeight, scale);
 }
 static void renderScheduledFrame() {
-    KillTimer(window, 1); frameScheduled = false;
+    KillTimer(window, 1); frameSchedule = FrameSchedule::none;
     InvalidateRect(window, nullptr, FALSE); UpdateWindow(window);
 }
 extern "C" void vex_window_invalidate() {
     if (!IsWindow(window)) return;
     ULONGLONG now = GetTickCount64();
-    if (!frameScheduled || frameDeadline > now + 8) {
+    if (frameSchedule != FrameSchedule::posted) {
         frameDeadline = now + 8;
-        if (!SetTimer(window, 1, 8, nullptr)) { platformError = (int)GetLastError(); DestroyWindow(window); }
-        else frameScheduled = true;
+        KillTimer(window, 1);
+        frameSchedule = FrameSchedule::posted;
+        // A posted frame coalesces queued changes without Win32 timer-resolution input delay.
+        if (!PostMessageW(window, WM_APP + 10, 0, 0)) { platformError = (int)GetLastError(); DestroyWindow(window); }
     } else if (now >= frameDeadline) renderScheduledFrame();
 }
 extern "C" void vex_window_defer_synchronized() {
     if (!IsWindow(window)) return;
     ULONGLONG now = GetTickCount64();
-    if (!frameScheduled || frameDeadline < now + 100) {
+    if (frameSchedule != FrameSchedule::synchronized) {
         frameDeadline = now + 100;
         if (!SetTimer(window, 1, 100, nullptr)) { platformError = (int)GetLastError(); DestroyWindow(window); }
-        else frameScheduled = true;
+        else frameSchedule = FrameSchedule::synchronized;
     } else if (now >= frameDeadline) renderScheduledFrame();
 }
 extern "C" void vex_window_close() { if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 0, 0); }
@@ -304,7 +312,7 @@ static void renderUiVerificationScene() {
 }
 
 static void renderScene() {
-    beginWindowChromeFrame({ target, chromeFont, chromeBoldFont, badgeFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose });
+    beginWindowChromeFrame({ target, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose });
     beginTerminalDrawingFrame({ &renderer, drawingFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
     target->Clear(rgb(chromePalette.window_bg));
     rectangle(0.0f, 0.0f, clientWidth, 44.0f, chromePalette.titlebar_bg);
@@ -321,8 +329,21 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     HRESULT result = createRenderTarget();
     if (SUCCEEDED(result)) result = renderer.beginFrame();
     if (FAILED(result)) { rendererFault(result); return false; }
+    if (frameSchedule == FrameSchedule::posted) frameSchedule = FrameSchedule::none;
     paintCount++;
+    LARGE_INTEGER sceneBegin = {};
+    if (measureFrameTiming) {
+        QueryPerformanceCounter(&sceneBegin);
+        if (frameRequestCounter.QuadPart) {
+            frameRequestDelayUs = (UINT64)((sceneBegin.QuadPart - frameRequestCounter.QuadPart) * 1000000 / counterFrequency.QuadPart);
+            frameRequestCounter.QuadPart = 0;
+        }
+    }
     renderScene();
+    if (measureFrameTiming) {
+        LARGE_INTEGER sceneEnd; QueryPerformanceCounter(&sceneEnd);
+        sceneDurationUs = (UINT64)((sceneEnd.QuadPart - sceneBegin.QuadPart) * 1000000 / counterFrequency.QuadPart);
+    }
     result = renderer.endFrame(pixels, stride);
     if (FAILED(result)) { rendererFault(result); return false; }
     rendererRecoveryAttempts = 0;
@@ -821,7 +842,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             vex_pty_ack_output(token);
             // Deadline check also renders when posted pipe events starve WM_TIMER.
             if (visible) vex_window_invalidate();
-            else if (frameScheduled && GetTickCount64() >= frameDeadline) renderScheduledFrame();
+            else if (frameSchedule != FrameSchedule::none && GetTickCount64() >= frameDeadline) renderScheduledFrame();
         }
         return 0;
     }
@@ -870,6 +891,20 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_APP + 7:
         return (selftestEnabled() && saveCaptureBmp()) ? 1 : 0;
+    case WM_APP + 10:
+        if (frameSchedule == FrameSchedule::posted) renderScheduledFrame();
+        return 0;
+    case WM_APP + 9:
+        if (!selftestEnabled()) return 0;
+        measureFrameTiming = true;
+        QueryPerformanceCounter(&frameRequestCounter);
+        if (wparam == 1) vex_window_defer_synchronized();
+        else if (wparam == 2) {
+            for (int i = 0; i < 20; ++i) vex_window_invalidate();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            UpdateWindow(hwnd);
+        } else vex_window_invalidate();
+        return 1;
     case WM_APP + 8:
         if (!selftestEnabled() || lparam) return 0;
         switch (wparam) {
@@ -901,6 +936,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 24: return (LRESULT)renderer.ui.batches.uploadCapacity();
             case 25: return TerminalRenderer::atlasSize * TerminalRenderer::atlasSize;
             case 26: return (LRESULT)renderer.ui.batches.atlasResets;
+            case 27: return (LRESULT)frameRequestDelayUs;
+            case 28: return (LRESULT)sceneDurationUs;
             case 40: uiVerificationMode = 1; vex_window_invalidate(); return 1;
             case 41: uiVerificationMode = 0; vex_window_invalidate(); return 1;
             case 42: uiVerificationMode = 2; vex_window_invalidate(); return 1;
@@ -921,7 +958,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             HRESULT result = renderer.trimUnusedTerminalUploads();
             if (FAILED(result)) { rendererFault(result); return 0; }
             if (callbacks.tick) callbacks.tick(callbacks.context);
-        } else if (wparam == 1) {
+        } else if (wparam == 1 && frameSchedule == FrameSchedule::synchronized && GetTickCount64() >= frameDeadline) {
             renderScheduledFrame();
         }
         return 0;
@@ -1051,6 +1088,8 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     };
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.5f, L"en-us", &chromeFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(chromeFont);
+    if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"en-us", &paneTitleFont);
+    if (SUCCEEDED(result)) result = configureChromeFormat(paneTitleFont);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us", &chromeBoldFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(chromeBoldFont);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f, L"en-us", &badgeFont);
@@ -1102,7 +1141,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (iconSmall) DestroyIcon(iconSmall);
     HRESULT shutdown = releaseRenderer();
     if (FAILED(shutdown) && !WindowsRenderer::deviceLost(shutdown) && !platformError) platformError = (int)shutdown;
-    releaseCom(chromeFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
+    releaseCom(chromeFont); releaseCom(paneTitleFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
     for (auto& font : terminalFonts) releaseCom(font);
     releaseCom(textFactory); releaseCom(drawingFactory);
     return platformError;

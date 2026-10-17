@@ -134,7 +134,7 @@ Each window owns up to **8 tabs**, each with independent terminal panes:
   This checkpoint draws an insertion marker, not WPF's animated ghost/push preview.
 - `Ctrl+Shift+R` / `Ctrl+Shift+D`: split the focused pane right/down (also exits focus/zoom mode if active so the new split is visible).
 - Custom Windows DWM titlebar chrome (`#181A1F` top bar, DWM dark mode, rounded corners, border color, and bundled `app.ico`), tabs starting at an 8-DIP left margin, hoverable `[ + | ▾ ]` new-tab / shell-picker split button, and native Windows Minimize / Maximize-Restore / Close (`#E81123` hover) caption buttons. No project selector, directory pill or Git branch lookup.
-- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge) and pane headers use the same `18×18` icon tile and `12×12` favicon as tabs, without focus-based shell recoloring; favicons use optional 73-entry brand data (`app_icon.zig`), cached process metadata, OSC 0/2 titles and current OSC 7501 `app` identity. Generated brand paths are rasterized only on UI-atlas misses and drawn through native D3D12 masks; unknown programs receive deterministic monograms without affecting execution or close protection.
+- Pane header action buttons (Focus/Zoom toggle when split, Split Right, Split Down, and Close) with hover states and 12-DIP split glyphs; tabs render an overlapping `TabIconStack` (up to 3 `18×18` rounded icon tiles at `10 DIP` stride plus a `+N` overflow badge), while pane headers use a bare `12×12` favicon without a tile or border and a 14-DIP title, without focus-based shell recoloring; favicons use optional 73-entry brand data (`app_icon.zig`), cached process metadata, OSC 0/2 titles and current OSC 7501 `app` identity. Generated brand paths are rasterized only on UI-atlas misses and drawn through native D3D12 masks; unknown programs receive deterministic monograms without affecting execution or close protection.
 - Click a pane to focus it. Drag a right/down divider to resize its two subtrees
   live, without changing terminal focus. Ratios stay in 0.1..0.9; interactive
   dragging also keeps each neighbor at least 100 DIPs. Too-small containers
@@ -169,17 +169,33 @@ focus outline. Font/cell metrics come from DirectWrite. Initial window size is
 
 ## Command palette and path autocomplete
 
-- `Ctrl+Shift+P`: compact, Rex-inspired action search in an owned native popup
+- `Ctrl+Shift+P`: compact action search in an owned native popup
   (no taskbar entry, terminal input blocked while open). Search is first, shortcuts
-  sit beside each action, and the popup shrinks to filtered results. Up/Down,
+  sit beside each action. Position and size stay fixed while typing; only changed
+  results update, without resetting the window theme or repainting the terminal.
+  Ctrl+Backspace deletes a query word; pasted line breaks/tabs become spaces and
+  other ASCII control characters are removed before query validation. Up/Down,
   Home/End and Page keys reach every action; Enter or one click runs the selection.
-- `Ctrl+Shift+M`: Theme Studio, the same kind of modal. Selecting a card previews the
-  theme in the real terminal; Enter applies and saves it, Escape/Cancel restores the
-  previous theme.
+- `Ctrl+Shift+M`: Theme Studio with a three-column collection of gradient
+  cards and miniature terminal previews. Only the six themes matching the current
+  dark/light appearance are shown, including in Settings. Dark: Obsidian, Tidal,
+  Grove, Dusk, Ember, Glacier. Light: Alabaster, Linen, Mist, Petal, Apricot, Sage.
+  Selecting a card previews the theme in the real terminal; Enter applies and saves
+  it, Escape/Cancel restores the previous theme. Gradients decorate the cards;
+  terminal backgrounds remain solid for legibility. Window chrome follows the
+  selected palette. Existing native theme names migrate to the new collection.
+  Cards have no hover effect; moving the pointer does not repaint them or change
+  the theme. Click a card to select it. Buffered painting avoids intermediate
+  clears; Settings prepares its card images once before showing the window, reuses
+  them across page switches and releases them on close. Palette, content, size and
+  DPI changes invalidate them.
 - `Ctrl+,`: Settings modal with General (default shell), Appearance (theme) and
-  Terminal (font size 9-32, blinking cursor) pages. Save writes
-  `%LOCALAPPDATA%\Vex\settings.json` atomically; a failed write is reported and leaves
-  the running terminals and the previous file untouched. Existing sessions keep their shell.
+  Terminal (font size 9-32, blinking cursor) pages. There is no Save/Cancel footer:
+  theme, shell, valid font-size and cursor changes apply immediately and write
+  `%LOCALAPPDATA%\Vex\settings.json` atomically. Escape/× closes without undoing them.
+  Invalid font edits are not applied; leaving the field restores its applied value.
+  A failed write is reported, restores the applied control values and leaves the
+  running terminals and previous file untouched. Existing sessions keep their shell.
 - `Ctrl+Shift+F`: cursor-anchored recursive path search. Indexing starts lazily on
   a background worker; typing remains available, stale navigation is cancelled
   between filesystem operations, and only the newest revision is published.
@@ -291,9 +307,11 @@ also covers partial process startup.
 Clean snapshots reuse their cell/text allocations and skip the cell walk. Hidden
 tabs keep consuming VT output but do not materialize/draw their grids until
 selected, nor schedule active-window paints just for hidden output. Dirty snapshots read all rows because Ghostty can under-report dirty
-rows after scroll shifts. Frame requests coalesce with a deadline check that
-prevents continuous posted pipe output from starving WM_TIMER/WM_PAINT. There
-is no continuously running render loop. A one-shot 530 ms cursor wake exists
+rows after scroll shifts. Ordinary frame requests coalesce into one posted
+window message without a timer delay; OS paints consume queued frames. A deadline
+check prevents continuous pipe output from starving presentation. Synchronized
+output has a bounded 100 ms deadline that later chunks cannot keep extending.
+There is no continuously running render loop. A one-shot 530 ms cursor wake exists
 only for the focused, visible, running pane when VT requests blinking. Hidden
 or steady cursors, overlays, inactive windows and minimization stop it; input
 reveals the cursor immediately. `Cursor: Toggle Blinking` in the command palette
@@ -307,6 +325,13 @@ shell rows; the arrow everywhere else, including empty dialog areas. Dialog curs
 are verified by `Test-NativeModals.ps1` through the real native controls.
 
 The existing metadata/idle-upload maintenance timer does not repaint unless chrome changes.
+A live shell alone in its job skips full-system process scanning. Modal controls
+have no hover drawing; selection, pressed state and keyboard focus remain visible.
+Owned modal page/control transitions are composited as a whole; command search
+retains its stable-layout, independently buffered results. Every owner-draw callback
+restores its GDI context so fonts/colors cannot leak into native focus/scroll drawing.
+See [PERFORMANCE.md](PERFORMANCE.md) for measured startup, scheduling, CPU and
+idle comparisons and their limitations.
 
 Directory reports use the synchronous native PWD callback: each report is parsed
 before a later one in the same read can replace it. There is no per-output-block
@@ -396,6 +421,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShellPick
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativePathCompletion.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativePalette.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeModals.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeThemeHover.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeModalUpdates.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeShellPainting.ps1
+# Requires a saved baseline with the same timing probes:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Measure-NativeFrameScheduling.ps1 -BaselineExecutable C:\saved-baseline\vex-native.exe -Executable .\zig-out\bin\vex-native.exe
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeUniversalPrograms.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeCloseConfirmation.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NativeTabs.ps1

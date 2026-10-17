@@ -78,7 +78,7 @@ pub fn showSettingsFailure(err: anyerror) void {
 /// A failed settings load uses defaults with an explicit warning; the original file is not rewritten.
 pub fn showSettingsLoadFailure(err: anyerror) void {
     var buffer: [384]u8 = undefined;
-    const message = std.fmt.bufPrint(&buffer, "Vex settings: saved preferences could not be loaded ({s}). Defaults are in use. The original file is unchanged until you choose Save.", .{@errorName(err)}) catch "Vex settings: saved preferences could not be loaded. Defaults are in use; the original file is unchanged.";
+    const message = std.fmt.bufPrint(&buffer, "Vex settings: saved preferences could not be loaded ({s}). Defaults are in use. The original file is unchanged until you change a preference.", .{@errorName(err)}) catch "Vex settings: saved preferences could not be loaded. Defaults are in use; the original file is unchanged.";
     c.vex_dialog_warning(nativeText(message));
 }
 /// Parses bounded native control data, including settings enums, before entering the application.

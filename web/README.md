@@ -27,9 +27,9 @@ Run the build before browser tests: they exercise the production preview.
 ## Design and screenshots
 
 The homepage uses a centered reading column, restrained typography, and native
-app screenshots, with no decorative side panel. Its editorial tone is inspired
-by Superlogical; documentation uses separate navigation and reading columns
-inspired by Rex. No reference-site assets are used.
+app screenshots, with no decorative side panel. Documentation uses separate
+navigation and reading columns.
+No reference-site assets are used.
 Both website themes work independently of the light/dark app screenshot preview.
 
 `public/shots/` contains native Vex window captures at 1440 × 900: a three-pane

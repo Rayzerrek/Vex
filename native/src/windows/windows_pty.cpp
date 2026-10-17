@@ -375,7 +375,12 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
         wcscpy_s(chosenStem, session->rootStem);
         qHead = qTail;
     } else {
-        refreshProcessSnapshot();
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting = {};
+        // A live root alone in its non-breakaway job cannot have foreground children.
+        const bool rootAlone = session->job && WaitForSingleObject(session->process, 0) == WAIT_TIMEOUT &&
+            QueryInformationJobObject(session->job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr) && accounting.ActiveProcesses == 1;
+        if (rootAlone) qHead = qTail;
+        else refreshProcessSnapshot();
     }
 
     DWORD fallbackShellPid = 0;

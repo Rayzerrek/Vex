@@ -14,14 +14,16 @@ pub fn presentTerminalModal(self: *Application) !void {
     var count: usize = 0;
     var request: native.DialogPresentation = .{
         .kind = .appearance,
-        .title = "Appearance",
-        .description = "Preview a color theme. Apply keeps it; Cancel restores the previous theme.",
+        .title = "Theme Studio",
+        .description = if (self.currentTheme().is_dark) "Dark collection · Select to preview. Enter to apply, Esc to restore." else "Light collection · Select to preview. Enter to apply, Esc to restore.",
         .palette = self.currentTheme().chromePalette(),
         .settings = self.currentPreferences(),
     };
     switch (self.overlay) {
         .theme_picker, .settings => {
-            for (themes.themes, 0..) |theme, i| {
+            var appearance_indices: [themes.themes.len]usize = undefined;
+            for (themes.indicesForAppearance(self.currentTheme().is_dark, &appearance_indices)) |i| {
+                const theme = themes.themes[i];
                 items[count] = .{ .value = @intCast(i), .label = theme.name, .detail = theme.subtitle, .background = theme.background, .foreground = theme.foreground, .accent = theme.accent, .swatches = .{ theme.ansi[1], theme.ansi[2], theme.ansi[3], theme.ansi[4], theme.ansi[5] } };
                 count += 1;
             }
@@ -29,8 +31,7 @@ pub fn presentTerminalModal(self: *Application) !void {
             if (self.overlay == .settings) {
                 request.kind = .settings;
                 request.title = "Settings";
-                request.description = "Terminal preferences. Changes are saved when you choose Save.";
-                request.accept_label = "Save";
+                request.description = "Changes are applied and saved automatically.";
                 self.discoverAvailableShells();
                 shells[0] = .{ .value = 0, .label = "Launch shell", .detail = "Keep the shell selected at startup" };
                 for (self.available_shells[0..self.available_shell_count], 1..) |kind, i| {
@@ -115,7 +116,7 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
         },
         .preview => |value| switch (self.overlay) {
             .theme_picker => {
-                if (value >= themes.themes.len) return error.InvalidThemeSelection;
+                if (value >= themes.themes.len or themes.themes[value].is_dark != self.currentTheme().is_dark) return error.InvalidThemeSelection;
                 try self.applyTheme(value);
                 try presentTerminalModal(self);
             },
@@ -137,12 +138,12 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
         },
         .settings => |settings| {
             if (self.overlay != .settings) return;
-            self.overlay = .none;
             try self.commitPreferences(settings);
+            try presentTerminalModal(self);
         },
         .choose => |value| switch (self.overlay) {
             .theme_picker => {
-                if (value >= themes.themes.len) return error.InvalidThemeSelection;
+                if (value >= themes.themes.len or themes.themes[value].is_dark != self.currentTheme().is_dark) return error.InvalidThemeSelection;
                 try self.applyTheme(value);
                 self.overlay = .none;
                 try self.commitPreferences(self.currentPreferences());
