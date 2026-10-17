@@ -242,6 +242,15 @@ extern "C" void vex_window_defer_synchronized() {
 extern "C" void vex_window_close() { if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 0, 0); }
 extern "C" uint64_t vex_window_paint_count() { return paintCount; }
 extern "C" bool vex_window_cursor_wake_armed() { return cursorWakeArmed; }
+static bool motionPreferenceKnown = false, motionEnabled = false;
+extern "C" bool vex_window_animations_enabled() {
+    if (!motionPreferenceKnown) {
+        BOOL enabled = FALSE;
+        motionEnabled = SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) && enabled;
+        motionPreferenceKnown = true;
+    }
+    return motionEnabled;
+}
 extern "C" int vex_window_schedule_cursor_wake(uint32_t delay_ms) {
     if (delay_ms > 60000) return ERROR_INVALID_PARAMETER;
     if (cursorWakeArmed && IsWindow(window)) KillTimer(window, 3);
@@ -1072,6 +1081,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_CLOSE: cancelPointerGesture(); DestroyWindow(hwnd); return 0;
+    case WM_SETTINGCHANGE:
+        motionPreferenceKnown = false;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
     case WM_DESTROY: destroyTerminalDialogs(); cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); cursorWakeArmed = false; PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
