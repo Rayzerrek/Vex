@@ -39,10 +39,6 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&conpty_dll.step);
     b.getInstallStep().dependOn(&conpty_host.step);
     b.getInstallStep().dependOn(&app_icon.step);
-    const cmd_integration = b.addInstallFileWithDir(b.path("src/shell/integration/Vex.cmd"), .bin, "ShellIntegration/Vex.cmd");
-    const nu_integration = b.addInstallFileWithDir(b.path("src/shell/integration/Vex.nu"), .bin, "ShellIntegration/Vex.nu");
-    b.getInstallStep().dependOn(&cmd_integration.step);
-    b.getInstallStep().dependOn(&nu_integration.step);
     const run = b.addSystemCommand(&.{b.getInstallPath(.bin, "vex-native.exe")});
     run.step.dependOn(b.getInstallStep());
     if (b.args) |args| run.addArgs(args);

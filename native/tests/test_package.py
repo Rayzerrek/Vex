@@ -24,12 +24,12 @@ class PackageTests(unittest.TestCase):
         struct.pack_into("<I", pe, 60, 128)
         pe[128:132] = b"PE\0\0"
         struct.pack_into("<H", pe, 132, 0x8664)
-        for name in ("vex-native.exe", "ghostty-vt.dll", "conpty.dll", "OpenConsole.exe", "app.ico", "ShellIntegration/Vex.cmd", "ShellIntegration/Vex.nu"):
+        for name in ("vex-native.exe", "ghostty-vt.dll", "conpty.dll", "OpenConsole.exe", "app.ico"):
             path = self.bin / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(pe if path.suffix in (".exe", ".dll") else b"fixture\n")
 
-    def test_payload_includes_nested_integration_and_licenses_but_not_tests_or_symbols(self):
+    def test_payload_includes_licenses_but_not_external_integration_tests_or_symbols(self):
         (self.bin / "vex-native-tests.exe").write_bytes(b"test binary")
         (self.bin / "vex-conpty-fixture.exe").write_bytes(b"test fixture")
         (self.bin / "vex-native.pdb").write_bytes(b"symbols")
@@ -37,7 +37,7 @@ class PackageTests(unittest.TestCase):
         with zipfile.ZipFile(path) as archive:
             self.assertEqual(sorted(archive.namelist()), sorted(package.PAYLOAD))
             self.assertEqual(archive.read("Vex.exe"), archive.read("vex-native.exe"))
-            self.assertEqual(archive.read("ShellIntegration/Vex.cmd"), b"fixture\n")
+            self.assertFalse(any(name.startswith("ShellIntegration/") for name in archive.namelist()))
         package.verify_checksum(path)
         package.verify(self.output, "1.7.0")
 
@@ -50,9 +50,9 @@ class PackageTests(unittest.TestCase):
         self.assertFalse((self.output / "app/stale.pdb").exists())
         self.assertEqual(path.name, "Vex-Native-1.7.0-preview-abcdef0-win-x64.zip")
 
-    def test_missing_integration_fails_before_replacing_staging(self):
+    def test_missing_icon_fails_before_replacing_staging(self):
         package.package(self.bin, self.output, "1.7.0")
-        (self.bin / "ShellIntegration/Vex.cmd").unlink()
+        (self.bin / "app.ico").unlink()
         with self.assertRaises(FileNotFoundError):
             package.package(self.bin, self.output, "1.7.0")
         self.assertTrue((self.output / "app/Vex.exe").is_file())

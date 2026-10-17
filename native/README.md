@@ -23,9 +23,13 @@ python3 tools/package.py
 
 The last command creates `publish/Vex-Native-<VERSION>-win-x64.zip`, its SHA-256
 file, and `publish/app/`. It uses only Python 3.11+; Windows tools are unnecessary.
-The ZIP contains `Vex.exe`, `vex-native.exe`, `ghostty-vt.dll`, the icon, shell
-integration and license notices, plus Microsoft's `conpty.dll` and `OpenConsole.exe`
-console-host pair, but no test executables or debug symbols.
+The ZIP contains `Vex.exe`, `vex-native.exe`, `ghostty-vt.dll`, the icon and
+license notices, plus Microsoft's `conpty.dll` and `OpenConsole.exe` console-host
+pair, but no test executables or debug symbols. CMD, PowerShell and Nushell
+integration is built in; no `ShellIntegration` folder beside the executable is
+needed. Other shells (including Git Bash, WSL and custom programs) can run without
+these files; command/prompt and directory tracking depends on the shell emitting
+the supported OSC sequences.
 
 Run `zig-out/bin/vex-native.exe` and `zig-out/bin/vex-native-tests.exe` on Windows,
 keeping `ghostty-vt.dll`, `conpty.dll` and `OpenConsole.exe` beside them. The tests
