@@ -346,6 +346,28 @@ extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thum
     brush->SetColor(D2D1::ColorF(chromePalette.text_primary, active ? 0.55f : 0.26f));
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, thumb_y, right, thumb_y + thumb_height), radius, radius), brush);
 }
+extern "C" void vex_draw_session_exit(VexPaneRect bounds, uint32_t exit_code) {
+    if (!target || !brush || bounds.width < 180 || bounds.height < 130) return;
+    const float width = fminf(520.0f, bounds.width - 32.0f);
+    const float x = bounds.x + (bounds.width - width) * 0.5f, y = bounds.y + bounds.height - 80.0f;
+    const auto card = D2D1::RoundedRect(D2D1::RectF(x, y, x + width, y + 64), 12, 12);
+    brush->SetColor(rgb(chromePalette.titlebar_bg)); target->FillRoundedRectangle(card, brush);
+    brush->SetColor(rgb(chromePalette.border)); target->DrawRoundedRectangle(card, brush, 1);
+    const uint32_t statusColor = exit_code == 0 ? (chromePalette.is_dark ? 0x85C9AD : 0x27664E) : (chromePalette.is_dark ? 0xE5A47C : 0x9B4B28);
+    brush->SetColor(rgb(statusColor));
+    const float cx = x + 26, cy = y + 24;
+    target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 8, 8), brush, 1.4f);
+    if (exit_code == 0) {
+        target->DrawLine(D2D1::Point2F(cx - 4, cy), D2D1::Point2F(cx - 1, cy + 3), brush, 1.4f);
+        target->DrawLine(D2D1::Point2F(cx - 1, cy + 3), D2D1::Point2F(cx + 4, cy - 3), brush, 1.4f);
+    } else {
+        target->DrawLine(D2D1::Point2F(cx, cy - 4), D2D1::Point2F(cx, cy + 1), brush, 1.4f);
+        target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy + 4), 0.8f, 0.8f), brush);
+    }
+    wchar_t title[80]; swprintf(title, 80, exit_code == 0 ? L"Session finished · exit code %u" : L"Process exited with code %u", exit_code);
+    label(title, x + 46, y + 12, width - 60, chromePalette.text_primary);
+    label(L"Output preserved. Ctrl+Shift+T opens a new terminal.", x + 46, y + 35, width - 60, chromePalette.text_muted);
+}
 extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
     if (!target || !brush || bounds.width <= 0.0f || bounds.height <= 0.0f) return;
     const D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), 6.0f, 6.0f);

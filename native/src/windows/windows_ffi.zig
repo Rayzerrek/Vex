@@ -519,6 +519,10 @@ pub fn endPane() void {
 pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active: bool) void {
     c.vex_draw_scrollbar(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, geometry.thumb_y, geometry.thumb_height, active);
 }
+/// Draws the retained final session's exit code without writing UI text into terminal output.
+pub fn drawSessionExit(bounds: panes.PaneRect, exit_code: u32) void {
+    c.vex_draw_session_exit(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, exit_code);
+}
 /// Draws the translucent split preview overlay for an active pane header drag-to-split gesture.
 pub fn drawSplitPreview(bounds: panes.PaneRect) void {
     c.vex_draw_split_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height });

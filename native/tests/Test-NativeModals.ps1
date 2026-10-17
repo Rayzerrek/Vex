@@ -69,20 +69,46 @@ try {
     Assert-NativeProbe $window 54 19 'settings apply terminal font size'
     Assert-NativeProbe $window 14 $terminalPid 'settings preserve the live ConPTY owner'
     if (!(Test-Path $fixtureSettingsPath)) { throw 'Vex modal: preferences were not saved.' }
+    Invoke-NativeAction $window 18
+    $dialog = Get-OwnedModal $window
+    Assert-DialogCursor $dialog ([VexNativeSmoke]::GetDlgItem($dialog, 141)) 'Hand'
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'shell-picker.png')
+    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]141, [IntPtr]::Zero) | Out-Null
+    Assert-NativeProbe $window 89 1 'shell picker segmented control selects split right'
+    Post-DialogKey $window 0x1B
+    Assert-NativeProbe $window 53 0 'shell picker Escape preserves the live session'
     Invoke-NativeAction $window 9
     $dialog = Get-OwnedModal $window
+    $fullPaletteBounds = New-Object VexNativeSmoke+Rect
+    [VexNativeSmoke]::GetWindowRect($dialog, [ref]$fullPaletteBounds) | Out-Null
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'command-palette-all.png')
     Assert-DialogCursor $dialog ([VexNativeSmoke]::GetDlgItem($dialog, 102)) 'Text'
     Post-DialogKey $window 0x23
     Assert-NativeProbe $window 100 20 'native palette reaches its last action from the query field'
     if ((Get-NativeProbe $window 102) -le 0) { throw 'Vex modal: native palette failed to scroll to the last action.' }
     Post-DialogKey $window 0x24
     Assert-NativeProbe $window 100 0 'native palette Home restores the first action'
+    [VexNativeSmoke]::SetControlText([VexNativeSmoke]::GetDlgItem($dialog, 102), 'no-such-vex-command') | Out-Null
+    Assert-NativeProbe $window 101 0 'empty search has no actionable result'
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'command-palette-empty.png')
     [VexNativeSmoke]::SetControlText([VexNativeSmoke]::GetDlgItem($dialog, 102), 'splr') | Out-Null
+    $filteredBounds = New-Object VexNativeSmoke+Rect
+    [VexNativeSmoke]::GetWindowRect($dialog, [ref]$filteredBounds) | Out-Null
+    if (($filteredBounds.Bottom - $filteredBounds.Top) -ge ($fullPaletteBounds.Bottom - $fullPaletteBounds.Top)) { throw 'Vex palette: filtered popup must shrink to its results.' }
     if ((Get-NativeProbe $window 101) -eq 0) { throw 'Vex modal: fuzzy command query lost its results.' }
     Assert-DialogCursor $dialog ([VexNativeSmoke]::GetDlgItem($dialog, 103)) 'Hand'
     Save-DialogImage $dialog (Join-Path $OutputDirectory 'command-palette.png')
-    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]1, [IntPtr]::Zero) | Out-Null
-    Assert-NativeProbe $window 11 2 'native command palette executes the chosen split action'
+    $commands = [VexNativeSmoke]::GetDlgItem($dialog, 103)
+    Send-NativePointer $commands 0x0201 20 14 1
+    Send-NativePointer $commands 0x0202 20 14 0
+    Assert-NativeProbe $window 11 2 'one click executes the native command palette split action'
+    Send-NativeStatus $window 'state=working:app=rex-ui-fixture'
+    Assert-NativeProbe $window 31 2 'close fixture reports running work'
+    Invoke-NativeAction $window 16 99
+    $dialog = Get-OwnedModal $window
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'close-confirmation.png')
+    Post-DialogKey $window 0x1B
+    Assert-NativeProbe $window 11 2 'cancelling close retains both live panes'
     Invoke-NativeAction $window 0
     Invoke-NativeAction $window 11
     $dialog = Get-OwnedModal $window
@@ -115,7 +141,27 @@ try {
     [IO.File]::SetAttributes($fixtureSettingsPath, [IO.FileAttributes]::Normal)
     Close-NativeInstance $process $window
     $process = $null
-    @{ Result = 'PASS'; Checks = @('owned popup', 'modal input isolation', 'selectable title', 'cancel restores input', 'settings apply', 'atomic persistence', 'restart restoration', 'stable ConPTY') } | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'modals.json')
+    $lightSettings = [IO.File]::ReadAllText($fixtureSettingsPath) | ConvertFrom-Json
+    $lightSettings.theme = 'Vex Alabaster'
+    [IO.File]::WriteAllText($fixtureSettingsPath, ($lightSettings | ConvertTo-Json))
+    $instance = Start-NativeInstance -SettingsPath $fixtureSettingsPath
+    $process = $instance.Process; $window = $instance.Window
+    Assert-NativeProbe $window 51 6 'light modal fixture uses the light terminal theme'
+    Invoke-NativeAction $window 19
+    $dialog = Get-OwnedModal $window
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-light.png')
+    [VexNativeSmoke]::SendWindowMessage($dialog, 0x111, [IntPtr]131, [IntPtr]::Zero) | Out-Null
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'settings-appearance-light.png')
+    Post-DialogKey $window 0x1B
+    Assert-NativeProbe $window 53 0 'light settings cancel restores terminal input'
+    Invoke-NativeAction $window 9
+    $dialog = Get-OwnedModal $window
+    Save-DialogImage $dialog (Join-Path $OutputDirectory 'command-palette-light.png')
+    Post-DialogKey $window 0x1B
+    Assert-NativeProbe $window 53 0 'light palette Escape restores terminal input'
+    Close-NativeInstance $process $window
+    $process = $null
+    @{ Result = 'PASS'; Checks = @('owned popup', 'modal input isolation', 'selectable title', 'cancel restores input', 'settings apply', 'atomic persistence', 'restart restoration', 'stable ConPTY', 'segmented shell modes', 'palette shrinks after filtering', 'empty search', 'one-click commands', 'close cancellation', 'dark and light modal screenshots') } | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'modals.json')
 } finally {
     if ($process -and !$process.HasExited) { $process.Kill(); $process.WaitForExit() }
     if ($fixtureSettingsPath -and (Test-Path $fixtureSettingsPath)) { [IO.File]::SetAttributes($fixtureSettingsPath, [IO.FileAttributes]::Normal) }

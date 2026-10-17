@@ -602,12 +602,15 @@ pub const TerminalApplication = struct {
                 const summary = session.terminal.program_status.programStatus();
                 platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex());
                 defer platform.endPane();
-                try platform.drawTerminalFrame(frame, focused, self.cursor_blink.isShown(), pane_link, active_theme);
+                try platform.drawTerminalFrame(frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
             }
-            if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
+            const scrollbar = try session.terminal.scrollbar();
+            if (platform.ScrollbarGeometry.compute(placement.bounds, scrollbar)) |sb| {
                 const sb_active = self.hovered_scrollbar == placement.id or (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id);
                 platform.drawScrollbar(placement.bounds, sb, sb_active);
             }
+            if (session.state == .exited and scrollbar.offset == scrollbar.scrollable())
+                platform.drawSessionExit(placement.bounds, session.state.exited);
         }
         if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging and self.pointer_drag.pane.zone != .none) {
             if (self.findPlacement(self.pointer_drag.pane.pane_id)) |placement| {
@@ -1197,9 +1200,11 @@ pub const TerminalApplication = struct {
         switch (model.closeExitedPane(id)) {
             .stale => return error.MissingPaneSession,
             .retained_final => {
-                var banner_buf: [96]u8 = undefined;
-                const banner = try std.fmt.bufPrint(&banner_buf, "\r\n\x1b[2m[process exited with code {d}]\x1b[m\r\n", .{code});
-                try session.terminal.feedOutput(banner);
+                // Leave room for the native exit card without covering the final output.
+                if (self.metrics) |metrics| {
+                    const gap_rows: usize = @intFromFloat(std.math.clamp(@ceil(84 / metrics.cell_height), 1, 16));
+                    for (0..gap_rows) |_| try session.terminal.feedOutput("\r\n");
+                }
                 _ = session.refreshAppIcon(false);
                 platform.invalidateWindow();
             },

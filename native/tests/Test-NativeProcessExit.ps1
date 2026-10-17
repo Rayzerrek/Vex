@@ -8,10 +8,12 @@ $NativeWorkingDirectory = Split-Path $PSScriptRoot -Parent
 $NativeLaunchArguments = '--program "' + $env:WINDIR + '\System32\cmd.exe" --arguments /d'
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 $oldSelftest = $env:VEX_NATIVE_SELFTEST
+$oldCapture = $env:VEX_NATIVE_CAPTURE_BMP
 $previousDpiContext = [VexNativeSmoke]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $process = $null
 try {
     $env:VEX_NATIVE_SELFTEST = '1'
+    $env:VEX_NATIVE_CAPTURE_BMP = Join-Path (Resolve-Path $OutputDirectory).Path '.capture.bmp'
     $instance = Start-NativeInstance
     $process = $instance.Process
     $window = $instance.Window
@@ -97,6 +99,10 @@ try {
     if ((Get-NativeProbe $window 12) -le $firstPane) { throw 'Vex exit: removed pane identities were reused.' }
     Invoke-NativeAction $window 7 0
     Assert-NativeProbe $window 13 1 'retained exited session can subsequently be closed'
+    Send-NativeText $window ("exit 0`r")
+    Assert-NativeProbe $window 70 1 'successful final session is retained'
+    Assert-NativeProbe $window 71 0 'successful exit card uses the real zero exit code'
+    Save-NativeScreenshot $window (Join-Path $OutputDirectory 'process-exit-success.png')
     Close-NativeInstance $process $window
     $process = $null
     $report = [pscustomobject]@{
@@ -109,5 +115,6 @@ try {
 } finally {
     if ($process -and !$process.HasExited) { $process.Kill(); $process.WaitForExit() }
     $env:VEX_NATIVE_SELFTEST = $oldSelftest
+    $env:VEX_NATIVE_CAPTURE_BMP = $oldCapture
     [VexNativeSmoke]::SetThreadDpiAwarenessContext($previousDpiContext) | Out-Null
 }

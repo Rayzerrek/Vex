@@ -9,6 +9,8 @@ All GPU drawing and presentation use **native D3D12 + DXGI flip-discard**:
 terminal cells, chrome, vector icons, overlays and screenshot readback. There is
 no D3D11On12/translated UI device. DirectWrite and software WIC/Direct2D remain
 for metrics/shaping and cache-miss-only font rasterization, not scene drawing.
+Owned Win32 modal dialogs use native controls with GDI text, antialiased GDI+
+surfaces and theme-aware scrollbars; they are separate from the D3D12 scene.
 See [RENDERER.md](RENDERER.md) for ownership, tests and measured tradeoffs.
 This is not yet a daily-driver replacement. The full behavior/visual contract
 and remaining work are in [REWRITE.md](REWRITE.md).
@@ -146,7 +148,8 @@ Each window owns up to **8 tabs**, each with independent terminal panes:
   leaf. Closing an active tab selects the left neighbor, or right for tab zero.
 - Shell exit automatically closes its pane or nonfinal tab, including hidden
   panes without stealing visible focus. The final pane retains its output and
-  exit-code banner; new tabs can still launch. Exit cancels captured gestures
+  shows a native exit-status card, leaving room below the final output. The card
+  hides while viewing scrollback; new tabs can still launch. Exit cancels captured gestures
   before tree edits, and close confirmations retain stable tab identities.
 - Each pane uses the current default shell profile (integrated cmd by default) or an explicit per-pane shell override chosen from the Shell Picker or Command Palette. New tabs use the application's startup
   directory; splits inherit the focused pane's last valid local OSC 7 directory,
@@ -166,9 +169,10 @@ focus outline. Font/cell metrics come from DirectWrite. Initial window size is
 
 ## Command palette and path autocomplete
 
-- `Ctrl+Shift+P`: fuzzy action search in a native modal dialog owned by the terminal
-  window (centred over it, no taskbar entry, terminal input blocked while open).
-  Up/Down, Home/End and Page keys reach every action; Enter runs the highlighted one.
+- `Ctrl+Shift+P`: compact, Rex-inspired action search in an owned native popup
+  (no taskbar entry, terminal input blocked while open). Search is first, shortcuts
+  sit beside each action, and the popup shrinks to filtered results. Up/Down,
+  Home/End and Page keys reach every action; Enter or one click runs the selection.
 - `Ctrl+Shift+M`: Theme Studio, the same kind of modal. Selecting a card previews the
   theme in the real terminal; Enter applies and saves it, Escape/Cancel restores the
   previous theme.
