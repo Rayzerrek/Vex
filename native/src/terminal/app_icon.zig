@@ -305,7 +305,7 @@ const aliases = [_]AliasEntry{
 };
 
 const shell_icon_names = [_][]const u8{
-    "cmd",  "wsl",       "wslhost", "nu",   "nushell", "pwsh", "powershell", "bash", "sh", "gnubash",
+    "cmd",  "wsl",       "wslhost", "nu",   "nushell", "pwsh", "powershell", "bash",   "sh", "gnubash",
     "fish", "fishshell", "zsh",     "dash", "ksh",     "ash",  "gitbash",    "system",
 };
 
@@ -607,4 +607,3 @@ test "explicit shim app beats stale OSC title and native processes keep their ow
     try std.testing.expectEqual(GlyphId.antigravity, resolveDirect("antigravity").?.glyph);
     try std.testing.expectEqual(GlyphId.antigravity, resolveDirect("agy").?.glyph);
 }
-

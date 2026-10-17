@@ -335,4 +335,3 @@ test "custom tab title trims whitespace, preserves non-empty overrides, and surv
     try std.testing.expect(model.moveTab(@enumFromInt(1), 1));
     try std.testing.expectEqualStrings("Backend API", model.tabs.items[1].customTitle().?);
 }
-

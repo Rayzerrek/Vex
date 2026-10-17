@@ -35,13 +35,11 @@ Both website themes work independently of the light/dark app screenshot preview.
 `public/shots/` contains native Vex window captures at 1440 × 900: a three-pane
 workspace in both appearances, the command palette, and the path picker. Shell
 output is staged for reproducibility, not a benchmark or live test result.
-Regenerate on Windows with PowerShell 7 and a built Vex executable:
+The legacy app-capture PowerShell runner is maintained locally outside this
+repository. It takes an explicit checkout (`-Repository`) and built legacy
+executable (`-AppPath`), rather than assuming its own directory is the checkout.
 
-```powershell
-pwsh -NoProfile -File web/scripts/capture-app.ps1 -AppPath <path-to-Vex.App.exe>
-```
-
-Run from the repository root. Capture uses a disposable `VEX_PROFILE_DIR`; it
+Capture uses a disposable `VEX_PROFILE_DIR`; it
 never edits the user's settings or restored sessions. It briefly focuses its own
 window, then closes that process and removes the temporary profile.
 

@@ -1,168 +1,169 @@
-name: Release
-
-# Publishing is tag-driven: pushing v1.3.0 builds the installer and publishes
-# the release for it. Before this workflow existed a release was a manual step
-# that nothing enforced, so a version bump could sit unreleased indefinitely —
-# 1.3.0 did exactly that, with the tag still at v1.2.1.
-#
-# workflow_dispatch re-runs an existing tag, which is the recovery path when a
-# release job fails after the tag has already been pushed.
+name: Native packages
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      mode:
+        description: Preview creates Actions artifacts only; release publishes an existing version tag
+        type: choice
+        options: [preview, release]
+        default: preview
       tag:
-        description: "Existing tag to build and release, e.g. v1.3.0"
-        required: true
+        description: Existing vX.Y.Z tag (release mode only)
         type: string
+        default: ""
 
-# contents: write is required to create the release and upload its assets.
 permissions:
-  contents: write
+  contents: read
 
-env:
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-  TAG: ${{ inputs.tag || github.ref_name }}
+concurrency:
+  group: native-package-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: build installer and publish release
-    runs-on: windows-latest
-    timeout-minutes: 60
-
+  resolve:
+    name: Resolve exact source and version
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
+      label: ${{ steps.source.outputs.label }}
+      tag: ${{ steps.source.outputs.tag }}
+      mode: ${{ steps.source.outputs.mode }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - name: Validate source
+        id: source
+        shell: bash
+        env:
+          MODE: ${{ github.event_name == 'push' && 'release' || inputs.mode }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag=''
+          label=''
+          if [[ "$MODE" == release ]]; then
+            [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo 'Expected vX.Y.Z tag'; exit 1; }
+            tag="$RELEASE_TAG"
+            commit="$(git rev-parse --verify "refs/tags/$tag^{commit}")"
+          elif [[ "$MODE" == preview ]]; then
+            commit="$GITHUB_SHA"
+            label="preview-${commit:0:12}"
+          else
+            echo 'Unknown package mode'; exit 1
+          fi
+          git checkout --detach "$commit"
+          version="$(python3 -c 'import sys; sys.path.insert(0, "native/tools"); import package; print(package.release_version())')"
+          if [[ "$MODE" == release && "$tag" != "v$version" ]]; then
+            echo "Tag $tag does not match native/VERSION ($version)"; exit 1
+          fi
+          printf 'commit=%s\nversion=%s\nlabel=%s\ntag=%s\nmode=%s\n' "$commit" "$version" "$label" "$tag" "$MODE" >> "$GITHUB_OUTPUT"
 
-      - name: Install .NET SDK
-        uses: actions/setup-dotnet@v5
+  checks:
+    name: Native build and tests
+    needs: resolve
+    uses: ./.github/workflows/native.yml
+    with:
+      ref: ${{ needs.resolve.outputs.commit }}
+
+  package:
+    name: ZIP and MSI from tested binaries
+    needs: [resolve, checks]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-win-x64-ReleaseSafe
+          path: native/zig-out/bin
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      # .NET is a WiX/MSI build tool only; neither the application nor its tests use WPF/.NET.
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "10.0.x"
-
-      # The tag names the release; Vex.App.csproj names the artifacts. If they
-      # disagree the release ships files labelled with a version that is not
-      # the one it is tagged as, which is how the version drift that stalled
-      # 1.3.0 went unnoticed.
-      - name: Check the tag matches the project version
-        shell: pwsh
-        run: |
-          $expected = $env:TAG -replace '^v', ''
-          $csproj = [xml](Get-Content windows/Vex.App/Vex.App.csproj)
-          $version = $csproj.Project.PropertyGroup.Version |
-            Where-Object { $_ } | Select-Object -First 1
-          Write-Host "tag=$env:TAG csproj=$version"
-
-          if ($version -ne $expected) {
-            throw "tag $env:TAG does not match <Version>$version</Version> in Vex.App.csproj"
-          }
-
-          # WiX needs a four-part version, so Package.wxs keeps its own copy.
-          # That is a second place a release can drift, so check it too.
-          $wxs = (Select-String -Path windows/Vex.Setup/Package.wxs `
-            -Pattern 'Version="([0-9]+(?:\.[0-9]+)+)"').Matches[0].Groups[1].Value
-          if ($wxs -ne "$expected.0") {
-            throw "Package.wxs Version=$wxs does not match $expected.0"
-          }
-
-      - name: Restore
-        run: dotnet restore windows/Vex.slnx
-
-      - name: Build
-        run: dotnet build windows/Vex.slnx --no-restore -c Release
-
-      # Never publish artifacts that have not passed the suite.
-      - name: Test
-        run: dotnet test windows/Vex.slnx --no-build -c Release
-
-      - name: Build the zip and the MSI
-        shell: pwsh
-        run: pwsh -NoProfile -File windows/build-installer.ps1
-
-      # The 1.2.1 zip could not start: it omitted the native WPF libraries,
-      # which live beside the exe instead of inside the single-file bundle.
-      # Nothing caught that before it shipped, so assert the payload here —
-      # this runs headless, unlike launching the app.
-      - name: Verify the release payload
-        shell: pwsh
-        run: |
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-
-          $zip = Get-ChildItem windows/publish/Vex-*-win-x64.zip
-          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
-          $names = $archive.Entries | ForEach-Object { $_.FullName }
-          $archive.Dispose()
-          Write-Host "zip has $($names.Count) entries"
-
-          $required = @(
-            'Vex.App.exe'
-            'ghostty-vt.dll'
-            'wpfgfx_cor3.dll'
-            'PresentationNative_cor3.dll'
-            'D3DCompiler_47_cor3.dll'
-            'PenImc_cor3.dll'
-            'vcruntime140_cor3.dll'
-          )
-          $missing = $required | Where-Object { $_ -notin $names }
-          if ($missing) { throw "zip is missing: $($missing -join ', ')" }
-
-          $symbols = $names | Where-Object { $_ -like '*.pdb' }
-          if ($symbols) { throw "zip carries debug symbols: $($symbols -join ', ')" }
-
-          # WiX reuses a stale harvest when Vex.Setup/obj survives a republish,
-          # which silently produced a 64 KB MSI with no files in it.
-          $msi = Get-ChildItem windows/publish/Vex-*-win-x64.msi
-          $minBytes = 10MB
-          if ($msi.Length -lt $minBytes) {
-            throw "MSI is only $([int]($msi.Length / 1KB)) KB; the payload is probably empty"
-          }
-          Write-Host "payload OK: zip $([int]($zip.Length / 1MB)) MB, msi $([int]($msi.Length / 1MB)) MB"
-
-      # Idempotent so a re-run after a failed upload repairs the release rather
-      # than failing on "release already exists".
-      - name: Publish the release
+      - name: Package and verify MSI extraction
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          LABEL: ${{ needs.resolve.outputs.label }}
         run: |
-          $assets = Get-ChildItem windows/publish/Vex-*-win-x64.zip,
-                                      windows/publish/Vex-*-win-x64.msi,
-                                      windows/publish/Vex-*-win-x64.zip.sha256
-          $paths = $assets.FullName
-
-          # Actions runs pwsh with $ErrorActionPreference = 'stop'. Toggle off
-          # native-command error promotion explicitly so the expected non-zero
-          # exit from a missing release is a value, not a terminating error.
-          $promote = $PSNativeCommandUseErrorActionPreference
-          $PSNativeCommandUseErrorActionPreference = $false
-          gh release view $env:TAG *> $null
-          $exists = $LASTEXITCODE -eq 0
-          $PSNativeCommandUseErrorActionPreference = $promote
-
-          if ($exists) {
-            Write-Host "release $env:TAG exists; uploading assets"
-            gh release upload $env:TAG @paths --clobber
-          } else {
-            # No --target: the tag already exists and GitHub rejects
-            # target_commitish for an existing tag.
-            gh release create $env:TAG --title "Vex $($env:TAG -replace '^v', '')" `
-              --verify-tag --generate-notes @paths
-          }
-          if ($LASTEXITCODE -ne 0) { throw "publishing the release failed" }
-
-          gh release view $env:TAG --json assets `
-            --jq '.assets[] | "\(.name)  \(.size) bytes"' | ForEach-Object { Write-Host "    $_" }
-
-      - name: Summarize
+          ./native/build-installer.ps1 -Version $env:VERSION -Label $env:LABEL -SkipBuild -SkipTests
+      - name: Record source provenance
         shell: pwsh
+        env:
+          SOURCE_COMMIT: ${{ needs.resolve.outputs.commit }}
+          PACKAGE_MODE: ${{ needs.resolve.outputs.mode }}
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
-          "### Vex $($env:TAG -replace '^v', '')" >> $env:GITHUB_STEP_SUMMARY
-          "" >> $env:GITHUB_STEP_SUMMARY
-          Get-ChildItem windows/publish/Vex-* -File | ForEach-Object {
-            "- ``$($_.Name)`` — $([int]($_.Length / 1MB)) MB" >> $env:GITHUB_STEP_SUMMARY
+          @{
+            commit = $env:SOURCE_COMMIT
+            ref = $env:GITHUB_REF
+            version = $env:VERSION
+            mode = $env:PACKAGE_MODE
+            run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          } | ConvertTo-Json | Set-Content native/publish/build-info.json -Encoding utf8
+          "### Native $env:PACKAGE_MODE package — $env:SOURCE_COMMIT" >> $env:GITHUB_STEP_SUMMARY
+          "ZIP, MSI and both SHA-256 files are available in the workflow artifacts." >> $env:GITHUB_STEP_SUMMARY
+          if ($env:PACKAGE_MODE -eq 'preview') {
+            "No tag, GitHub Release or main-branch change was made. Preview MSI uses the same install location as stable; test on an isolated machine." >> $env:GITHUB_STEP_SUMMARY
           }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vex-native-${{ needs.resolve.outputs.label || needs.resolve.outputs.version }}
+          path: |
+            native/publish/*.zip
+            native/publish/*.msi
+            native/publish/*.sha256
+            native/publish/build-info.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: native-packaging-diagnostics
+          path: native/publish/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    name: Publish stable GitHub Release
+    if: needs.resolve.outputs.mode == 'release'
+    needs: [resolve, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: vex-native-${{ needs.resolve.outputs.version }}
+          path: publish
+      - name: Upload verified artifacts and publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          base="publish/Vex-Native-$VERSION-win-x64"
+          assets=("$base.zip" "$base.zip.sha256" "$base.msi" "$base.msi.sha256")
+          for asset in "${assets[@]}"; do test -f "$asset"; done
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft --title "Vex Native $VERSION" --generate-notes
+          fi
+          gh release upload "$TAG" "${assets[@]}" --clobber
+          gh release edit "$TAG" --draft=false

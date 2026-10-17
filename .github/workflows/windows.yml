@@ -1,9 +1,17 @@
-name: Windows
+name: Legacy WPF
 
 on:
   push:
     branches: [main]
+    paths:
+      - "windows/**"
+      - "Vendor/libghostty/**"
+      - ".github/workflows/windows.yml"
   pull_request:
+    paths:
+      - "windows/**"
+      - "Vendor/libghostty/**"
+      - ".github/workflows/windows.yml"
   workflow_dispatch:
 
 permissions:
