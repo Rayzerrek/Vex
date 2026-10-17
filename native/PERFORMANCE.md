@@ -181,3 +181,107 @@ claim is made. A real display frame can still miss its deadline under system loa
 Desktop tests require a quiet interactive desktop. Initial runs also observed
 focus/cursor interference and nonzero idle paints; those runs are not presented
 as clean idle samples. The table uses the completed alternating runs above.
+
+## Terminal rendering follow-up — Windows 10, 240 Hz
+
+Built in WSL with Zig **0.15.2**, executed on the native Windows desktop through
+Windows PowerShell. This checkout does not build with the globally installed Zig
+0.16; no language migration or Windows compiler installation was made. Machine:
+Windows 10 Pro 10.0.19045, NVIDIA GeForce GTX 1060 3GB, reported 1920×1080 / 240 Hz.
+All performance binaries are ReleaseSafe without graphics debugging.
+
+### Retained changes
+
+- Bounded, optional per-pane CPU quad cache. Warm panes skip the Zig cell/style/run
+  walk and native glyph lookups; instances are copied in bulk into fence-protected
+  frame uploads. Cursor overlays stay separate. Full GPU frames are still drawn.
+- Exact contrast correction is cached across frames in a bounded four-way cache;
+  colors, not theme identities, form its complete key.
+- Continuous visible output is paced to the monitor using a one-shot high-resolution
+  waitable timer integrated with the message pump. It does not pace ordinary UI
+  requests, alter global timer resolution, or leave an idle render loop. Frame work
+  and blocking Present count toward the period, avoiding an extra vsync delay.
+- The ConPTY queue experiment was **discarded**: three alternating real-output
+  trials did not show a repeatable benefit. Production pipe ownership is unchanged.
+
+### Measurements
+
+Baseline is HEAD `ce67d8e`, before these changes, rebuilt with the same compiler.
+Three alternating trials per workload, same Windows cwd, raw cmd, 1120×720 window,
+steady cursor. The warm fixture's JSON retains its historical `atlas` candidate label.
+Ranges below are the three trial results, not confidence intervals.
+
+| Measurement | Baseline | Candidate |
+| --- | ---: | ---: |
+| Plain warm scene preparation, trial medians | 0.298–0.344 ms | 0.104–0.106 ms |
+| Styled warm scene preparation, trial medians | 1.386–1.451 ms | 0.105–0.111 ms |
+| Styled warm scene preparation, trial p95 | 1.589–1.685 ms | 0.153–0.161 ms |
+| Plain warm process CPU/forced frame | 0.608 ms | 0.347–0.434 ms |
+| Styled warm process CPU/forced frame | 1.562–1.823 ms | 0.260–0.521 ms |
+| 6,000 styled scrolling lines, process CPU | 1,953–2,328 ms | 1,266–1,391 ms |
+| Styled output process CPU, median trial | 2,187.5 ms | 1,328.1 ms |
+| Styled output wall time | 2,504–2,633 ms | 2,515–2,634 ms |
+| Styled output presentation count | 1,386–1,454 | 453–475 |
+| Isolated ordinary request → scene-start p95 | 0.182–0.210 ms | 0.181–0.193 ms |
+| Idle presents / process CPU over 2 s, scheduling trials | 0 / 0 ms | 0 / 0 ms |
+
+The styled stream uses about **39% less process CPU at the median**, not a proven
+throughput speedup. Plain output is less conclusive: CPU ranges are 781–828 ms
+versus 438–750 ms, while wall ranges are 1,164–1,278 ms versus 1,258–1,311 ms.
+Do not generalize this fixture to every shell/TUI. Its wall time includes command
+submission, child startup, ConPTY and up to 100 ms marker polling delay; text probes
+may force snapshots at 10 Hz. Child process CPU is excluded. Forced-frame CPU
+counters are coarse. Preparation excludes GPU execution, submission and Present;
+request timing also excludes the earlier frame-slot fence wait. No physical
+input-to-photon, GPU-duration or variable-refresh measurement was made.
+
+The warm 28×96 fixture retains 160 KiB of CPU geometry. The eight-entry cache is
+bounded at 20 MiB total and is optional under allocation pressure. The persistent
+contrast table is fixed-size (about 72 KiB). These are additional CPU caches, not
+claims about driver/GPU allocations or total application memory.
+
+### Verification
+
+- **137/137 tests pass** in both Debug and ReleaseSafe on Windows.
+- Native renderer passes on hardware and forced WARP: byte-identical GPU captures
+  with cache enabled/disabled for plain text, styled Unicode, atlas exhaustion,
+  and light/split scenes. Healthy-device recreation, font/DPI changes, resize,
+  upload reclamation, minimize/restore and idle suppression also pass.
+- Cursor blink, workspace, process exit, universal-program fixtures and native UI
+  renderer pass on the final binary.
+- Output pacing checks cover stream bounding, the final deferred request waking
+  without another output event, ordinary-request priority, OS-paint coalescing and
+  no idle repaint loop. The isolated priority probe measured 93 µs, not scanout.
+- Three final scheduling trials keep the synchronized-output starvation bound
+  (five paints over 600 ms) and zero idle paints. An earlier attempt observed six
+  idle paints; its cause was not established and it is not used as a clean sample.
+- D3D12 debug-layer validation was **not run**: Windows Graphics Tools / SDK layers
+  are not installed. Physical multi-monitor moves and refresh changes are unverified.
+
+Reproduce on Windows (baseline executable must be retained before rebuilding):
+
+```powershell
+zig build
+zig build test
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Test-NativeRenderer.ps1 -RequireNativeGlyphAtlas -RequireGeometryCache
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Test-NativeOutputPacing.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Measure-NativeRenderer.ps1 -BaselineExecutable C:\saved-baseline\vex-native.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/Measure-NativeTerminalOutput.ps1 -BaselineExecutable C:\saved-baseline\vex-native.exe
+```
+
+For WSL, `zig build test-build` compiles the Windows tests; run the resulting exe
+and PowerShell fixtures on Windows. Outputs were staged under
+`%TEMP%\Vex-render-perf`, without copying or installing the whole toolchain.
+Selected reports, logs, pixel pairs and the baseline are copied into the ignored
+`zig-out/verification/terminal-performance/`. Final raw Windows reports are in
+`%TEMP%\Vex-render-perf\results\final-*`.
+
+Executable SHA-256:
+
+- Baseline: `601a926f0df6adce276e2c7affe0a5fe1ac7aec93453daf97ee23100a18ee0c3`
+- Candidate: `87aa9e3258f75a6ea869f3e4a5d0194bc15d71ee22f42a5e2bcefe743df29d5c`
+
+Remaining targets: full viewport snapshot extraction on dirty frames, atlas churn
+for very large Unicode working sets, and real TUI/input-latency distributions.
+These changes are measured improvements, not a claim that terminal performance
+is now optimal on every workload.

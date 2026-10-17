@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Run the native Windows terminal").dependOn(&run.step);
     const tests = b.addTest(.{ .root_module = module });
     const install_tests = b.addInstallArtifact(tests, .{ .dest_sub_path = "vex-native-tests.exe" });
+    b.step("test-build", "Compile native tests without running Windows tools").dependOn(&install_tests.step);
     const test_run = b.addSystemCommand(&.{b.getInstallPath(.bin, "vex-native-tests.exe")});
     test_run.step.dependOn(&install_tests.step);
     test_run.step.dependOn(&dll.step);

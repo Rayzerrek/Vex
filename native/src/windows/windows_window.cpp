@@ -36,13 +36,16 @@ static float terminalFontSize = 14.0f;
 static float dpiScale = 1.0f;
 static uint32_t tabStripCount = 1;
 static float tabWidthDip = 160;
-enum class FrameSchedule { none, posted, synchronized };
+enum class FrameSchedule { none, posted, synchronized, output };
 static FrameSchedule frameSchedule = FrameSchedule::none;
 static bool firstOutput, firstFrame;
 static bool cursorWakeArmed;
 static ULONGLONG frameDeadline;
 static int platformError;
 static LARGE_INTEGER startupCounter, counterFrequency;
+static HANDLE outputFrameTimer;
+static HMONITOR outputMonitor;
+static LONGLONG outputFrameTicks, nextOutputFrame;
 static uint16_t pendingSurrogate;
 static uint64_t paintCount;
 static LARGE_INTEGER frameRequestCounter;
@@ -150,7 +153,19 @@ static HRESULT resizeRenderer(UINT width, UINT height, float dpi) {
     }
     return renderer.resize(width, height, dpi);
 }
+static void updateOutputCadence() {
+    HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    if (monitor == outputMonitor && outputFrameTicks) return;
+    outputMonitor = monitor;
+    MONITORINFOEXW info = {}; info.cbSize = sizeof(info);
+    DEVMODEW mode = {}; mode.dmSize = sizeof(mode);
+    UINT refresh = 60;
+    if (GetMonitorInfoW(monitor, &info) && EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) &&
+        mode.dmDisplayFrequency >= 24 && mode.dmDisplayFrequency <= 1000) refresh = mode.dmDisplayFrequency;
+    outputFrameTicks = counterFrequency.QuadPart / refresh;
+}
 static void updateWindowMetrics() {
+    updateOutputCadence();
     RECT bounds; GetClientRect(window, &bounds);
     float scale = GetDpiForWindow(window) / 96.0f;
     dpiScale = scale > 0.0f ? scale : 1.0f;
@@ -159,7 +174,9 @@ static void updateWindowMetrics() {
     callbacks.resize(callbacks.context, clientWidth, clientHeight, cellWidth, cellHeight, scale);
 }
 static void renderScheduledFrame() {
-    KillTimer(window, 1); frameSchedule = FrameSchedule::none;
+    KillTimer(window, 1);
+    if (outputFrameTimer) CancelWaitableTimer(outputFrameTimer);
+    frameSchedule = FrameSchedule::none;
     InvalidateRect(window, nullptr, FALSE); UpdateWindow(window);
 }
 extern "C" void vex_window_invalidate() {
@@ -168,16 +185,56 @@ extern "C" void vex_window_invalidate() {
     if (frameSchedule != FrameSchedule::posted) {
         frameDeadline = now + 8;
         KillTimer(window, 1);
+        if (outputFrameTimer) CancelWaitableTimer(outputFrameTimer);
         frameSchedule = FrameSchedule::posted;
         // A posted frame coalesces queued changes without Win32 timer-resolution input delay.
         if (!PostMessageW(window, WM_APP + 10, 0, 0)) { platformError = (int)GetLastError(); DestroyWindow(window); }
     } else if (now >= frameDeadline) renderScheduledFrame();
 }
+static void invalidateOutputFrame() {
+    if (!IsWindow(window)) return;
+    if (frameSchedule == FrameSchedule::posted || frameSchedule == FrameSchedule::synchronized) {
+        vex_window_invalidate();
+        return;
+    }
+    LARGE_INTEGER now; QueryPerformanceCounter(&now);
+    if (now.QuadPart >= nextOutputFrame) {
+        if (frameSchedule == FrameSchedule::output) renderScheduledFrame();
+        else vex_window_invalidate();
+        return;
+    }
+    if (frameSchedule == FrameSchedule::output) return;
+    // Isolated output stays immediate. Only a sustained stream is paced to the current monitor.
+    if (!outputFrameTimer) outputFrameTimer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!outputFrameTimer) { vex_window_invalidate(); return; }
+    LARGE_INTEGER due;
+    due.QuadPart = -((nextOutputFrame - now.QuadPart) * 10000000 / counterFrequency.QuadPart + 1);
+    if (!SetWaitableTimer(outputFrameTimer, &due, 0, nullptr, nullptr, FALSE)) { vex_window_invalidate(); return; }
+    frameDeadline = GetTickCount64() + (ULONGLONG)((-due.QuadPart + 9999) / 10000);
+    frameSchedule = FrameSchedule::output;
+}
+
+static BOOL nextWindowMessage(MSG& message) {
+    for (;;) {
+        // Sent messages can arm/cancel the timer while PeekMessage dispatches them, even without queued input.
+        const bool outputPending = frameSchedule == FrameSchedule::output;
+        const DWORD status = MsgWaitForMultipleObjectsEx(outputPending ? 1 : 0, outputPending ? &outputFrameTimer : nullptr,
+            INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        if (status == WAIT_FAILED) return -1;
+        if (outputPending && status == WAIT_OBJECT_0) {
+            if (frameSchedule == FrameSchedule::output) renderScheduledFrame();
+            continue;
+        }
+        if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) return message.message == WM_QUIT ? 0 : 1;
+    }
+}
+
 extern "C" void vex_window_defer_synchronized() {
     if (!IsWindow(window)) return;
     ULONGLONG now = GetTickCount64();
     if (frameSchedule != FrameSchedule::synchronized) {
         frameDeadline = now + 100;
+        if (outputFrameTimer) CancelWaitableTimer(outputFrameTimer);
         if (!SetTimer(window, 1, 100, nullptr)) { platformError = (int)GetLastError(); DestroyWindow(window); }
         else frameSchedule = FrameSchedule::synchronized;
     } else if (now >= frameDeadline) renderScheduledFrame();
@@ -329,11 +386,13 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     HRESULT result = createRenderTarget();
     if (SUCCEEDED(result)) result = renderer.beginFrame();
     if (FAILED(result)) { rendererFault(result); return false; }
-    if (frameSchedule == FrameSchedule::posted) frameSchedule = FrameSchedule::none;
+    if (frameSchedule == FrameSchedule::posted || frameSchedule == FrameSchedule::output) {
+        if (outputFrameTimer) CancelWaitableTimer(outputFrameTimer);
+        frameSchedule = FrameSchedule::none;
+    }
     paintCount++;
-    LARGE_INTEGER sceneBegin = {};
+    LARGE_INTEGER sceneBegin; QueryPerformanceCounter(&sceneBegin);
     if (measureFrameTiming) {
-        QueryPerformanceCounter(&sceneBegin);
         if (frameRequestCounter.QuadPart) {
             frameRequestDelayUs = (UINT64)((sceneBegin.QuadPart - frameRequestCounter.QuadPart) * 1000000 / counterFrequency.QuadPart);
             frameRequestCounter.QuadPart = 0;
@@ -347,6 +406,8 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     result = renderer.endFrame(pixels, stride);
     if (FAILED(result)) { rendererFault(result); return false; }
     rendererRecoveryAttempts = 0;
+    // Preparation and a blocking Present already consume the interval; do not add another full period afterward.
+    nextOutputFrame = sceneBegin.QuadPart + outputFrameTicks;
     if (SUCCEEDED(result) && !firstFrame) { firstFrame = true; startupMilestone("first frame"); }
     return SUCCEEDED(result);
 }
@@ -783,7 +844,12 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_CAPTURECHANGED: case WM_CANCELMODE:
         cancelPointerGesture();
         return 0;
+    case WM_DISPLAYCHANGE:
+        outputMonitor = nullptr;
+        if (window) updateOutputCadence();
+        break;
     case WM_WINDOWPOSCHANGED:
+        if (window) updateOutputCadence();
         repositionTerminalDialogs();
         break;
     case WM_SIZE:
@@ -841,7 +907,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             bool visible = callbacks.output(callbacks.context, token, bytes, length);
             vex_pty_ack_output(token);
             // Deadline check also renders when posted pipe events starve WM_TIMER.
-            if (visible) vex_window_invalidate();
+            if (visible) invalidateOutputFrame();
             else if (frameSchedule != FrameSchedule::none && GetTickCount64() >= frameDeadline) renderScheduledFrame();
         }
         return 0;
@@ -899,6 +965,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         measureFrameTiming = true;
         QueryPerformanceCounter(&frameRequestCounter);
         if (wparam == 1) vex_window_defer_synchronized();
+        else if (wparam == 3) invalidateOutputFrame();
         else if (wparam == 2) {
             for (int i = 0; i < 20; ++i) vex_window_invalidate();
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -938,6 +1005,12 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 26: return (LRESULT)renderer.ui.batches.atlasResets;
             case 27: return (LRESULT)frameRequestDelayUs;
             case 28: return (LRESULT)sceneDurationUs;
+            case 50: return (LRESULT)renderer.terminal.geometryHits;
+            case 51: return (LRESULT)renderer.terminal.geometryBuilds;
+            case 52: return (LRESULT)renderer.terminal.geometryCapacity();
+            case 53: renderer.terminal.geometryEnabled = false; return 1;
+            case 54: renderer.terminal.geometryEnabled = true; return 1;
+            case 55: return outputFrameTicks ? (LRESULT)(counterFrequency.QuadPart / outputFrameTicks) : 0;
             case 40: uiVerificationMode = 1; vex_window_invalidate(); return 1;
             case 41: uiVerificationMode = 0; vex_window_invalidate(); return 1;
             case 42: uiVerificationMode = 2; vex_window_invalidate(); return 1;
@@ -1125,7 +1198,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 updateWindowMetrics();
                 ShowWindow(window, SW_SHOW); UpdateWindow(window);
                 MSG message; BOOL status;
-                while ((status = GetMessageW(&message, nullptr, 0, 0)) > 0) {
+                while ((status = nextWindowMessage(message)) > 0) {
                     if (routeTerminalDialogMessage(message)) continue;
                     if (message.message == WM_KEYDOWN || message.message == WM_SYSKEYDOWN) {
                         // Do not TranslateMessage a consumed workspace chord into terminal control bytes.
@@ -1136,6 +1209,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
             }
         }
     } else platformError = (int)result;
+    if (outputFrameTimer) { CloseHandle(outputFrameTimer); outputFrameTimer = nullptr; }
     destroyTerminalDialogs();
     if (iconBig) DestroyIcon(iconBig);
     if (iconSmall) DestroyIcon(iconSmall);

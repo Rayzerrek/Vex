@@ -34,6 +34,20 @@ Zig runtime safety is never disabled. Native C++ compiles with
 Or run `zig-out/bin/vex-native.exe` with `ghostty-vt.dll` beside it. No CLR/WPF,
 Electron, external packages, or separately installed C++ toolchain is used.
 
+WSL can cross-compile both artifacts with Zig **0.15.2**:
+
+```sh
+zig build
+zig build test-build
+```
+
+Run `zig-out/bin/vex-native-tests.exe` and the desktop PowerShell fixtures on
+Windows, with `ghostty-vt.dll` beside the executables. Copying the output directory
+and fixtures to a Windows directory avoids UNC working-directory behavior in cmd;
+installing another compiler on Windows is unnecessary. `test-build` only compiles
+and installs the test executable; it does not run tests or the icon-generation check.
+See [PERFORMANCE.md](PERFORMANCE.md) for terminal rendering measurements.
+
 ## Shell profiles
 
 ```powershell

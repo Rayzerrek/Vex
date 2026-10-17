@@ -200,7 +200,78 @@ HRESULT TerminalRenderer::appendQuad(const Quad& quad) {
     if (!pendingQuads) { pendingPage = page; pendingOffset = offset; }
     memcpy(frames[frameIndex].pages[page].mapped + offset, &quad, sizeof(quad));
     pendingQuads++;
+    if (recording) recordQuad(quad);
     return S_OK;
+}
+
+void TerminalRenderer::recordQuad(const Quad& quad) {
+    auto& entry = *recording;
+    if (entry.count == entry.capacity) {
+        if (entry.capacity == maxGeometryQuads) { recording = nullptr; return; }
+        const UINT capacity = entry.capacity ? entry.capacity * 2 : 256;
+        auto memory = static_cast<Quad*>(entry.quads
+            ? HeapReAlloc(GetProcessHeap(), 0, entry.quads, (SIZE_T)capacity * sizeof(Quad))
+            : HeapAlloc(GetProcessHeap(), 0, (SIZE_T)capacity * sizeof(Quad)));
+        // Caching is optional: allocation pressure must not prevent ordinary drawing.
+        if (!memory) { recording = nullptr; return; }
+        entry.quads = memory; entry.capacity = capacity;
+    }
+    entry.quads[entry.count++] = quad;
+}
+
+HRESULT TerminalRenderer::replayGeometry(const Geometry& entry) {
+    UINT copied = 0;
+    while (copied < entry.count) {
+        const UINT count = entry.count - copied < pageBytes / sizeof(Quad)
+            ? entry.count - copied : pageBytes / (UINT)sizeof(Quad);
+        UINT page, offset;
+        HRESULT result = allocateUpload(count * sizeof(Quad), 4, page, offset);
+        if (FAILED(result)) return result;
+        if (pendingQuads && (page != pendingPage || offset != pendingOffset + pendingQuads * sizeof(Quad))) flushQuads();
+        if (!pendingQuads) { pendingPage = page; pendingOffset = offset; }
+        memcpy(frames[frameIndex].pages[page].mapped + offset, entry.quads + copied, count * sizeof(Quad));
+        pendingQuads += count; copied += count;
+    }
+    return S_OK;
+}
+
+HRESULT TerminalRenderer::beginGeometry(uint64_t generation, const uint32_t (&key)[14], const float (&geometry)[4], bool& reused) {
+    reused = false;
+    if (!passOpen || recording) return E_UNEXPECTED;
+    if (!geometryEnabled) return S_OK;
+    Geometry* entry = nullptr;
+    Geometry* oldest = &geometries[0];
+    for (auto& candidate : geometries) {
+        if (candidate.key[0] == key[0]) { entry = &candidate; break; }
+        if (candidate.lastUsed < oldest->lastUsed) oldest = &candidate;
+    }
+    if (!entry) entry = oldest;
+    entry->lastUsed = ++geometryClock;
+    if (entry->valid && entry->generation == generation && entry->atlasGeneration == atlasResets &&
+        memcmp(entry->key, key, sizeof(entry->key)) == 0 && memcmp(entry->geometry, geometry, sizeof(entry->geometry)) == 0) {
+        HRESULT result = replayGeometry(*entry);
+        if (SUCCEEDED(result)) { reused = true; geometryHits++; }
+        return result;
+    }
+    entry->valid = false; entry->count = 0;
+    entry->generation = generation; entry->atlasGeneration = atlasResets;
+    memcpy(entry->key, key, sizeof(entry->key)); memcpy(entry->geometry, geometry, sizeof(entry->geometry));
+    recording = entry;
+    return S_OK;
+}
+
+void TerminalRenderer::endGeometry(bool complete) {
+    if (!recording) return;
+    // Mid-build eviction can reuse UVs already recorded. Never retain that mixed atlas generation.
+    recording->valid = complete && recording->atlasGeneration == atlasResets;
+    if (recording->valid) geometryBuilds++;
+    recording = nullptr;
+}
+
+UINT64 TerminalRenderer::geometryCapacity() const {
+    UINT64 bytes = 0;
+    for (const auto& entry : geometries) bytes += (UINT64)entry.capacity * sizeof(Quad);
+    return bytes;
 }
 
 HRESULT TerminalRenderer::drawSolid(float left, float top, float right, float bottom, uint32_t color, uint8_t alpha) {
@@ -371,6 +442,11 @@ void TerminalRenderer::trimUnusedUploads(UINT index, ULONGLONG now) {
 }
 
 void TerminalRenderer::shutdown() {
+    recording = nullptr;
+    for (auto& entry : geometries) {
+        if (entry.quads) HeapFree(GetProcessHeap(), 0, entry.quads);
+        entry = {};
+    }
     clearGlyphCache();
     for (auto& frame : frames) {
         for (auto& upload : frame.pages) {

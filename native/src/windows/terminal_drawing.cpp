@@ -356,4 +356,15 @@ extern "C" void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, u
     }
     renderer->terminalResult(result);
 }
+extern "C" int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reused) {
+    if (!reused) return (int)renderer->terminalResult(E_INVALIDARG);
+    const uint32_t scalars[] = {
+        key.pane_id, key.columns, key.rows, key.background, key.foreground, key.cursor,
+        key.selection_background, key.accent, key.is_dark, key.block_column, key.block_row,
+        key.link_row, key.link_start, key.link_end
+    };
+    const float geometry[] = { gridLeft, gridTop, cellWidth, cellHeight };
+    return (int)renderer->terminalResult(renderer->terminal.beginGeometry(key.generation, scalars, geometry, *reused));
+}
+extern "C" void vex_terminal_geometry_end(bool complete) { renderer->terminal.endGeometry(complete); }
 extern "C" void vex_end_pane() { renderer->endTerminalPass(); }

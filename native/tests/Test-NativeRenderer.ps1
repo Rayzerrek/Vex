@@ -2,7 +2,8 @@ param(
     [string]$Executable = "$PSScriptRoot\..\zig-out\bin\vex-native.exe",
     [string]$OutputDirectory = "$PSScriptRoot\..\zig-out\verification",
     [switch]$RequireGraphicsDebug,
-    [switch]$RequireNativeGlyphAtlas
+    [switch]$RequireNativeGlyphAtlas,
+    [switch]$RequireGeometryCache
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\DesktopHarness.ps1"
@@ -60,6 +61,18 @@ function Save-RendererCapture([IntPtr]$Window, [string]$Name) {
     return (Get-FileHash $path -Algorithm SHA256).Hash
 }
 
+function Assert-GeometryPixels([IntPtr]$Window, [string]$Name) {
+    if (!$RequireGeometryCache) { return }
+    if ((Get-RendererProbe $Window 54) -ne 1) { throw 'Vex renderer: geometry cache probes unavailable.' }
+    Save-RendererCapture $Window "$Name-build" | Out-Null
+    $cached = Save-RendererCapture $Window "$Name-cached"
+    try {
+        Get-RendererProbe $Window 53 | Out-Null
+        $uncached = Save-RendererCapture $Window "$Name-uncached"
+        if ($cached -ne $uncached) { throw "Vex renderer: cached geometry changed pixels ($Name)." }
+    } finally { Get-RendererProbe $Window 54 | Out-Null }
+}
+
 $oldSelftest = $env:VEX_NATIVE_SELFTEST
 $oldWarp = $env:VEX_NATIVE_WARP
 $oldCapture = $env:VEX_NATIVE_CAPTURE_BMP
@@ -109,17 +122,20 @@ try {
             $misses = Get-RendererProbe $window 12
             $allocations = Get-RendererProbe $window 13
             $hits = Get-RendererProbe $window 11
+            $geometryHits = Get-RendererProbe $window 50
             $draws = Get-RendererProbe $window 10
             $framesBefore = Get-RendererProbe $window 2
             if ($misses -le 0 -or $hits -le 0) { throw 'Vex renderer: native glyph atlas did not rasterize/reuse glyphs.' }
             Save-RendererCapture $window "renderer-$driver-warm" | Out-Null
             Assert-RendererProbe $window 12 $misses
             Assert-RendererProbe $window 13 $allocations
-            if ((Get-RendererProbe $window 11) -le $hits) { throw 'Vex renderer: warm frame did not reuse cached glyphs.' }
+            if ((Get-RendererProbe $window 11) -le $hits -and (Get-RendererProbe $window 50) -le $geometryHits) { throw 'Vex renderer: warm frame did not reuse glyphs or geometry.' }
+            if ($RequireGeometryCache -and (Get-RendererProbe $window 50) -le $geometryHits) { throw 'Vex renderer: warm frame did not replay geometry.' }
             $presented = [Math]::Max(1, (Get-RendererProbe $window 2) - $framesBefore)
             if ((Get-RendererProbe $window 10) - $draws -gt 2 * $presented) { throw 'Vex renderer: warm single-pane frames were not batched.' }
         }
 
+        Assert-GeometryPixels $window "geometry-$driver-plain"
         $generation = Get-RendererProbe $window 3
         for ($i = 0; $i -lt 4; $i++) {
             Get-RendererProbe $window 7 | Out-Null
@@ -186,6 +202,7 @@ $lines = @(
             $misses = Get-RendererProbe $window 12
             $allocations = Get-RendererProbe $window 13
             Save-RendererCapture $window "renderer-$driver-glyphs-warm" | Out-Null
+            Assert-GeometryPixels $window "geometry-$driver-unicode"
             Assert-RendererProbe $window 12 $misses
             Assert-RendererProbe $window 13 $allocations
             for ($i = 0; $i -lt 5; $i++) { Invoke-NativeAction $window 14 }
@@ -208,6 +225,7 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
             $peakUploadCapacity = Get-RendererProbe $window 14
             Save-RendererCapture $window "renderer-$driver-eviction" | Out-Null
             if ((Get-RendererProbe $window 15) -le $resets) { throw 'Vex renderer: the bounded glyph cache did not exercise eviction.' }
+            Assert-GeometryPixels $window "geometry-$driver-eviction"
             Assert-NativeProbe $window 14 $shellPid 'atlas eviction preserves the shell'
             if ($peakUploadCapacity -le 1024 * 1024) { throw 'Vex renderer: atlas churn did not grow uploads beyond the warm reserve.' }
             Invoke-NativeAction $window 17
@@ -221,6 +239,9 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
             $framesBeforeTrim = Get-RendererProbe $window 2
             Assert-RendererProbe $window 14 (1024 * 1024)
             Assert-NativeProbe $window 75 1 'upload trimming does not stop cursor animation'
+            # Pixel comparisons may already have aged out the excess pages. Still require a real cursor frame.
+            $blinkDeadline = [DateTime]::UtcNow.AddSeconds(3)
+            while ((Get-RendererProbe $window 2) -le $framesBeforeTrim -and [DateTime]::UtcNow -lt $blinkDeadline) { Start-Sleep -Milliseconds 30 }
             if ((Get-RendererProbe $window 2) -le $framesBeforeTrim) { throw 'Vex renderer: upload trim fixture did not present blinking frames.' }
             if ((Get-RendererProbe $window 17) -le 0) { throw 'Vex renderer: excess upload pages were not reclaimed.' }
             Save-RendererCapture $window "renderer-$driver-trimmed" | Out-Null
@@ -238,6 +259,8 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
         }
         Invoke-NativeAction $window 10 7
         Save-RendererCapture $window "renderer-$driver-light" | Out-Null
+        Assert-RendererIdle $window
+        Assert-GeometryPixels $window "geometry-$driver-light-split"
         Invoke-NativeAction $window 10 1
         Invoke-NativeAction $window 13
         Invoke-NativeAction $window 15
@@ -257,6 +280,8 @@ for ($i = 0; $i -lt 2049; $i++) { [void]$b.Append([char](0x4e00 + $i)); [void]$b
             UiDrawCalls = Get-RendererProbe $window 18; UiUploadCapacityBytes = Get-RendererProbe $window 24
             TranslationModuleLoaded = $loadedModules -contains 'd3d11on12.dll'
             GlyphHits = Get-RendererProbe $window 11; GlyphMisses = Get-RendererProbe $window 12
+            GeometryHits = Get-RendererProbe $window 50; GeometryBuilds = Get-RendererProbe $window 51
+            GeometryCapacityBytes = Get-RendererProbe $window 52
             DrawCalls = Get-RendererProbe $window 10
             UploadAllocations = Get-RendererProbe $window 13; UploadCapacityBytes = Get-RendererProbe $window 14
             Result = 'PASS'
