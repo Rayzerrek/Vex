@@ -171,7 +171,7 @@ pub const TerminalApplication = struct {
     /// Animated status dots repaint every visible tab; hidden terminal grids stay unmaterialized.
     fn anyAnimatedStatus(self: *TerminalApplication) bool {
         const model = if (self.model) |*model| model else return false;
-        if (!self.cursor_window_active or self.overlay != .none or self.editing_tab != null) return false;
+        if (!self.cursor_window_active or self.overlay != .none or self.editing_tab != null or !platform.animationsEnabled()) return false;
         for (model.tabs.items) |tab| {
             const presentation = self.tabProgramStatus(tab.tree.root) catch return false;
             if (status_pulse.StatusPulse.animates(@intFromEnum(presentation.summary.state))) return true;

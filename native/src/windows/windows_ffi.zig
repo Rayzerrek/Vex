@@ -415,6 +415,9 @@ pub fn paintCount() u64 {
     return c.vex_window_paint_count();
 }
 /// Arms a single cursor wake in milliseconds, or cancels it when the cursor is ineligible.
+pub fn animationsEnabled() bool {
+    return c.vex_window_animations_enabled();
+}
 pub fn scheduleCursorWake(delay_ms: ?u32) !void {
     if (c.vex_window_schedule_cursor_wake(delay_ms orelse 0) != 0) return error.CursorWakeSchedulingFailed;
 }

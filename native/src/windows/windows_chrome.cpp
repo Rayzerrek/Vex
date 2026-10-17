@@ -121,28 +121,48 @@ static void labelUtf8WithFont(IDWriteTextFormat* format, const uint8_t* bytes, s
 static uint32_t programStatusColor(VexProgramStatus status) {
     if (status.state == 4) return chromePalette.is_dark ? 0xe8c98d : 0x8b6019;
     if (status.state == 5) return chromePalette.is_dark ? 0xe99ba4 : 0xaa3040;
+    if (status.state == 3) return chromePalette.is_dark ? 0x85c9ad : 0x27664e;
+    if (status.state == 2) return chromePalette.accent;
     return chromePalette.text_muted;
 }
 static void drawProgramStatus(VexProgramStatus status, float x, float y, float width, bool iconOnly) {
     if (status.state < 1 || status.state > 5) return;
     const uint32_t color = programStatusColor(status);
-    const uint32_t phase = status.phase % 3;
+    const float phase = (float)(status.phase % 1200) / 1200.0f;
+    const bool motion = vex_window_animations_enabled();
     if (iconOnly) {
         if (status.state == 2) {
-            // Three-dot wave: the lit dot advances once per shared icon phase step.
+            // A staggered raised-cosine wave eases to rest between lifts.
             for (uint32_t i = 0; i < 3; ++i) {
-                const bool lit = (phase + 3 - i) % 3 == 0;
-                const float radius = lit ? 2.1f : 1.5f;
-                brush->SetColor(rgb(color, lit ? 1.0f : 0.38f));
-                target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + 2.5f + (float)i * 4.6f, y + 10.0f), radius, radius), brush);
+                const float t = fmodf(phase + 1.0f - (float)i * 0.14f, 1.0f);
+                const float lift = motion && t < 0.56f ? 0.5f - 0.5f * cosf(t / 0.56f * 6.2831853f) : 0.0f;
+                const float radius = 1.45f + lift * 0.35f;
+                brush->SetColor(rgb(color, motion ? 0.42f + lift * 0.58f : 0.85f));
+                target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + 2.5f + (float)i * 4.6f, y + 10.0f - lift * 2.5f), radius, radius), brush);
             }
         } else if (status.state == 1) {
             brush->SetColor(rgb(color));
             target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x + 6, y + 10), 2.5f, 2.5f), brush, 1);
         } else {
-            // Blocked breathes for attention; done and error stay static.
-            const float alpha = status.state == 4 ? (phase == 0 ? 1.0f : (phase == 1 ? 0.62f : 0.84f)) : 1.0f;
-            labelWithFont(badgeFont, status.state == 3 ? L"\x2713" : status.state == 4 ? L"\x25C7" : L"!", x, y + 2, width, color, alpha);
+            // Waiting breathes quietly; success and failure remain unambiguous at rest.
+            const float alpha = status.state == 4 && motion ? 0.72f + 0.28f * cosf(phase * 6.2831853f) : 1.0f;
+            brush->SetColor(rgb(color, alpha));
+            const float cx = x + 6.5f, cy = y + 10.0f;
+            if (status.state == 3) {
+                target->DrawLine(D2D1::Point2F(cx - 4, cy), D2D1::Point2F(cx - 1, cy + 3), brush, 1.6f, true);
+                target->DrawLine(D2D1::Point2F(cx - 1, cy + 3), D2D1::Point2F(cx + 4.5f, cy - 3.5f), brush, 1.6f, true);
+            } else {
+                target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 5.5f, 5.5f), brush, 1.2f);
+                if (status.state == 4) {
+                    for (int i = 0; i < 2; ++i) {
+                        const float dx = i ? 1.8f : -1.8f;
+                        target->DrawLine(D2D1::Point2F(cx + dx, cy - 2), D2D1::Point2F(cx + dx, cy + 2), brush, 1.4f, true);
+                    }
+                } else {
+                    target->DrawLine(D2D1::Point2F(cx, cy - 2.7f), D2D1::Point2F(cx, cy + 0.5f), brush, 1.4f, true);
+                    target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy + 3), 0.8f, 0.8f), brush);
+                }
+            }
         }
         return;
     }
@@ -220,7 +240,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool e
             inset += 20.0f;
         }
     }
-    const bool hasStatus = status.state >= 2 && status.state <= 5 && (status.state != 2 || !active);
+    const bool hasStatus = status.state >= 2 && status.state <= 5;
     float rightReserve = 24.0f;
     if (hasStatus && width >= 88.0f) {
         drawProgramStatus(status, x + width - 36.0f, 13.0f, 14.0f, true);
@@ -329,23 +349,31 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
     const float actionsWidth = (bounds.width >= 180.0f && bounds.height >= 28.0f) ? (can_focus ? 94.0f : 72.0f) : 0.0f;
     const float remainingWidth = fmaxf(0, bounds.width - actionsWidth);
     const float statusWidth = status.state >= 2 && status.state <= 5 && remainingWidth >= 90 ? 20.0f : 0.0f;
-    if (statusWidth > 0) drawProgramStatus(status, bounds.x + remainingWidth - statusWidth - 4, bounds.y + 4, statusWidth, true);
     float titleInset = 10.0f;
     if (bounds.width >= 90.0f && bounds.height >= 28.0f) {
         drawAppIcon(icon, bounds.x + 11.0f, bounds.y + 7.0f, 12.0f);
         if (focused) focusedPaneIconKey = computeIconCacheKey(icon, 12);
         titleInset = 30.0f;
     }
-    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4.0f, fmaxf(0, remainingWidth - statusWidth - titleInset - 8), focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont);
+    // Keep activity with the program identity, not the pane actions.
+    if (statusWidth > 0) {
+        drawProgramStatus(status, bounds.x + titleInset, bounds.y + 4, statusWidth, true);
+        titleInset += statusWidth;
+    }
+    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4.0f, fmaxf(0, remainingWidth - titleInset - 12), focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont);
     beginTerminalPane(bounds);
 }
 extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active) {
     if (!isfinite(thumb_y) || !isfinite(thumb_height) || thumb_height <= 0.0f || bounds.width < 24.0f) return;
-    const float width = active ? 10.0f : 6.0f;
-    const float right = bounds.x + bounds.width - 2.0f;
+    const float width = active ? 6.0f : 3.0f;
+    const float right = bounds.x + bounds.width - 4.0f;
     const float left = right - width;
     const float radius = width * 0.5f;
-    brush->SetColor(D2D1::ColorF(chromePalette.text_primary, active ? 0.55f : 0.26f));
+    if (active) {
+        brush->SetColor(rgb(chromePalette.text_primary, 0.045f));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(right - 8, bounds.y + 30, right + 2, bounds.y + bounds.height - 6), 5, 5), brush);
+    }
+    brush->SetColor(rgb(chromePalette.text_primary, active ? 0.48f : 0.20f));
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, thumb_y, right, thumb_y + thumb_height), radius, radius), brush);
 }
 extern "C" void vex_draw_session_exit(VexPaneRect bounds, uint32_t exit_code) {

@@ -44,6 +44,7 @@ struct DialogHost {
     uint64_t themeCardPaintCount = 0, dialogPaintCount = 0, surfacePaintCount = 0;
     enum class Phase { closed, creating, active, closing } phase = Phase::closed;
     bool synchronizing = false;
+    ULONGLONG revealStarted = 0;
     SettingsPage page = SettingsPage::general;
     VexUserSettings draft = {};
     float scale = 1, width = 600, height = 470, baseWidth = 600, baseHeight = 470;
@@ -142,6 +143,8 @@ void closeDialog(bool restoreFocus) {
     if (host.phase == DialogHost::Phase::closed || host.phase == DialogHost::Phase::closing) return;
     host.phase = DialogHost::Phase::closing;
     HWND dialog = host.window;
+    if (IsWindow(dialog)) KillTimer(dialog, 7);
+    host.revealStarted = 0;
     host.window = nullptr;
     if (IsWindow(dialog)) DestroyWindow(dialog);
     releasePaint();
@@ -186,8 +189,8 @@ LRESULT CALLBACK dialogControlInput(HWND control, UINT message, WPARAM wparam, L
         HDC dc = BeginPaint(control, &paint);
         if (dc) {
             RECT bounds; GetClientRect(control, &bounds);
-            DialogPaintBuffer buffer(dc, bounds);
-            FillRect(buffer.dc, &bounds, host.background);
+            DialogPaintBuffer buffer(dc, paint.rcPaint);
+            FillRect(buffer.dc, &paint.rcPaint, host.background);
             DefSubclassProc(control, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(buffer.dc), PRF_CLIENT);
         }
         EndPaint(control, &paint);
@@ -503,17 +506,6 @@ HBITMAP themeCardImage(const DRAWITEMSTRUCT& draw, const DialogItem& item, bool 
     }
     return image;
 }
-void prepareSettingsThemeCards() {
-    HWND grid = GetDlgItem(host.window, themeGridId);
-    HDC dc = GetDC(grid);
-    if (!dc) return;
-    for (size_t i = 0; i < host.model.count; ++i) {
-        DRAWITEMSTRUCT draw = {}; draw.itemID = (UINT)i; draw.hDC = dc;
-        if (SendMessageW(grid, LB_GETITEMRECT, i, reinterpret_cast<LPARAM>(&draw.rcItem)) != LB_ERR)
-            themeCardImage(draw, host.model.items[i], host.model.items[i].value == host.draft.theme);
-    }
-    ReleaseDC(grid, dc);
-}
 void drawListItem(const DRAWITEMSTRUCT& draw) {
     if (draw.itemID == (UINT)-1 || draw.itemID >= host.model.count) return;
     const DialogItem& item = host.model.items[draw.itemID];
@@ -669,7 +661,7 @@ void showPage(SettingsPage previousPage) {
             InvalidateRect(GetDlgItem(host.window, firstPageId + (int)host.page), nullptr, FALSE);
         }
         RECT content = { 0, px(host.height < 430 ? 92 : 136), px(host.width), px(host.height - 16) };
-        RedrawWindow(host.window, &content, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        RedrawWindow(host.window, &content, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
     }
 }
 void paintDialogSurface(HDC dc) {
@@ -902,6 +894,21 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         SetWindowLongPtrW(window, DWLP_MSGRESULT, restored ? 1 : 0);
         return TRUE;
     }
+    case WM_TIMER:
+        if (wparam == 7 && host.revealStarted) {
+            const float t = fminf(1.0f, (float)(GetTickCount64() - host.revealStarted) / 120.0f);
+            if (t >= 1.0f || !vex_window_animations_enabled()) {
+                KillTimer(window, 7);
+                host.revealStarted = 0;
+                SetLayeredWindowAttributes(window, 0, 255, LWA_ALPHA);
+                SetWindowLongPtrW(window, GWL_EXSTYLE, GetWindowLongPtrW(window, GWL_EXSTYLE) & ~WS_EX_LAYERED);
+            } else {
+                const float ease = 1.0f - powf(1.0f - t, 3.0f);
+                SetLayeredWindowAttributes(window, 0, (BYTE)lroundf(220.0f + 35.0f * ease), LWA_ALPHA);
+            }
+            return TRUE;
+        }
+        break;
     case WM_ERASEBKGND: return TRUE;
     case WM_PAINT: {
         ++host.surfacePaintCount; ++host.dialogPaintCount;
@@ -1165,7 +1172,18 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     host.window = result;
     host.phase = DialogHost::Phase::active;
     repositionTerminalDialogs();
-    if (request.kind == 4) prepareSettingsThemeCards();
+    // Theme thumbnails are cached on first visible paint, never on the opening path.
+    if (vex_window_animations_enabled()) {
+        const LONG_PTR style = GetWindowLongPtrW(result, GWL_EXSTYLE);
+        SetWindowLongPtrW(result, GWL_EXSTYLE, style | WS_EX_LAYERED);
+        if (SetLayeredWindowAttributes(result, 0, 220, LWA_ALPHA)) {
+            host.revealStarted = GetTickCount64();
+            if (!SetTimer(result, 7, 16, nullptr)) {
+                host.revealStarted = 0;
+                SetWindowLongPtrW(result, GWL_EXSTYLE, style);
+            }
+        } else SetWindowLongPtrW(result, GWL_EXSTYLE, style);
+    }
     EnableWindow(host.owner, FALSE);
     ShowWindow(result, SW_SHOW);
     SetActiveWindow(result);

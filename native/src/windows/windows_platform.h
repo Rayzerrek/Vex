@@ -91,6 +91,7 @@ uint64_t vex_window_paint_count(void);
 /* One-shot cursor wake; zero cancels it. No animation timer exists for a steady/hidden cursor. */
 int vex_window_schedule_cursor_wake(uint32_t delay_ms);
 bool vex_window_cursor_wake_armed(void);
+bool vex_window_animations_enabled(void);
 /* Window thread only; releasing capture may synchronously deliver WM_CAPTURECHANGED. */
 int vex_window_cancel_pointer_capture(void);
 bool vex_window_has_pointer_capture(void);
