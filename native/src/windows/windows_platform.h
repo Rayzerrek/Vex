@@ -39,7 +39,7 @@ typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN =
 /* Owned dialog controls copy all request strings before returning to the caller. */
 typedef struct { const uint8_t* bytes; size_t length; } VexDialogText;
 typedef struct { uint32_t value; VexDialogText label, detail; uint32_t background, foreground, accent; uint32_t swatches[5]; } VexDialogItem;
-typedef struct { uint32_t theme, font_size, shell; bool cursor_blink; } VexUserSettings;
+typedef struct { uint32_t theme, font_size, shell; bool cursor_blink; uint8_t font_family[128]; } VexUserSettings;
 /* Kind: appearance/commands/tabs/settings/shell/close = 1..6. */
 typedef struct {
     uint32_t kind, selected, mode;
@@ -86,6 +86,7 @@ void vex_window_close(void);
 void vex_window_paste_clipboard(void);
 void vex_window_set_chrome_palette(VexChromePalette palette);
 int vex_window_set_font_size(float font_size);
+int vex_window_set_font_family(const uint8_t* family);
 float vex_window_font_size(void);
 uint64_t vex_window_paint_count(void);
 /* One-shot cursor wake; zero cancels it. No animation timer exists for a steady/hidden cursor. */

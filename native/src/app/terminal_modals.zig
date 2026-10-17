@@ -73,9 +73,9 @@ pub fn presentTerminalModal(self: *Application) !void {
         },
         .shell_picker => |picker| {
             request.kind = .shell;
-            request.title = "Choose Shell";
-            request.description = "Existing terminal sessions keep their current shell.";
-            request.accept_label = "Choose";
+            request.title = "Choose a shell";
+            request.description = "Installed shells · Open a new terminal tab.";
+            request.accept_label = "Open tab";
             request.mode = @intFromEnum(picker.mode);
             self.discoverAvailableShells();
             for (self.available_shells[0..self.available_shell_count]) |kind| {

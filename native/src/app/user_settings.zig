@@ -8,10 +8,18 @@ pub const DefaultShell = enum(u32) { startup = 0, cmd = 1, powershell = 2, pwsh 
 pub const UserSettings = struct {
     theme_index: u8 = themes.default_dark_index,
     font_size: u8 = 14,
+    font_family: [128]u8 = default_font,
     cursor_blink: bool = true,
     default_shell: DefaultShell = .startup,
 
+    pub fn fontFamily(self: *const UserSettings) []const u8 {
+        return std.mem.sliceTo(&self.font_family, 0);
+    }
+
     pub fn validate(self: UserSettings) !void {
+        const family = self.fontFamily();
+        if (family.len == 0 or family.len >= self.font_family.len or !std.unicode.utf8ValidateSlice(family)) return error.InvalidUserSettings;
+        for (family) |byte| if (byte < 32 or byte == 127) return error.InvalidUserSettings;
         if (self.theme_index >= themes.themes.len or self.font_size < 9 or self.font_size > 32) return error.InvalidUserSettings;
     }
 
@@ -25,9 +33,13 @@ pub const UserSettings = struct {
         for (themes.themes, 0..) |theme, i| {
             if (std.mem.eql(u8, theme.name, parsed.value.theme) or std.mem.eql(u8, legacy_theme_names[i], parsed.value.theme)) index = @intCast(i);
         }
+        if (parsed.value.font_family.len == 0 or parsed.value.font_family.len >= 128 or std.mem.indexOfScalar(u8, parsed.value.font_family, 0) != null) return error.InvalidUserSettings;
+        var family = [_]u8{0} ** 128;
+        @memcpy(family[0..parsed.value.font_family.len], parsed.value.font_family);
         const result: UserSettings = .{
             .theme_index = index orelse return error.UnknownSettingsTheme,
             .font_size = parsed.value.font_size,
+            .font_family = family,
             .cursor_blink = parsed.value.cursor_blink,
             .default_shell = parsed.value.default_shell,
         };
@@ -41,6 +53,7 @@ pub const UserSettings = struct {
         return std.json.Stringify.valueAlloc(allocator, Document{
             .theme = themes.themes[self.theme_index].name,
             .font_size = self.font_size,
+            .font_family = self.fontFamily(),
             .cursor_blink = self.cursor_blink,
             .default_shell = self.default_shell,
         }, .{ .whitespace = .indent_2 });
@@ -65,9 +78,12 @@ test "legacy theme names migrate to the matching appearance and encode the new c
     }
 }
 
+pub const default_font: [128]u8 = "Cascadia Mono".* ++ [_]u8{0} ** (128 - "Cascadia Mono".len);
+
 const Document = struct {
     version: u8 = 1,
     theme: []const u8,
+    font_family: []const u8 = "Cascadia Mono",
     font_size: u8 = 14,
     cursor_blink: bool = true,
     default_shell: DefaultShell = .startup,
@@ -129,6 +145,20 @@ test "settings decode validates version, theme, size and shell; serialization ro
     try std.testing.expectError(error.InvalidUserSettings, UserSettings.decode(std.testing.allocator, "{\"theme\":\"Vex Obsidian\",\"font_size\":0}"));
     try std.testing.expectError(error.UnknownSettingsTheme, UserSettings.decode(std.testing.allocator, "{\"theme\":\"unknown\"}"));
     try std.testing.expectError(error.UnsupportedSettingsVersion, UserSettings.decode(std.testing.allocator, "{\"version\":2,\"theme\":\"Tokyo Night\"}"));
+}
+
+test "font preferences migrate, round trip and reject invalid families" {
+    const defaults = try UserSettings.decode(std.testing.allocator, "{\"theme\":\"Vex Obsidian\"}");
+    try std.testing.expectEqualStrings("Cascadia Mono", defaults.fontFamily());
+    var settings = defaults;
+    settings.font_family = [_]u8{0} ** 128;
+    @memcpy(settings.font_family[0..8], "Consolas");
+    const bytes = try settings.encodeAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(bytes);
+    try std.testing.expectEqualDeep(settings, try UserSettings.decode(std.testing.allocator, bytes));
+    settings.font_family = [_]u8{'x'} ** 128;
+    try std.testing.expectError(error.InvalidUserSettings, settings.validate());
+    try std.testing.expectError(error.InvalidUserSettings, UserSettings.decode(std.testing.allocator, "{\"theme\":\"Vex Obsidian\",\"font_family\":\"\"}"));
 }
 
 test "settings save is replaceable and malformed storage is not silently replaced" {

@@ -1815,6 +1815,50 @@ test "mouse tracking priority, partial mode reset resilience, SGR/pixel formats,
     try std.testing.expect(!try terminal.inBandResize());
 }
 
+test "bundled ConPTY preserves erase semantics from child output through the terminal" {
+    const allocator = std.testing.allocator;
+    const directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(directory);
+    const fixture = try std.fs.path.join(allocator, &.{ directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const api = try binding.Api.load();
+    for ([_][]const u8{ "all", "screen", "history", "alternate" }) |scenario| {
+        const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, scenario }, .max_output_bytes = 64 * 1024 });
+        defer allocator.free(output.stdout);
+        defer allocator.free(output.stderr);
+        try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+        try std.testing.expect(std.mem.indexOf(u8, output.stdout, "OLD_PROMPT") != null);
+        if (!std.mem.eql(u8, scenario, "screen")) try std.testing.expect(std.mem.indexOf(u8, output.stdout, "\x1b[3J") != null);
+        var terminal = try Terminal.init(allocator, &api);
+        defer terminal.deinit();
+        try terminal.resize(40, 5, 8, 16);
+        var reply: TestReply = .{};
+        try terminal.attachResponseSink(.{ .context = &reply, .write = TestReply.write });
+        for (output.stdout) |byte| try terminal.feedOutput(&.{byte});
+        try std.testing.expect(try terminal.containsViewportText("NEW_PROMPT"));
+        const keep_screen = std.mem.eql(u8, scenario, "history") or std.mem.eql(u8, scenario, "alternate");
+        try std.testing.expectEqual(keep_screen, try terminal.containsViewportText("ROW_4"));
+        const keep_history = std.mem.eql(u8, scenario, "screen") or std.mem.eql(u8, scenario, "alternate");
+        try std.testing.expectEqual(keep_history, (try terminal.scrollbar()).isVisible());
+        try terminal.scrollToRow(0);
+        try std.testing.expectEqual(keep_history, try terminal.containsViewportText("OLD_PROMPT"));
+    }
+}
+
+test "erase saved lines removes scrollback even when viewing older output" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(20, 4, 8, 16);
+    try terminal.feedOutput("OLD_PROMPT\r\n1\r\n2\r\n3\r\n4\r\n5");
+    try std.testing.expect((try terminal.scrollbar()).isVisible());
+    try terminal.scrollToRow(0);
+    for ("\x1b[H\x1b[2J\x1b[3J") |byte| try terminal.feedOutput(&.{byte});
+    try terminal.scrollToRow(0);
+    try std.testing.expect(!try terminal.containsViewportText("OLD_PROMPT"));
+    try std.testing.expect(!(try terminal.scrollbar()).isVisible());
+}
+
 test "scrollbar state and scrollToRow seek exact scrollback offsets" {
     const api = try binding.Api.load();
     var terminal = try Terminal.init(std.testing.allocator, &api);

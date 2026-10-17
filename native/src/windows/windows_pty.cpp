@@ -1,4 +1,5 @@
 #include "windows_platform.h"
+#include "windows_conpty.h"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <winternl.h>
@@ -15,6 +16,7 @@ struct VexPty {
     VexPty* next;
     HANDLE input, output, process, job, reader, writer, exitWatcher, outputConsumed, inputReady;
     HPCON console;
+    VexConptyApi conpty;
     CRITICAL_SECTION inputLock;
     uint8_t inputQueue[1024 * 1024];
     size_t inputHead, inputLength;
@@ -107,6 +109,8 @@ static DWORD WINAPI writePtyInput(void* context) {
 }
 
 static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLaunch launch) {
+    DWORD apiError = session->conpty.load();
+    if (apiError) return apiError;
     extractLowerStem(reinterpret_cast<const wchar_t*>(launch.program), session->rootStem);
     session->outputConsumed = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!session->outputConsumed) return GetLastError();
@@ -117,7 +121,7 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
     if (!CreatePipe(&session->output, &outputWrite, nullptr, 0)) {
         DWORD error = GetLastError(); CloseHandle(inputRead); return error;
     }
-    HRESULT result = CreatePseudoConsole(COORD{(SHORT)columns, (SHORT)rows}, inputRead, outputWrite, 0, &session->console);
+    HRESULT result = session->conpty.create(COORD{(SHORT)columns, (SHORT)rows}, inputRead, outputWrite, 0, &session->console);
     CloseHandle(inputRead); CloseHandle(outputWrite);
     if (FAILED(result)) return (DWORD)result;
     // Drain before spawning: startup failure must also be able to close ConPTY safely.
@@ -202,13 +206,14 @@ extern "C" void vex_pty_close(VexPty* session) {
     // No reader means thread creation failed; close its pipe before closing ConPTY.
     if (!session->reader && session->output) { CloseHandle(session->output); session->output = nullptr; }
     // Keep the output reader alive to drain ClosePseudoConsole, including partial startup.
-    if (session->console) ClosePseudoConsole(session->console);
+    if (session->console) session->conpty.close(session->console);
     if (session->writer) { CancelSynchronousIo(session->writer); WaitForSingleObject(session->writer, INFINITE); }
     if (session->reader) { CancelSynchronousIo(session->reader); WaitForSingleObject(session->reader, INFINITE); }
     if (session->exitWatcher) WaitForSingleObject(session->exitWatcher, INFINITE);
     const HANDLE handles[] = { session->input, session->output, session->process, session->reader, session->writer, session->exitWatcher, session->outputConsumed, session->inputReady };
     for (HANDLE handle : handles) if (handle) CloseHandle(handle);
     DeleteCriticalSection(&session->inputLock);
+    session->conpty.unload();
     free(session);
 }
 
@@ -231,7 +236,7 @@ extern "C" bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t leng
 
 extern "C" bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows) {
     return session && columns >= 2 && rows > 0 && columns <= 32767 && rows <= 32767 &&
-        SUCCEEDED(ResizePseudoConsole(session->console, COORD{(SHORT)columns, (SHORT)rows}));
+        SUCCEEDED(session->conpty.resize(session->console, COORD{(SHORT)columns, (SHORT)rows}));
 }
 
 extern "C" bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length) {

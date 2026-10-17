@@ -16,6 +16,20 @@ their own licenses. Full license texts are reproduced below where required.
 Used as the VT stream emulator behind `Vex.Libghostty`. The DLL is checked into
 this repository and redistributed unmodified.
 
+### Microsoft Windows Console ConPTY
+
+- **Files:** `Vendor/conpty/conpty.dll`, `Vendor/conpty/OpenConsole.exe`
+- **Package:** `Microsoft.Windows.Console.ConPTY` 1.24.261001001 (Windows x64)
+- **Source:** https://github.com/microsoft/terminal
+- **License:** MIT
+- **Copyright:** Copyright (c) Microsoft Corporation. All rights reserved.
+
+Redistributed unmodified from Microsoft's signed NuGet package. The native app
+uses this matched DLL/host pair instead of the Windows inbox implementation so
+terminal control sequences, including erase-scrollback (ED3), reach its emulator
+on supported Windows versions. See `Vendor/conpty/README.md` for provenance and
+checksums, and `Vendor/conpty/LICENSE` for the upstream license.
+
 ## NuGet dependencies
 
 | Package | License | Used by |

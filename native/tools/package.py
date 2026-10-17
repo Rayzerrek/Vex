@@ -15,6 +15,8 @@ PAYLOAD = (
     "Vex.exe",
     "vex-native.exe",
     "ghostty-vt.dll",
+    "conpty.dll",
+    "OpenConsole.exe",
     "app.ico",
     "ShellIntegration/Vex.cmd",
     "ShellIntegration/Vex.nu",

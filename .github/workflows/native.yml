@@ -6,6 +6,7 @@ on:
     paths:
       - "native/**"
       - "Vendor/libghostty/**"
+      - "Vendor/conpty/**"
       - "flake.nix"
       - "flake.lock"
       - "LICENSE"
@@ -16,6 +17,7 @@ on:
     paths:
       - "native/**"
       - "Vendor/libghostty/**"
+      - "Vendor/conpty/**"
       - "flake.nix"
       - "flake.lock"
       - "LICENSE"

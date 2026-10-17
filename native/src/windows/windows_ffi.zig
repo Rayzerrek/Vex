@@ -506,6 +506,10 @@ pub fn setFontSize(size: f32) !void {
     if (c.vex_window_set_font_size(size) != 0) return error.InvalidFontSize;
 }
 /// Returns the active terminal font size in DIPs.
+pub fn setFontFamily(family: *const [128]u8) !void {
+    if (c.vex_window_set_font_family(family) != 0) return error.InvalidFontFamily;
+}
+
 pub fn fontSize() f32 {
     return c.vex_window_font_size();
 }
