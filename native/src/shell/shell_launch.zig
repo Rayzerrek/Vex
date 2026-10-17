@@ -142,7 +142,7 @@ pub const ShellLaunch = struct {
     backend: union(enum) { windows, wsl: wsl_launch.WslLaunch } = .windows,
 
     /// Resolves cheap canonical/PATH probes once per application, not once per pane.
-    pub fn resolve(allocator: std.mem.Allocator, request: ShellRequest, system_directory: []const u8, integration_directory: []const u8, environment: *std.process.EnvMap) !ShellLaunch {
+    pub fn resolve(allocator: std.mem.Allocator, request: ShellRequest, system_directory: []const u8, environment: *std.process.EnvMap) !ShellLaunch {
         const kind: ShellKind = switch (request) {
             .builtin => |profile| resolvedShellKind(profile),
             .custom => .custom,
@@ -169,11 +169,14 @@ pub const ShellLaunch = struct {
             .custom => |custom| custom.arguments,
             .builtin, .wsl => "",
         };
-        if (resolved_kind == .cmd or resolved_kind == .nu) {
-            const script = (try probeShellPath(allocator, integration_directory, if (resolved_kind == .cmd) "Vex.cmd" else "Vex.nu")) orelse return error.ShellIntegrationUnavailable;
-            allocator.free(script);
-        }
         try normalizeTerminalEnvironment(environment);
+        if (resolved_kind == .cmd) {
+            const prompt = environment.get("PROMPT") orelse "$P$G";
+            // Keep user prompt text out of cmd's command parser.
+            const integrated = try std.fmt.allocPrint(allocator, "$E]133;A$E\\{s}", .{if (prompt.len == 0) "$P$G" else prompt});
+            defer allocator.free(integrated);
+            try environment.put("PROMPT", integrated);
+        }
         var backend: @FieldType(ShellLaunch, "backend") = switch (request) {
             .wsl => |request_wsl| .{ .wsl = try wsl_launch.WslLaunch.init(allocator, switch (request_wsl.distribution) {
                 .named => |name| name,
@@ -184,7 +187,7 @@ pub const ShellLaunch = struct {
         errdefer if (backend == .wsl) backend.wsl.deinit();
         const command_line = switch (backend) {
             .wsl => |*profile| try profile.commandPrefixAlloc(allocator, program),
-            .windows => try buildShellCommandLine(allocator, resolved_kind, program, integration_directory, raw_arguments),
+            .windows => try buildShellCommandLine(allocator, resolved_kind, program, raw_arguments),
         };
         errdefer allocator.free(command_line);
         const block = try std.process.createWindowsEnvBlock(allocator, environment);
@@ -235,16 +238,12 @@ fn validateShellProgram(program: []const u8) !void {
 }
 
 /// Builds only the shell bootstrap; startup never replays a saved command or writes the user's profile.
-pub fn buildShellCommandLine(allocator: std.mem.Allocator, kind: ShellKind, program: []const u8, integration_directory: []const u8, raw_arguments: []const u8) ![]u8 {
+pub fn buildShellCommandLine(allocator: std.mem.Allocator, kind: ShellKind, program: []const u8, raw_arguments: []const u8) ![]u8 {
     try validateShellProgram(program);
     const quoted = try quoteWindowsArgument(allocator, program);
     defer allocator.free(quoted);
     const arguments = switch (kind) {
-        .cmd => blk: {
-            _ = try directory.DirectoryPath.parse(integration_directory);
-            if (std.mem.indexOfAny(u8, integration_directory, "\"%") != null) return error.InvalidShellIntegrationPath;
-            break :blk try std.fmt.allocPrint(allocator, "/q /k \"call \"{s}\\Vex.cmd\"\"", .{integration_directory});
-        },
+        .cmd => try allocator.dupe(u8, "/q /k"),
         .powershell, .pwsh => blk: {
             const script = try std.unicode.utf8ToUtf16LeAlloc(allocator, @embedFile("integration/Vex.ps1"));
             defer allocator.free(script);
@@ -254,18 +253,7 @@ pub fn buildShellCommandLine(allocator: std.mem.Allocator, kind: ShellKind, prog
             break :blk try std.fmt.allocPrint(allocator, "-NoLogo -NoExit -EncodedCommand {s}", .{std.base64.standard.Encoder.encode(encoded, bytes)});
         },
         .nu => blk: {
-            _ = try directory.DirectoryPath.parse(integration_directory);
-            const path = try std.fmt.allocPrint(allocator, "{s}\\Vex.nu", .{integration_directory});
-            defer allocator.free(path);
-            var escaped: std.ArrayList(u8) = .empty;
-            defer escaped.deinit(allocator);
-            for (path) |byte| {
-                if (byte == '\\' or byte == '"') try escaped.append(allocator, '\\');
-                try escaped.append(allocator, byte);
-            }
-            const script = try std.fmt.allocPrint(allocator, "source \"{s}\"", .{escaped.items});
-            defer allocator.free(script);
-            const argument = try quoteWindowsArgument(allocator, script);
+            const argument = try quoteWindowsArgument(allocator, @embedFile("integration/Vex.nu"));
             defer allocator.free(argument);
             break :blk try std.fmt.allocPrint(allocator, "--execute {s}", .{argument});
         },
@@ -339,15 +327,10 @@ fn resolveBuiltinProgram(allocator: std.mem.Allocator, kind: BuiltinShellProfile
     }
 }
 
-/// Checks whether a built-in Windows shell executable and its required integration script exist on disk.
-pub fn isBuiltinShellAvailable(allocator: std.mem.Allocator, kind: BuiltinShellProfile, system_directory: []const u8, integration_directory: []const u8, environment: *const std.process.EnvMap) !bool {
+/// Checks the executable only; shell bootstraps are embedded.
+pub fn isBuiltinShellAvailable(allocator: std.mem.Allocator, kind: BuiltinShellProfile, system_directory: []const u8, environment: *const std.process.EnvMap) !bool {
     const program = (try resolveBuiltinProgram(allocator, kind, system_directory, environment)) orelse return false;
     defer allocator.free(program);
-    const resolved = resolvedShellKind(kind);
-    if (resolved == .cmd or resolved == .nu) {
-        const script = (try probeShellPath(allocator, integration_directory, if (resolved == .cmd) "Vex.cmd" else "Vex.nu")) orelse return false;
-        allocator.free(script);
-    }
     return true;
 }
 
@@ -370,11 +353,23 @@ test "shell requests reject duplicates and relative/custom control paths without
 
 fn checkShellBuildAllocations(allocator: std.mem.Allocator) !void {
     for ([_]ShellKind{ .cmd, .powershell, .pwsh, .nu, .gitbash, .custom }) |kind| {
-        const command = try buildShellCommandLine(allocator, kind, "C:\\Program Files\\shell.exe", "C:\\Żółć pane\\ShellIntegration", "/d");
+        const command = try buildShellCommandLine(allocator, kind, "C:\\Program Files\\shell.exe", "/d");
         defer allocator.free(command);
         try std.testing.expect(std.mem.startsWith(u8, command, "\"C:\\Program Files\\shell.exe\" "));
     }
 }
+test "shell bootstraps do not reference external integration files" {
+    const allocator = std.testing.allocator;
+    const cmd = try buildShellCommandLine(allocator, .cmd, "C:\\cmd.exe", "");
+    defer allocator.free(cmd);
+    try std.testing.expectEqualStrings("\"C:\\cmd.exe\" /q /k", cmd);
+    const nu = try buildShellCommandLine(allocator, .nu, "C:\\nu.exe", "");
+    defer allocator.free(nu);
+    try std.testing.expect(std.mem.indexOf(u8, nu, "shell_integration.osc133") != null);
+    try std.testing.expect(std.mem.indexOf(u8, nu, "shell_integration.osc7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, nu, "source ") == null);
+}
+
 test "all shell launch quoting/encoding allocation failures release intermediate buffers" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkShellBuildAllocations, .{});
 }
@@ -384,8 +379,6 @@ fn checkShellResolveAllocations(allocator: std.mem.Allocator, root: []const u8) 
     defer environment.deinit();
     const missing = try std.fmt.allocPrint(allocator, "{s}\\missing", .{root});
     defer allocator.free(missing);
-    const integration = try std.fmt.allocPrint(allocator, "{s}\\integration", .{root});
-    defer allocator.free(integration);
     const path = try std.fmt.allocPrint(allocator, ";relative;\"{s}\\bin\"", .{root});
     defer allocator.free(path);
     try environment.put("ProgramFiles", missing);
@@ -394,26 +387,21 @@ fn checkShellResolveAllocations(allocator: std.mem.Allocator, root: []const u8) 
     try environment.put("LOCALAPPDATA", root);
     try environment.put("PATH", path);
     for ([_]BuiltinShellProfile{ .system, .cmd, .powershell, .pwsh, .nu, .gitbash }) |kind| {
-        var launch = try ShellLaunch.resolve(allocator, .{ .builtin = kind }, root, integration, &environment);
+        var launch = try ShellLaunch.resolve(allocator, .{ .builtin = kind }, root, &environment);
         defer launch.deinit();
         try std.testing.expectEqual(resolvedShellKind(kind), launch.kind);
+        if (launch.kind == .cmd) {
+            try std.testing.expect(std.mem.startsWith(u8, environment.get("PROMPT") orelse return error.MissingPrompt, "$E]133;A$E\\"));
+        }
         try std.testing.expect(launch.environment.len >= 2);
         try std.testing.expectEqual(@as(u16, 0), launch.environment[launch.environment.len - 1]);
         try std.testing.expectEqual(@as(u16, 0), launch.environment[launch.environment.len - 2]);
     }
     try environment.put("PATH", "");
-    var fallback = try ShellLaunch.resolve(allocator, .{ .builtin = .pwsh }, root, integration, &environment);
+    var fallback = try ShellLaunch.resolve(allocator, .{ .builtin = .pwsh }, root, &environment);
     defer fallback.deinit();
     try std.testing.expectEqual(.cmd, fallback.kind);
-    if (ShellLaunch.resolve(allocator, .{ .builtin = .cmd }, root, missing, &environment)) |unexpected| {
-        var owned = unexpected;
-        defer owned.deinit();
-        return error.ExpectedMissingShellIntegration;
-    } else |err| {
-        if (err == error.OutOfMemory) return err;
-        try std.testing.expectEqual(error.ShellIntegrationUnavailable, err);
-    }
-    var custom = try ShellLaunch.resolve(allocator, .{ .custom = .{ .program = fallback.program, .arguments = "/d" } }, root, missing, &environment);
+    var custom = try ShellLaunch.resolve(allocator, .{ .custom = .{ .program = fallback.program, .arguments = "/d" } }, root, &environment);
     defer custom.deinit();
     try std.testing.expectEqual(.custom, custom.kind);
     try std.testing.expect(std.mem.endsWith(u8, custom.command_line, " /d"));
@@ -422,8 +410,8 @@ fn checkShellResolveAllocations(allocator: std.mem.Allocator, root: []const u8) 
 test "canonical/PATH resolution, missing-profile fallback and environment allocation failures release every owner" {
     var fixture = std.testing.tmpDir(.{});
     defer fixture.cleanup();
-    for ([_][]const u8{ "integration", "bin", "WindowsPowerShell/v1.0", "scoop/apps/nu/current", "Programs/Git/bin" }) |path| try fixture.dir.makePath(path);
-    for ([_][]const u8{ "cmd.exe", "integration/Vex.cmd", "integration/Vex.nu", "bin/pwsh.exe", "WindowsPowerShell/v1.0/powershell.exe", "scoop/apps/nu/current/nu.exe", "Programs/Git/bin/bash.exe" }) |path| {
+    for ([_][]const u8{ "bin", "WindowsPowerShell/v1.0", "scoop/apps/nu/current", "Programs/Git/bin" }) |path| try fixture.dir.makePath(path);
+    for ([_][]const u8{ "cmd.exe", "bin/pwsh.exe", "WindowsPowerShell/v1.0/powershell.exe", "scoop/apps/nu/current/nu.exe", "Programs/Git/bin/bash.exe" }) |path| {
         const file = try fixture.dir.createFile(path, .{});
         file.close();
     }
@@ -434,8 +422,7 @@ test "canonical/PATH resolution, missing-profile fallback and environment alloca
 
 test "launch lengths count UTF-16 units after argv quoting, not only the raw argument length" {
     const long_arguments = [_]u8{'a'} ** 32760;
-    try std.testing.expectError(error.ShellCommandLineTooLong, buildShellCommandLine(std.testing.allocator, .custom, "C:\\cmd.exe", "", &long_arguments));
-    try std.testing.expectError(error.InvalidShellIntegrationPath, buildShellCommandLine(std.testing.allocator, .cmd, "C:\\cmd.exe", "C:\\percent%path", ""));
+    try std.testing.expectError(error.ShellCommandLineTooLong, buildShellCommandLine(std.testing.allocator, .custom, "C:\\cmd.exe", &long_arguments));
 }
 
 test "terminal environment defaults preserve explicit user overrides" {
@@ -495,7 +482,7 @@ fn checkWslLaunchAllocations(allocator: std.mem.Allocator, root: []const u8) !vo
         try ShellRequest.parseArguments(&.{ "--shell", "wsl:/opt/O'Brien shell", "--distribution", "Ubuntu", "--arguments", "--interactive \"an argument\"" }),
         try ShellRequest.parseArguments(&.{ "--shell", "wsl:/usr/bin/nu", "--distribution", "Ubuntu Test" }),
     }) |request| {
-        var launch = try ShellLaunch.resolve(allocator, request, root, "", &environment);
+        var launch = try ShellLaunch.resolve(allocator, request, root, &environment);
         defer launch.deinit();
         try std.testing.expectEqual(.wsl, launch.kind);
         try std.testing.expectEqualStrings(request.wsl.distribution.named.bytes, launch.directoryContext().wsl.bytes);
@@ -529,12 +516,12 @@ test "WSL launch ownership, per-pane directories and allocation failures are ind
     var unresolved_environment = std.process.EnvMap.init(std.testing.allocator);
     defer unresolved_environment.deinit();
     const unresolved = try ShellRequest.parseArguments(&.{ "--shell", "wsl" });
-    try std.testing.expectError(error.WslDefaultDistributionUnavailable, ShellLaunch.resolve(std.testing.allocator, unresolved, root, "", &unresolved_environment));
+    try std.testing.expectError(error.WslDefaultDistributionUnavailable, ShellLaunch.resolve(std.testing.allocator, unresolved, root, &unresolved_environment));
     try fixture.dir.deleteFile("wsl.exe");
     const cmd = try fixture.dir.createFile("cmd.exe", .{});
     cmd.close();
     var environment = std.process.EnvMap.init(std.testing.allocator);
     defer environment.deinit();
     const request = try ShellRequest.parseArguments(&.{ "--shell", "wsl", "--distribution", "Ubuntu" });
-    try std.testing.expectError(error.WslLauncherUnavailable, ShellLaunch.resolve(std.testing.allocator, request, root, "", &environment));
+    try std.testing.expectError(error.WslLauncherUnavailable, ShellLaunch.resolve(std.testing.allocator, request, root, &environment));
 }

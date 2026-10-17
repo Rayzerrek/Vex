@@ -107,13 +107,9 @@ pub const TerminalApplication = struct {
         if (default_distribution) |name| request.wsl.distribution = .{ .named = name };
         const system_directory = try platform.systemDirectoryAlloc(allocator);
         defer allocator.free(system_directory);
-        const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
-        defer allocator.free(executable_directory);
-        const integration_directory = try std.fmt.allocPrint(allocator, "{s}\\ShellIntegration", .{executable_directory});
-        defer allocator.free(integration_directory);
         var environment = try std.process.getEnvMap(allocator);
         defer environment.deinit();
-        var launch = try shell.ShellLaunch.resolve(allocator, request, system_directory, integration_directory, &environment);
+        var launch = try shell.ShellLaunch.resolve(allocator, request, system_directory, &environment);
         errdefer launch.deinit();
         const default_kind = launch.kind;
         try platform.setShellName(launch.shellName());
@@ -329,10 +325,6 @@ pub const TerminalApplication = struct {
         if (self.available_shell_count > 0) return;
         const system_directory = platform.systemDirectoryAlloc(self.allocator) catch null;
         defer if (system_directory) |dir| self.allocator.free(dir);
-        const executable_directory = std.fs.selfExeDirPathAlloc(self.allocator) catch null;
-        defer if (executable_directory) |dir| self.allocator.free(dir);
-        const integration_directory = if (executable_directory) |dir| std.fmt.allocPrint(self.allocator, "{s}\\ShellIntegration", .{dir}) catch null else null;
-        defer if (integration_directory) |dir| self.allocator.free(dir);
         var environment = std.process.getEnvMap(self.allocator) catch null;
         defer if (environment) |*env| env.deinit();
 
@@ -340,7 +332,7 @@ pub const TerminalApplication = struct {
         var count: u8 = 0;
         for (candidates) |candidate| {
             var available = candidate == self.launch.kind;
-            if (!available) if (system_directory) |sys_dir| if (integration_directory) |int_dir| if (environment) |*env_ptr| {
+            if (!available) if (system_directory) |sys_dir| if (environment) |*env_ptr| {
                 if (candidate == .wsl) {
                     if (shell.isWslLauncherAvailable(self.allocator, sys_dir) catch false) {
                         if (wsl_registry.readDefaultWslDistributionAlloc(self.allocator)) |distro| {
@@ -349,7 +341,7 @@ pub const TerminalApplication = struct {
                         } else |_| {}
                     }
                 } else if (candidate.builtinProfile()) |profile| {
-                    available = shell.isBuiltinShellAvailable(self.allocator, profile, sys_dir, int_dir, env_ptr) catch false;
+                    available = shell.isBuiltinShellAvailable(self.allocator, profile, sys_dir, env_ptr) catch false;
                 }
             };
             if (available and count < self.available_shells.len) {
@@ -371,10 +363,6 @@ pub const TerminalApplication = struct {
         try self.shell_launches.ensureUnusedCapacity(self.allocator, 1);
         const system_directory = try platform.systemDirectoryAlloc(self.allocator);
         defer self.allocator.free(system_directory);
-        const executable_directory = try std.fs.selfExeDirPathAlloc(self.allocator);
-        defer self.allocator.free(executable_directory);
-        const integration_directory = try std.fmt.allocPrint(self.allocator, "{s}\\ShellIntegration", .{executable_directory});
-        defer self.allocator.free(integration_directory);
         var environment = try std.process.getEnvMap(self.allocator);
         defer environment.deinit();
 
@@ -392,7 +380,7 @@ pub const TerminalApplication = struct {
         }
         const owned = try self.allocator.create(shell.ShellLaunch);
         errdefer self.allocator.destroy(owned);
-        owned.* = try shell.ShellLaunch.resolve(self.allocator, request, system_directory, integration_directory, &environment);
+        owned.* = try shell.ShellLaunch.resolve(self.allocator, request, system_directory, &environment);
         self.shell_launches.appendAssumeCapacity(owned);
         return owned;
     }

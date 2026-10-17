@@ -18,8 +18,6 @@ PAYLOAD = (
     "conpty.dll",
     "OpenConsole.exe",
     "app.ico",
-    "ShellIntegration/Vex.cmd",
-    "ShellIntegration/Vex.nu",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
 )
