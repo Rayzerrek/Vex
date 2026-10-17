@@ -24,6 +24,12 @@ public:
     HRESULT drawEllipse(float cx, float cy, float rx, float ry, float stroke, uint32_t color, uint8_t alpha);
     HRESULT setClip(D3D12_RECT clip);
     void clearGlyphCache();
+    // A hit replays immutable CPU instances into this slot's fence-protected uploads.
+    HRESULT beginGeometry(uint64_t generation, const uint32_t (&key)[14], const float (&geometry)[4], bool& reused);
+    void endGeometry(bool complete);
+    UINT64 geometryHits = 0, geometryBuilds = 0;
+    UINT64 geometryCapacity() const;
+    bool geometryEnabled = true;
     // Caller must verify this frame slot's fence completed; never frees recently used pages.
     void trimUnusedUploads(UINT index, ULONGLONG now);
     UINT64 glyphHits = 0, glyphMisses = 0, atlasResets = 0, drawCalls = 0, uploadAllocations = 0;
@@ -40,6 +46,18 @@ private:
         UINT pageCount = 0, pageIndex = 0;
     };
     struct Quad { float bounds[4], uv[4]; uint32_t color; uint32_t kind = 0; };
+    static constexpr UINT geometrySlots = 8, maxGeometryQuads = 65536;
+    struct Geometry {
+        Quad* quads = nullptr;
+        UINT count = 0, capacity = 0;
+        uint32_t key[14] = {};
+        float geometry[4] = {};
+        UINT64 generation = 0, atlasGeneration = 0, lastUsed = 0;
+        bool valid = false;
+    };
+    Geometry geometries[geometrySlots];
+    Geometry* recording = nullptr;
+    UINT64 geometryClock = 0;
     struct Glyph {
         uint8_t* text = nullptr;
         UINT length = 0, x = 0, y = 0, width = 0, height = 0;
@@ -69,5 +87,7 @@ private:
     HRESULT allocateUpload(UINT bytes, UINT alignment, UINT& page, UINT& offset);
     HRESULT appendQuad(const Quad& quad);
     void flushQuads();
+    void recordQuad(const Quad& quad);
+    HRESULT replayGeometry(const Geometry& geometry);
     HRESULT uploadGlyph(Glyph& glyph);
 };

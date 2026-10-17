@@ -528,32 +528,85 @@ pub fn drawSplitPreview(bounds: panes.PaneRect) void {
     c.vex_draw_split_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height });
 }
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
-pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, cursor_shown: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
+pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalFrame, focused: bool, cursor_shown: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
     const cursor = frame.cursor;
     const cursor_visible = focused and cursor_shown and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
     const block_cursor = cursor_visible and cursor.shape == .block;
+    const key = terminalGeometryKey(pane_id, frame, block_cursor, hovered_link, theme);
+    var reused = false;
+    if (c.vex_terminal_geometry_begin(key, &reused) != 0) return error.NativeTextRenderingFailed;
+    if (!reused) {
+        var complete = false;
+        defer c.vex_terminal_geometry_end(complete);
+        try drawTerminalCells(frame, block_cursor, hovered_link, theme);
+        complete = true;
+    }
+    if (cursor_visible and cursor.shape != .block) {
+        c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), theme.cursor);
+    }
+}
+
+fn terminalGeometryKey(
+    pane_id: panes.PaneId,
+    frame: *const terminal.TerminalFrame,
+    block_cursor: bool,
+    hovered_link: ?HoveredLinkSpan,
+    theme: terminal_theme.TerminalTheme,
+) c.VexTerminalGeometryKey {
+    const absent = std.math.maxInt(u32);
+    return .{
+        .generation = frame.generation,
+        .pane_id = @intFromEnum(pane_id),
+        .columns = frame.columns,
+        .rows = frame.rows,
+        .background = theme.background,
+        .foreground = theme.foreground,
+        .cursor = theme.cursor,
+        .selection_background = theme.selection_background,
+        .accent = theme.accent,
+        .is_dark = @intFromBool(theme.is_dark),
+        .block_column = if (block_cursor) frame.cursor.column else absent,
+        .block_row = if (block_cursor) frame.cursor.row else absent,
+        .link_row = if (hovered_link) |link| link.row else absent,
+        .link_start = if (hovered_link) |link| link.start_col else absent,
+        .link_end = if (hovered_link) |link| link.end_col else absent,
+    };
+}
+
+const ContrastCache = struct {
+    const Entry = struct {
+        key: u64 = std.math.maxInt(u64),
+        corrected: u32 = 0,
+    };
+    const Bucket = struct {
+        entries: [4]Entry = @splat(.{}),
+        next: u2 = 0,
+    };
+
+    buckets: [1024]Bucket = @splat(.{}),
+
+    fn get(self: *ContrastCache, foreground: u32, background: u32) u32 {
+        const key = (@as(u64, foreground) << 32) | background;
+        const hash = std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
+        const bucket = &self.buckets[hash & (self.buckets.len - 1)];
+        for (bucket.entries) |entry| {
+            if (entry.key == key) return entry.corrected;
+        }
+        const corrected = ensureMinimumContrast(foreground, background);
+        bucket.entries[bucket.next] = .{ .key = key, .corrected = corrected };
+        bucket.next +%= 1;
+        return corrected;
+    }
+};
+
+// Window-thread-only. The transform depends solely on these two colors, not the active theme or pane.
+var contrast_cache: ContrastCache = .{};
+
+fn drawTerminalCells(frame: *const terminal.TerminalFrame, block_cursor: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
+    const cursor = frame.cursor;
     var cached_fg: u32 = theme.foreground;
     var cached_bg: u32 = theme.background;
     var cached_corrected_fg: u32 = theme.foreground;
-    const ContrastCache = struct {
-        fg: [16]u32 = [_]u32{0xFFFFFFFF} ** 16,
-        bg: [16]u32 = [_]u32{0xFFFFFFFF} ** 16,
-        corrected: [16]u32 = [_]u32{0} ** 16,
-
-        fn get(self: *@This(), fg_val: u32, bg_val: u32) u32 {
-            const slot = (fg_val ^ (bg_val *% 2654435761)) & 15;
-            if (self.fg[slot] == fg_val and self.bg[slot] == bg_val) {
-                return self.corrected[slot];
-            }
-            const res = ensureMinimumContrast(fg_val, bg_val);
-            self.fg[slot] = fg_val;
-            self.bg[slot] = bg_val;
-            self.corrected[slot] = res;
-            return res;
-        }
-    };
-    var contrast_cache = ContrastCache{};
-
     for (0..frame.rows) |row| {
         const cells = frame.cells.items[row * frame.columns ..][0..frame.columns];
         const row_link = if (hovered_link) |hl| (if (hl.row == row) hl else null) else null;
@@ -607,9 +660,56 @@ pub fn drawTerminalFrame(frame: *const terminal.TerminalFrame, focused: bool, cu
         }
         try drawRun(start, row, run_cells, buffer[0..length], style, theme.background);
     }
-    if (cursor_visible and cursor.shape != .block) {
-        c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), theme.cursor);
+}
+
+test "contrast cache preserves exact correction across hits, collisions and appearance changes" {
+    var cache: ContrastCache = .{};
+    for (0..8192) |index| {
+        const foreground: u32 = @intCast((index * 2654435761) & 0xffffff);
+        const background: u32 = if (index % 2 == 0) 0x282c34 else 0xfafafa;
+        const expected = ensureMinimumContrast(foreground, background);
+        try std.testing.expectEqual(expected, cache.get(foreground, background));
+        try std.testing.expectEqual(expected, cache.get(foreground, background));
+        try std.testing.expectEqual(ensureMinimumContrast(foreground, background ^ 0xffffff), cache.get(foreground, background ^ 0xffffff));
     }
+}
+
+test "terminal geometry excludes overlay cursor motion but includes block cursor cells" {
+    const testing = std.testing;
+    const theme = terminal_theme.themes[0];
+    var frame: terminal.TerminalFrame = .{ .columns = 80, .rows = 24, .generation = 1 };
+    const pane: panes.PaneId = @enumFromInt(1);
+    const initial = terminalGeometryKey(pane, &frame, false, null, theme);
+    frame.cursor = .{ .column = 12, .row = 3, .visible = true, .shape = .bar };
+    try testing.expect(std.meta.eql(initial, terminalGeometryKey(pane, &frame, false, null, theme)));
+    const block = terminalGeometryKey(pane, &frame, true, null, theme);
+    try testing.expect(!std.meta.eql(initial, block));
+    frame.cursor.column += 1;
+    try testing.expect(!std.meta.eql(block, terminalGeometryKey(pane, &frame, true, null, theme)));
+}
+
+test "terminal geometry keys distinguish content owners, themes and hovered links" {
+    const testing = std.testing;
+    const theme = terminal_theme.themes[0];
+    var frame: terminal.TerminalFrame = .{ .columns = 80, .rows = 24, .generation = 1 };
+    const pane: panes.PaneId = @enumFromInt(1);
+    const initial = terminalGeometryKey(pane, &frame, false, null, theme);
+    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(@enumFromInt(2), &frame, false, null, theme)));
+    frame.generation += 1;
+    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, false, null, theme)));
+    frame.generation -= 1;
+    frame.columns += 1;
+    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, false, null, theme)));
+    frame.columns -= 1;
+    var changed_theme = theme;
+    changed_theme.selection_background ^= 1;
+    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, false, null, changed_theme)));
+    const link: HoveredLinkSpan = .{ .row = 1, .start_col = 2, .end_col = 8 };
+    const linked = terminalGeometryKey(pane, &frame, false, link, theme);
+    try testing.expect(!std.meta.eql(initial, linked));
+    var changed_link = link;
+    changed_link.end_col += 1;
+    try testing.expect(!std.meta.eql(linked, terminalGeometryKey(pane, &frame, false, changed_link, theme)));
 }
 
 pub fn isBlockGraphic(text: []const u8) bool {

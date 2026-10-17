@@ -602,7 +602,7 @@ pub const TerminalApplication = struct {
                 const summary = session.terminal.program_status.programStatus();
                 platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex());
                 defer platform.endPane();
-                try platform.drawTerminalFrame(frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
+                try platform.drawTerminalFrame(placement.id, frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
             }
             const scrollbar = try session.terminal.scrollbar();
             if (platform.ScrollbarGeometry.compute(placement.bounds, scrollbar)) |sb| {

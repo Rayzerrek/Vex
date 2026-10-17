@@ -123,6 +123,15 @@ void vex_draw_split_preview(VexPaneRect bounds);
 void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, uint32_t flags);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);
 void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color);
+/* Exact scalar key: pane, dimensions, palette, block cursor and hovered link. No borrowed pointers. */
+typedef struct {
+    uint64_t generation;
+    uint32_t pane_id, columns, rows;
+    uint32_t background, foreground, cursor, selection_background, accent, is_dark;
+    uint32_t block_column, block_row, link_row, link_start, link_end;
+} VexTerminalGeometryKey;
+int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reused);
+void vex_terminal_geometry_end(bool complete);
 /* Loads only the DLL beside the executable, never a library from PATH/CWD. */
 void* vex_terminal_symbol(const char* name);
 #ifdef __cplusplus

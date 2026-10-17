@@ -68,6 +68,22 @@ and new draws on the same queue; eviction never overwrites still-needed upload
 memory. The desktop fixture exercises more unique visible CJK graphemes than
 cache entries.
 
+Terminal geometry also has an optional CPU instance cache: eight LRU pane entries,
+up to 65,536 quads (2.5 MiB) each, allocated on demand. Keys compare pane identity,
+snapshot generation, dimensions, theme, block cursor, hovered link and grid/font
+geometry. Atlas resets (including font/DPI changes) invalidate every saved UV.
+A build crossing an atlas reset is never retained. Allocation failure or an
+oversized scene falls back to ordinary drawing, without truncation.
+
+A warm hit bulk-copies instances into the current fence-protected upload slot;
+it never reuses in-flight GPU upload memory. Non-block cursors remain an overlay,
+so blink/focus changes can reuse text geometry. Block cursors stay in the key to
+preserve text inversion and painter order. Selection changes invalidate the
+snapshot. This skips CPU cell/run/glyph processing, not the full-scene GPU draw.
+A window-thread-only, bounded 4,096-pair contrast cache retains the exact existing
+color transform between frames; appearance changes need no invalidation because
+both input colors are part of its key.
+
 Each instance is 40 bytes: physical bounds, UVs/shape parameters, packed color
 and a shape-kind tag. Solid cell
 backgrounds, glyphs, decorations and cursors share the same pipeline and preserve
@@ -150,6 +166,18 @@ Zig layout/ConPTY geometry. Shells are not restarted and input is not replayed.
 Fence waits have a five-second timeout. If shutdown cannot drain a still-live
 GPU, the process fails fast instead of freeing in-flight native resources.
 Driver calls such as Present or staging Map are not guaranteed nonblocking.
+
+Sustained visible PTY output is paced to the current monitor's reported refresh
+rate (60 Hz fallback). Ordinary UI requests keep the immediate coalesced posted
+path and override deferred output. A lazily created, one-shot high-resolution
+waitable timer participates in the Win32 message wait, without sleeping/blocking
+the UI thread or changing system timer resolution. Frame preparation and Present
+consume the interval rather than adding another period after a vsync wait.
+OS paints consume pending requests; stopped output does not keep a timer loop
+alive. Monitor moves/display changes refresh the cadence; physical multi-monitor
+behavior and variable-refresh scanout remain unverified. Synchronized output
+retains its independent 100 ms starvation bound. Timer-creation failure falls
+back to ordinary immediate invalidation.
 
 Hardware adapters are tried in DXGI enumeration order at feature level 11.0.
 If none supports D3D12, the backend selects D3D12 WARP and emits a diagnostic.

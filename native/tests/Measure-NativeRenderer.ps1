@@ -66,12 +66,24 @@ for ($row = 0; $row -lt 28; $row++) {
                 $process.Refresh()
                 $cpuMs = $process.TotalProcessorTime.TotalMilliseconds - $cpuBefore
                 $activeWorkingSet = $process.WorkingSet64
+                # Sample preparation separately so diagnostic round trips do not enter the CPU/frame sample.
+                [VexNativeSmoke]::SendWindowMessage($window, 0x8009, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+                $sceneSamples = @()
+                for ($i = 0; $i -lt 120; $i++) {
+                    [VexNativeSmoke]::SendWindowMessage($window, 0xf, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+                    $sceneSamples += [VexNativeSmoke]::SendWindowMessage($window, 0x8008, [IntPtr]28, [IntPtr]::Zero).ToInt64()
+                }
+                $sceneSamples = @($sceneSamples | Sort-Object)
                 Start-Sleep -Milliseconds 2600
                 $process.Refresh()
                 $results += [pscustomobject]@{
                     Version = $version; Workload = $workload; Trial = $trial + 1; Frames = $Frames
                     ProcessCpuMs = $cpuMs; ProcessCpuMsPerFrame = $cpuMs / $Frames
                     WallMs = $watch.Elapsed.TotalMilliseconds
+                    ScenePreparationMedianUs = $sceneSamples[60]; ScenePreparationP95Us = $sceneSamples[113]
+                    ScenePreparationMaxUs = $sceneSamples[119]
+                    GeometryHits = [VexNativeSmoke]::SendWindowMessage($window, 0x8008, [IntPtr]50, [IntPtr]::Zero).ToInt64()
+                    GeometryCapacityBytes = [VexNativeSmoke]::SendWindowMessage($window, 0x8008, [IntPtr]52, [IntPtr]::Zero).ToInt64()
                     ActiveWorkingSetBytes = $activeWorkingSet; IdleWorkingSetBytes = $process.WorkingSet64
                     PrivateBytes = $process.PrivateMemorySize64
                     NativeGlyphAtlas = [VexNativeSmoke]::SendWindowMessage($window, 0x8008, [IntPtr]16, [IntPtr]::Zero).ToInt64() -gt 0
