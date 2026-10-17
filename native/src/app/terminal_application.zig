@@ -241,7 +241,7 @@ pub const TerminalApplication = struct {
     }
     /// Captures runtime values without serializing any live session or launch command.
     pub fn currentPreferences(self: *TerminalApplication) preferences.UserSettings {
-        return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .default_shell = self.settings.default_shell };
+        return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
     }
     /// Writes atomically before applying; storage failure never closes running terminals.
     pub fn commitPreferences(self: *TerminalApplication, settings: preferences.UserSettings) !void {
@@ -260,6 +260,7 @@ pub const TerminalApplication = struct {
             platform.invalidateWindow();
             return;
         };
+        if (!std.mem.eql(u8, self.settings.fontFamily(), settings.fontFamily())) try platform.setFontFamily(&settings.font_family);
         self.settings = settings;
         if (self.theme_index != settings.theme_index) try self.applyTheme(settings.theme_index);
         if (platform.fontSize() != @as(f32, @floatFromInt(settings.font_size))) _ = try platform.setFontSize(@floatFromInt(settings.font_size));
@@ -465,6 +466,7 @@ pub const TerminalApplication = struct {
         if (self.health == .failed) return;
         if (self.startup_preferences == .font_pending) {
             self.startup_preferences = if (self.startup_preferences.font_pending) |err| .{ .warning_pending = err } else .applied;
+            platform.setFontFamily(&self.settings.font_family) catch |err| self.fail(err);
             if (self.settings.font_size != 14) {
                 _ = platform.setFontSize(@floatFromInt(self.settings.font_size)) catch |err| self.fail(err);
                 return;

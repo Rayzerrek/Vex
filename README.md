@@ -1,72 +1,72 @@
 # Vex
 
-Native Windows terminal workspace: Zig, Win32, ConPTY, libghostty-vt and D3D12.
-The active application lives in [`native/`](native/); `windows/` contains the
-older WPF implementation, retained separately.
+Vex is a native Windows terminal for working with several shells in one place.
+Keep projects in separate tabs, split a tab into panes, and move between your
+editor, development server and command line without juggling terminal windows.
 
-## Install
+Use PowerShell, Command Prompt, Nushell, Git Bash or WSL — whichever is installed
+on your machine. Each terminal session runs independently, so you can work in
+Windows and Linux shells side by side.
 
-Download native artifacts from [Releases](https://github.com/Rayzerrek/Vex/releases):
+## A workspace for your command line
 
-- `Vex-Native-<version>-win-x64.zip` — extract all files and run `Vex.exe`.
-- `Vex-Native-<version>-win-x64.msi` — Windows installer with Start Menu and desktop shortcuts.
+- **Tabs and split panes.** Give each task its own tab, or keep related sessions
+  visible next to each other with horizontal and vertical splits.
+- **Your choice of shell.** Open a tab from the shell picker and choose a default
+  shell for new sessions in Settings.
+- **Commands within reach.** Open the command palette to find actions and their
+  keyboard shortcuts. Use the tab overview to switch between running tasks.
+- **Make it comfortable.** Choose a light or dark theme, set your terminal font
+  and text size, and turn cursor blinking on or off. Preferences save automatically.
 
-Windows 10 1809+ / Windows 11, x64. No .NET runtime installation is needed.
-Older `Vex-<version>` artifacts and `Vex.App.exe` belong to the WPF application.
-Keep `ghostty-vt.dll` and the `ShellIntegration` directory beside the native exe.
+Vex uses Windows' ConPTY for shell sessions, Ghostty's terminal emulation library
+and a GPU-accelerated D3D12 renderer. It is a native desktop application, without
+Electron or a required .NET runtime.
 
-## Development in Nix / WSL
+## Get Vex
 
-```sh
-nix develop
-cd native
-zig build
-zig build test-build
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-python3 tools/package.py
-```
+Download a Windows x64 package from [Releases](https://github.com/Rayzerrek/Vex/releases):
 
-The Nix shell pins the same Zig version as CI. Windows binaries and test executables
-are cross-compiled in WSL; Windows only runs the resulting files. ZIP packaging is
-cross-platform. MSI packaging uses WiX/.NET on a Windows CI runner, not your workstation.
+- **Installer** (`Vex-Native-<version>-win-x64.msi`) — installs Vex with Start Menu
+  and desktop shortcuts.
+- **Portable ZIP** (`Vex-Native-<version>-win-x64.zip`) — extract the whole archive
+  into a folder and run `Vex.exe`. Keep the included DLLs, `OpenConsole.exe` and
+  `ShellIntegration` folder beside the executable.
 
-See [`native/README.md`](native/README.md) for shell options, shortcuts, Windows
-build commands and packaging details. Zig runtime safety remains enabled in release
-builds. Commits use conventional prefixes such as `feat:`, `fix:` and `ci:`.
+Requires **Windows 10 version 1809 or later, or Windows 11**, on x64.
+Shells and WSL distributions need to be installed separately.
 
-## Branch preview and stable releases
+Older packages named `Vex-<version>` and the `Vex.App.exe` executable are from
+Vex's previous WPF implementation, not the current native app.
 
-```sh
-# Test the branch without modifying main, creating a tag or publishing a GitHub Release:
-gh workflow run release.yml --ref feat/zig-native -f mode=preview
-```
+## Find your way around
 
-The **Native packages** run provides ZIP, MSI, SHA-256 files and source provenance
-as Actions artifacts. Preview filenames include the commit; artifacts expire after
-14 days. Test MSI installation on an isolated Windows machine because it uses the
-stable application's install location.
+Start with a shell, open another tab when you need a separate task, or split the
+current tab to keep two sessions in view. The command palette is a good place to
+find an action without memorizing every shortcut.
 
-For stable releases, update `native/VERSION` and push a matching `vX.Y.Z` tag.
-The pipeline tests Debug and ReleaseSafe, builds native packages, verifies the ZIP
-and extracted MSI payload, then publishes both packages and checksums. It does not
-build or publish WPF. Read-only checks and preview jobs cannot publish releases.
+| Action | Shortcut |
+| --- | --- |
+| Open command palette | Ctrl+Shift+P |
+| New tab | Ctrl+Shift+T |
+| Close tab | Ctrl+Shift+W |
+| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Split right / down | Ctrl+Shift+R / Ctrl+Shift+D |
+| Choose a theme | Ctrl+Shift+M |
+| Open tab overview | Ctrl+Shift+Space |
+| Complete a path | Ctrl+Shift+F |
 
-**Native Zig** separately runs on native pull requests and main/feature-branch pushes.
-Linux cross-builds both configurations; Windows runs their compiled unit tests.
-Interactive renderer tests and benchmarks are local tools, not hosted CI coverage.
-Legacy WPF and web checks are path-filtered and independent.
+## Development
 
-## Structure
+The current application lives in [`native/`](native/). See the
+[native development guide](native/README.md) for building, running tests,
+command-line shell options and packaging releases. The pinned toolchain supports
+cross-compiling from Linux or WSL; running the application requires Windows.
 
-```text
-native/              active Zig/Win32 application, tests and native packaging
-windows/             legacy WPF/.NET implementation
-Vendor/libghostty/   bundled terminal emulator DLL
-web/                 landing page
-flake.nix            Linux/WSL native development shell
-```
+The repository also contains the previous WPF implementation in `windows/` and
+the website in `web/`.
 
-## Licensing
+## License
 
-[GPL-3.0](LICENSE). Third-party attribution, including Ghostty, is retained in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Vex is licensed under [GPL-3.0](LICENSE). See
+[third-party notices](THIRD-PARTY-NOTICES.md) for Ghostty and other included components.

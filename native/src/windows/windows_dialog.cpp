@@ -11,6 +11,7 @@
 
 namespace {
 constexpr int titleId = 100, descriptionId = 101, queryId = 102, listId = 103;
+constexpr int fontId = 116, fontLabelId = 117;
 constexpr int sizeId = 111, blinkId = 112, shellId = 113, themeGridId = 115;
 constexpr int pageTitleId = 104, pageDetailId = 105, closeId = 125, firstPageId = 130, firstModeId = 140;
 enum class SettingsPage { general, appearance, terminal, about };
@@ -304,6 +305,23 @@ void fillCombo(HWND combo, const DialogItem* items, size_t count, uint32_t selec
         }
     }
     SendMessageW(combo, CB_SETCURSEL, selection, 0);
+}
+int CALLBACK enumerateFont(const LOGFONTW* font, const TEXTMETRICW* metrics, DWORD, LPARAM context) {
+    if ((metrics->tmPitchAndFamily & TMPF_FIXED_PITCH) || font->lfFaceName[0] == L'@') return 1;
+    HWND combo = reinterpret_cast<HWND>(context);
+    if (SendMessageW(combo, CB_FINDSTRINGEXACT, -1, reinterpret_cast<LPARAM>(font->lfFaceName)) == CB_ERR)
+        SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(font->lfFaceName));
+    return 1;
+}
+void fillFonts(HWND combo) {
+    LOGFONTW query = {}; query.lfCharSet = DEFAULT_CHARSET;
+    HDC dc = GetDC(host.window);
+    if (dc) { EnumFontFamiliesExW(dc, &query, enumerateFont, reinterpret_cast<LPARAM>(combo), 0); ReleaseDC(host.window, dc); }
+    wchar_t selected[128] = {};
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(host.draft.font_family), -1, selected, 128);
+    LRESULT row = SendMessageW(combo, CB_FINDSTRINGEXACT, -1, reinterpret_cast<LPARAM>(selected));
+    if (row == CB_ERR) row = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(selected));
+    SendMessageW(combo, CB_SETCURSEL, row, 0);
 }
 void fillList(int id = listId) {
     HWND list = GetDlgItem(host.window, id);
@@ -621,7 +639,7 @@ float dialogHeight() {
     if (host.model.kind == 2) return 112.0f + 14.0f * (float)px(listRowHeight()) / host.scale;
     if (host.model.kind == 5) {
         const size_t rows = host.model.count > shellLimit ? shellLimit : host.model.count;
-        return 212.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
+        return 170.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
     }
     return host.model.kind == 6 ? 240.0f : host.model.kind == 4 ? 620.0f : 520.0f;
 }
@@ -634,7 +652,7 @@ void showPage(SettingsPage previousPage) {
     const bool general = host.page == SettingsPage::general, appearance = host.page == SettingsPage::appearance, terminal = host.page == SettingsPage::terminal;
     const struct PageControl { int id; bool visible; } controls[] = {
         { shellId, general }, { 122, general }, { 123, general }, { themeGridId, appearance },
-        { sizeId, terminal }, { blinkId, terminal }, { 121, terminal }, { 126, terminal },
+        { sizeId, terminal }, { blinkId, terminal }, { 121, terminal }, { 126, terminal }, { fontId, terminal }, { fontLabelId, terminal },
     };
     constexpr UINT visibilityFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
     HDWP batch = BeginDeferWindowPos(8);
@@ -670,7 +688,7 @@ void paintDialogSurface(HDC dc) {
     roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(24));
     if (host.model.kind == 4 && (host.page == SettingsPage::general || host.page == SettingsPage::terminal)) {
         const bool compact = host.height < 430;
-        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 362 : 310) - (compact ? 46 : 0)) };
+        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 422 : 310) - (compact ? 46 : 0)) };
         roundedFill(dc, card, color(host.model.palette.pane_bg), color(host.model.palette.pane_bg), px(28));
     }
     if (host.model.kind == 2) {
@@ -719,7 +737,11 @@ bool createControls(float width, float height) {
         HWND fontSize = control(L"EDIT", size, ES_NUMBER | ES_AUTOHSCROLL | ES_CENTER | WS_TABSTOP, sizeId, width - 126, 248, 64, 26);
         ok = fontSize && ok;
         if (fontSize) SendMessageW(fontSize, EM_SETLIMITTEXT, 2, 0);
-        ok = control(L"BUTTON", L"Blink terminal cursor", BS_OWNERDRAW | WS_TABSTOP, blinkId, 34, 308, width - 68, 40) && ok;
+        ok = control(L"STATIC", L"Font family", 0, fontLabelId, 46, 312, 180, 24) && ok;
+        HWND fonts = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_SORT | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, fontId, width - 340, 308, 288, 240);
+        ok = fonts && ok;
+        if (fonts) fillFonts(fonts);
+        ok = control(L"BUTTON", L"Blink terminal cursor", BS_OWNERDRAW | WS_TABSTOP, blinkId, 34, 368, width - 68, 40) && ok;
         ok = control(L"STATIC", L"Default shell", 0, 122, 46, 242, 160, 24) && ok;
         ok = control(L"STATIC", L"Used for new tabs and splits.", 0, 123, 46, 268, 300, 24) && ok;
         HWND shell = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, shellId, width - 300, 244, 248, 220);
@@ -739,10 +761,6 @@ bool createControls(float width, float height) {
                 SendMessageW(edit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Search commands..."));
             }
             top = 62;
-        } else if (host.model.kind == 5) {
-            const wchar_t* modes[] = { L"New tab", L"Split right", L"Split down", L"Default" };
-            for (int i = 0; i < 4; ++i) ok = control(L"BUTTON", modes[i], BS_OWNERDRAW | WS_TABSTOP, firstModeId + i, 16 + i * (width - 32) / 4, 98, (width - 32) / 4 - 2, 32) && ok;
-            top = 142;
         }
         const bool themes = host.model.kind == 1;
         HWND list = control(L"LISTBOX", L"", WS_TABSTOP | (themes ? WS_HSCROLL | LBS_MULTICOLUMN : WS_VSCROLL) | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, listId, commands ? 10 : 16, top, width - (commands ? 20 : 32), height - top - (commands ? 48 : 70));
@@ -806,6 +824,16 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         }
         if (LOWORD(wparam) == sizeId && (HIWORD(wparam) == EN_CHANGE || HIWORD(wparam) == EN_KILLFOCUS)) {
             applySettingsFontSize(HIWORD(wparam) == EN_KILLFOCUS);
+            return TRUE;
+        }
+        if (LOWORD(wparam) == fontId && HIWORD(wparam) == CBN_SELCHANGE) {
+            wchar_t family[128] = {};
+            GetDlgItemTextW(window, fontId, family, 128);
+            uint8_t utf8[128] = {};
+            if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, family, -1, reinterpret_cast<char*>(utf8), 128, nullptr, nullptr)) {
+                memcpy(host.draft.font_family, utf8, sizeof(utf8));
+                notify(4, 0, nullptr, 0, host.draft);
+            }
             return TRUE;
         }
         if (LOWORD(wparam) == shellId && HIWORD(wparam) == CBN_SELCHANGE) {
@@ -949,7 +977,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
         const bool muted = id == descriptionId || id == pageDetailId || id == 123 || id == 126;
         SetTextColor(dc, color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
-        const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == 121 || id == 122 || id == 123 || id == 126);
+        const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == 121 || id == 122 || id == 123 || id == 126);
         if (id == queryId) {
             SetBkColor(dc, fieldColor());
             SetDCBrushColor(dc, fieldColor());
@@ -1039,14 +1067,14 @@ void repositionTerminalDialogs() {
         float x = c.x, y = c.y, w = c.width, h = c.height;
         if (id >= firstPageId && id < firstPageId + 4) x += dx / 2;
         else if (id >= firstModeId && id < firstModeId + 4) { x += (id - firstModeId) * dx / 4; w += dx / 4; }
-        else if (id == IDOK || id == IDCANCEL || id == closeId || id == sizeId || id == shellId) x += dx;
+        else if (id == IDOK || id == IDCANCEL || id == closeId || id == sizeId || id == shellId || id == fontId) x += dx;
         else if (w > host.baseWidth * 0.5f) w += dx;
         if (id == IDOK || id == IDCANCEL) y += dy;
         if (id == listId || id == themeGridId) h += dy;
         if (id == 123 || id == 126) w = fminf(w, host.width - 350);
         if (compact) {
             if (id >= firstPageId && id < firstPageId + 4) { y = 44; h = 44; }
-            if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == blinkId) y -= 46;
+            if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == blinkId) y -= 46;
             if (id == pageDetailId) h = 30;
             if (id == themeGridId) { y = 174; h = host.height - 198; }
         }
@@ -1061,7 +1089,7 @@ void repositionTerminalDialogs() {
             SendMessageW(c.window, LB_SETITEMHEIGHT, 0, px(host.model.kind == 1 || id == themeGridId ? themeRowHeight() : listRowHeight()));
             if (host.model.kind == 1 || id == themeGridId) SendMessageW(c.window, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0);
         }
-        if (id == shellId) {
+        if (id == shellId || id == fontId) {
             SendMessageW(c.window, CB_SETITEMHEIGHT, (WPARAM)-1, px(30));
             SendMessageW(c.window, CB_SETITEMHEIGHT, 0, px(30));
         }

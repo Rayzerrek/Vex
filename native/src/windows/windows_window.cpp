@@ -1090,13 +1090,14 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
+static wchar_t terminalFontFamily[128] = L"Cascadia Mono";
 static HRESULT rebuildTerminalFonts(float fontSize) {
     if (!textFactory || !isfinite(fontSize)) return E_INVALIDARG;
     const float clamped = fminf(32.0f, fmaxf(9.0f, roundf(fontSize)));
     IDWriteTextFormat* newFonts[4] = {};
     HRESULT result = S_OK;
     for (int i = 0; i < 4 && SUCCEEDED(result); i++) {
-        result = textFactory->CreateTextFormat(L"Cascadia Mono", nullptr, (i & 1) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        result = textFactory->CreateTextFormat(terminalFontFamily, nullptr, (i & 1) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
             (i & 2) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, clamped, L"en-us", &newFonts[i]);
         if (SUCCEEDED(result)) result = newFonts[i]->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
@@ -1139,6 +1140,15 @@ extern "C" int vex_window_set_font_size(float font_size) {
         vex_window_invalidate();
     }
     return 0;
+}
+extern "C" int vex_window_set_font_family(const uint8_t* family) {
+    wchar_t wide[128] = {};
+    if (!family || !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(family), -1, wide, 128)) return E_INVALIDARG;
+    wchar_t previous[128]; memcpy(previous, terminalFontFamily, sizeof(previous));
+    memcpy(terminalFontFamily, wide, sizeof(wide));
+    int result = vex_window_set_font_size(terminalFontSize);
+    if (result) memcpy(terminalFontFamily, previous, sizeof(previous));
+    return result;
 }
 extern "C" float vex_window_font_size(void) { return terminalFontSize; }
 

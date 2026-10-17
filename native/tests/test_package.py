@@ -24,13 +24,14 @@ class PackageTests(unittest.TestCase):
         struct.pack_into("<I", pe, 60, 128)
         pe[128:132] = b"PE\0\0"
         struct.pack_into("<H", pe, 132, 0x8664)
-        for name in ("vex-native.exe", "ghostty-vt.dll", "app.ico", "ShellIntegration/Vex.cmd", "ShellIntegration/Vex.nu"):
+        for name in ("vex-native.exe", "ghostty-vt.dll", "conpty.dll", "OpenConsole.exe", "app.ico", "ShellIntegration/Vex.cmd", "ShellIntegration/Vex.nu"):
             path = self.bin / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(pe if path.suffix in (".exe", ".dll") else b"fixture\n")
 
     def test_payload_includes_nested_integration_and_licenses_but_not_tests_or_symbols(self):
         (self.bin / "vex-native-tests.exe").write_bytes(b"test binary")
+        (self.bin / "vex-conpty-fixture.exe").write_bytes(b"test fixture")
         (self.bin / "vex-native.pdb").write_bytes(b"symbols")
         path = package.package(self.bin, self.output, "1.7.0")
         with zipfile.ZipFile(path) as archive:
@@ -55,6 +56,18 @@ class PackageTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             package.package(self.bin, self.output, "1.7.0")
         self.assertTrue((self.output / "app/Vex.exe").is_file())
+
+    def test_bundled_conpty_pair_is_required_before_replacing_staging(self):
+        for name in ("conpty.dll", "OpenConsole.exe"):
+            with self.subTest(name=name):
+                package.package(self.bin, self.output, "1.7.0")
+                path = self.bin / name
+                original = path.read_bytes()
+                path.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    package.package(self.bin, self.output, "1.7.0")
+                self.assertTrue((self.output / "app/Vex.exe").is_file())
+                path.write_bytes(original)
 
     def test_wrong_architecture_and_non_pe_payload_are_rejected(self):
         exe = self.bin / "vex-native.exe"

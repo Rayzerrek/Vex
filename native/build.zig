@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_system.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_dialog.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_pty.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/windows_conpty.cpp"), .flags = native_flags });
     const renderer_flags: []const []const u8 = if (b.option(bool, "graphics-debug", "Require the installed D3D12 debug layer") orelse false)
         &(native_flags.* ++ .{"-DVEX_GRAPHICS_DEBUG=1"})
     else
@@ -30,9 +31,13 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{ .name = "vex-native", .root_module = module });
     exe.subsystem = .Windows;
     const dll = b.addInstallFileWithDir(b.path("../Vendor/libghostty/ghostty-vt.dll"), .bin, "ghostty-vt.dll");
+    const conpty_dll = b.addInstallFileWithDir(b.path("../Vendor/conpty/conpty.dll"), .bin, "conpty.dll");
+    const conpty_host = b.addInstallFileWithDir(b.path("../Vendor/conpty/OpenConsole.exe"), .bin, "OpenConsole.exe");
     const app_icon = b.addInstallFileWithDir(b.path("assets/app.ico"), .bin, "app.ico");
     b.installArtifact(exe);
     b.getInstallStep().dependOn(&dll.step);
+    b.getInstallStep().dependOn(&conpty_dll.step);
+    b.getInstallStep().dependOn(&conpty_host.step);
     b.getInstallStep().dependOn(&app_icon.step);
     const cmd_integration = b.addInstallFileWithDir(b.path("src/shell/integration/Vex.cmd"), .bin, "ShellIntegration/Vex.cmd");
     const nu_integration = b.addInstallFileWithDir(b.path("src/shell/integration/Vex.nu"), .bin, "ShellIntegration/Vex.nu");
@@ -44,11 +49,20 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Run the native Windows terminal").dependOn(&run.step);
     const tests = b.addTest(.{ .root_module = module });
     const install_tests = b.addInstallArtifact(tests, .{ .dest_sub_path = "vex-native-tests.exe" });
+    const fixture_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+    fixture_module.addIncludePath(b.path("src/windows"));
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/conpty_fixture.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/windows_conpty.cpp"), .flags = native_flags });
+    fixture_module.linkSystemLibrary("kernel32", .{});
+    const fixture = b.addExecutable(.{ .name = "vex-conpty-fixture", .root_module = fixture_module });
+    const install_fixture = b.addInstallArtifact(fixture, .{});
     const test_build = b.step("test-build", "Compile native tests without running Windows tools");
     test_build.dependOn(&install_tests.step);
     test_build.dependOn(&dll.step);
+    test_build.dependOn(&conpty_dll.step);
+    test_build.dependOn(&conpty_host.step);
+    test_build.dependOn(&install_fixture.step);
     const test_run = b.addSystemCommand(&.{b.getInstallPath(.bin, "vex-native-tests.exe")});
-    test_run.step.dependOn(&install_tests.step);
-    test_run.step.dependOn(&dll.step);
+    test_run.step.dependOn(test_build);
     b.step("test", "Check native ownership, terminal tab/split state, behavior and allocation failures").dependOn(&test_run.step);
 }

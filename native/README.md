@@ -24,10 +24,12 @@ python3 tools/package.py
 The last command creates `publish/Vex-Native-<VERSION>-win-x64.zip`, its SHA-256
 file, and `publish/app/`. It uses only Python 3.11+; Windows tools are unnecessary.
 The ZIP contains `Vex.exe`, `vex-native.exe`, `ghostty-vt.dll`, the icon, shell
-integration and license notices, but no test executables or debug symbols.
+integration and license notices, plus Microsoft's `conpty.dll` and `OpenConsole.exe`
+console-host pair, but no test executables or debug symbols.
 
 Run `zig-out/bin/vex-native.exe` and `zig-out/bin/vex-native-tests.exe` on Windows,
-keeping the DLL beside them. Copying `zig-out/bin` to a Windows directory avoids
+keeping `ghostty-vt.dll`, `conpty.dll` and `OpenConsole.exe` beside them. The tests
+also need the adjacent `vex-conpty-fixture.exe` produced by `test-build`. Copying `zig-out/bin` to a Windows directory avoids
 UNC working-directory behavior in cmd. Windows does not need Zig or .NET to run
 the app or the compiled tests. Linux compilation alone is not a Windows test run.
 
@@ -50,7 +52,7 @@ zig build run -- --shell wsl
 zig build run -- --program 'C:\Windows\System32\cmd.exe' --arguments /d
 ```
 
-Shell selection, themes, font size and cursor blinking are configurable in
+Shell selection, themes, font family, font size and cursor blinking are configurable in
 Settings. Custom programs use an absolute executable path and a raw Windows
 argument string. Available shells depend on the local Windows/WSL installation.
 
@@ -67,7 +69,8 @@ argument string. Available shells depend on the local Windows/WSL installation.
 ## CI and packages
 
 - **Native Zig**: Linux cross-builds Debug and ReleaseSafe, checks Zig formatting
-  and portable packaging, then Windows executes both compiled Zig test suites.
+  and portable packaging, then Windows executes both compiled Zig test suites,
+  including headless child-process ConPTY erase/scrollback regressions.
 - **Native packages**: runs the same checks before packaging ReleaseSafe into a
   ZIP and MSI. WiX/.NET are installed only on the Windows packaging runner.
 - **Legacy WPF** and **Web** have separate path-filtered workflows. Changes to
