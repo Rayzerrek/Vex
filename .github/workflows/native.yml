@@ -1,0 +1,108 @@
+name: Native Zig
+
+on:
+  push:
+    branches: [main, "feat/**"]
+    paths:
+      - "native/**"
+      - "Vendor/libghostty/**"
+      - "flake.nix"
+      - "flake.lock"
+      - "LICENSE"
+      - "THIRD-PARTY-NOTICES.md"
+      - ".github/workflows/native.yml"
+      - ".github/workflows/release.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - "Vendor/libghostty/**"
+      - "flake.nix"
+      - "flake.lock"
+      - "LICENSE"
+      - "THIRD-PARTY-NOTICES.md"
+      - ".github/workflows/native.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build and test
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Cross-build / ${{ matrix.configuration }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, ReleaseSafe]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Read pinned Zig version
+        id: toolchain
+        shell: bash
+        run: echo "version=$(tr -d '\r\n' < native/.zig-version)" >> "$GITHUB_OUTPUT"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.toolchain.outputs.version }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Check Zig formatting
+        working-directory: native
+        run: zig fmt --check build.zig src
+      - name: Test portable packaging
+        run: python -m unittest discover -s native/tests -p 'test_*.py' -v
+      - name: Cross-compile application and tests
+        working-directory: native
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          zig build -Doptimize="$CONFIGURATION"
+          zig build test-build -Doptimize="$CONFIGURATION"
+      - name: Verify portable payload
+        run: |
+          python native/tools/package.py
+          python native/tools/package.py --verify
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-win-x64-${{ matrix.configuration }}
+          path: native/zig-out/bin/
+          if-no-files-found: error
+          retention-days: 7
+
+  test:
+    name: Windows tests / ${{ matrix.configuration }}
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, ReleaseSafe]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-win-x64-${{ matrix.configuration }}
+          path: native-bin
+      - name: Run compiled Zig tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          & ./native-bin/vex-native-tests.exe 2>&1 | Tee-Object test-results/zig-tests.txt
+          if ($LASTEXITCODE -ne 0) { throw "Native Zig tests failed: $LASTEXITCODE" }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: native-test-results-${{ matrix.configuration }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 14

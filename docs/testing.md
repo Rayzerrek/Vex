@@ -1,7 +1,10 @@
 # Testing
 
-Vex has three layers of tests. Unit and emulator integration tests run in CI.
-Renderer tests need a desktop session and run locally in Debug.
+The detailed .NET test descriptions below cover the legacy WPF app. Native Zig
+build/test instructions are in [native/README.md](../native/README.md). Desktop
+PowerShell harnesses and benchmark scripts are maintained locally outside this
+repository; historical commands referring to them are not CI entry points.
+Renderer tests need an interactive desktop.
 
 ## Unit and integration tests
 
@@ -201,16 +204,17 @@ Useful when reviewing a change to that page:
 
 ## What CI runs
 
-`.github/workflows/windows.yml` restores, builds in Release, and runs
-`dotnet test` over the solution. `.github/workflows/web.yml` installs with a
-frozen lockfile, then runs `check`, `test`, and `build`.
+`.github/workflows/native.yml` checks Zig formatting and portable packaging,
+cross-compiles Debug/ReleaseSafe on Linux, then executes both compiled test suites
+on Windows. It does not require a Windows Zig or .NET installation.
 
-`.github/workflows/release.yml` runs on a version tag and adds the packaging
-gates: the tag must match the project version, the suite must pass, and the zip
-must contain every native library the app loads at runtime. The MSI is checked
-too — a stale WiX harvest once produced an installer with no files in it.
+`.github/workflows/windows.yml` runs the legacy .NET suite only for relevant
+`windows/` changes. `.github/workflows/web.yml` checks and builds the landing page.
 
-None of these workflows runs the renderer self-test: GitHub runners have no
-desktop session capable of creating the window it needs. That is why the
-release job verifies the zip's payload by inspection rather than by launching
-it, and why a release candidate is worth starting by hand once.
+`.github/workflows/release.yml` reuses native CI, builds a ZIP and WiX MSI from the
+tested ReleaseSafe output, verifies checksums and compares the administratively
+extracted MSI files with staging. Stable tags must match `native/VERSION`. Manual
+preview runs produce branch artifacts without creating tags or GitHub Releases.
+
+Hosted CI does not run interactive GPU/desktop tests. Package verification and
+Windows unit tests are not a substitute for a local renderer smoke test.

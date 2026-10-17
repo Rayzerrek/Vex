@@ -1,24 +1,27 @@
 # AGENTS.md
 
-Vex is a WPF terminal workspace: ConPTY sessions, tabs, and split panes.
-The app lives in `windows/`.
+Vex is a native Zig/Win32 terminal workspace: ConPTY sessions, tabs and split panes.
+The active app lives in `native/`; `windows/` is the legacy WPF implementation.
 
-## Build
+## Build and verify native code
 
-```sh
-dotnet build windows/Vex.slnx
-dotnet run --project windows/Vex.App
-```
-
-## Verify
-
-Build, run the app, exercise the change.
+Use `nix develop` on Linux/WSL for the pinned Zig/Python toolchain. From `native/`:
 
 ```sh
-dotnet test windows/Vex.Libghostty.Tests
+zig fmt --check build.zig src
+zig build
+zig build test-build
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+python3 tools/package.py
 ```
 
-## Linux orbs
+Run the compiled `vex-native-tests.exe` with its adjacent DLL on Windows, or use
+`zig build test` on a Windows development machine. Linux compilation is not a
+Windows test pass. Interactive desktop tests and benchmark tools are local,
+not repository scripts or hosted CI coverage. MSI packaging runs on Windows CI;
+local WSL ZIP packaging does not need .NET. See `native/README.md`.
+
+## Legacy WPF / web Linux orbs
 
 - `.agents/setup` caches .NET 10, Node.js 24, the pnpm version from `web/package.json`, and NuGet/web dependencies. `.agents/resume` only checks cached tools and repairs the kernel's Oxlint memory setting; do not reinstall on every wake.
 - Login shells load the toolchains from `~/.bash_profile`. In an already-running agent with an older environment, use `bash -lc '<command>'`.

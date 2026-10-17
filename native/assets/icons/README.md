@@ -9,12 +9,9 @@ The other bundled brand paths come from the existing curated snapshot in
 `windows/Vex.App/Model/AppIconCatalog.generated.cs`. The native application does
 not load WPF or access the network at runtime.
 
-Regenerate the native geometry after changing a source path or Zig icon IDs:
-
-```powershell
-powershell -NoProfile -File tools/Generate-AppIconGeometry.ps1
-powershell -NoProfile -File tools/Generate-AppIconGeometry.ps1 -Check
-```
+Native geometry is checked in at `src/windows/app_icon_geometry.generated.h`.
+Regeneration tooling is maintained locally outside the repository; changing a
+source path or Zig icon IDs requires updating that generated snapshot.
 
 The generator matches paths by slug and orders them by the Zig `GlyphId` enum;
 there is no separately maintained numeric C++ drawing switch. Paths are flattened

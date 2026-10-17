@@ -5,31 +5,34 @@ Vex, what is expected of a change, and how to get it merged.
 
 ## Prerequisites
 
-- **Windows 10 1809+ or Windows 11.** Vex is a WPF application. Running it,
-  native tests, and MSI packaging require Windows; Linux orbs can cross-compile
-  the managed projects as described below.
-- **.NET 10 SDK.** Check with `dotnet --list-sdks`; the project targets
-  `net10.0` and `net10.0-windows`.
+- **Windows 10 1809+ or Windows 11** to run the native application and compiled
+  Zig tests. Linux/WSL can cross-compile both and create portable ZIPs.
+- **Zig 0.15.2 and Python 3.11+** for the active app in `native/`. `nix develop`
+  provides the pinned toolchain on Linux/WSL. .NET is needed only for WiX/MSI
+  packaging on Windows CI, or development of the legacy WPF app in `windows/`.
 - **Node.js 24 and pnpm 11.5.2** — only needed for the landing page in `web/`.
   Vite+ resolves pnpm through `packageManager` in `web/package.json`.
 
 ## Building
 
-```powershell
-dotnet build windows/Vex.slnx
-dotnet run --project windows/Vex.App
+```sh
+nix develop
+cd native
+zig build
+zig build test-build
+python3 tools/package.py
 ```
 
-To produce the self-contained executable and the MSI installer:
+Run the resulting Windows executables with their adjacent DLL on Windows.
+The portable ZIP is created entirely in WSL. Windows CI consumes the tested
+cross-build output and calls `native/build-installer.ps1 -SkipBuild -SkipTests`
+to create and verify the MSI. No Windows toolchain installation is needed locally.
+See [native/README.md](native/README.md) for commands and supported configurations.
 
-```powershell
-pwsh windows/build-installer.ps1
-```
+For legacy WPF development, use `dotnet build windows/Vex.slnx` and
+`dotnet run --project windows/Vex.App`; its packager is not used for new releases.
 
-This publishes `Vex.App` for `win-x64`, builds the WiX package, and writes
-`windows/publish/installer/Vex.msi`.
-
-### Amp orbs (Linux)
+### Legacy WPF/web Amp orbs (Linux)
 
 Amp runs the executable `.agents/setup` hook to prepare a project snapshot:
 Debian prerequisites, .NET 10, Node.js 24, pnpm from `web/package.json`, locked
@@ -65,11 +68,13 @@ default branch; a local commit alone does not activate them.
 
 ## Testing
 
-```powershell
-dotnet test windows/Vex.slnx
-```
+For native code, run `zig fmt --check build.zig src`, `zig build test` on Windows,
+or `zig build test-build` in WSL followed by the compiled `vex-native-tests.exe`
+on Windows. Validate portable packaging with
+`python3 -m unittest discover -s native/tests -p 'test_*.py' -v` from the repo root.
+Headless CI does not claim interactive rendering coverage; desktop tooling is local.
 
-Two projects hold tests:
+The legacy WPF suite uses `dotnet test windows/Vex.slnx`. Two projects hold tests:
 
 - `windows/Vex.App.Tests` — key encoding, fuzzy search scoring, theme
   resolution, color parsing, and debounce behaviour.
@@ -91,35 +96,34 @@ pnpm run build
 
 ## What CI enforces
 
-Every pull request must pass both workflows in `.github/workflows/`:
+Path-filtered workflows in `.github/workflows/` check the relevant implementation:
 
-- **Windows** — restore, Release build, and `dotnet test` across the solution.
-- **Web** — formatting, lint, type checking, tests, and a production build.
+- **Native Zig** — formatting, packaging tests, Linux cross-builds in Debug and
+  ReleaseSafe, then both compiled Zig test suites on Windows.
+- **Legacy WPF** — restore, Release build and `dotnet test` for `windows/` changes.
+- **Web** — formatting, lint, type checking and a production build.
 
 `pnpm run check` also enforces formatting. Run it before pushing; CI fails on
 unformatted files.
 
 ## Releasing
 
-Pushing a version tag builds the installer and publishes the release:
+`native/VERSION` is the version source of truth. A matching `vX.Y.Z` tag starts
+`.github/workflows/release.yml`, which resolves the exact tag commit, runs native
+checks and publishes the ZIP, MSI and both SHA-256 files. Publishing uses a draft
+until assets are uploaded; reruns can repair uploads. The WPF project version is
+not consulted.
+
+A branch preview does not create a tag or GitHub Release and does not modify main:
 
 ```sh
-git tag -a v1.3.0 -m "Vex 1.3.0"
-git push origin v1.3.0
+gh workflow run release.yml --ref feat/zig-native -f mode=preview
 ```
 
-`.github/workflows/release.yml` then checks that the tag matches `<Version>` in
-`windows/Vex.App/Vex.App.csproj` and `Version` in `Vex.Setup/Package.wxs`, runs
-the test suite, builds the zip and MSI, verifies the payload, and attaches all
-three assets to the release.
-
-If the job fails after the tag is pushed, re-run it against that tag from the
-Actions tab (`workflow_dispatch` accepts a tag). Uploading is idempotent, so a
-re-run repairs a partially published release instead of failing on it.
-
-The version check exists because releases used to be a manual step that nothing
-enforced: a version bump could sit unreleased indefinitely, and the tag and the
-project version could disagree without anything noticing.
+Download packages and source provenance from the workflow artifacts (14 days).
+Preview MSI uses the stable install location, so install it only on an isolated
+test machine. Stable retries use `-f mode=release -f tag=vX.Y.Z` on a workflow
+revision containing the native pipeline.
 
 ## Guidelines
 

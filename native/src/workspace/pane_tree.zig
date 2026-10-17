@@ -358,4 +358,3 @@ test "pane header drag area, edge drop zones, and split preview geometry match W
     try std.testing.expectApproxEqAbs(@as(f32, 292.0), right_preview.height, 0.01);
     try std.testing.expectEqual(@as(?PaneRect, null), bounds.splitPreviewRect(.none));
 }
-

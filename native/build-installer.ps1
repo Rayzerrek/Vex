@@ -1,123 +1,90 @@
-# Builds the release artifacts for Vex Native: a standalone win-x64 zip and an MSI installer.
-#
-# The installer installs Vex Native into Program Files, configures Desktop and Start Menu
-# shortcuts, and registers uninstall cleanly in Windows.
-
+# ZIP staging is cross-platform (tools/package.py); WiX/MSI runs only on Windows.
 [CmdletBinding()]
 param(
-    [string]$Version = "1.7.0",
-    [string]$Configuration = "ReleaseSafe",
+    [string]$Version = '',
+    [ValidateSet('Debug', 'ReleaseSafe')][string]$Configuration = 'ReleaseSafe',
+    [string]$Label = '',
+    [string]$BinDirectory = "$PSScriptRoot\zig-out\bin",
+    [string]$Python = 'python',
+    [switch]$SkipBuild,
     [switch]$SkipTests
 )
-
-$ErrorActionPreference = "Stop"
-
-$ScriptDir = $PSScriptRoot
-$NativeDir = $ScriptDir
-$PublishDir = Join-Path $NativeDir "publish"
-$AppPublishDir = Join-Path $PublishDir "app"
-$SetupProj = Join-Path $NativeDir "installer\Vex.Native.Setup.wixproj"
-$MsiSource = Join-Path $NativeDir "installer\bin\Release\VexSetup.msi"
-
-function Write-Step([string]$Message) {
-    Write-Host "==> $Message" -ForegroundColor Cyan
+$ErrorActionPreference = 'Stop'
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+    throw 'MSI packaging requires Windows. For a portable ZIP in WSL use: python3 native/tools/package.py'
 }
-
-$fourPartVersion = if ($Version -match '^\d+\.\d+\.\d+$') { "$Version.0" } else { $Version }
-$baseName = "Vex-Native-$Version-win-x64"
-$zipPath = Join-Path $PublishDir "$baseName.zip"
+$expectedVersion = (Get-Content "$PSScriptRoot/VERSION" -Raw).Trim()
+if (!$Version) { $Version = $expectedVersion }
+if ($Version -ne $expectedVersion) { throw "Version must match native/VERSION ($expectedVersion)." }
+if ($Label -and $Label -notmatch '^preview-[0-9a-f]{7,40}$') { throw 'Invalid preview label.' }
+$PublishDir = Join-Path $PSScriptRoot 'publish'
+$SetupDir = Join-Path $PSScriptRoot 'installer'
+$PackageTool = Join-Path $PSScriptRoot 'tools/package.py'
+$baseName = "Vex-Native-$Version$(if ($Label) { '-' + $Label })-win-x64"
 $msiPath = Join-Path $PublishDir "$baseName.msi"
 
-Write-Step "Building native binary (Zig 0.15.2, $Configuration)"
-Push-Location $NativeDir
-try {
-    zig build "-Doptimize=$Configuration"
-    if ($LASTEXITCODE -ne 0) { throw "zig build failed with exit code $LASTEXITCODE" }
-
-    if (-not $SkipTests) {
-        Write-Step "Running native test suite"
-        zig build test
-        if ($LASTEXITCODE -ne 0) { throw "zig build test failed with exit code $LASTEXITCODE" }
+if (!$SkipBuild) {
+    $zigVersion = & zig version
+    if ($LASTEXITCODE -ne 0 -or $zigVersion.Trim() -ne (Get-Content "$PSScriptRoot/.zig-version" -Raw).Trim()) {
+        throw 'Use the pinned Zig version, or -SkipBuild with binaries cross-compiled in Nix/WSL.'
     }
-}
-finally {
-    Pop-Location
-}
-
-Write-Step "Preparing publish staging directory"
-if (Test-Path $PublishDir) { Remove-Item $PublishDir -Recurse -Force }
-New-Item -ItemType Directory -Path $AppPublishDir -Force | Out-Null
-
-$BinDir = Join-Path $NativeDir "zig-out\bin"
-$exeSource = Join-Path $BinDir "vex-native.exe"
-$dllSource = Join-Path $BinDir "ghostty-vt.dll"
-$icoSource = Join-Path $BinDir "app.ico"
-$shellSource = Join-Path $BinDir "ShellIntegration"
-
-if (-not (Test-Path $exeSource)) { throw "Missing expected binary at $exeSource" }
-if (-not (Test-Path $dllSource)) { throw "Missing ghostty-vt.dll at $dllSource" }
-
-# Stage files: provide both Vex.exe and vex-native.exe
-Copy-Item $exeSource (Join-Path $AppPublishDir "Vex.exe") -Force
-Copy-Item $exeSource (Join-Path $AppPublishDir "vex-native.exe") -Force
-Copy-Item $dllSource (Join-Path $AppPublishDir "ghostty-vt.dll") -Force
-if (Test-Path $icoSource) {
-    Copy-Item $icoSource (Join-Path $AppPublishDir "app.ico") -Force
-}
-if (Test-Path $shellSource) {
-    Copy-Item $shellSource (Join-Path $AppPublishDir "ShellIntegration") -Recurse -Force
+    Push-Location $PSScriptRoot
+    try {
+        zig build "-Doptimize=$Configuration"
+        if ($LASTEXITCODE -ne 0) { throw 'zig build failed.' }
+        if (!$SkipTests) {
+            zig build test "-Doptimize=$Configuration"
+            if ($LASTEXITCODE -ne 0) { throw 'zig build test failed.' }
+        }
+    } finally { Pop-Location }
+} elseif (!$SkipTests) {
+    & (Join-Path $BinDirectory 'vex-native-tests.exe')
+    if ($LASTEXITCODE -ne 0) { throw 'Compiled Zig tests failed.' }
 }
 
-Write-Step "Packing $baseName.zip"
-$payload = Get-ChildItem $AppPublishDir -Recurse -File |
-    Where-Object { $_.Extension -ne ".pdb" }
+Write-Host '==> Preparing and verifying portable ZIP'
+$packageArgs = @($PackageTool, '--bin-dir', $BinDirectory, '--output-dir', $PublishDir, '--version', $Version)
+if ($Label) { $packageArgs += @('--label', $Label) }
+& $Python @packageArgs
+if ($LASTEXITCODE -ne 0) { throw 'Portable packaging failed.' }
 
-Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
-$archive = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
-try {
-    foreach ($file in $payload) {
-        $entry = $file.FullName.Substring($AppPublishDir.Length + 1).Replace('\', '/')
-        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $entry,
-            [IO.Compression.CompressionLevel]::Optimal) | Out-Null
-    }
-}
-finally {
-    $archive.Dispose()
-}
-
-$zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-"$zipHash  $baseName.zip" | Set-Content "$zipPath.sha256" -NoNewline -Encoding ascii
-
-Write-Step "Building WiX MSI installer"
-$SetupDir = Join-Path $NativeDir "installer"
-foreach ($stale in @("obj", "bin")) {
+Write-Host '==> Building WiX MSI from the same staged payload'
+foreach ($stale in @('obj', 'bin')) {
     $path = Join-Path $SetupDir $stale
     if (Test-Path $path) { Remove-Item $path -Recurse -Force }
 }
+dotnet build (Join-Path $SetupDir 'Vex.Native.Setup.wixproj') -c Release "-p:Version=$Version.0"
+if ($LASTEXITCODE -ne 0) { throw 'WiX MSI build failed.' }
+$msiSource = Join-Path $SetupDir 'bin/Release/VexSetup.msi'
+if (!(Test-Path $msiSource)) { throw "MSI not produced at $msiSource" }
+Copy-Item $msiSource $msiPath -Force
+$hash = (Get-FileHash $msiPath -Algorithm SHA256).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText("$msiPath.sha256", "$hash  $baseName.msi`n", [Text.Encoding]::ASCII)
+& $Python @packageArgs --verify --require-msi
+if ($LASTEXITCODE -ne 0) { throw 'Release payload or checksum verification failed.' }
 
-dotnet build $SetupProj -c Release -p:Version="$fourPartVersion"
-if ($LASTEXITCODE -ne 0) { throw "dotnet build Vex.Native.Setup.wixproj failed" }
-if (-not (Test-Path $MsiSource)) { throw "MSI not produced at $MsiSource" }
-Copy-Item $MsiSource $msiPath -Force
-
-$msiHash = (Get-FileHash $msiPath -Algorithm SHA256).Hash.ToLowerInvariant()
-"$msiHash  $baseName.msi" | Set-Content "$msiPath.sha256" -NoNewline -Encoding ascii
-
-Write-Step "Verifying artifacts"
-$archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-$names = $archive.Entries | ForEach-Object { $_.FullName }
-$archive.Dispose()
-
-$required = @('Vex.exe', 'ghostty-vt.dll')
-$missing = $required | Where-Object { $_ -notin $names }
-if ($missing) { throw "zip is missing required files: $($missing -join ', ')" }
-
-$msiFile = Get-Item $msiPath
-if ($msiFile.Length -lt 1MB) {
-    throw "MSI is unexpectedly small ($($msiFile.Length) bytes); check WiX harvesting"
+# Administrative extraction checks the real cabinet payload, without installing or registering the application.
+Write-Host '==> Verifying MSI extraction against staged files'
+$verification = Join-Path ([IO.Path]::GetTempPath()) ('Vex-MSI-' + [Guid]::NewGuid().ToString('N'))
+$log = Join-Path $PublishDir 'msi-verification.log'
+try {
+    New-Item -ItemType Directory -Force $verification | Out-Null
+    $arguments = @('/a', ('"' + $msiPath + '"'), '/qn', ('TARGETDIR="' + $verification + '"'), '/l*v', ('"' + $log + '"'))
+    $process = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "MSI extraction failed ($($process.ExitCode)); see $log" }
+    $executables = @(Get-ChildItem $verification -Recurse -File -Filter Vex.exe)
+    if ($executables.Count -ne 1) { throw 'MSI must extract exactly one Vex.exe.' }
+    $installRoot = $executables[0].Directory.FullName
+    $staging = Join-Path $PublishDir 'app'
+    foreach ($source in Get-ChildItem $staging -Recurse -File) {
+        $relative = $source.FullName.Substring($staging.Length + 1)
+        $extracted = Join-Path $installRoot $relative
+        if (!(Test-Path $extracted) -or (Get-FileHash $source.FullName).Hash -ne (Get-FileHash $extracted).Hash) {
+            throw "MSI payload differs from staging: $relative"
+        }
+    }
+} finally {
+    if (Test-Path $verification) { Remove-Item $verification -Recurse -Force }
 }
-
-Write-Step "Done! Release artifacts generated at:"
-Get-ChildItem $PublishDir -File | ForEach-Object {
-    Write-Host ("    {0,-40} ({1,6:N2} MB)" -f $_.Name, ($_.Length / 1MB))
-}
+Write-Host '==> Verified artifacts'
+Get-ChildItem $PublishDir -File | Where-Object { $_.Extension -ne '.log' } | Select-Object Name, Length

@@ -44,13 +44,11 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Run the native Windows terminal").dependOn(&run.step);
     const tests = b.addTest(.{ .root_module = module });
     const install_tests = b.addInstallArtifact(tests, .{ .dest_sub_path = "vex-native-tests.exe" });
-    b.step("test-build", "Compile native tests without running Windows tools").dependOn(&install_tests.step);
+    const test_build = b.step("test-build", "Compile native tests without running Windows tools");
+    test_build.dependOn(&install_tests.step);
+    test_build.dependOn(&dll.step);
     const test_run = b.addSystemCommand(&.{b.getInstallPath(.bin, "vex-native-tests.exe")});
     test_run.step.dependOn(&install_tests.step);
     test_run.step.dependOn(&dll.step);
-    const check_icons = b.addSystemCommand(&.{ "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File" });
-    check_icons.addFileArg(b.path("tools/Generate-AppIconGeometry.ps1"));
-    check_icons.addArg("-Check");
-    test_run.step.dependOn(&check_icons.step);
     b.step("test", "Check native ownership, terminal tab/split state, behavior and allocation failures").dependOn(&test_run.step);
 }

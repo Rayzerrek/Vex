@@ -595,4 +595,3 @@ test "status presentation labels and multi-pane origin detail formatting match W
     try std.testing.expectEqualStrings("", idle.badgeLabel());
     try std.testing.expectEqualStrings("", idle.formatOriginDetail(&buf, 1, 2, "Command Prompt"));
 }
-
