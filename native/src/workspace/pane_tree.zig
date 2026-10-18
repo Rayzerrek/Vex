@@ -131,15 +131,6 @@ pub const PaneTree = struct {
     pub fn closePane(self: *PaneTree, id: PaneId) bool {
         return removeLeaf(self.allocator, self.root, id);
     }
-    /// Sets the parent divider of a leaf, matching WPF's 0.1..0.9 ratio clamp.
-    pub fn setParentRatio(self: *PaneTree, id: PaneId, ratio: f32) !void {
-        if (!std.math.isFinite(ratio)) return error.InvalidSplitRatio;
-        const parent = findParent(self.root, id) orelse return error.PaneNotFound;
-        switch (parent.*) {
-            .split => |*split| split.ratio = std.math.clamp(ratio, 0.1, 0.9),
-            .leaf => return error.PaneNotFound,
-        }
-    }
     /// Returns the divider under a finite DIP point, excluding right/bottom edges as in pane hit testing.
     pub fn dividerAtPoint(self: *const PaneTree, bounds: PaneRect, x: f32, y: f32) !?DividerPlacement {
         try bounds.validate();
@@ -191,15 +182,6 @@ fn findLeaf(node: *PaneNode, id: PaneId, depth: usize) ?FoundLeaf {
         .leaf => |leaf| if (leaf == id) .{ .node = node, .depth = depth } else null,
         .split => |split| findLeaf(split.first, id, depth + 1) orelse findLeaf(split.second, id, depth + 1),
     };
-}
-fn findParent(node: *PaneNode, id: PaneId) ?*PaneNode {
-    switch (node.*) {
-        .leaf => return null,
-        .split => |split| {
-            if ((split.first.* == .leaf and split.first.leaf == id) or (split.second.* == .leaf and split.second.leaf == id)) return node;
-            return findParent(split.first, id) orelse findParent(split.second, id);
-        },
-    }
 }
 fn removeLeaf(allocator: std.mem.Allocator, node: *PaneNode, id: PaneId) bool {
     switch (node.*) {
@@ -315,8 +297,13 @@ test "duplicate IDs, invalid ratios/geometry and excessive depth fail without mu
     defer tree.deinit();
     try std.testing.expectError(error.DuplicatePaneId, tree.splitPane(@enumFromInt(1), @enumFromInt(1), .down));
     try tree.splitPane(@enumFromInt(1), @enumFromInt(2), .right);
-    try std.testing.expectError(error.InvalidSplitRatio, tree.setParentRatio(@enumFromInt(2), std.math.nan(f32)));
-    try tree.setParentRatio(@enumFromInt(2), 2);
+    try std.testing.expectError(error.InvalidSplitRatio, tree.setDividerRatio(@enumFromInt(2), std.math.nan(f32)));
+    try std.testing.expectError(error.InvalidSplitRatio, tree.setDividerRatio(@enumFromInt(2), std.math.inf(f32)));
+    const unchanged = try tree.dividerPlacement(.{ .x = 0, .y = 0, .width = 1006, .height = 600 }, @enumFromInt(2)) orelse return error.TestExpectedDivider;
+    try std.testing.expectEqual(@as(f32, 0.5), unchanged.ratio);
+    try std.testing.expect(try tree.setDividerRatio(@enumFromInt(2), 2));
+    try std.testing.expect(!try tree.setDividerRatio(@enumFromInt(2), 2));
+    try std.testing.expect(!try tree.setDividerRatio(@enumFromInt(99), 0.5));
     var placements: std.ArrayList(PanePlacement) = .empty;
     defer placements.deinit(std.testing.allocator);
     try std.testing.expectError(error.InvalidPaneGeometry, tree.layout(std.testing.allocator, &placements, .{ .x = 0, .y = 0, .width = std.math.inf(f32), .height = 600 }));

@@ -62,6 +62,10 @@ test "status presentation uses reported tasks, app fallback and truthful activit
     try std.testing.expectEqualStrings("Inspecting atlas ownership", statusDetail(summary));
     try std.testing.expectEqualStrings("codex", statusTitle(.{ .app = "codex", .title = "" }, "cmd"));
     try std.testing.expectEqualStrings("cmd", statusTitle(.{}, "cmd"));
+    try std.testing.expectEqualStrings("Allow bash tool?", statusDetail(.{ .state = .blocked, .kind = .permission, .app = "claude", .message = "Allow bash tool?" }));
+    try std.testing.expectEqualStrings("Waiting for sign-in", statusDetail(.{ .state = .blocked, .kind = .auth }));
+    try std.testing.expectEqualStrings("Idle", statusDetail(.{ .state = .idle }));
+    try std.testing.expectEqualStrings("", statusDetail(.{ .message = "stale message" }));
 }
 
 test "status text boundaries preserve UTF-8 and repaint keys observe text-only changes" {

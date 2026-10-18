@@ -106,9 +106,28 @@ class PackageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 package.package(self.bin, output, "1.7.0")
 
+    def test_invalid_label_preserves_staging_and_archive(self):
+        path = package.package(self.bin, self.output, "1.7.0")
+        original = path.read_bytes()
+        marker = self.output / "app/keep.txt"
+        marker.write_bytes(b"previous staging")
+        with self.assertRaisesRegex(ValueError, "preview"):
+            package.package(self.bin, self.output, "1.7.0", "../../escape")
+        self.assertEqual(marker.read_bytes(), b"previous staging")
+        self.assertEqual(path.read_bytes(), original)
+        package.verify_checksum(path)
+
+    def test_staged_payload_tampering_is_detected(self):
+        package.package(self.bin, self.output, "1.7.0")
+        (self.output / "app/Vex.exe").write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "ZIP differs from staged payload: Vex.exe"):
+            package.verify(self.output, "1.7.0")
+
     def test_msi_presence_size_and_checksum_are_required(self):
         path = package.package(self.bin, self.output, "1.7.0")
         msi = path.with_suffix(".msi")
+        with self.assertRaises(FileNotFoundError):
+            package.verify(self.output, "1.7.0", require_msi=True)
         msi.write_bytes(b"small")
         package.write_checksum(msi)
         with self.assertRaisesRegex(ValueError, "small"):
@@ -116,6 +135,9 @@ class PackageTests(unittest.TestCase):
         msi.write_bytes(b"\0" * (1024 * 1024))
         package.write_checksum(msi)
         package.verify(self.output, "1.7.0", require_msi=True)
+        msi.with_suffix(".msi.sha256").write_text("wrong hash", encoding="ascii")
+        with self.assertRaisesRegex(ValueError, "Checksum"):
+            package.verify(self.output, "1.7.0", require_msi=True)
 
 
 if __name__ == "__main__":

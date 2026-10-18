@@ -112,10 +112,6 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
                     if (@intFromEnum(command.id) == value) cp.selected_index = i;
                 }
             },
-            .tab_peek => |*peek| {
-                const model = if (self.model) |*model| model else return;
-                if (model.tabIndex(@enumFromInt(value))) |index| peek.selected_index = index;
-            },
             else => {},
         },
         .shell_mode => |mode| {
@@ -141,11 +137,6 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
                     return;
                 };
                 self.overlay = .none;
-            },
-            .tab_peek => {
-                self.overlay = .none;
-                const model = if (self.model) |*model| model else return;
-                if (model.tabIndex(@enumFromInt(value))) |index| try self.applyAction(.select_tab, @intCast(index));
             },
             .shell_picker => |picker| {
                 const kind = std.meta.intToEnum(shell.ShellKind, value) catch return error.InvalidShellSelection;

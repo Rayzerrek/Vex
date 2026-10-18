@@ -12,11 +12,6 @@ pub const TerminalTheme = struct {
     accent: u32,
     ansi: [16]u32,
 
-    /// Returns the explicit application appearance for this terminal theme.
-    pub fn isDark(self: TerminalTheme) bool {
-        return self.is_dark;
-    }
-
     /// Derives the window chrome palette from this terminal theme.
     pub fn chromePalette(self: TerminalTheme) ChromePalette {
         return ChromePalette.fromTheme(self);
@@ -94,10 +89,6 @@ pub fn mix(a: u32, b: u32, t: f32) u32 {
 
 pub fn darken(rgb: u32, amount: f32) u32 {
     return mix(rgb, 0x000000, amount);
-}
-
-pub fn lighten(rgb: u32, amount: f32) u32 {
-    return mix(rgb, 0xFFFFFF, amount);
 }
 
 pub const default_dark_index: usize = 0;
@@ -274,8 +265,6 @@ pub const themes = [_]TerminalTheme{
     },
 };
 
-pub const built_in = themes;
-
 /// Collects indices into `themes` matching the requested dark/light appearance.
 pub fn indicesForAppearance(is_dark: bool, out: *[themes.len]usize) []const usize {
     var count: usize = 0;
@@ -304,8 +293,8 @@ test "built-in themes partition into 6 dark and 6 light themes and derive chrome
         if (i > 0) try std.testing.expect(index > light[i - 1]);
     }
     try std.testing.expectEqual(themes.len, dark.len + light.len);
-    try std.testing.expect(themes[default_dark_index].isDark());
-    try std.testing.expect(!themes[default_light_index].isDark());
+    try std.testing.expect(themes[default_dark_index].is_dark);
+    try std.testing.expect(!themes[default_light_index].is_dark);
     const vex_dark_chrome = themes[default_dark_index].chromePalette();
     try std.testing.expect(vex_dark_chrome.is_dark);
     try std.testing.expectEqual(@as(u32, 0x0D0F14), vex_dark_chrome.pane_bg);

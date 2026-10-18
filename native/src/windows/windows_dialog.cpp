@@ -1592,7 +1592,7 @@ extern "C" uint32_t vex_dialog_first_visible() {
     return first >= 0 && (uint64_t)first <= UINT32_MAX ? (uint32_t)first : 0;
 }
 extern "C" int vex_dialog_open(VexDialogRequest request) {
-    if (!IsWindow(host.owner) || request.kind < 1 || request.kind > 6 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
+    if (!IsWindow(host.owner) || request.kind < 1 || request.kind == 3 || request.kind > 6 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
     if (!host.graphicsToken) {
         Gdiplus::GdiplusStartupInput startup;
         if (Gdiplus::GdiplusStartup(&host.graphicsToken, &startup, nullptr) != Gdiplus::Ok) {

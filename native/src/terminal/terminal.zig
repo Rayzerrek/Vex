@@ -291,10 +291,11 @@ pub const Terminal = struct {
     pub fn onProgressOsc(self: *Terminal, body: []const u8) void {
         self.program_status.applyProgressReport(body);
     }
-    /// RIS resets status and custom title after the emulator; screen switches/soft resets deliberately do not.
+    /// RIS resets status, title and mouse motion history; screen switches/soft resets deliberately do not.
     pub fn onTerminalReset(self: *Terminal) void {
         self.program_status.resetProgramStatus();
         self.title.reset();
+        self.resetMouseEncoder();
     }
     /// Borrows raw directory-report bytes only until the next feed/reset/deinit; the caller parses the URI.
     pub fn reportedDirectory(self: *const Terminal) ![]const u8 {
@@ -1877,6 +1878,21 @@ test "mouse tracking priority, partial mode reset resilience, SGR/pixel formats,
     try terminal.feedOutput("\x1b[?2026l\x1b[?2048l");
     try std.testing.expect(!try terminal.synchronizedOutput());
     try std.testing.expect(!try terminal.inBandResize());
+}
+
+test "RIS clears mouse motion deduplication before a new application tracks the same cell" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(20, 10, 10, 20);
+    var out: [64]u8 = undefined;
+    const enable = "\x1b[?1003h\x1b[?1006h";
+    try terminal.feedOutput(enable);
+    try std.testing.expectEqualStrings("\x1b[<35;2;2M", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
+    try std.testing.expectEqualStrings("", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
+    try terminal.feedOutput("\x1bc" ++ enable);
+    try std.testing.expectEqualStrings("\x1b[<35;2;2M", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
+    try std.testing.expectEqualStrings("", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
 }
 
 test "bundled ConPTY preserves erase semantics from child output through the terminal" {

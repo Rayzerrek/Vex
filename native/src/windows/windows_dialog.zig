@@ -5,7 +5,7 @@ const themes = @import("../workspace/terminal_theme.zig");
 const c = platform.c;
 
 /// Owned dialog kind; path completion deliberately remains an in-terminal popup.
-pub const DialogKind = enum(u32) { appearance = 1, commands = 2, tabs = 3, settings = 4, shell = 5, close = 6 };
+pub const DialogKind = enum(u32) { appearance = 1, commands = 2, settings = 4, shell = 5, close = 6 };
 /// Borrowed presentation strings are copied by the native dialog before showDialog returns.
 pub const DialogItem = struct {
     value: u32,

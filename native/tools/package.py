@@ -70,6 +70,7 @@ def verify_pe(path):
 def package(bin_dir, output_dir, version, label=""):
     bin_dir, output_dir = bin_dir.resolve(), output_dir.resolve()
     app_dir = output_dir / "app"
+    archive_path = output_dir / (artifact_name(version, label) + ".zip")
     if bin_dir.is_relative_to(output_dir) or output_dir.is_relative_to(bin_dir):
         raise ValueError("Build output and publish directories must not overlap")
     sources = {}
@@ -91,7 +92,6 @@ def package(bin_dir, output_dir, version, label=""):
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
 
-    archive_path = output_dir / (artifact_name(version, label) + ".zip")
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name in sorted(PAYLOAD):
             # Stable ZIP metadata keeps checksums independent of host, source mtimes and executable permissions.
