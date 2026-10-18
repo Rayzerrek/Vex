@@ -529,8 +529,8 @@ pub fn endPane() void {
     c.vex_end_pane();
 }
 /// Draws the rounded scrollback thumb overlay along the right edge of a pane.
-pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active: bool) void {
-    c.vex_draw_scrollbar(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, geometry.thumb_y, geometry.thumb_height, active);
+pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active: bool, opacity: f32) void {
+    c.vex_draw_scrollbar(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, geometry.thumb_y, geometry.thumb_height, active, opacity);
 }
 /// Draws the retained final session's exit code without writing UI text into terminal output.
 pub fn drawSessionExit(bounds: panes.PaneRect, exit_code: u32) void {

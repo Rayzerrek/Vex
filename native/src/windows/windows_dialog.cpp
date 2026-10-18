@@ -1,5 +1,6 @@
 #include "windows_dialog.h"
 #include "ui_renderer.h"
+#include "overlay_scrollbar.h"
 #include <commctrl.h>
 #include <gdiplus.h>
 #include <uxtheme.h>
@@ -183,6 +184,167 @@ bool navigateCommandList(WPARAM key) {
     if (value >= 0 && (uint64_t)value <= UINT32_MAX) notify(2, (uint32_t)value);
     return true;
 }
+struct ListOverlay {
+    OverlayScrollbarVisibility visibility;
+    bool hovered = false, dragging = false, horizontal = false, ownsCapture = false;
+    float grab = 0;
+    int unitsPerStep = 1;
+};
+constexpr UINT_PTR overlaySubclass = 8, overlayTimer = 8;
+bool overlayAnimations() {
+    BOOL enabled = TRUE;
+    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0);
+    return enabled != FALSE;
+}
+OverlayScrollbar listOverlayGeometry(HWND control, ListOverlay& state) {
+    RECT bounds; GetClientRect(control, &bounds);
+    const int count = (int)SendMessageW(control, LB_GETCOUNT, 0, 0);
+    const int row = (int)SendMessageW(control, LB_GETITEMHEIGHT, 0, 0);
+    if (row <= 0 || count <= 0) return {};
+    const int visibleRows = bounds.bottom / row;
+    if (visibleRows <= 0) return {};
+    int first = (int)SendMessageW(control, LB_GETTOPINDEX, 0, 0);
+    state.unitsPerStep = 1;
+    if (state.horizontal) {
+        RECT item;
+        if (SendMessageW(control, LB_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&item)) == LB_ERR) return {};
+        const int width = item.right - item.left;
+        if (width <= 0) return {};
+        state.unitsPerStep = visibleRows;
+        return OverlayScrollbar::compute((count + visibleRows - 1) / visibleRows, bounds.right / width,
+            first / visibleRows, (float)bounds.right, (float)px(24));
+    }
+    return OverlayScrollbar::compute(count, visibleRows, first, (float)bounds.bottom, (float)px(24));
+}
+bool listOverlayHit(HWND control, const ListOverlay& state, LPARAM point) {
+    RECT bounds; GetClientRect(control, &bounds);
+    const int x = (short)LOWORD(point), y = (short)HIWORD(point);
+    return x >= 0 && y >= 0 && x < bounds.right && y < bounds.bottom &&
+        (state.horizontal ? y >= bounds.bottom - px(14) : x >= bounds.right - px(14));
+}
+void wakeListOverlay(HWND control, ListOverlay& state) {
+    state.visibility.reveal(GetTickCount64());
+    SetTimer(control, overlayTimer, 900, nullptr);
+    InvalidateRect(control, nullptr, FALSE);
+}
+void paintListOverlay(HWND control, HDC dc, ListOverlay& state) {
+    const auto geometry = listOverlayGeometry(control, state);
+    if (!geometry.maximum) return;
+    const bool active = state.hovered || state.dragging;
+    const float opacity = state.visibility.opacity(GetTickCount64(), active, overlayAnimations());
+    if (opacity <= 0) return;
+    RECT bounds; GetClientRect(control, &bounds);
+    const float width = (float)px(active ? 5 : 3), inset = (float)px(4);
+    const float x = state.horizontal ? geometry.thumbTop : bounds.right - inset - width;
+    const float y = state.horizontal ? bounds.bottom - inset - width : geometry.thumbTop;
+    const float w = state.horizontal ? geometry.thumbHeight : width;
+    const float h = state.horizontal ? width : geometry.thumbHeight;
+    const COLORREF ink = color(host.model.palette.text_primary);
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    Gdiplus::SolidBrush brush(Gdiplus::Color((BYTE)lroundf(255 * (active ? 0.38f : 0.22f) * opacity), GetRValue(ink), GetGValue(ink), GetBValue(ink)));
+    Gdiplus::GraphicsPath path;
+    path.AddArc(x, y, width, width, 180, 90);
+    path.AddArc(x + w - width, y, width, width, 270, 90);
+    path.AddArc(x + w - width, y + h - width, width, width, 0, 90);
+    path.AddArc(x, y + h - width, width, width, 90, 90);
+    path.CloseFigure();
+    graphics.FillPath(&brush, &path);
+}
+LRESULT CALLBACK listOverlayInput(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) {
+    auto& state = *reinterpret_cast<ListOverlay*>(data);
+    if (message == WM_NCDESTROY) {
+        KillTimer(control, overlayTimer);
+        RemoveWindowSubclass(control, listOverlayInput, overlaySubclass);
+        HeapFree(GetProcessHeap(), 0, &state);
+        return DefSubclassProc(control, message, wparam, lparam);
+    }
+    if (message == WM_STYLECHANGING && wparam == (WPARAM)GWL_STYLE)
+        reinterpret_cast<STYLESTRUCT*>(lparam)->styleNew &= ~(WS_VSCROLL | WS_HSCROLL);
+    // LISTBOX can re-enable scroll styles internally when its range changes.
+    // Keep the entire window client-owned even when Win32 updates that range.
+    if (message == WM_NCCALCSIZE || message == WM_NCPAINT) return 0;
+    if (message == WM_NCHITTEST) return HTCLIENT;
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint;
+        HDC dc = BeginPaint(control, &paint);
+        if (dc) {
+            DialogPaintBuffer buffer(dc, paint.rcPaint);
+            FillRect(buffer.dc, &paint.rcPaint, host.background);
+            DefSubclassProc(control, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(buffer.dc), PRF_CLIENT);
+            paintListOverlay(control, buffer.dc, state);
+        }
+        EndPaint(control, &paint);
+        return 0;
+    }
+    if (message == WM_TIMER && wparam == overlayTimer) {
+        const float opacity = state.visibility.opacity(GetTickCount64(), state.hovered || state.dragging, overlayAnimations());
+        KillTimer(control, overlayTimer);
+        if (opacity > 0 && !state.hovered && !state.dragging) SetTimer(control, overlayTimer, 16, nullptr);
+        InvalidateRect(control, nullptr, FALSE);
+        return 0;
+    }
+    if (message == WM_MOUSEMOVE) {
+        const bool hovered = listOverlayGeometry(control, state).maximum && listOverlayHit(control, state, lparam);
+        if (hovered != state.hovered) {
+            state.hovered = hovered;
+            wakeListOverlay(control, state);
+        }
+        TRACKMOUSEEVENT tracking = { sizeof(tracking), TME_LEAVE, control, 0 };
+        TrackMouseEvent(&tracking);
+        if (state.dragging) {
+            const auto geometry = listOverlayGeometry(control, state);
+            const float point = (float)(state.horizontal ? (short)LOWORD(lparam) : (short)HIWORD(lparam));
+            SendMessageW(control, LB_SETTOPINDEX, geometry.target(point, state.grab) * state.unitsPerStep, 0);
+            wakeListOverlay(control, state);
+            return 0;
+        }
+    }
+    if (message == WM_MOUSELEAVE && state.hovered) {
+        state.hovered = false;
+        wakeListOverlay(control, state);
+    }
+    if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) {
+        const auto geometry = listOverlayGeometry(control, state);
+        if (geometry.maximum && listOverlayHit(control, state, lparam)) {
+            const float point = (float)(state.horizontal ? (short)LOWORD(lparam) : (short)HIWORD(lparam));
+            state.grab = point >= geometry.thumbTop && point <= geometry.thumbTop + geometry.thumbHeight ? point - geometry.thumbTop : geometry.thumbHeight / 2;
+            state.dragging = true;
+            // Combo drop-downs already own capture; do not close them on thumb release.
+            state.ownsCapture = GetCapture() != control;
+            SetCapture(control);
+            SendMessageW(control, LB_SETTOPINDEX, geometry.target(point, state.grab) * state.unitsPerStep, 0);
+            wakeListOverlay(control, state);
+            return 0;
+        }
+    }
+    if (message == WM_LBUTTONUP && state.dragging) {
+        state.dragging = false;
+        if (state.ownsCapture && GetCapture() == control) ReleaseCapture();
+        wakeListOverlay(control, state);
+        return 0;
+    }
+    if ((message == WM_CAPTURECHANGED || message == WM_CANCELMODE) && state.dragging) {
+        state.dragging = false;
+        wakeListOverlay(control, state);
+    }
+    const bool scroll = message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL || message == WM_KEYDOWN ||
+        message == LB_SETTOPINDEX || message == LB_SETCURSEL || message == WM_VSCROLL || message == WM_HSCROLL;
+    const LRESULT before = scroll ? SendMessageW(control, LB_GETTOPINDEX, 0, 0) : 0;
+    LRESULT result = DefSubclassProc(control, message, wparam, lparam);
+    if (scroll && before != SendMessageW(control, LB_GETTOPINDEX, 0, 0)) wakeListOverlay(control, state);
+    return result;
+}
+bool installListOverlay(HWND control, bool horizontal) {
+    auto* state = static_cast<ListOverlay*>(HeapAlloc(GetProcessHeap(), 0, sizeof(ListOverlay)));
+    if (!state) return false;
+    *state = {};
+    state->horizontal = horizontal;
+    if (!SetWindowSubclass(control, listOverlayInput, overlaySubclass, reinterpret_cast<DWORD_PTR>(state))) { HeapFree(GetProcessHeap(), 0, state); return false; }
+    SetWindowLongPtrW(control, GWL_STYLE, GetWindowLongPtrW(control, GWL_STYLE) & ~(WS_VSCROLL | WS_HSCROLL));
+    SetWindowPos(control, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    return true;
+}
 LRESULT CALLBACK dialogControlInput(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
     if (message == WM_ERASEBKGND) return 1;
     if (message == WM_PAINT) {
@@ -263,19 +425,28 @@ LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARA
         SendMessageW(control, EM_SETSEL, 0, -1);
         return 0;
     }
-    LRESULT result = DefSubclassProc(control, message, wparam, lparam);
-    if ((message == WM_PAINT || message == WM_PRINT || message == WM_PRINTCLIENT) && GetDlgCtrlID(control) == queryId && !GetWindowTextLengthW(control)) {
-        HDC dc = message == WM_PAINT ? GetDC(control) : reinterpret_cast<HDC>(wparam);
+    if (message == WM_PAINT && GetDlgCtrlID(control) == queryId) {
+        // Paint text and cue in one pass; drawing over a visible XOR caret leaves artifacts.
+        const bool focused = GetFocus() == control;
+        if (focused) HideCaret(control);
+        PAINTSTRUCT paint;
+        HDC dc = BeginPaint(control, &paint);
         if (dc) {
-            RECT bounds; GetClientRect(control, &bounds);
-            const int saved = SaveDC(dc);
-            SelectObject(dc, host.font); SetBkMode(dc, TRANSPARENT); SetTextColor(dc, color(host.model.palette.text_muted));
-            DrawTextW(dc, L"Search commands...", -1, &bounds, DT_SINGLELINE | DT_NOPREFIX);
-            if (saved) RestoreDC(dc, saved);
-            if (message == WM_PAINT) ReleaseDC(control, dc);
+            DialogPaintBuffer buffer(dc, paint.rcPaint);
+            DefSubclassProc(control, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(buffer.dc), PRF_CLIENT);
+            if (!GetWindowTextLengthW(control)) {
+                RECT bounds; SendMessageW(control, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&bounds));
+                bounds.left += px(3);
+                SelectObject(buffer.dc, host.font); SetBkMode(buffer.dc, TRANSPARENT);
+                SetTextColor(buffer.dc, color(host.model.palette.text_muted));
+                DrawTextW(buffer.dc, L"Search commands...", -1, &bounds, DT_SINGLELINE | DT_NOPREFIX);
+            }
         }
+        EndPaint(control, &paint);
+        if (focused) ShowCaret(control);
+        return 0;
     }
-    return result;
+    return DefSubclassProc(control, message, wparam, lparam);
 }
 HWND control(const wchar_t* klass, const wchar_t* text, DWORD style, int id, float x, float y, float width, float height) {
     if (host.controlCount >= 40) return nullptr;
@@ -286,7 +457,10 @@ HWND control(const wchar_t* klass, const wchar_t* text, DWORD style, int id, flo
     if ((wcscmp(klass, L"LISTBOX") == 0 || wcscmp(klass, L"BUTTON") == 0) && !SetWindowSubclass(result, dialogControlInput, 1, 0)) { DestroyWindow(result); return nullptr; }
     if (wcscmp(klass, L"LISTBOX") == 0 || wcscmp(klass, L"COMBOBOX") == 0)
         SetWindowTheme(result, host.model.palette.is_dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    if (wcscmp(klass, L"LISTBOX") == 0 && !installListOverlay(result, (style & LBS_MULTICOLUMN) != 0)) { DestroyWindow(result); return nullptr; }
     if (wcscmp(klass, L"COMBOBOX") == 0) {
+        COMBOBOXINFO info = {}; info.cbSize = sizeof(info);
+        if (!GetComboBoxInfo(result, &info) || !installListOverlay(info.hwndList, false)) { DestroyWindow(result); return nullptr; }
         if (!SetWindowSubclass(result, themedCombo, 1, 0)) { DestroyWindow(result); return nullptr; }
         SendMessageW(result, CB_SETITEMHEIGHT, (WPARAM)-1, px(30));
         SendMessageW(result, CB_SETITEMHEIGHT, 0, px(30));
@@ -758,7 +932,7 @@ bool createControls(float width, float height) {
             ok = edit && ok;
             if (edit) {
                 SendMessageW(edit, EM_SETLIMITTEXT, 128, 0);
-                SendMessageW(edit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Search commands..."));
+                SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(px(2), px(2)));
             }
             top = 62;
         }

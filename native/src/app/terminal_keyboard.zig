@@ -79,6 +79,7 @@ pub fn onKey(self: *Application, key: u32, modifiers: u32) bool {
 
 fn handleSessionKey(self: *Application, session: *TerminalSession, key: u32, modifiers: u32) !bool {
     if (try session.terminal.scrollViewportShortcut(key, modifiers)) {
+        session.scrollbar_visibility.reveal(self.cursorNowMs());
         platform.invalidateWindow();
         return true;
     }

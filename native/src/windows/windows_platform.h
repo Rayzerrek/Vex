@@ -120,7 +120,7 @@ bool vex_pty_exists(uint32_t token);
 void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool editing, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention);
 void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status);
 void vex_end_pane(void);
-void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active);
+void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity);
 void vex_draw_session_exit(VexPaneRect bounds, uint32_t exit_code);
 void vex_draw_split_preview(VexPaneRect bounds);
 void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, uint32_t flags);

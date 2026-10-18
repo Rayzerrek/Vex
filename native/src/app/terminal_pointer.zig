@@ -81,11 +81,13 @@ fn handleScroll(self: *Application, delta: i32, x: f32, y: f32, modifiers: u32) 
             }
         }
         session.terminal.scroll(delta);
+        session.scrollbar_visibility.reveal(self.cursorNowMs());
         platform.invalidateWindow();
         return;
     };
     const session = self.activeSession() orelse return;
     session.terminal.scroll(delta);
+    session.scrollbar_visibility.reveal(self.cursorNowMs());
     platform.invalidateWindow();
 }
 
@@ -315,6 +317,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                         if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
                             if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
                                 if (sb.containsPoint(placement.bounds, x, y)) {
+                                    session.scrollbar_visibility.reveal(self.cursorNowMs());
                                     _ = model.focusPane(placement.id);
                                     try self.clearOtherSelections(placement.id);
                                     if (sb.containsThumb(y)) {
@@ -451,6 +454,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                         if (self.findSession(sb_drag.pane_id)) |session| {
                             if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
                                 try session.terminal.scrollToRow(sb.targetOffsetForY(y, sb_drag.grab_offset));
+                                session.scrollbar_visibility.reveal(self.cursorNowMs());
                                 platform.invalidateWindow();
                             }
                         }

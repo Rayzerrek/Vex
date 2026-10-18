@@ -34,6 +34,7 @@ test {
     _ = @import("workspace/divider_drag.zig");
     _ = @import("workspace/cursor_blink.zig");
     _ = @import("workspace/status_pulse.zig");
+    _ = @import("workspace/scrollbar_visibility.zig");
     _ = @import("workspace/tab_strip.zig");
     _ = @import("workspace/tab_drag.zig");
     _ = @import("workspace/terminal_theme.zig");

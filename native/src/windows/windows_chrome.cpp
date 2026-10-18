@@ -388,17 +388,14 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
     labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4.0f, fmaxf(0, remainingWidth - titleInset - 12), focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont);
     beginTerminalPane(bounds);
 }
-extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active) {
-    if (!isfinite(thumb_y) || !isfinite(thumb_height) || thumb_height <= 0.0f || bounds.width < 24.0f) return;
-    const float width = active ? 6.0f : 3.0f;
+extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity) {
+    if (!isfinite(thumb_y) || !isfinite(thumb_height) || !isfinite(opacity) || opacity <= 0.0f || thumb_height <= 0.0f || bounds.width < 24.0f) return;
+    const float width = active ? 5.0f : 3.0f;
     const float right = bounds.x + bounds.width - 4.0f;
     const float left = right - width;
     const float radius = width * 0.5f;
-    if (active) {
-        brush->SetColor(rgb(chromePalette.text_primary, 0.045f));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(right - 8, bounds.y + 30, right + 2, bounds.y + bounds.height - 6), 5, 5), brush);
-    }
-    brush->SetColor(rgb(chromePalette.text_primary, active ? 0.48f : 0.20f));
+    // A translucent thumb borrows the pane's palette without painting a separate rail.
+    brush->SetColor(rgb(chromePalette.text_primary, (active ? 0.38f : 0.22f) * fminf(opacity, 1.0f)));
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, thumb_y, right, thumb_y + thumb_height), radius, radius), brush);
 }
 extern "C" void vex_draw_session_exit(VexPaneRect bounds, uint32_t exit_code) {

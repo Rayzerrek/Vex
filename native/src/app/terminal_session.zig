@@ -23,6 +23,7 @@ pub const TerminalSession = struct {
     size: ?platform.TerminalSize = null,
     state: SessionState = .running,
     needs_attention: bool = false,
+    scrollbar_visibility: @import("../workspace/scrollbar_visibility.zig").ScrollbarVisibility = .{},
     sync_defer_since_ms: ?i64 = null,
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
     process_icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,

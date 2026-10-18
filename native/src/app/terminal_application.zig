@@ -158,7 +158,7 @@ pub const TerminalApplication = struct {
         self.health = .{ .failed = err };
         platform.closeWindow();
     }
-    fn cursorNowMs(self: *TerminalApplication) u64 {
+    pub fn cursorNowMs(self: *TerminalApplication) u64 {
         return self.cursor_clock.read() / std.time.ns_per_ms;
     }
     fn cursorBlinkEligible(self: *TerminalApplication) bool {
@@ -189,7 +189,12 @@ pub const TerminalApplication = struct {
         self.status_pulse.synchronize(self.anyAnimatedStatus(), now);
         const blink_delay = self.cursor_blink.nextDelayMs(now);
         const pulse_delay = self.status_pulse.nextDelayMs(now);
-        const delay: ?u32 = if (blink_delay) |bd| (if (pulse_delay) |pd| @min(bd, pd) else bd) else pulse_delay;
+        var delay: ?u32 = if (blink_delay) |bd| (if (pulse_delay) |pd| @min(bd, pd) else bd) else pulse_delay;
+        for (self.placements.items) |placement| {
+            const session = self.findSession(placement.id) orelse continue;
+            if (session.scrollbar_visibility.nextDelayMs(now, self.scrollbarActive(placement.id))) |sd|
+                delay = if (delay) |d| @min(d, sd) else sd;
+        }
         try platform.scheduleCursorWake(delay);
     }
     pub fn resetCursorOnInput(self: *TerminalApplication) !void {
@@ -217,8 +222,16 @@ pub const TerminalApplication = struct {
             self.cursor_blink.synchronize(null, now);
         }
         if (self.status_pulse.advance(now)) repaint = true;
+        for (self.placements.items) |placement| {
+            const session = self.findSession(placement.id) orelse continue;
+            if (session.scrollbar_visibility.hide_at != null and !self.scrollbarActive(placement.id)) repaint = true;
+        }
         if (repaint) platform.invalidateWindow();
         self.syncAnimationWake() catch |err| self.fail(err);
+    }
+    fn scrollbarActive(self: *const TerminalApplication, id: panes.PaneId) bool {
+        return self.overlay == .none and (self.hovered_scrollbar == id or
+            (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == id));
     }
     pub fn currentTheme(self: *const TerminalApplication) terminal_theme.TerminalTheme {
         return terminal_theme.themes[@min(self.theme_index, terminal_theme.themes.len - 1)];
@@ -616,9 +629,11 @@ pub const TerminalApplication = struct {
                 try platform.drawTerminalFrame(placement.id, frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
             }
             const scrollbar = try session.terminal.scrollbar();
-            if (platform.ScrollbarGeometry.compute(placement.bounds, scrollbar)) |sb| {
-                const sb_active = self.hovered_scrollbar == placement.id or (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id);
-                platform.drawScrollbar(placement.bounds, sb, sb_active);
+            const geometry = platform.ScrollbarGeometry.compute(placement.bounds, scrollbar);
+            const sb_active = self.scrollbarActive(placement.id);
+            const opacity = session.scrollbar_visibility.opacity(self.cursorNowMs(), geometry != null, sb_active, platform.animationsEnabled());
+            if (geometry) |sb| {
+                if (opacity > 0) platform.drawScrollbar(placement.bounds, sb, sb_active, opacity);
             }
             if (session.state == .exited and scrollbar.offset == scrollbar.scrollable())
                 platform.drawSessionExit(placement.bounds, session.state.exited);
