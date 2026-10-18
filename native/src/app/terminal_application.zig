@@ -13,6 +13,7 @@ const tab_strip = @import("../workspace/tab_strip.zig");
 const app_icon = @import("../terminal/app_icon.zig");
 const terminal_theme = @import("../workspace/terminal_theme.zig");
 const path_completion = @import("../terminal/path_completion.zig");
+const completion_popup = @import("../workspace/completion_popup.zig");
 const PathIndex = @import("../terminal/path_index.zig").PathIndex;
 const close_confirmation = @import("../workspace/close_confirmation.zig");
 const cursor_blink = @import("../workspace/cursor_blink.zig");
@@ -71,6 +72,8 @@ pub const TerminalApplication = struct {
     hovered_pane: ?panes.PaneId = null,
     hovered_header_action: ?panes.PaneHeaderAction = null,
     hovered_scrollbar: ?panes.PaneId = null,
+    zoom_wheel: @import("../workspace/wheel_scroll.zig").WheelScroll = .{},
+    completion_wheel: @import("../workspace/wheel_scroll.zig").WheelScroll = .{},
     hovered_link: ?pointer.HoveredLink = null,
     reported_mouse_pane: ?panes.PaneId = null,
     reported_mouse_buttons: u8 = 0,
@@ -629,7 +632,13 @@ pub const TerminalApplication = struct {
                 try platform.drawTerminalFrame(placement.id, frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
             }
             const scrollbar = try session.terminal.scrollbar();
-            const geometry = platform.ScrollbarGeometry.compute(placement.bounds, scrollbar);
+            var geometry = platform.ScrollbarGeometry.compute(placement.bounds, scrollbar);
+            if (geometry) |*sb| {
+                if (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id) {
+                    const drag = self.pointer_drag.scrollbar;
+                    sb.thumb_y = sb.thumbTopForY(drag.pointer_y, drag.grab_offset);
+                }
+            }
             const sb_active = self.scrollbarActive(placement.id);
             const opacity = session.scrollbar_visibility.opacity(self.cursorNowMs(), geometry != null, sb_active, platform.animationsEnabled());
             if (geometry) |sb| {
@@ -735,28 +744,12 @@ pub const TerminalApplication = struct {
         }
         try self.updateLayout();
     }
-    pub fn pathCompletionPopupBounds(self: *TerminalApplication, pane_id: panes.PaneId) !?panes.PaneRect {
+    pub fn pathCompletionPopup(self: *TerminalApplication) ?completion_popup.Layout {
+        if (self.overlay != .path_completion) return null;
         const metrics = self.metrics orelse return null;
-        const placement = self.findPlacement(pane_id) orelse return null;
-        const session = self.findSession(pane_id) orelse return null;
-        const frame = try session.terminal.readFrame();
-        const total = self.path_completion.matches.items.len;
-        const start = @min(self.path_completion.first_visible, total);
-        const visible = @min(total - start, 8);
-        const mw = @min(@as(f32, 420.0), @max(@as(f32, 260.0), metrics.width - 24.0));
-        const mh = 56.0 + @as(f32, @floatFromInt(@max(visible, 1))) * 26.0 + 34.0;
-        const cursor_col: f32 = if (frame.cursor.visible and frame.cursor.column < frame.columns) @floatFromInt(frame.cursor.column) else 0.0;
-        const cursor_row: f32 = if (frame.cursor.visible and frame.cursor.row < frame.rows) @floatFromInt(frame.cursor.row) else 0.0;
-        const anchor_x = placement.bounds.x + 6.0 + cursor_col * metrics.cell_width;
-        const cursor_top = placement.bounds.y + 30.0 + cursor_row * metrics.cell_height;
-        const cursor_bottom = cursor_top + metrics.cell_height;
-        const mx = @round(std.math.clamp(anchor_x, 8.0, @max(8.0, metrics.width - mw - 8.0)));
-        const my_below = cursor_bottom + 4.0;
-        const my = @round(if (my_below + mh > metrics.height - 8.0 and cursor_top - mh - 4.0 >= 46.0)
-            cursor_top - mh - 4.0
-        else
-            std.math.clamp(my_below, 46.0, @max(46.0, metrics.height - mh - 8.0)));
-        return .{ .x = mx, .y = my, .width = mw, .height = mh };
+        const state = self.overlay.path_completion;
+        const placement = self.findPlacement(state.pane_id) orelse return null;
+        return completion_popup.compute(.{ .x = 0, .y = 0, .width = metrics.width, .height = metrics.height }, placement.bounds, metrics.cell_width, metrics.cell_height, state.anchor);
     }
     fn openPathCompletion(self: *TerminalApplication) !void {
         self.commitTabRename();
@@ -764,13 +757,21 @@ pub const TerminalApplication = struct {
         const pane_id = model.activeTab().active_pane;
         const session = self.findSession(pane_id) orelse return;
         if (session.state != .running) return;
+        const frame = try session.terminal.readFrame();
+        const anchor: ?completion_popup.Anchor = if (frame.cursor.visible and frame.cursor.column < frame.columns and frame.cursor.row < frame.rows)
+            .{ .column = frame.cursor.caretColumn(), .row = frame.cursor.row }
+        else
+            null;
+        const metrics = self.metrics orelse return;
+        const placement = self.findPlacement(pane_id) orelse return;
+        if (completion_popup.compute(.{ .x = 0, .y = 0, .width = metrics.width, .height = metrics.height }, placement.bounds, metrics.cell_width, metrics.cell_height, anchor) == null) return;
         // Only parsed OSC 7/launch metadata selects a directory; terminal text is not a trusted prompt.
         const dir = session.directory.current().bytes;
         if (self.path_completion.index == .synchronous) self.path_completion.index = .{ .deferred = .{} };
         self.path_completion.recursive = true;
         try self.path_completion.openDirectory(dir, "");
         try self.syncPathIndex();
-        self.overlay = .{ .path_completion = .{ .pane_id = pane_id } };
+        self.overlay = .{ .path_completion = .{ .pane_id = pane_id, .anchor = anchor } };
         platform.invalidateWindow();
     }
     pub fn syncPathIndex(self: *TerminalApplication) !void {

@@ -29,6 +29,38 @@ pub fn onProbe(self: *Application, query: u32) u64 {
         103 => return if (self.overlay == .command_palette) self.overlay.command_palette.query_len else 0,
         104 => return @intFromBool(self.path_completion.index == .deferred and self.path_completion.index.deferred.loading),
         105 => return self.path_completion.entries.items.len,
+        110...113 => {
+            const popup = self.pathCompletionPopup() orelse return 0;
+            const value = switch (query) {
+                110 => popup.bounds.x,
+                111 => popup.bounds.y,
+                112 => popup.bounds.width,
+                else => popup.bounds.height,
+            };
+            return @intFromFloat(@round(value * 1000));
+        },
+        114 => return if (self.pathCompletionPopup()) |popup| popup.visible_rows else 0,
+        115 => return @intFromBool(self.overlay == .path_completion and self.overlay.path_completion.anchor != null),
+        116...123 => {
+            const session = self.activeSession() orelse return 0;
+            const info = session.terminal.scrollbar() catch return 0;
+            if (query == 116) return info.offset;
+            if (query == 117) return info.scrollable();
+            if (query == 118) return info.len;
+            const placement = self.findPlacement(session.id) orelse return 0;
+            const geometry = platform.ScrollbarGeometry.compute(placement.bounds, info) orelse return 0;
+            const value = switch (query) {
+                119 => geometry.thumb_y,
+                120 => geometry.thumb_height,
+                121 => geometry.track_top,
+                122 => geometry.track_height,
+                else => if (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == session.id)
+                    geometry.thumbTopForY(self.pointer_drag.scrollbar.pointer_y, self.pointer_drag.scrollbar.grab_offset)
+                else
+                    geometry.thumb_y,
+            };
+            return @intFromFloat(@round(value * 1000));
+        },
         107 => return if (self.activeSession()) |session| @intFromEnum(session.terminal.program_status.shellActivityState()) else 0,
         108 => return if (model.tabs.items.len > 1) if (self.findSession(model.tabs.items[1].active_pane)) |session| session.terminal.title.generation else 0 else 0,
         109 => return if (self.activeSession()) |session| session.terminal.title.generation else 0,

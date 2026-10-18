@@ -1,6 +1,8 @@
 #include "windows_dialog.h"
 #include "ui_renderer.h"
 #include "overlay_scrollbar.h"
+#include "dialog_motion.h"
+#include "pixel_scroll.h"
 #include <commctrl.h>
 #include <gdiplus.h>
 #include <uxtheme.h>
@@ -46,7 +48,9 @@ struct DialogHost {
     uint64_t themeCardPaintCount = 0, dialogPaintCount = 0, surfacePaintCount = 0;
     enum class Phase { closed, creating, active, closing } phase = Phase::closed;
     bool synchronizing = false;
-    ULONGLONG revealStarted = 0;
+    DialogMotion motion;
+    uint32_t pendingEvent = 0, pendingValue = 0;
+    bool layered = false, layoutReady = false;
     SettingsPage page = SettingsPage::general;
     VexUserSettings draft = {};
     float scale = 1, width = 600, height = 470, baseWidth = 600, baseHeight = 470;
@@ -90,14 +94,16 @@ COLORREF blend(COLORREF a, COLORREF b, float amount) {
 COLORREF surfaceColor() { return blend(color(host.model.palette.pane_bg), color(host.model.palette.text_primary), host.model.palette.is_dark ? 0.045f : 0.015f); }
 COLORREF fieldColor() { return blend(surfaceColor(), color(host.model.palette.text_primary), 0.055f); }
 COLORREF selectionColor() { return blend(surfaceColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.44f : 0.20f); }
-int listRowHeight() { return host.model.kind == 2 ? 34 : 58; }
+int listRowHeight() { return host.model.kind == 2 ? 32 : 58; }
 int themeRowHeight() {
-    const float available = host.model.kind == 4 ? host.height - (host.height < 430 ? 198 : 246) : host.height - 170;
+    const float available = (host.model.kind == 4 ? host.height - (host.height < 430 ? 198 : 246) : host.height - 170) - 16;
     return (int)fmaxf(104, floorf(available / 2));
 }
 int themeColumnWidth() { return (int)floorf((host.width - 32) / 3); }
 void roundedFill(HDC dc, RECT bounds, COLORREF fill, COLORREF border, int radius);
 void acceptDialog();
+void drawListItem(const DRAWITEMSTRUCT& draw);
+void drawComboItem(const DRAWITEMSTRUCT& draw);
 void drawSymbol(HDC dc, const wchar_t* symbol, RECT bounds, COLORREF ink) {
     HGDIOBJ old = SelectObject(dc, host.symbols);
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, ink);
@@ -142,18 +148,21 @@ void notify(uint32_t event, uint32_t value = 0, const uint8_t* text = nullptr, s
     if (host.callbacks.dialog) host.callbacks.dialog(host.callbacks.context, event, value, text, length, settings);
 }
 void closeDialog(bool restoreFocus) {
-    if (host.phase == DialogHost::Phase::closed || host.phase == DialogHost::Phase::closing) return;
+    if (host.phase == DialogHost::Phase::closed) return;
     host.phase = DialogHost::Phase::closing;
     HWND dialog = host.window;
     if (IsWindow(dialog)) KillTimer(dialog, 7);
-    host.revealStarted = 0;
+    host.motion = {};
+    host.layered = false;
     host.window = nullptr;
+    // Destroying the active popup while its owner is disabled can activate another app.
+    if (IsWindow(host.owner)) EnableWindow(host.owner, TRUE);
     if (IsWindow(dialog)) DestroyWindow(dialog);
     releasePaint();
     host.phase = DialogHost::Phase::closed;
     host.controlCount = 0;
     if (IsWindow(host.owner)) {
-        EnableWindow(host.owner, TRUE);
+        vex_window_invalidate();
         if (restoreFocus) {
             SetActiveWindow(host.owner);
             SetFocus(IsWindow(host.previousFocus) ? host.previousFocus : host.owner);
@@ -161,6 +170,16 @@ void closeDialog(bool restoreFocus) {
     }
 }
 void finish(uint32_t event, uint32_t value = 0) {
+    if (host.phase != DialogHost::Phase::active) return;
+    // Dispatch commands immediately; a closing animation must never delay an action or the next picker.
+    if (event == 0 && host.model.kind != 2 && host.layered && vex_window_animations_enabled()) {
+        host.pendingEvent = event; host.pendingValue = value;
+        host.phase = DialogHost::Phase::closing;
+        host.motion.start(0, GetTickCount64(), true);
+        if (SetTimer(host.window, 7, 16, nullptr)) return;
+    }
+    // Timer failure and reduced motion must have the same completion semantics.
+    host.phase = DialogHost::Phase::active;
     closeDialog(true);
     notify(event, value);
 }
@@ -173,12 +192,15 @@ bool navigateCommandList(WPARAM key) {
     if (count <= 0) return true;
     LRESULT selected = SendMessageW(list, LB_GETCURSEL, 0, 0);
     if (selected < 0) selected = 0;
+    RECT viewport; GetClientRect(list, &viewport);
+    const int rowHeight = (int)SendMessageW(list, LB_GETITEMHEIGHT, 0, 0);
+    const LRESULT pageRows = rowHeight > 0 ? (viewport.bottom / rowHeight > 0 ? viewport.bottom / rowHeight : 1) : 1;
     if (key == VK_UP) selected = selected == 0 ? count - 1 : selected - 1;
     else if (key == VK_DOWN) selected = selected + 1 == count ? 0 : selected + 1;
     else if (key == VK_HOME) selected = 0;
     else if (key == VK_END) selected = count - 1;
-    else if (key == VK_PRIOR) selected = selected > 8 ? selected - 8 : 0;
-    else selected = selected + 8 < count ? selected + 8 : count - 1;
+    else if (key == VK_PRIOR) selected = selected > pageRows ? selected - pageRows : 0;
+    else selected = selected + pageRows < count ? selected + pageRows : count - 1;
     SendMessageW(list, LB_SETCURSEL, selected, 0);
     LRESULT value = SendMessageW(list, LB_GETITEMDATA, selected, 0);
     if (value >= 0 && (uint64_t)value <= UINT32_MAX) notify(2, (uint32_t)value);
@@ -186,10 +208,61 @@ bool navigateCommandList(WPARAM key) {
 }
 struct ListOverlay {
     OverlayScrollbarVisibility visibility;
-    bool hovered = false, dragging = false, horizontal = false, ownsCapture = false;
+    PixelScroll scroll;
+    HWND combo = nullptr;
+    bool hovered = false, dragging = false, horizontal = false, ownsCapture = false, pointerInput = false, releasingCapture = false;
     float grab = 0;
-    int unitsPerStep = 1;
+    int unitsPerStep = 1, pixelsPerStep = 1;
+    unsigned nativeUpdateDepth = 0;
+    bool redrawEnabled = true, nativeDirty = false;
 };
+constexpr int listGutter = 16;
+
+void setNativeListRedraw(HWND control, bool enabled) {
+    const LONG_PTR visible = GetWindowLongPtrW(control, GWL_STYLE) & WS_VISIBLE;
+    DefSubclassProc(control, WM_SETREDRAW, enabled, 0);
+    // WM_SETREDRAW changes WS_VISIBLE. Preserve logical visibility for page/layout callbacks.
+    const LONG_PTR style = GetWindowLongPtrW(control, GWL_STYLE);
+    if ((style & WS_VISIBLE) != visible) SetWindowLongPtrW(control, GWL_STYLE, (style & ~WS_VISIBLE) | visible);
+}
+void invalidateListContent(HWND control, ListOverlay& state) {
+    state.nativeDirty = true;
+    if (state.redrawEnabled && !state.nativeUpdateDepth) {
+        InvalidateRect(control, nullptr, FALSE);
+        state.nativeDirty = false;
+    }
+}
+bool nativeListMutation(UINT message) {
+    switch (message) {
+    case LB_SETCURSEL: case LB_SETTOPINDEX: case LB_RESETCONTENT: case LB_ADDSTRING:
+    case LB_INSERTSTRING: case LB_DELETESTRING: case LB_SETITEMDATA: case LB_SETITEMHEIGHT: case LB_SETCOLUMNWIDTH:
+    case WM_KEYDOWN: case WM_CHAR: case WM_SETFOCUS: case WM_KILLFOCUS: case WM_SETFONT:
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK: case WM_MOUSEMOVE: case WM_MOUSELEAVE:
+    case WM_VSCROLL: case WM_HSCROLL: case WM_TIMER: case WM_SIZE: case WM_WINDOWPOSCHANGED:
+    case WM_SHOWWINDOW: case WM_ENABLE: case WM_CAPTURECHANGED: case WM_CANCELMODE: return true;
+    default: return false;
+    }
+}
+LRESULT nativeListMessage(HWND control, ListOverlay& state, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (!nativeListMutation(message)) return DefSubclassProc(control, message, wparam, lparam);
+    const auto identity = reinterpret_cast<HANDLE>(&state);
+    const LRESULT selected = DefSubclassProc(control, LB_GETCURSEL, 0, 0);
+    const LRESULT first = DefSubclassProc(control, LB_GETTOPINDEX, 0, 0);
+    if (state.nativeUpdateDepth++ == 0 && state.redrawEnabled) setNativeListRedraw(control, false);
+    // Native LISTBOX still owns selection/keyboard/accessibility, never pixels or ScrollWindow blits.
+    const LRESULT result = DefSubclassProc(control, message, wparam, lparam);
+    if (GetPropW(control, L"VexListOverlay") != identity) return result;
+    const bool pointerOrKey = message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_LBUTTONDOWN ||
+        message == WM_LBUTTONUP || message == WM_LBUTTONDBLCLK || message == WM_KEYDOWN || message == WM_CHAR ||
+        message == LB_SETCURSEL || message == LB_SETTOPINDEX || message == WM_TIMER;
+    state.nativeDirty |= !pointerOrKey || selected != DefSubclassProc(control, LB_GETCURSEL, 0, 0) ||
+        first != DefSubclassProc(control, LB_GETTOPINDEX, 0, 0);
+    if (--state.nativeUpdateDepth == 0 && state.redrawEnabled) {
+        setNativeListRedraw(control, true);
+        if (state.nativeDirty) invalidateListContent(control, state);
+    }
+    return result;
+}
 constexpr UINT_PTR overlaySubclass = 8, overlayTimer = 8;
 bool overlayAnimations() {
     BOOL enabled = TRUE;
@@ -200,31 +273,36 @@ OverlayScrollbar listOverlayGeometry(HWND control, ListOverlay& state) {
     RECT bounds; GetClientRect(control, &bounds);
     const int count = (int)SendMessageW(control, LB_GETCOUNT, 0, 0);
     const int row = (int)SendMessageW(control, LB_GETITEMHEIGHT, 0, 0);
-    if (row <= 0 || count <= 0) return {};
-    const int visibleRows = bounds.bottom / row;
-    if (visibleRows <= 0) return {};
-    int first = (int)SendMessageW(control, LB_GETTOPINDEX, 0, 0);
-    state.unitsPerStep = 1;
+    if (row <= 0 || count <= 0 || bounds.bottom <= 0 || bounds.right <= 0) {
+        state.scroll.range(0, GetTickCount64()); return {};
+    }
+    int extent = count * row, viewport = bounds.bottom;
+    state.unitsPerStep = 1; state.pixelsPerStep = row;
     if (state.horizontal) {
         RECT item;
         if (SendMessageW(control, LB_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&item)) == LB_ERR) return {};
         const int width = item.right - item.left;
         if (width <= 0) return {};
-        state.unitsPerStep = visibleRows;
-        return OverlayScrollbar::compute((count + visibleRows - 1) / visibleRows, bounds.right / width,
-            first / visibleRows, (float)bounds.right, (float)px(24));
+        state.unitsPerStep = bounds.bottom / row > 0 ? bounds.bottom / row : 1;
+        state.pixelsPerStep = width;
+        extent = ((count + state.unitsPerStep - 1) / state.unitsPerStep) * width;
+        viewport = bounds.right;
     }
-    return OverlayScrollbar::compute(count, visibleRows, first, (float)bounds.bottom, (float)px(24));
+    const auto now = GetTickCount64();
+    state.scroll.range((float)(extent - viewport), now);
+    auto geometry = OverlayScrollbar::compute(extent, viewport, 0, (float)viewport, (float)px(24));
+    if (geometry.maximum) geometry.thumbTop = (geometry.height - geometry.thumbHeight) * state.scroll.sample(now) / geometry.maximum;
+    return geometry;
 }
 bool listOverlayHit(HWND control, const ListOverlay& state, LPARAM point) {
     RECT bounds; GetClientRect(control, &bounds);
     const int x = (short)LOWORD(point), y = (short)HIWORD(point);
     return x >= 0 && y >= 0 && x < bounds.right && y < bounds.bottom &&
-        (state.horizontal ? y >= bounds.bottom - px(14) : x >= bounds.right - px(14));
+        (state.horizontal ? y >= bounds.bottom - px(listGutter) : x >= bounds.right - px(listGutter));
 }
 void wakeListOverlay(HWND control, ListOverlay& state) {
     state.visibility.reveal(GetTickCount64());
-    SetTimer(control, overlayTimer, 900, nullptr);
+    SetTimer(control, overlayTimer, state.scroll.pending(GetTickCount64()) ? 16 : 900, nullptr);
     InvalidateRect(control, nullptr, FALSE);
 }
 void paintListOverlay(HWND control, HDC dc, ListOverlay& state) {
@@ -251,11 +329,58 @@ void paintListOverlay(HWND control, HDC dc, ListOverlay& state) {
     path.CloseFigure();
     graphics.FillPath(&brush, &path);
 }
+int syncListPosition(HWND control, ListOverlay& state) {
+    const int offset = (int)lroundf(state.scroll.sample(GetTickCount64()));
+    const int first = (offset / state.pixelsPerStep) * state.unitsPerStep;
+    // Native selection/hit testing needs a row index; painting and dragging share a pixel offset.
+    if (DefSubclassProc(control, LB_GETTOPINDEX, 0, 0) != first) nativeListMessage(control, state, LB_SETTOPINDEX, first, 0);
+    return offset;
+}
+void paintListContent(HWND control, HDC dc, ListOverlay& state) {
+    RECT bounds; GetClientRect(control, &bounds);
+    listOverlayGeometry(control, state);
+    // LB_SETTOPINDEX can repaint synchronously. Never mutate native scrolling during a paint.
+    const int offset = (int)lroundf(state.scroll.sample(GetTickCount64()));
+    const int row = (int)SendMessageW(control, LB_GETITEMHEIGHT, 0, 0);
+    if (row <= 0) return;
+    const int count = (int)SendMessageW(control, LB_GETCOUNT, 0, 0);
+    const int selected = (int)SendMessageW(control, LB_GETCURSEL, 0, 0);
+    const int first = (offset / state.pixelsPerStep) * state.unitsPerStep;
+    const int saved = SaveDC(dc);
+    if (state.horizontal) IntersectClipRect(dc, 0, 0, bounds.right, bounds.bottom - px(listGutter));
+    else IntersectClipRect(dc, 0, 0, bounds.right - px(listGutter), bounds.bottom);
+    for (int i = first; i < count; ++i) {
+        DRAWITEMSTRUCT draw = {};
+        draw.CtlType = state.combo ? ODT_COMBOBOX : ODT_LISTBOX;
+        draw.CtlID = GetDlgCtrlID(state.combo ? state.combo : control);
+        draw.hwndItem = state.combo ? state.combo : control;
+        draw.itemID = i; draw.itemAction = ODA_DRAWENTIRE;
+        draw.itemState = i == selected ? ODS_SELECTED : 0;
+        if (GetFocus() == control && i == selected) draw.itemState |= ODS_FOCUS;
+        draw.hDC = dc;
+        if (state.horizontal) {
+            const int x = (i / state.unitsPerStep) * state.pixelsPerStep - offset;
+            if (x >= bounds.right) break;
+            const int y = (i % state.unitsPerStep) * row;
+            draw.rcItem = { x, y, x + state.pixelsPerStep, y + row };
+        } else {
+            const int y = i * row - offset;
+            if (y >= bounds.bottom) break;
+            draw.rcItem = { 0, y, bounds.right - px(listGutter), y + row };
+        }
+        const int savedItem = SaveDC(dc);
+        ++host.dialogPaintCount;
+        if (state.combo) drawComboItem(draw); else drawListItem(draw);
+        if (savedItem) RestoreDC(dc, savedItem);
+    }
+    if (saved) RestoreDC(dc, saved);
+}
 LRESULT CALLBACK listOverlayInput(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR data) {
     auto& state = *reinterpret_cast<ListOverlay*>(data);
     if (message == WM_NCDESTROY) {
         KillTimer(control, overlayTimer);
         RemoveWindowSubclass(control, listOverlayInput, overlaySubclass);
+        RemovePropW(control, L"VexListOverlay");
         HeapFree(GetProcessHeap(), 0, &state);
         return DefSubclassProc(control, message, wparam, lparam);
     }
@@ -265,23 +390,55 @@ LRESULT CALLBACK listOverlayInput(HWND control, UINT message, WPARAM wparam, LPA
     // Keep the entire window client-owned even when Win32 updates that range.
     if (message == WM_NCCALCSIZE || message == WM_NCPAINT) return 0;
     if (message == WM_NCHITTEST) return HTCLIENT;
+    if (message == WM_ERASEBKGND) return 1;
+    if (message == WM_SETREDRAW) {
+        state.redrawEnabled = wparam != 0;
+        if (!state.nativeUpdateDepth) {
+            setNativeListRedraw(control, state.redrawEnabled);
+            if (state.redrawEnabled && state.nativeDirty) invalidateListContent(control, state);
+        }
+        return 0;
+    }
     if (message == WM_PAINT) {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(control, &paint);
         if (dc) {
             DialogPaintBuffer buffer(dc, paint.rcPaint);
             FillRect(buffer.dc, &paint.rcPaint, host.background);
-            DefSubclassProc(control, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(buffer.dc), PRF_CLIENT);
+            paintListContent(control, buffer.dc, state);
             paintListOverlay(control, buffer.dc, state);
         }
         EndPaint(control, &paint);
         return 0;
     }
+    if ((message == WM_PRINT || message == WM_PRINTCLIENT) && wparam) {
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        const int saved = SaveDC(dc);
+        RECT bounds; GetClientRect(control, &bounds);
+        FillRect(dc, &bounds, host.background);
+        paintListContent(control, dc, state); paintListOverlay(control, dc, state);
+        if (saved) RestoreDC(dc, saved);
+        return 0;
+    }
     if (message == WM_TIMER && wparam == overlayTimer) {
-        const float opacity = state.visibility.opacity(GetTickCount64(), state.hovered || state.dragging, overlayAnimations());
+        const auto now = GetTickCount64();
+        if (!overlayAnimations()) state.scroll.moveTo(state.scroll.destination, now, false);
+        const float opacity = state.visibility.opacity(now, state.hovered || state.dragging, overlayAnimations());
         KillTimer(control, overlayTimer);
-        if (opacity > 0 && !state.hovered && !state.dragging) SetTimer(control, overlayTimer, 16, nullptr);
+        if (state.scroll.pending(now) || (opacity > 0 && !state.hovered && !state.dragging)) SetTimer(control, overlayTimer, 16, nullptr);
         InvalidateRect(control, nullptr, FALSE);
+        return 0;
+    }
+    if (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL) {
+        listOverlayGeometry(control, state);
+        UINT lines = 3;
+        SystemParametersInfoW(message == WM_MOUSEHWHEEL ? SPI_GETWHEELSCROLLCHARS : SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+        RECT bounds; GetClientRect(control, &bounds);
+        const float step = lines == WHEEL_PAGESCROLL ? (float)(state.horizontal ? bounds.right : bounds.bottom) :
+            (float)lines * (state.horizontal ? px(32) : state.pixelsPerStep);
+        const float delta = (float)(short)HIWORD(wparam) / WHEEL_DELTA;
+        state.scroll.moveTo(state.scroll.destination + (message == WM_MOUSEHWHEEL ? delta : -delta) * step, GetTickCount64(), overlayAnimations());
+        wakeListOverlay(control, state);
         return 0;
     }
     if (message == WM_MOUSEMOVE) {
@@ -295,7 +452,8 @@ LRESULT CALLBACK listOverlayInput(HWND control, UINT message, WPARAM wparam, LPA
         if (state.dragging) {
             const auto geometry = listOverlayGeometry(control, state);
             const float point = (float)(state.horizontal ? (short)LOWORD(lparam) : (short)HIWORD(lparam));
-            SendMessageW(control, LB_SETTOPINDEX, geometry.target(point, state.grab) * state.unitsPerStep, 0);
+            state.scroll.moveTo((float)geometry.target(point, state.grab), GetTickCount64(), false);
+            syncListPosition(control, state);
             wakeListOverlay(control, state);
             return 0;
         }
@@ -311,36 +469,82 @@ LRESULT CALLBACK listOverlayInput(HWND control, UINT message, WPARAM wparam, LPA
             state.grab = point >= geometry.thumbTop && point <= geometry.thumbTop + geometry.thumbHeight ? point - geometry.thumbTop : geometry.thumbHeight / 2;
             state.dragging = true;
             // Combo drop-downs already own capture; do not close them on thumb release.
-            state.ownsCapture = GetCapture() != control;
-            SetCapture(control);
-            SendMessageW(control, LB_SETTOPINDEX, geometry.target(point, state.grab) * state.unitsPerStep, 0);
+            const HWND capture = GetCapture();
+            state.ownsCapture = capture != control && (!state.combo || capture != state.combo);
+            if (state.ownsCapture) SetCapture(control);
+            state.scroll.moveTo((float)geometry.target(point, state.grab), GetTickCount64(), false);
+            syncListPosition(control, state);
             wakeListOverlay(control, state);
             return 0;
         }
     }
     if (message == WM_LBUTTONUP && state.dragging) {
         state.dragging = false;
-        if (state.ownsCapture && GetCapture() == control) ReleaseCapture();
+        if (state.ownsCapture && GetCapture() == control) {
+            // ComboLBox treats native capture loss as dismissal, even for our own thumb release.
+            state.releasingCapture = true;
+            ReleaseCapture();
+            state.releasingCapture = false;
+        }
+        state.ownsCapture = false;
         wakeListOverlay(control, state);
         return 0;
     }
+    if (message == WM_CAPTURECHANGED && state.releasingCapture) return 0;
     if ((message == WM_CAPTURECHANGED || message == WM_CANCELMODE) && state.dragging) {
         state.dragging = false;
         wakeListOverlay(control, state);
     }
-    const bool scroll = message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL || message == WM_KEYDOWN ||
-        message == LB_SETTOPINDEX || message == LB_SETCURSEL || message == WM_VSCROLL || message == WM_HSCROLL;
-    const LRESULT before = scroll ? SendMessageW(control, LB_GETTOPINDEX, 0, 0) : 0;
-    LRESULT result = DefSubclassProc(control, message, wparam, lparam);
-    if (scroll && before != SendMessageW(control, LB_GETTOPINDEX, 0, 0)) wakeListOverlay(control, state);
+    if (message == LB_GETTOPINDEX) return (int)(state.scroll.sample(GetTickCount64()) / state.pixelsPerStep) * state.unitsPerStep;
+    if (message == LB_RESETCONTENT) state.scroll = {};
+    if (message == LB_SETTOPINDEX) {
+        listOverlayGeometry(control, state);
+        state.scroll.moveTo((float)((int)wparam / state.unitsPerStep * state.pixelsPerStep), GetTickCount64(), false);
+        syncListPosition(control, state); wakeListOverlay(control, state);
+        return 0;
+    }
+    const bool pointer = message == WM_MOUSEMOVE || message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_LBUTTONDBLCLK;
+    if (pointer) {
+        if (listOverlayHit(control, state, lparam)) return 0;
+        listOverlayGeometry(control, state);
+        const int remainder = syncListPosition(control, state) % state.pixelsPerStep;
+        int x = (short)LOWORD(lparam), y = (short)HIWORD(lparam);
+        if (state.horizontal) x += remainder; else y += remainder;
+        state.pointerInput = true;
+        // Clicking a result can synchronously destroy the control and open another picker.
+        const LRESULT result = nativeListMessage(control, state, message, wparam, MAKELPARAM(x, y));
+        if (GetPropW(control, L"VexListOverlay") == reinterpret_cast<HANDLE>(data)) state.pointerInput = false;
+        return result;
+    }
+    LRESULT result = nativeListMessage(control, state, message, wparam, lparam);
+    if (GetPropW(control, L"VexListOverlay") != reinterpret_cast<HANDLE>(data)) return result;
+    const bool showing = message == WM_SHOWWINDOW && wparam;
+    if ((message == LB_SETCURSEL || message == WM_KEYDOWN || showing) && !state.pointerInput) {
+        const int selected = (int)DefSubclassProc(control, LB_GETCURSEL, 0, 0);
+        if (selected >= 0) {
+            listOverlayGeometry(control, state);
+            RECT bounds; GetClientRect(control, &bounds);
+            const float top = (float)(selected / state.unitsPerStep * state.pixelsPerStep);
+            state.scroll.reveal(top, top + state.pixelsPerStep, (float)(state.horizontal ? bounds.right : bounds.bottom), GetTickCount64(), !showing && overlayAnimations());
+            syncListPosition(control, state); wakeListOverlay(control, state);
+        }
+    } else if (message == WM_VSCROLL || message == WM_HSCROLL) {
+        const int first = (int)DefSubclassProc(control, LB_GETTOPINDEX, 0, 0);
+        listOverlayGeometry(control, state);
+        state.scroll.moveTo((float)(first / state.unitsPerStep * state.pixelsPerStep), GetTickCount64(), false);
+        wakeListOverlay(control, state);
+    }
     return result;
 }
-bool installListOverlay(HWND control, bool horizontal) {
+bool installListOverlay(HWND control, bool horizontal, HWND combo = nullptr) {
     auto* state = static_cast<ListOverlay*>(HeapAlloc(GetProcessHeap(), 0, sizeof(ListOverlay)));
     if (!state) return false;
     *state = {};
-    state->horizontal = horizontal;
-    if (!SetWindowSubclass(control, listOverlayInput, overlaySubclass, reinterpret_cast<DWORD_PTR>(state))) { HeapFree(GetProcessHeap(), 0, state); return false; }
+    state->horizontal = horizontal; state->combo = combo;
+    if (!SetPropW(control, L"VexListOverlay", state)) { HeapFree(GetProcessHeap(), 0, state); return false; }
+    if (!SetWindowSubclass(control, listOverlayInput, overlaySubclass, reinterpret_cast<DWORD_PTR>(state))) {
+        RemovePropW(control, L"VexListOverlay"); HeapFree(GetProcessHeap(), 0, state); return false;
+    }
     SetWindowLongPtrW(control, GWL_STYLE, GetWindowLongPtrW(control, GWL_STYLE) & ~(WS_VSCROLL | WS_HSCROLL));
     SetWindowPos(control, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     return true;
@@ -360,7 +564,18 @@ LRESULT CALLBACK dialogControlInput(HWND control, UINT message, WPARAM wparam, L
         return 0;
     }
     if (message == WM_KEYDOWN && GetDlgCtrlID(control) == listId && navigateCommandList(wparam)) return 0;
-    // Owner-drawn controls have no hover state; preserve native dragging, not hot tracking.
+    // Only command rows follow hover; keep native dragging and avoid repainting unchanged rows.
+    if (message == WM_MOUSEMOVE && !(wparam & MK_LBUTTON) && host.model.kind == 2 && host.phase == DialogHost::Phase::active && GetDlgCtrlID(control) == listId) {
+        const LRESULT hit = SendMessageW(control, LB_ITEMFROMPOINT, 0, lparam);
+        RECT item;
+        const POINT point = { (short)LOWORD(lparam), (short)HIWORD(lparam) };
+        if (!HIWORD(hit) && LOWORD(hit) < host.model.count && SendMessageW(control, LB_GETITEMRECT, LOWORD(hit), reinterpret_cast<LPARAM>(&item)) != LB_ERR &&
+            PtInRect(&item, point) && SendMessageW(control, LB_GETCURSEL, 0, 0) != LOWORD(hit)) {
+            SendMessageW(control, LB_SETCURSEL, LOWORD(hit), 0);
+            notify(2, host.model.items[LOWORD(hit)].value);
+        }
+        return 0;
+    }
     if ((message == WM_MOUSEMOVE && !(wparam & MK_LBUTTON)) || message == WM_MOUSELEAVE) return 0;
     if (message == WM_LBUTTONUP && GetDlgCtrlID(control) == listId && (host.model.kind == 2 || host.model.kind == 5)) {
         LRESULT hit = SendMessageW(control, LB_ITEMFROMPOINT, 0, lparam);
@@ -376,6 +591,18 @@ LRESULT CALLBACK dialogControlInput(HWND control, UINT message, WPARAM wparam, L
     return DefSubclassProc(control, message, wparam, lparam);
 }
 LRESULT CALLBACK themedCombo(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    if (message == WM_MOUSEMOVE || message == WM_LBUTTONUP) {
+        COMBOBOXINFO info = {}; info.cbSize = sizeof(info);
+        if (GetComboBoxInfo(control, &info)) {
+            auto* state = static_cast<ListOverlay*>(GetPropW(info.hwndList, L"VexListOverlay"));
+            if (state && state->dragging) {
+                // Native combo popups can capture through the combo HWND rather than ComboLBox.
+                POINT point = { (short)LOWORD(lparam), (short)HIWORD(lparam) };
+                MapWindowPoints(control, info.hwndList, &point, 1);
+                return SendMessageW(info.hwndList, message, wparam, MAKELPARAM(point.x, point.y));
+            }
+        }
+    }
     if ((message == WM_MOUSEMOVE && !(wparam & MK_LBUTTON)) || message == WM_MOUSELEAVE) return 0;
     if (message == WM_PAINT || message == WM_PRINTCLIENT) {
         PAINTSTRUCT paint = {};
@@ -399,6 +626,13 @@ LRESULT CALLBACK themedCombo(HWND control, UINT message, WPARAM wparam, LPARAM l
         return 0;
     }
     LRESULT result = DefSubclassProc(control, message, wparam, lparam);
+    if (message == WM_KEYDOWN || message == CB_SETCURSEL || (message == CB_SHOWDROPDOWN && wparam)) {
+        COMBOBOXINFO info = {}; info.cbSize = sizeof(info);
+        if (GetComboBoxInfo(control, &info)) {
+            const LRESULT selected = SendMessageW(control, CB_GETCURSEL, 0, 0);
+            if (selected >= 0) SendMessageW(info.hwndList, LB_SETCURSEL, selected, 0);
+        }
+    }
     if (message == WM_SETFOCUS || message == WM_KILLFOCUS || message == CB_SETCURSEL) InvalidateRect(control, nullptr, FALSE);
     return result;
 }
@@ -460,7 +694,7 @@ HWND control(const wchar_t* klass, const wchar_t* text, DWORD style, int id, flo
     if (wcscmp(klass, L"LISTBOX") == 0 && !installListOverlay(result, (style & LBS_MULTICOLUMN) != 0)) { DestroyWindow(result); return nullptr; }
     if (wcscmp(klass, L"COMBOBOX") == 0) {
         COMBOBOXINFO info = {}; info.cbSize = sizeof(info);
-        if (!GetComboBoxInfo(result, &info) || !installListOverlay(info.hwndList, false)) { DestroyWindow(result); return nullptr; }
+        if (!GetComboBoxInfo(result, &info) || !installListOverlay(info.hwndList, false, result)) { DestroyWindow(result); return nullptr; }
         if (!SetWindowSubclass(result, themedCombo, 1, 0)) { DestroyWindow(result); return nullptr; }
         SendMessageW(result, CB_SETITEMHEIGHT, (WPARAM)-1, px(30));
         SendMessageW(result, CB_SETITEMHEIGHT, 0, px(30));
@@ -725,8 +959,9 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
     SetBkMode(draw.hDC, TRANSPARENT);
     SelectObject(draw.hDC, host.font);
     RECT row = draw.rcItem; row.top += px(2); row.bottom -= px(2); row.left += px(2); row.right -= px(3);
-    COLORREF fill = selected ? selectionColor() : surfaceColor();
-    roundedFill(draw.hDC, row, fill, fill, px(14));
+    const bool commands = host.model.kind == 2;
+    COLORREF fill = selected ? (commands ? blend(surfaceColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.22f : 0.14f) : selectionColor()) : surfaceColor();
+    roundedFill(draw.hDC, row, fill, fill, px(commands ? 8 : 14));
     RECT text = row; text.left += px(12); text.right -= px(12);
     if (host.model.kind == 2) {
         RECT shortcut = text;
@@ -808,9 +1043,9 @@ void drawComboItem(const DRAWITEMSTRUCT& draw) {
     SelectObject(draw.hDC, host.font); SetBkMode(draw.hDC, TRANSPARENT); SetTextColor(draw.hDC, color(host.model.palette.text_primary));
     DrawTextW(draw.hDC, text, -1, &bounds, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
-float dialogWidth() { return host.model.kind == 4 ? 760.0f : host.model.kind == 1 ? 580.0f : host.model.kind == 6 ? 460.0f : 480.0f; }
+float dialogWidth() { return host.model.kind == 4 ? 760.0f : host.model.kind == 1 ? 580.0f : host.model.kind == 2 ? 560.0f : host.model.kind == 6 ? 460.0f : 480.0f; }
 float dialogHeight() {
-    if (host.model.kind == 2) return 112.0f + 14.0f * (float)px(listRowHeight()) / host.scale;
+    if (host.model.kind == 2) return 112.0f + 12.0f * (float)px(listRowHeight()) / host.scale;
     if (host.model.kind == 5) {
         const size_t rows = host.model.count > shellLimit ? shellLimit : host.model.count;
         return 170.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
@@ -881,6 +1116,9 @@ void paintDialogSurface(HDC dc) {
             SetBkMode(dc, TRANSPARENT); SetTextColor(dc, color(host.model.palette.text_muted)); SelectObject(dc, host.font);
             DrawTextW(dc, L"No matching commands", -1, &empty, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
+        RECT rule = { px(16), bounds.bottom - px(43), bounds.right - px(16), bounds.bottom - px(43) + 1 };
+        SetDCBrushColor(dc, color(host.model.palette.border));
+        FillRect(dc, &rule, reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         RECT footer = { px(20), bounds.bottom - px(38), bounds.right - px(20), bounds.bottom - px(8) };
         SetBkMode(dc, TRANSPARENT); SetTextColor(dc, color(host.model.palette.text_muted)); SelectObject(dc, host.font);
         DrawTextW(dc, L"↑ ↓  Navigate", -1, &footer, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -1061,6 +1299,56 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         SetWindowLongPtrW(window, DWLP_MSGRESULT, (LONG_PTR)(host.dialogPaintCount - before));
         return TRUE;
     }
+    case WM_APP + 7: {
+        wchar_t enabled[2];
+        if (GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) != 1 || enabled[0] != L'1') return FALSE;
+        HWND list = GetDlgItem(window, (int)wparam);
+        auto* state = static_cast<ListOverlay*>(GetPropW(list, L"VexListOverlay"));
+        if (!state || state->horizontal) { SetWindowLongPtrW(window, DWLP_MSGRESULT, -1); return TRUE; }
+        UpdateWindow(window); UpdateWindow(list);
+        RECT bounds; GetClientRect(list, &bounds);
+        const int row = (int)SendMessageW(list, LB_GETITEMHEIGHT, 0, 0);
+        const int rows = row > 0 ? (int)fminf(64, (float)(bounds.bottom / row)) : 0;
+        HDC dc = rows > 0 ? GetDC(list) : nullptr;
+        if (!dc) { SetWindowLongPtrW(window, DWLP_MSGRESULT, -1); return TRUE; }
+        COLORREF baseline[64];
+        const int x = bounds.right - px(12);
+        for (int i = 0; i < rows; ++i) {
+            baseline[i] = GetPixel(dc, x, i * row + row / 2);
+            if (baseline[i] == CLR_INVALID) {
+                ReleaseDC(list, dc); SetWindowLongPtrW(window, DWLP_MSGRESULT, -1); return TRUE;
+            }
+        }
+        int changed = 0;
+        // Observe immediately after native selection, without WM_PAINT/PrintWindow masking the defect.
+        for (int i = 0; i < rows; ++i) {
+            SendMessageW(list, WM_MOUSEMOVE, 0, MAKELPARAM(px(20), i * row + row / 2));
+            for (int j = 0; j < rows; ++j) if (GetPixel(dc, x, j * row + row / 2) != baseline[j]) ++changed;
+        }
+        ReleaseDC(list, dc);
+        SetWindowLongPtrW(window, DWLP_MSGRESULT, changed);
+        return TRUE;
+    }
+    case WM_APP + 6: {
+        wchar_t enabled[2];
+        if (GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) != 1 || enabled[0] != L'1') return FALSE;
+        HWND control = GetDlgItem(window, (int)wparam);
+        auto* state = static_cast<ListOverlay*>(GetPropW(control, L"VexListOverlay"));
+        if (!state) {
+            COMBOBOXINFO info = {}; info.cbSize = sizeof(info);
+            if (GetComboBoxInfo(control, &info)) {
+                control = info.hwndList;
+                state = static_cast<ListOverlay*>(GetPropW(control, L"VexListOverlay"));
+            }
+        }
+        if (!state) { SetWindowLongPtrW(window, DWLP_MSGRESULT, -1); return TRUE; }
+        const auto geometry = listOverlayGeometry(control, *state);
+        const auto now = GetTickCount64();
+        const float value = lparam == 1 ? state->scroll.destination : lparam == 2 ? (float)state->scroll.pending(now) :
+            lparam == 3 ? geometry.thumbTop : lparam == 4 ? (float)px(listGutter) : lparam == 5 ? state->scroll.maximum : state->scroll.sample(now);
+        SetWindowLongPtrW(window, DWLP_MSGRESULT, (LONG_PTR)lroundf(value * 1000));
+        return TRUE;
+    }
     case WM_APP + 4: {
         wchar_t enabled[2];
         if (GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) != 1 || enabled[0] != L'1') return FALSE;
@@ -1097,16 +1385,17 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         return TRUE;
     }
     case WM_TIMER:
-        if (wparam == 7 && host.revealStarted) {
-            const float t = fminf(1.0f, (float)(GetTickCount64() - host.revealStarted) / 120.0f);
-            if (t >= 1.0f || !vex_window_animations_enabled()) {
-                KillTimer(window, 7);
-                host.revealStarted = 0;
-                SetLayeredWindowAttributes(window, 0, 255, LWA_ALPHA);
-                SetWindowLongPtrW(window, GWL_EXSTYLE, GetWindowLongPtrW(window, GWL_EXSTYLE) & ~WS_EX_LAYERED);
+        if (wparam == 7 && host.layered) {
+            const auto now = GetTickCount64();
+            const bool done = !host.motion.pending(now) || !vex_window_animations_enabled();
+            if (done) KillTimer(window, 7);
+            if (done && host.phase == DialogHost::Phase::closing) {
+                const auto event = host.pendingEvent, value = host.pendingValue;
+                host.phase = DialogHost::Phase::active;
+                closeDialog(true);
+                notify(event, value);
             } else {
-                const float ease = 1.0f - powf(1.0f - t, 3.0f);
-                SetLayeredWindowAttributes(window, 0, (BYTE)lroundf(220.0f + 35.0f * ease), LWA_ALPHA);
+                SetLayeredWindowAttributes(window, 0, done ? 255 : (BYTE)lroundf(255 * host.motion.sample(now)), LWA_ALPHA);
             }
             return TRUE;
         }
@@ -1132,8 +1421,20 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
     case DM_SETDEFID: SetWindowLongPtrW(window, DWLP_MSGRESULT, TRUE); return TRUE;
     case WM_DRAWITEM:
         if (lparam) {
-            ++host.dialogPaintCount;
             const auto& draw = *reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
+            HWND list = draw.CtlType == ODT_LISTBOX ? draw.hwndItem : nullptr;
+            if (draw.CtlType == ODT_COMBOBOX) {
+                COMBOBOXINFO info = {}; info.cbSize = sizeof(info);
+                if (GetComboBoxInfo(draw.hwndItem, &info)) list = info.hwndList;
+            }
+            auto* state = list ? static_cast<ListOverlay*>(GetPropW(list, L"VexListOverlay")) : nullptr;
+            if (state) {
+                // Native selection paints use full-width, whole-row rectangles. Only our viewport may draw lists.
+                invalidateListContent(list, *state);
+                if (draw.CtlType == ODT_COMBOBOX) InvalidateRect(draw.hwndItem, nullptr, FALSE);
+                return TRUE;
+            }
+            ++host.dialogPaintCount;
             const int saved = SaveDC(draw.hDC);
             if (draw.CtlType == ODT_LISTBOX) drawListItem(draw);
             else if (draw.CtlType == ODT_BUTTON) drawDialogButton(draw);
@@ -1195,8 +1496,10 @@ bool routeTerminalDialogMessage(MSG& message) { return host.window && IsDialogMe
 void drawTerminalDialogBackdrop(UiRenderer& target, UiBrush& brush, float scale) {
     if (!IsWindow(host.window) || !IsWindow(host.owner)) return;
     const auto size = target.GetSize();
-    brush.SetColor(D2D1::ColorF(0x000000, 0.48f));
-    target.FillRectangle(D2D1::RectF(0, 0, size.width, size.height), &brush);
+    if (host.model.kind != 2) {
+        brush.SetColor(D2D1::ColorF(0x000000, host.model.palette.is_dark ? 0.32f : 0.16f));
+        target.FillRectangle(D2D1::RectF(0, 0, size.width, size.height), &brush);
+    }
     RECT bounds; if (!GetWindowRect(host.window, &bounds)) return;
     POINT origin = { bounds.left, bounds.top }; if (!ScreenToClient(host.owner, &origin)) return;
     float x = origin.x / scale, y = origin.y / scale, w = (bounds.right - bounds.left) / scale, h = (bounds.bottom - bounds.top) / scale;
@@ -1221,6 +1524,14 @@ void repositionTerminalDialogs() {
     host.width = fminf(dialogWidth(), (owner.right - owner.left) / scale - 32);
     host.height = fminf(dialogHeight(), (owner.bottom - owner.top) / scale - 40);
     if (host.width <= 0 || host.height <= 0) return;
+    const int top = host.model.kind == 2 ? (int)fminf((float)px(64), (owner.bottom - px(host.height)) / 2.0f) : (owner.bottom - px(host.height)) / 2;
+    const int left = origin.x + (owner.right - px(host.width)) / 2;
+    RECT current;
+    // Activation/z-order changes also send WM_WINDOWPOSCHANGED to the owner.
+    // They must not relayout and repaint every child of an otherwise stationary popup.
+    if (host.layoutReady && !dpiChanged && GetWindowRect(host.window, &current) &&
+        current.left == left && current.top == origin.y + top &&
+        current.right - current.left == px(host.width) && current.bottom - current.top == px(host.height)) return;
     HFONT oldFont = nullptr, oldHeading = nullptr, oldSymbols = nullptr;
     if (dpiChanged) {
         HFONT font = CreateFontW(-px(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -1229,8 +1540,7 @@ void repositionTerminalDialogs() {
         if (font && heading && symbols) { oldFont = host.font; oldHeading = host.heading; oldSymbols = host.symbols; host.font = font; host.heading = heading; host.symbols = symbols; }
         else { if (font) DeleteObject(font); if (heading) DeleteObject(heading); if (symbols) DeleteObject(symbols); }
     }
-    const int top = host.model.kind == 2 ? (int)fminf((float)px(64), (owner.bottom - px(host.height)) / 2.0f) : (owner.bottom - px(host.height)) / 2;
-    SetWindowPos(host.window, HWND_TOP, origin.x + (owner.right - px(host.width)) / 2, origin.y + top, px(host.width), px(host.height), SWP_NOACTIVATE);
+    SetWindowPos(host.window, HWND_TOP, left, origin.y + top, px(host.width), px(host.height), SWP_NOACTIVATE);
     HRGN rounded = CreateRoundRectRgn(0, 0, px(host.width) + 1, px(host.height) + 1, px(24), px(24));
     if (rounded && !SetWindowRgn(host.window, rounded, FALSE)) DeleteObject(rounded);
     const float dx = host.width - host.baseWidth, dy = host.height - host.baseHeight;
@@ -1271,6 +1581,7 @@ void repositionTerminalDialogs() {
     if (oldFont) DeleteObject(oldFont);
     if (oldHeading) DeleteObject(oldHeading);
     if (oldSymbols) DeleteObject(oldSymbols);
+    host.layoutReady = true;
     RedrawWindow(host.window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE);
 }
 extern "C" void vex_dialog_close() { closeDialog(true); }
@@ -1358,6 +1669,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     host.model = next;
     host.draft = request.settings;
     host.page = SettingsPage::general;
+    host.layoutReady = false;
     host.phase = DialogHost::Phase::creating;
     host.previousFocus = GetFocus();
     struct Template { DLGTEMPLATE dialog; WORD menu, klass, title; } layout = {};
@@ -1375,14 +1687,16 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
         const LONG_PTR style = GetWindowLongPtrW(result, GWL_EXSTYLE);
         SetWindowLongPtrW(result, GWL_EXSTYLE, style | WS_EX_LAYERED);
         if (SetLayeredWindowAttributes(result, 0, 220, LWA_ALPHA)) {
-            host.revealStarted = GetTickCount64();
-            if (!SetTimer(result, 7, 16, nullptr)) {
-                host.revealStarted = 0;
-                SetWindowLongPtrW(result, GWL_EXSTYLE, style);
-            }
+            // Keep the compositor path stable at full opacity; toggling it repaints child HWNDs.
+            host.layered = true;
+            host.motion = {};
+            host.motion.start(1, GetTickCount64(), false);
+            if (!SetTimer(result, 7, 16, nullptr)) SetLayeredWindowAttributes(result, 0, 255, LWA_ALPHA);
         } else SetWindowLongPtrW(result, GWL_EXSTYLE, style);
     }
     EnableWindow(host.owner, FALSE);
+    // The backdrop is part of the owner, not the popup's GDI surface.
+    vex_window_invalidate();
     ShowWindow(result, SW_SHOW);
     SetActiveWindow(result);
     HWND focus = GetDlgItem(result, request.kind == 4 ? shellId : request.kind == 6 ? IDCANCEL : request.kind == 2 ? queryId : listId);

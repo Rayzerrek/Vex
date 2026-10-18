@@ -4,6 +4,7 @@ const panes = @import("../workspace/pane_tree.zig");
 const workspace = @import("../workspace/workspace_model.zig");
 const close_confirmation = @import("../workspace/close_confirmation.zig");
 const palette = @import("../workspace/command_palette.zig");
+const completion_popup = @import("../workspace/completion_popup.zig");
 
 /// Shell picker intent is independent of the chosen shell preset.
 pub const ShellPickerMode = enum(u8) { new_tab = 0, split_right = 1, split_down = 2, set_default = 3 };
@@ -15,7 +16,7 @@ pub const OverlayState = union(enum) {
     theme_picker: struct { initial_theme_index: usize },
     command_palette: palette.CommandPalette,
     tab_peek: struct { selected_index: usize = 0 },
-    path_completion: struct { pane_id: panes.PaneId },
+    path_completion: struct { pane_id: panes.PaneId, anchor: ?completion_popup.Anchor = null },
     close_confirm: struct { target: CloseTarget, confirmation: close_confirmation.CloseConfirmation },
     shell_picker: struct { mode: ShellPickerMode = .new_tab, selected_index: usize = 0 },
     settings,
@@ -24,11 +25,12 @@ pub const OverlayState = union(enum) {
 /// Paints only the cursor-anchored path popup; owned dialogs have their own real controls and focus.
 pub fn drawActiveOverlay(self: *Application) !void {
     if (self.overlay != .path_completion) return;
-    const popup = (try self.pathCompletionPopupBounds(self.overlay.path_completion.pane_id)) orelse return;
+    const layout = self.pathCompletionPopup() orelse return;
+    self.path_completion.ensureVisible(layout.visible_rows);
     var items: [8]platform.c.VexPathCompletionItem = undefined;
     const total = self.path_completion.matches.items.len;
     const start = @min(self.path_completion.first_visible, total);
-    const visible = @min(total - start, items.len);
+    const visible = @min(total - start, layout.visible_rows);
     for (0..visible) |i| {
         const match = self.path_completion.matches.items[start + i];
         const entry = self.path_completion.entries.items[match.entry_index];
@@ -40,13 +42,14 @@ pub fn drawActiveOverlay(self: *Application) !void {
             .hovered = if (self.path_completion.hovered_index) |hover| hover == start + i else false,
         };
     }
-    platform.drawPathCompletion(popup, self.path_completion.directory, self.path_completion.query(), items[0..visible], self.path_completion.scan_error, self.path_completion.index == .deferred and self.path_completion.index.deferred.loading, self.path_completion.is_truncated);
+    platform.drawPathCompletion(layout.bounds, self.path_completion.directory, self.path_completion.query(), items[0..visible], self.path_completion.scan_error, self.path_completion.index == .deferred and self.path_completion.index.deferred.loading, self.path_completion.is_truncated);
 }
 
 /// Native dialogs own keyboard navigation; the inline path popup still routes terminal-window keys.
 pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
     if (self.overlay != .path_completion) return true;
     const pane_id = self.overlay.path_completion.pane_id;
+    const rows = if (self.pathCompletionPopup()) |layout| layout.visible_rows else 1;
     switch (key) {
         0x1B => {
             self.overlay = .none;
@@ -67,9 +70,9 @@ pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
             self.path_completion.moveSelection(switch (key) {
                 0x26 => -1,
                 0x28 => 1,
-                0x21 => -8,
-                else => 8,
-            }, 8);
+                0x21 => -@as(isize, @intCast(rows)),
+                else => @intCast(rows),
+            }, rows);
             platform.invalidateWindow();
         },
         0x08, 0x2E => {
@@ -85,11 +88,12 @@ pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
 /// The popup reuses identical row hit regions for selection and cursor feedback; other dialogs own their HWND input.
 pub fn handleOverlayPointer(self: *Application, event: platform.PointerEvent, x: f32, y: f32) !platform.PointerResponse {
     if (self.overlay != .path_completion) return .normal;
+    const layout = self.pathCompletionPopup() orelse return .normal;
     const pane_id = self.overlay.path_completion.pane_id;
-    const popup = (try self.pathCompletionPopupBounds(pane_id)) orelse return .normal;
+    const popup = layout.bounds;
     const total = self.path_completion.matches.items.len;
     const start = @min(self.path_completion.first_visible, total);
-    const visible = @min(total - start, 8);
+    const visible = @min(total - start, layout.visible_rows);
     var hit: ?usize = null;
     if (x >= popup.x + 6 and x < popup.x + popup.width - 6 and y >= popup.y + 56) {
         const row = @floor((y - popup.y - 56) / 26);

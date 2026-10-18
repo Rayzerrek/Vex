@@ -24,7 +24,7 @@ void beginTerminalPane(VexPaneRect bounds) {
     const float scale = dpiScale;
     const D3D12_RECT clip = {
         (LONG)fmaxf(0, roundf(gridLeft * scale)), (LONG)fmaxf(0, roundf(gridTop * scale)),
-        (LONG)fminf((float)renderer->width(), fmaxf(gridLeft, bounds.x + bounds.width - 6) * scale),
+        (LONG)fminf((float)renderer->width(), fmaxf(gridLeft, bounds.x + bounds.width - 18) * scale),
         (LONG)fminf((float)renderer->height(), fmaxf(gridTop, bounds.y + bounds.height - 6) * scale)
     };
     renderer->beginTerminalPass(clip);

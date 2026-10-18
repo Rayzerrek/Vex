@@ -253,6 +253,11 @@ extern "C" bool vex_window_animations_enabled() {
     }
     return motionEnabled;
 }
+extern "C" uint32_t vex_window_wheel_scroll_lines() {
+    UINT lines = 3;
+    SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+    return lines;
+}
 extern "C" int vex_window_schedule_cursor_wake(uint32_t delay_ms) {
     if (delay_ms > 60000) return ERROR_INVALID_PARAMETER;
     if (cursorWakeArmed && IsWindow(window)) KillTimer(window, 3);
@@ -1087,7 +1092,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         POINT point = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
         ScreenToClient(hwnd, &point);
         float scale = GetDpiForWindow(hwnd) / 96.0f;
-        callbacks.scroll(callbacks.context, -(GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA) * 3, point.x / scale, point.y / scale, currentModifiers());
+        callbacks.scroll(callbacks.context, -GET_WHEEL_DELTA_WPARAM(wparam), point.x / scale, point.y / scale, currentModifiers());
         return 0;
     }
     case WM_CLOSE: cancelPointerGesture(); DestroyWindow(hwnd); return 0;

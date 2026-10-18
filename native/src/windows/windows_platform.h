@@ -63,6 +63,7 @@ typedef struct {
     bool (*key)(void*, uint32_t, uint32_t);
     void (*text)(void*, const uint8_t*, size_t);
     void (*paste)(void*, const uint8_t*, size_t);
+    /* Signed raw wheel units (120 per notch); the pane accumulates high-resolution deltas. */
     void (*scroll)(void*, int32_t, float, float, uint32_t);
     void (*click)(void*, float, float);
     void (*mouse_button)(void*, uint32_t, bool, float, float, uint32_t);
@@ -93,6 +94,7 @@ uint64_t vex_window_paint_count(void);
 int vex_window_schedule_cursor_wake(uint32_t delay_ms);
 bool vex_window_cursor_wake_armed(void);
 bool vex_window_animations_enabled(void);
+uint32_t vex_window_wheel_scroll_lines(void);
 /* Window thread only; releasing capture may synchronously deliver WM_CAPTURECHANGED. */
 int vex_window_cancel_pointer_capture(void);
 bool vex_window_has_pointer_capture(void);

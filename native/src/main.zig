@@ -40,6 +40,8 @@ test {
     _ = @import("workspace/terminal_theme.zig");
     _ = @import("workspace/close_confirmation.zig");
     _ = @import("workspace/command_palette.zig");
+    _ = @import("workspace/completion_popup.zig");
+    _ = @import("workspace/wheel_scroll.zig");
     _ = @import("app/user_settings.zig");
     _ = @import("windows/windows_dialog.zig");
     _ = @import("workspace/workspace_model.zig");

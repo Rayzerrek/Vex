@@ -36,6 +36,7 @@ const MouseDrag = struct {
 const ScrollbarDrag = struct {
     pane_id: panes.PaneId,
     grab_offset: f32,
+    pointer_y: f32,
 };
 
 const PaneDrag = struct {
@@ -51,11 +52,15 @@ pub const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, 
 pub fn onScroll(self: *Application, delta: i32, x: f32, y: f32, modifiers: u32) void {
     if (self.health == .failed or delta == 0) return;
     if ((modifiers & 2) != 0) {
-        self.adjustFontZoom(if (delta < 0) 1.0 else -1.0) catch |err| self.fail(err);
+        const steps = self.zoom_wheel.take(delta, 1);
+        if (steps != 0) self.adjustFontZoom(-@as(f32, @floatFromInt(steps))) catch |err| self.fail(err);
         return;
     }
     if (self.overlay == .path_completion) {
-        self.path_completion.moveSelection(if (delta < 0) -1 else 1, 8);
+        const rows = if (self.pathCompletionPopup()) |layout| layout.visible_rows else 1;
+        const steps = self.completion_wheel.take(delta, 1);
+        if (steps == 0) return;
+        self.path_completion.moveSelection(steps, rows);
         platform.invalidateWindow();
         return;
     }
@@ -69,8 +74,9 @@ fn handleScroll(self: *Application, delta: i32, x: f32, y: f32, modifiers: u32) 
         const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
         if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
             if (try metrics.viewportPoint(placement.bounds, x, y, true)) |vp| {
-                const wheel_button: terminal.MouseButton = if (delta < 0) .wheel_up else .wheel_down;
-                const steps: usize = @max(1, @divTrunc(@abs(delta), 3));
+                const ticks = session.wheel_scroll.take(delta, 1);
+                const wheel_button: terminal.MouseButton = if (ticks < 0) .wheel_up else .wheel_down;
+                const steps = @abs(ticks);
                 const any_pressed = (self.pointer_drag == .mouse and self.pointer_drag.mouse.pane_id == placement.id) or
                     (self.reported_mouse_pane == placement.id and self.reported_mouse_buttons != 0);
                 for (0..steps) |_| {
@@ -80,13 +86,19 @@ fn handleScroll(self: *Application, delta: i32, x: f32, y: f32, modifiers: u32) 
                 return;
             }
         }
-        session.terminal.scroll(delta);
+        const units = platform.wheelScrollLines() orelse if (session.size) |size| size.rows else 24;
+        const rows = session.wheel_scroll.take(delta, units);
+        if (rows == 0) return;
+        session.terminal.scroll(rows);
         session.scrollbar_visibility.reveal(self.cursorNowMs());
         platform.invalidateWindow();
         return;
     };
     const session = self.activeSession() orelse return;
-    session.terminal.scroll(delta);
+    const units = platform.wheelScrollLines() orelse if (session.size) |size| size.rows else 24;
+    const rows = session.wheel_scroll.take(delta, units);
+    if (rows == 0) return;
+    session.terminal.scroll(rows);
     session.scrollbar_visibility.reveal(self.cursorNowMs());
     platform.invalidateWindow();
 }
@@ -324,6 +336,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                                         self.pointer_drag = .{ .scrollbar = .{
                                             .pane_id = placement.id,
                                             .grab_offset = y - sb.thumb_y,
+                                            .pointer_y = y,
                                         } };
                                     } else {
                                         const page_rows: i32 = @intCast(if (session.size) |sz| sz.rows else 24);
@@ -449,7 +462,8 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                         }
                     }
                 },
-                .scrollbar => |sb_drag| {
+                .scrollbar => |*sb_drag| {
+                    sb_drag.pointer_y = y;
                     if (self.findPlacement(sb_drag.pane_id)) |placement| {
                         if (self.findSession(sb_drag.pane_id)) |session| {
                             if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {

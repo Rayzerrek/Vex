@@ -24,6 +24,7 @@ pub const TerminalSession = struct {
     state: SessionState = .running,
     needs_attention: bool = false,
     scrollbar_visibility: @import("../workspace/scrollbar_visibility.zig").ScrollbarVisibility = .{},
+    wheel_scroll: @import("../workspace/wheel_scroll.zig").WheelScroll = .{},
     sync_defer_since_ms: ?i64 = null,
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
     process_icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,

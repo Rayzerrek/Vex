@@ -42,7 +42,7 @@ pub const WindowMetrics = struct {
         try self.validate();
         try bounds.validate();
         return .{
-            .columns = @intFromFloat(std.math.clamp(@floor((bounds.width - 12) / self.cell_width), 2, 1000)),
+            .columns = @intFromFloat(std.math.clamp(@floor((bounds.width - 24) / self.cell_width), 2, 1000)),
             .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - 36) / self.cell_height), 1, 1000)),
             .cell_width_px = @intFromFloat(std.math.clamp(@round(self.cell_width * self.scale), 1, 65536)),
             .cell_height_px = @intFromFloat(std.math.clamp(@round(self.cell_height * self.scale), 1, 65536)),
@@ -54,7 +54,7 @@ pub const WindowMetrics = struct {
         const size = try self.terminalSize(bounds);
         const grid_left = bounds.x + 6;
         const grid_top = bounds.y + 30;
-        const grid_right = bounds.x + bounds.width - 6;
+        const grid_right = bounds.x + bounds.width - 18;
         const grid_bottom = bounds.y + bounds.height - 6;
         if (grid_right <= grid_left or grid_bottom <= grid_top) return null;
         if (!clamp_outside and (x < grid_left or x >= grid_right or y < grid_top or y >= grid_bottom)) return null;
@@ -74,6 +74,11 @@ pub const WindowMetrics = struct {
 };
 /// ConPTY-compatible grid dimensions and physical cell metrics.
 pub const TerminalSize = struct { columns: u16, rows: u16, cell_width_px: u32, cell_height_px: u32 };
+/// Null means Windows requests a page per wheel notch.
+pub fn wheelScrollLines() ?u32 {
+    const lines = c.vex_window_wheel_scroll_lines();
+    return if (lines == std.math.maxInt(u32)) null else @min(lines, 1000);
+}
 /// Computed DIP geometry for a pane's vertical scrollback overlay thumb and track.
 pub const ScrollbarGeometry = struct {
     track_top: f32,
@@ -118,10 +123,14 @@ pub const ScrollbarGeometry = struct {
     pub fn containsThumb(self: ScrollbarGeometry, y: f32) bool {
         return y >= self.thumb_y and y <= self.thumb_y + self.thumb_height;
     }
+    /// Drag feedback follows the pointer, not the rounded scrollback row selected by the emulator.
+    pub fn thumbTopForY(self: ScrollbarGeometry, y: f32, grab_offset: f32) f32 {
+        return self.track_top + std.math.clamp(y - self.track_top - grab_offset, 0, self.travel);
+    }
     /// Maps a dragged pointer Y and initial grab offset to a target scrollback row offset.
     pub fn targetOffsetForY(self: ScrollbarGeometry, y: f32, grab_offset: f32) u64 {
         if (self.travel <= 0.0 or self.scrollable == 0) return 0;
-        const desired = std.math.clamp(y - self.track_top - grab_offset, 0.0, self.travel);
+        const desired = self.thumbTopForY(y, grab_offset) - self.track_top;
         const ratio: f64 = @as(f64, desired) / @as(f64, self.travel);
         const target_f = @round(ratio * @as(f64, @floatFromInt(self.scrollable)));
         return @intFromFloat(std.math.clamp(target_f, 0.0, @as(f64, @floatFromInt(self.scrollable))));
@@ -917,6 +926,9 @@ test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid 
     try std.testing.expectEqual(@as(u16, 2), inside.row);
     try std.testing.expectApproxEqAbs(@as(f64, 30.0), inside.x_px, 0.01);
     try std.testing.expectApproxEqAbs(@as(f64, 51.0), inside.y_px, 0.01);
+    // The scrollbar gutter is never terminal text, even when no scrollbar is visible yet.
+    try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 330, 114, false));
+    try std.testing.expectEqual(@as(u16, 38), (try metrics.terminalSize(bounds)).columns);
     // Clamped drag outside the pane clamps to the boundary cells.
     const clamped = (try metrics.viewportPoint(bounds, -50, 900, true)).?;
     try std.testing.expectEqual(@as(u16, 0), clamped.column);
@@ -933,6 +945,9 @@ test "ScrollbarGeometry computes thumb travel, right-edge hit zone, and drag tar
     try std.testing.expectApproxEqAbs(@as(f32, 200.0), mid.track_height, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 50.0), mid.thumb_height, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 150.0), mid.travel, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 123.5), mid.thumbTopForY(133.5, 10), 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 70), mid.thumbTopForY(-100, 10), 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 220), mid.thumbTopForY(900, 10), 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 120.0), mid.thumb_y, 0.01);
     try std.testing.expect(mid.containsPoint(bounds, 305.0, 130.0));
     try std.testing.expect(!mid.containsPoint(bounds, 280.0, 130.0));
