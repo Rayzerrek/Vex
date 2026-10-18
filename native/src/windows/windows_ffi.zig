@@ -549,6 +549,19 @@ pub fn drawSessionExit(bounds: panes.PaneRect, exit_code: u32) void {
 pub fn drawSplitPreview(bounds: panes.PaneRect) void {
     c.vex_draw_split_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height });
 }
+pub fn drawTerminalPreview(pane_id: panes.PaneId, bounds: panes.PaneRect, frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme) !void {
+    c.vex_begin_terminal_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, frame.columns, frame.rows);
+    defer endPane();
+    // Borrow the terminal's generation-cached frame and the existing glyph atlas; never resize the PTY.
+    try drawTerminalFrame(pane_id, frame, false, false, null, theme);
+}
+pub fn drawPreviewClose(bounds: panes.PaneRect, hovered: bool) void {
+    c.vex_draw_preview_close(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, hovered);
+}
+pub fn drawTabPreviewCard(bounds: panes.PaneRect, title: []const u8, selected: bool) void {
+    c.vex_draw_tab_preview_card(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, title.ptr, title.len, selected);
+}
+
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
 pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalFrame, focused: bool, cursor_shown: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
     const cursor = frame.cursor;

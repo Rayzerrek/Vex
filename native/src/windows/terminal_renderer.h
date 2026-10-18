@@ -24,6 +24,7 @@ public:
     HRESULT drawEllipse(float cx, float cy, float rx, float ry, float stroke, uint32_t color, uint8_t alpha);
     HRESULT setClip(D3D12_RECT clip);
     void clearGlyphCache();
+    void setPreviewTransform(float factor = 1, float x = 0, float y = 0) { previewScale = factor; previewX = x; previewY = y; }
     // A hit replays immutable CPU instances into this slot's fence-protected uploads.
     HRESULT beginGeometry(uint64_t generation, const uint32_t (&key)[12], const float (&geometry)[4], bool& reused);
     void endGeometry(bool complete);
@@ -80,6 +81,7 @@ private:
     UINT pendingPage = 0, pendingOffset = 0, pendingQuads = 0;
     ULONGLONG frameTimeMs = 0;
     float scale = 1;
+    float previewScale = 1, previewX = 0, previewY = 0;
     bool apartmentOwned = false, passOpen = false;
     ID3D12Resource* passBuffer = nullptr;
     HRESULT createPipeline(const TerminalRenderer* sharedPipeline);

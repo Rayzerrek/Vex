@@ -4,13 +4,13 @@ const native = @import("../windows/windows_dialog.zig");
 const platform = @import("../windows/windows_ffi.zig");
 const themes = @import("../workspace/terminal_theme.zig");
 const commands = @import("terminal_commands.zig");
+const overlays = @import("terminal_overlays.zig");
 const shell = @import("../shell/shell_launch.zig");
 
 /// Builds a synchronous, copied presentation; terminal/session storage never escapes into native controls.
 pub fn presentTerminalModal(self: *Application) !void {
     var items: [64]native.DialogItem = undefined;
     var shells: [8]native.DialogItem = undefined;
-    var details: [8][96]u8 = undefined;
     var count: usize = 0;
     var request: native.DialogPresentation = .{
         .kind = .appearance,
@@ -53,24 +53,7 @@ pub fn presentTerminalModal(self: *Application) !void {
             }
             request.selected = if (count > 0) items[@min(cp.selected_index, count - 1)].value else 0;
         },
-        .tab_peek => |peek| {
-            request.kind = .tabs;
-            request.title = "Tab Overview";
-            request.description = "Choose a tab without interrupting running programs.";
-            request.accept_label = "Switch";
-            const model = if (self.model) |*model| model else return;
-            for (model.tabs.items, 0..) |*tab, i| {
-                const session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
-                const status = try self.tabProgramStatus(tab.tree.root);
-                items[count] = .{
-                    .value = @intFromEnum(tab.id),
-                    .label = tab.customTitle() orelse session.displayTitle(),
-                    .detail = try std.fmt.bufPrint(&details[i], "{d} panes · {s}", .{ tab.tree.paneCount(), @tagName(status.summary.state) }),
-                };
-                count += 1;
-            }
-            request.selected = if (count > 0) items[@min(peek.selected_index, count - 1)].value else 0;
-        },
+        .tab_peek => return,
         .shell_picker => |picker| {
             request.kind = .shell;
             request.title = "Choose a shell";
@@ -104,8 +87,10 @@ pub fn onDialogEvent(self: *Application, event: native.DialogEvent) void {
 fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
     switch (event) {
         .cancel => {
+            const return_to_peek = if (self.overlay == .close_confirm) self.overlay.close_confirm.return_to_peek else null;
             if (self.overlay == .theme_picker) try self.applyTheme(self.overlay.theme_picker.initial_theme_index);
             self.overlay = .none;
+            if (return_to_peek) |index| overlays.restorePeek(self, index);
             platform.invalidateWindow();
         },
         .query => |query| {

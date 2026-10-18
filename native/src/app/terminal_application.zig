@@ -54,6 +54,7 @@ pub const TerminalApplication = struct {
     sessions: std.ArrayList(*TerminalSession) = .empty,
     model: ?workspace.WorkspaceModel = null,
     placements: std.ArrayList(panes.PanePlacement) = .empty,
+    preview_placements: std.ArrayList(panes.PanePlacement) = .empty,
     metrics: ?platform.WindowMetrics = null,
     pointer_drag: pointer.PointerDrag = .none,
     editing_tab: ?keyboard.TabRename = null,
@@ -144,6 +145,7 @@ pub const TerminalApplication = struct {
         self.sessions.deinit(self.allocator);
         if (self.model) |*model| model.deinit();
         self.placements.deinit(self.allocator);
+        self.preview_placements.deinit(self.allocator);
         if (self.path_index) |index| index.destroy();
         self.path_completion.deinit();
         self.allocator.free(self.startup_directory.bytes);
@@ -528,7 +530,7 @@ pub const TerminalApplication = struct {
         if (!visible) {
             if (chrome_changed) _ = session.refreshAppIcon(false);
             session.sync_defer_since_ms = null;
-            return chrome_changed;
+            return chrome_changed or overlays.peekContainsPane(self, id);
         }
         const now_probe = std.time.milliTimestamp();
         if (chrome_changed or now_probe - session.last_icon_probe_ms >= 200) {
@@ -553,6 +555,7 @@ pub const TerminalApplication = struct {
         } else {
             session.sync_defer_since_ms = null;
         }
+        if (self.overlay == .tab_peek) return chrome_changed or overlays.peekContainsPane(self, id);
         return true;
     }
     pub fn onTick(self: *TerminalApplication) void {
@@ -583,6 +586,7 @@ pub const TerminalApplication = struct {
         self.paintWorkspace() catch |err| self.fail(err);
     }
     fn paintWorkspace(self: *TerminalApplication) !void {
+        try overlays.finishPeek(self);
         const model = if (self.model) |*model| model else return;
         const active_theme = self.currentTheme();
         platform.drawTabStripBackground(model.selected_tab);
@@ -610,6 +614,7 @@ pub const TerminalApplication = struct {
         const can_focus = active_tab.tree.paneCount() > 1;
         var saw_active_pane = false;
         for (self.placements.items) |placement| {
+            if (self.overlay == .tab_peek) break;
             if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             const focused = active_tab.active_pane == placement.id and self.overlay == .none and self.editing_tab == null;
@@ -674,8 +679,11 @@ pub const TerminalApplication = struct {
     pub fn requestClosePane(self: *TerminalApplication, pane_id: panes.PaneId) !void {
         self.commitTabRename();
         const model = if (self.model) |*model| model else return;
-        if (model.activeTab().tree.paneCount() <= 1) {
-            return self.requestCloseTab(model.selected_tab);
+        const owner = for (model.tabs.items, 0..) |tab, index| {
+            if (tab.tree.containsPane(pane_id)) break index;
+        } else return;
+        if (model.tabs.items[owner].tree.paneCount() <= 1) {
+            return self.requestCloseTab(owner);
         }
         const session = self.findSession(pane_id) orelse return;
         if (close_confirmation.evaluatePane(session.closeSnapshot(true), .pane)) |confirmation| {
@@ -687,7 +695,7 @@ pub const TerminalApplication = struct {
             platform.invalidateWindow();
             return;
         }
-        if (model.closePaneSplit(pane_id)) |id| {
+        if (model.closePaneSplitAnywhere(pane_id)) |id| {
             self.removeSession(id);
             try self.updateLayout();
         }
@@ -725,14 +733,20 @@ pub const TerminalApplication = struct {
         if (self.overlay != .close_confirm) return;
         dialogs.closeDialog();
         const target = self.overlay.close_confirm.target;
+        const return_to_peek = self.overlay.close_confirm.return_to_peek;
         self.overlay = .none;
         const model = if (self.model) |*model| model else return;
         switch (target) {
             .pane => |pane_id| {
-                if (model.closePaneSplit(pane_id)) |id| {
+                if (model.closePaneSplitAnywhere(pane_id)) |id| {
                     self.removeSession(id);
                 } else {
-                    try self.closeTab(model.selected_tab);
+                    for (model.tabs.items, 0..) |tab, index| {
+                        if (tab.tree.containsPane(pane_id)) {
+                            try self.closeTab(index);
+                            break;
+                        }
+                    }
                 }
             },
             .tab => |tab_id| {
@@ -743,6 +757,7 @@ pub const TerminalApplication = struct {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
         }
         try self.updateLayout();
+        if (return_to_peek) |index| overlays.restorePeek(self, index);
     }
     pub fn pathCompletionPopup(self: *TerminalApplication) ?completion_popup.Layout {
         if (self.overlay != .path_completion) return null;
@@ -838,8 +853,9 @@ pub const TerminalApplication = struct {
     fn openTabPeek(self: *TerminalApplication) void {
         self.commitTabRename();
         const model = if (self.model) |*model| model else return;
-        self.overlay = .{ .tab_peek = .{ .selected_index = model.selected_tab } };
-        modals.presentTerminalModal(self) catch |err| self.fail(err);
+        dialogs.closeDialog();
+        self.overlay = .{ .tab_peek = .{ .selected_index = model.selected_tab, .started_ms = self.cursorNowMs() } };
+        self.syncAnimationWake() catch |err| self.fail(err);
         platform.invalidateWindow();
     }
     fn openShellPicker(self: *TerminalApplication, mode: overlays.ShellPickerMode) void {

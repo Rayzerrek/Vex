@@ -70,6 +70,27 @@ argument string. Available shells depend on the local Windows/WSL installation.
 | Tab overview | Ctrl+Shift+Space |
 | Path completion | Ctrl+Shift+F |
 
+The tab overview uses terminal frames (including split panes), not window captures.
+Use arrows or Tab/Shift+Tab to choose, Home/End to jump to the first/last tab, Enter or a
+card click to switch, and Escape to return without switching. Each card has a close
+button (except the final tab); split previews also have individual close buttons
+when large enough for a usable target. Closing keeps the overview open and uses
+the usual running-process confirmation, including when closing an inactive tab.
+The centered grid shows all tabs together (the workspace limit is eight), with
+uniform card sizes and a centered final row. Columns adapt to window proportions.
+It prefers three-fifths of the available area, growing on smaller windows to keep
+close controls and terminal content usable rather than hiding tabs on pages. Opening and
+selection use a monitor-paced 180 ms scale transition, respecting Windows' animation preference.
+PTY sizes stay unchanged, and previews share the normal glyph atlas and cached
+geometry. Output from visible previews uses the existing output frame scheduler;
+a settled overview has no animation loop.
+
+Windows desktop verification: exercise different split layouts, Unicode/wide and
+box-drawing glyphs, a continuously updating inactive tab, both themes, mixed DPI,
+keyboard navigation with seven/eight tabs, cancellation, process exit, and disabled system animations. Check
+that opening/closing the overview never emits terminal resizes. This is a local
+interactive check, not covered by Linux cross-compilation.
+
 ## Rendering and motion
 
 Dirty terminal snapshots still read every row to handle Ghostty's scroll dirty-state

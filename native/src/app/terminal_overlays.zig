@@ -1,3 +1,5 @@
+const std = @import("std");
+const overview = @import("../workspace/tab_overview.zig");
 const Application = @import("terminal_application.zig").TerminalApplication;
 const platform = @import("../windows/windows_ffi.zig");
 const panes = @import("../workspace/pane_tree.zig");
@@ -10,20 +12,126 @@ const completion_popup = @import("../workspace/completion_popup.zig");
 pub const ShellPickerMode = enum(u8) { new_tab = 0, split_right = 1, split_down = 2, set_default = 3 };
 /// Stable identities survive process exit and tab reordering while a close dialog is open.
 pub const CloseTarget = union(enum) { pane: panes.PaneId, tab: workspace.TabId };
-/// Dialog state belongs to the terminal owner; only path completion is painted inside the terminal.
+/// Inline terminal previews retain identities and timing, never borrowed frame pointers.
 pub const OverlayState = union(enum) {
     none,
     theme_picker: struct { initial_theme_index: usize },
     command_palette: palette.CommandPalette,
-    tab_peek: struct { selected_index: usize = 0 },
+    tab_peek: struct { selected_index: usize = 0, started_ms: u64 = 0, closing: bool = false, accept: bool = false, hovered_close: ?CloseTarget = null },
     path_completion: struct { pane_id: panes.PaneId, anchor: ?completion_popup.Anchor = null },
-    close_confirm: struct { target: CloseTarget, confirmation: close_confirmation.CloseConfirmation },
+    close_confirm: struct { target: CloseTarget, confirmation: close_confirmation.CloseConfirmation, return_to_peek: ?usize = null },
     shell_picker: struct { mode: ShellPickerMode = .new_tab, selected_index: usize = 0 },
     settings,
 };
 
-/// Paints only the cursor-anchored path popup; owned dialogs have their own real controls and focus.
+const peek_duration_ms = 180;
+
+pub fn peekContainsPane(self: *Application, id: panes.PaneId) bool {
+    if (self.overlay != .tab_peek) return false;
+    const model = if (self.model) |*model| model else return false;
+    for (model.tabs.items) |tab| if (tab.tree.containsPane(id)) return true;
+    return false;
+}
+
+pub fn peekAnimating(self: *Application) bool {
+    return self.overlay == .tab_peek and platform.animationsEnabled() and self.cursorNowMs() -| self.overlay.tab_peek.started_ms < peek_duration_ms;
+}
+
+fn closePeek(self: *Application, accept: bool) void {
+    if (!accept) {
+        if (self.model) |model| self.overlay.tab_peek.selected_index = model.selected_tab;
+    }
+    self.overlay.tab_peek.closing = true;
+    self.overlay.tab_peek.accept = accept;
+    self.overlay.tab_peek.started_ms = self.cursorNowMs();
+    self.resetCursorOnInput() catch |err| self.fail(err);
+    platform.invalidateWindow();
+}
+
+pub fn finishPeek(self: *Application) !void {
+    if (self.overlay != .tab_peek or !self.overlay.tab_peek.closing) return;
+    if (peekAnimating(self)) return;
+    const peek = self.overlay.tab_peek;
+    self.overlay = .none;
+    if (peek.accept) try self.applyAction(.select_tab, @intCast(peek.selected_index));
+}
+
+fn drawTabOverview(self: *Application) !void {
+    const model = if (self.model) |*model| model else return;
+    const metrics = self.metrics orelse return;
+    const peek = &self.overlay.tab_peek;
+    peek.selected_index = @min(peek.selected_index, model.tabs.items.len - 1);
+    const elapsed = self.cursorNowMs() -| peek.started_ms;
+    const progress: f32 = if (platform.animationsEnabled()) @min(1, @as(f32, @floatFromInt(elapsed)) / peek_duration_ms) else 1;
+    const layout = overview.Layout.init(metrics.width, metrics.height, model.tabs.items.len);
+    platform.c.vex_draw_tab_overview(progress < 1);
+    // The selected card is last so its expansion occludes neighbours without extra layers/textures.
+    for (0..layout.count) |index| {
+        if (index != peek.selected_index) try drawTabCard(self, index, layout.card(index), false);
+    }
+    const full = @import("terminal_application.zig").windowContentBounds(metrics);
+    const destination = layout.card(peek.selected_index);
+    const bounds = if (peek.closing) overview.interpolate(destination, full, progress) else overview.interpolate(full, destination, progress);
+    try drawTabCard(self, peek.selected_index, bounds, true);
+}
+
+fn drawTabCard(self: *Application, index: usize, bounds: panes.PaneRect, selected: bool) !void {
+    const model = if (self.model) |*model| model else return;
+    const tab = &model.tabs.items[index];
+    const active = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
+    platform.drawTabPreviewCard(bounds, tab.customTitle() orelse active.displayTitle(), selected);
+    if (model.tabs.items.len > 1) {
+        if (overview.closeButton(bounds)) |button| platform.drawPreviewClose(button, std.meta.eql(self.overlay.tab_peek.hovered_close, @as(?CloseTarget, .{ .tab = tab.id })));
+    }
+    const content = overview.content(bounds);
+    try tab.tree.layout(self.allocator, &self.preview_placements, content);
+    for (self.preview_placements.items) |placement| {
+        const session = self.findSession(placement.id) orelse continue;
+        if (placement.bounds.width <= 0 or placement.bounds.height <= 0) continue;
+        const frame = try session.terminal.readFrame();
+        try platform.drawTerminalPreview(placement.id, placement.bounds, frame, self.currentTheme());
+        if (tab.tree.paneCount() > 1) {
+            if (overview.closeButton(placement.bounds)) |button| platform.drawPreviewClose(button, std.meta.eql(self.overlay.tab_peek.hovered_close, @as(?CloseTarget, .{ .pane = placement.id })));
+        }
+    }
+}
+
+pub fn restorePeek(self: *Application, index: usize) void {
+    const model = if (self.model) |*model| model else return;
+    self.overlay = .{ .tab_peek = .{ .selected_index = @min(index, model.tabs.items.len - 1), .started_ms = self.cursorNowMs() -| peek_duration_ms } };
+    platform.invalidateWindow();
+}
+
+fn requestPeekClose(self: *Application, target: CloseTarget) !void {
+    const selected = self.overlay.tab_peek.selected_index;
+    switch (target) {
+        .tab => |id| {
+            const model = if (self.model) |*model| model else return;
+            if (model.tabIndex(id)) |index| try self.applyAction(.request_close_tab, @intCast(index));
+        },
+        .pane => |id| try self.requestClosePane(id),
+    }
+    if (self.overlay == .close_confirm) self.overlay.close_confirm.return_to_peek = selected else restorePeek(self, selected);
+}
+
+fn peekCloseHit(self: *Application, index: usize, bounds: panes.PaneRect, x: f32, y: f32) !?CloseTarget {
+    const model = if (self.model) |*model| model else return null;
+    const tab = &model.tabs.items[index];
+    if (model.tabs.items.len > 1) {
+        if (overview.closeButton(bounds)) |button| if (button.contains(x, y)) return .{ .tab = tab.id };
+    }
+    if (tab.tree.paneCount() > 1) {
+        try tab.tree.layout(self.allocator, &self.preview_placements, overview.content(bounds));
+        for (self.preview_placements.items) |placement| {
+            if (overview.closeButton(placement.bounds)) |button| if (button.contains(x, y)) return .{ .pane = placement.id };
+        }
+    }
+    return null;
+}
+
+/// Inline overlays share the terminal renderer; ordinary dialogs retain native focus controls.
 pub fn drawActiveOverlay(self: *Application) !void {
+    if (self.overlay == .tab_peek) return drawTabOverview(self);
     if (self.overlay != .path_completion) return;
     const layout = self.pathCompletionPopup() orelse return;
     self.path_completion.ensureVisible(layout.visible_rows);
@@ -47,6 +155,27 @@ pub fn drawActiveOverlay(self: *Application) !void {
 
 /// Native dialogs own keyboard navigation; the inline path popup still routes terminal-window keys.
 pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
+    if (self.overlay == .tab_peek) {
+        if (self.overlay.tab_peek.closing) return true;
+        const model = if (self.model) |*model| model else return true;
+        const metrics = self.metrics orelse return true;
+        const layout = overview.Layout.init(metrics.width, metrics.height, model.tabs.items.len);
+        const selected = &self.overlay.tab_peek.selected_index;
+        switch (key) {
+            0x1B => closePeek(self, false),
+            0x0D => closePeek(self, true),
+            0x25 => selected.* -|= 1,
+            0x26, 0x28 => selected.* = layout.verticalNeighbor(selected.*, key == 0x28),
+            0x21, 0x24 => selected.* = 0,
+            0x22, 0x23 => selected.* = model.tabs.items.len - 1,
+            0x27, 0x09 => {
+                if (key == 0x09 and (modifiers & 1) != 0) selected.* -|= 1 else selected.* = @min(model.tabs.items.len - 1, selected.* + 1);
+            },
+            else => {},
+        }
+        platform.invalidateWindow();
+        return true;
+    }
     if (self.overlay != .path_completion) return true;
     const pane_id = self.overlay.path_completion.pane_id;
     const rows = if (self.pathCompletionPopup()) |layout| layout.visible_rows else 1;
@@ -87,6 +216,37 @@ pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
 
 /// The popup reuses identical row hit regions for selection and cursor feedback; other dialogs own their HWND input.
 pub fn handleOverlayPointer(self: *Application, event: platform.PointerEvent, x: f32, y: f32) !platform.PointerResponse {
+    if (self.overlay == .tab_peek) {
+        if (self.overlay.tab_peek.closing or peekAnimating(self)) return .normal;
+        const model = if (self.model) |*model| model else return .normal;
+        const metrics = self.metrics orelse return .normal;
+        const layout = overview.Layout.init(metrics.width, metrics.height, model.tabs.items.len);
+        const hit = layout.hit(x, y);
+        const close_target = if (hit) |index| try peekCloseHit(self, index, layout.card(index), x, y) else null;
+        if (event == .hover or event == .move or event == .cancel) {
+            const hovered = if (event == .cancel) null else close_target;
+            if (!std.meta.eql(self.overlay.tab_peek.hovered_close, hovered)) {
+                self.overlay.tab_peek.hovered_close = hovered;
+                platform.invalidateWindow();
+            }
+        }
+        if (event == .begin) {
+            if (close_target) |target| {
+                try requestPeekClose(self, target);
+                return .link;
+            }
+        }
+        if (hit) |index| {
+            if (event == .hover or event == .move or event == .begin) {
+                if (self.overlay.tab_peek.selected_index != index) {
+                    self.overlay.tab_peek.selected_index = index;
+                    platform.invalidateWindow();
+                }
+            }
+            if (event == .begin) closePeek(self, true);
+        } else if (event == .begin) closePeek(self, false);
+        return if (hit != null) .link else .normal;
+    }
     if (self.overlay != .path_completion) return .normal;
     const layout = self.pathCompletionPopup() orelse return .normal;
     const pane_id = self.overlay.path_completion.pane_id;

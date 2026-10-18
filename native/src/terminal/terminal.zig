@@ -758,9 +758,11 @@ pub const Terminal = struct {
     /// Encode navigation/function keys with the terminal's currently negotiated ConPTY-compatible modes.
     pub fn encodeKey(self: *Terminal, virtual_key: u32, mods: u32, output: []u8) !?[]const u8 {
         if (mods > 7) return error.InvalidKeyModifiers;
-        if (virtual_key == 0x08 and mods == 2) {
+        if (virtual_key == 0x08 and mods <= 2) {
             if (output.len == 0) return error.InvalidTerminalBufferLength;
-            output[0] = 0x17;
+            // Consume Backspace before WM_CHAR emits BS, which ConPTY treats as Ctrl+H.
+            // DEL represents a plain Backspace for both Windows shells and Unix line editors.
+            output[0] = if (mods == 2) 0x17 else 0x7f;
             return output[0..1];
         }
         const key = physicalTerminalKey(virtual_key) orelse return null;
@@ -1612,7 +1614,9 @@ test "viewport scroll shortcuts move primary scrollback, yield on alternate scre
     try std.testing.expect(!try terminal.scrollViewportShortcut(0x21, 1));
     var encoded: [64]u8 = undefined;
     try std.testing.expectEqualStrings("\x17", (try terminal.encodeKey(0x08, 2, &encoded)).?);
-    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKey(0x08, 0, &encoded));
+    try std.testing.expectEqualStrings("\x7f", (try terminal.encodeKey(0x08, 0, &encoded)).?);
+    try std.testing.expectEqualStrings("\x7f", (try terminal.encodeKey(0x08, 1, &encoded)).?);
+    try std.testing.expectError(error.InvalidTerminalBufferLength, terminal.encodeKey(0x08, 0, encoded[0..0]));
 }
 
 const ClipboardLog = struct {

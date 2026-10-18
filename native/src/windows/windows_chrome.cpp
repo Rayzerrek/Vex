@@ -420,6 +420,28 @@ extern "C" void vex_draw_session_exit(VexPaneRect bounds, uint32_t exit_code) {
     label(title, x + 46, y + 12, width - 60, chromePalette.text_primary);
     label(L"Output preserved. Ctrl+Shift+T opens a new terminal.", x + 46, y + 35, width - 60, chromePalette.text_muted);
 }
+extern "C" void vex_draw_tab_overview(bool animating) {
+    // Share monitor-paced scheduling with tab chrome; settled previews request no frames.
+    chromeMotionPending = chromeMotionPending || animating;
+    const auto size = target->GetSize();
+    rectangle(0, 44, size.width, fmaxf(0, size.height - 44), chromePalette.titlebar_bg);
+    labelWithFont(chromeBoldFont, L"Tabs", 28, 58, size.width - 56, chromePalette.text_primary);
+    label(L"Arrows / Tab to choose    Home / End    Enter to switch    Esc to return", 28, size.height - 32, size.width - 56, chromePalette.text_muted);
+}
+extern "C" void vex_draw_preview_close(VexPaneRect bounds, bool hovered) {
+    brush->SetColor(rgb(hovered ? (chromePalette.is_dark ? 0xffb4be : 0xb42336) : chromePalette.text_muted));
+    const float x = bounds.x + bounds.width * 0.5f, y = bounds.y + bounds.height * 0.5f;
+    target->DrawLine(D2D1::Point2F(x - 3.5f, y - 3.5f), D2D1::Point2F(x + 3.5f, y + 3.5f), brush, 1.4f, roundCaps);
+    target->DrawLine(D2D1::Point2F(x + 3.5f, y - 3.5f), D2D1::Point2F(x - 3.5f, y + 3.5f), brush, 1.4f, roundCaps);
+}
+extern "C" void vex_draw_tab_preview_card(VexPaneRect bounds, const uint8_t* title, size_t length, bool selected) {
+    const auto card = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), 7, 7);
+    brush->SetColor(rgb(chromePalette.pane_bg));
+    target->FillRoundedRectangle(card, brush);
+    brush->SetColor(rgb(selected ? chromePalette.accent : chromePalette.border));
+    target->DrawRoundedRectangle(card, brush, selected ? 2.0f : 1.0f);
+    labelUtf8OrDefault(title, length, bounds.x + 10, bounds.y + 5, fmaxf(0, bounds.width - 44), chromePalette.text_primary, paneTitleFont);
+}
 extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
     if (!target || !brush || bounds.width <= 0.0f || bounds.height <= 0.0f) return;
     const D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), 6.0f, 6.0f);

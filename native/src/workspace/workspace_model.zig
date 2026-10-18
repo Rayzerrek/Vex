@@ -130,6 +130,12 @@ pub const WorkspaceModel = struct {
     pub fn closePaneSplit(self: *WorkspaceModel, target: panes.PaneId) ?panes.PaneId {
         return self.closePaneInTab(self.selected_tab, target);
     }
+    pub fn closePaneSplitAnywhere(self: *WorkspaceModel, target: panes.PaneId) ?panes.PaneId {
+        for (self.tabs.items, 0..) |tab, index| {
+            if (tab.tree.containsPane(target)) return self.closePaneInTab(index, target);
+        }
+        return null;
+    }
     fn closePaneInTab(self: *WorkspaceModel, index: usize, target: panes.PaneId) ?panes.PaneId {
         const tab = &self.tabs.items[index];
         if (!tab.tree.closePane(target)) return null;
@@ -300,6 +306,20 @@ test "tab identity survives removal of its first pane and close fallback follows
     try std.testing.expectEqual(@as(TabId, @enumFromInt(1)), model.activeTab().id);
     try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(4)), model.activeTab().active_pane);
     try std.testing.expect(!model.moveTab(@enumFromInt(3), 1));
+}
+
+test "overview closes inactive splits without selecting their tab or removing the final leaf" {
+    var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+    defer model.deinit();
+    try model.splitActivePane(@enumFromInt(2), .right);
+    try model.newTab(@enumFromInt(3));
+    const selected = model.selected_tab;
+    try std.testing.expectEqual(@as(?panes.PaneId, @enumFromInt(2)), model.closePaneSplitAnywhere(@enumFromInt(2)));
+    try std.testing.expectEqual(selected, model.selected_tab);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(1)), model.tabs.items[0].active_pane);
+    try std.testing.expectEqual(@as(?panes.PaneId, null), model.closePaneSplitAnywhere(@enumFromInt(1)));
+    try std.testing.expectEqual(@as(?panes.PaneId, null), model.closePaneSplitAnywhere(@enumFromInt(99)));
+    try std.testing.expectEqual(@as(usize, 2), model.tabs.items.len);
 }
 
 test "focus mode requires multiple panes and unzooms when splitting or closing to a single leaf" {

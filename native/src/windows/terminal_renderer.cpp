@@ -198,7 +198,13 @@ HRESULT TerminalRenderer::appendQuad(const Quad& quad) {
     if (FAILED(result)) return result;
     if (pendingQuads && (page != pendingPage || offset != pendingOffset + pendingQuads * sizeof(Quad))) flushQuads();
     if (!pendingQuads) { pendingPage = page; pendingOffset = offset; }
-    memcpy(frames[frameIndex].pages[page].mapped + offset, &quad, sizeof(quad));
+    Quad transformed = quad;
+    // Scale cached atlas quads, not fonts: animation must never populate a new atlas per frame.
+    transformed.bounds[0] = quad.bounds[0] * previewScale + previewX * scale;
+    transformed.bounds[1] = quad.bounds[1] * previewScale + previewY * scale;
+    transformed.bounds[2] = quad.bounds[2] * previewScale + previewX * scale;
+    transformed.bounds[3] = quad.bounds[3] * previewScale + previewY * scale;
+    memcpy(frames[frameIndex].pages[page].mapped + offset, &transformed, sizeof(transformed));
     pendingQuads++;
     if (recording) recordQuad(quad);
     return S_OK;
@@ -229,7 +235,16 @@ HRESULT TerminalRenderer::replayGeometry(const Geometry& entry) {
         if (FAILED(result)) return result;
         if (pendingQuads && (page != pendingPage || offset != pendingOffset + pendingQuads * sizeof(Quad))) flushQuads();
         if (!pendingQuads) { pendingPage = page; pendingOffset = offset; }
-        memcpy(frames[frameIndex].pages[page].mapped + offset, entry.quads + copied, count * sizeof(Quad));
+        auto* output = reinterpret_cast<Quad*>(frames[frameIndex].pages[page].mapped + offset);
+        memcpy(output, entry.quads + copied, count * sizeof(Quad));
+        if (previewScale != 1 || previewX != 0 || previewY != 0) {
+            for (UINT i = 0; i < count; ++i) {
+                output[i].bounds[0] = output[i].bounds[0] * previewScale + previewX * scale;
+                output[i].bounds[1] = output[i].bounds[1] * previewScale + previewY * scale;
+                output[i].bounds[2] = output[i].bounds[2] * previewScale + previewX * scale;
+                output[i].bounds[3] = output[i].bounds[3] * previewScale + previewY * scale;
+            }
+        }
         pendingQuads += count; copied += count;
     }
     return S_OK;

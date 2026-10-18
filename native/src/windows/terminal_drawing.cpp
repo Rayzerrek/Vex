@@ -367,4 +367,18 @@ extern "C" int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reu
     return (int)renderer->terminalResult(renderer->terminal.beginGeometry(key.generation, scalars, geometry, *reused));
 }
 extern "C" void vex_terminal_geometry_end(bool complete) { renderer->terminal.endGeometry(complete); }
-extern "C" void vex_end_pane() { renderer->endTerminalPass(); }
+extern "C" void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns, uint16_t rows) {
+    gridLeft = 0; gridTop = 0;
+    const float factor = fminf(bounds.width / fmaxf(1, columns * cellWidth), bounds.height / fmaxf(1, rows * cellHeight));
+    const D3D12_RECT clip = {
+        (LONG)fmaxf(0, bounds.x * dpiScale), (LONG)fmaxf(0, bounds.y * dpiScale),
+        (LONG)fminf((float)renderer->width(), (bounds.x + bounds.width) * dpiScale),
+        (LONG)fminf((float)renderer->height(), (bounds.y + bounds.height) * dpiScale)
+    };
+    renderer->beginTerminalPass(clip);
+    renderer->terminal.setPreviewTransform(factor, bounds.x, bounds.y);
+}
+extern "C" void vex_end_pane() {
+    renderer->terminal.setPreviewTransform();
+    renderer->endTerminalPass();
+}

@@ -37,6 +37,7 @@ test {
     _ = @import("workspace/scrollbar_visibility.zig");
     _ = @import("workspace/tab_strip.zig");
     _ = @import("workspace/tab_drag.zig");
+    _ = @import("workspace/tab_overview.zig");
     _ = @import("workspace/terminal_theme.zig");
     _ = @import("workspace/close_confirmation.zig");
     _ = @import("workspace/command_palette.zig");
