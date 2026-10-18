@@ -16,10 +16,15 @@ struct WindowChromeFrame {
     uint32_t tabCount;
     int hoveredTab;
     bool hoveredClose;
+    double timeMs;
+    bool motionEnabled;
 };
 struct WindowChromeDiagnostics {
     uint64_t activeTabIconKey, focusedPaneIconKey;
     size_t activeTabIconCount;
+    float tabSelectionX;
 };
 void beginWindowChromeFrame(const WindowChromeFrame& frame);
 WindowChromeDiagnostics windowChromeDiagnostics();
+// True only until a chrome transition settles; the window schedules refresh-paced wakes.
+bool windowChromeAnimationPending();

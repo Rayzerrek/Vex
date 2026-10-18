@@ -569,6 +569,7 @@ pub const TerminalApplication = struct {
     fn paintWorkspace(self: *TerminalApplication) !void {
         const model = if (self.model) |*model| model else return;
         const active_theme = self.currentTheme();
+        platform.drawTabStripBackground(model.selected_tab);
         for (model.tabs.items, 0..) |tab, index| {
             const presentation = try self.tabProgramStatus(tab.tree.root);
             const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;

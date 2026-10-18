@@ -98,6 +98,7 @@ int vex_window_cancel_pointer_capture(void);
 bool vex_window_has_pointer_capture(void);
 /* Parsed strip geometry comes from Zig, so paint/input never use a stale painted tab count. */
 int vex_window_tab_strip(uint32_t count, float tab_width);
+void vex_draw_tab_strip_background(uint32_t active_index);
 int vex_draw_tab_insertion_marker(float x);
 void vex_window_error(const char* message);
 int vex_window_shell_name(const uint8_t* bytes, size_t length);
@@ -130,7 +131,7 @@ typedef struct {
     uint64_t generation;
     uint32_t pane_id, columns, rows;
     uint32_t background, foreground, cursor, selection_background, accent, is_dark;
-    uint32_t block_column, block_row, link_row, link_start, link_end;
+    uint32_t link_row, link_start, link_end;
 } VexTerminalGeometryKey;
 int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reused);
 void vex_terminal_geometry_end(bool complete);

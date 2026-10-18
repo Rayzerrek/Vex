@@ -235,7 +235,7 @@ HRESULT TerminalRenderer::replayGeometry(const Geometry& entry) {
     return S_OK;
 }
 
-HRESULT TerminalRenderer::beginGeometry(uint64_t generation, const uint32_t (&key)[14], const float (&geometry)[4], bool& reused) {
+HRESULT TerminalRenderer::beginGeometry(uint64_t generation, const uint32_t (&key)[12], const float (&geometry)[4], bool& reused) {
     reused = false;
     if (!passOpen || recording) return E_UNEXPECTED;
     if (!geometryEnabled) return S_OK;

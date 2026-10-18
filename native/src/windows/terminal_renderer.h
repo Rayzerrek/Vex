@@ -25,7 +25,7 @@ public:
     HRESULT setClip(D3D12_RECT clip);
     void clearGlyphCache();
     // A hit replays immutable CPU instances into this slot's fence-protected uploads.
-    HRESULT beginGeometry(uint64_t generation, const uint32_t (&key)[14], const float (&geometry)[4], bool& reused);
+    HRESULT beginGeometry(uint64_t generation, const uint32_t (&key)[12], const float (&geometry)[4], bool& reused);
     void endGeometry(bool complete);
     UINT64 geometryHits = 0, geometryBuilds = 0;
     UINT64 geometryCapacity() const;
@@ -50,7 +50,7 @@ private:
     struct Geometry {
         Quad* quads = nullptr;
         UINT count = 0, capacity = 0;
-        uint32_t key[14] = {};
+        uint32_t key[12] = {};
         float geometry[4] = {};
         UINT64 generation = 0, atlasGeneration = 0, lastUsed = 0;
         bool valid = false;

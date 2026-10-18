@@ -360,7 +360,7 @@ extern "C" int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reu
     if (!reused) return (int)renderer->terminalResult(E_INVALIDARG);
     const uint32_t scalars[] = {
         key.pane_id, key.columns, key.rows, key.background, key.foreground, key.cursor,
-        key.selection_background, key.accent, key.is_dark, key.block_column, key.block_row,
+        key.selection_background, key.accent, key.is_dark,
         key.link_row, key.link_start, key.link_end
     };
     const float geometry[] = { gridLeft, gridTop, cellWidth, cellHeight };

@@ -354,6 +354,11 @@ pub fn cancelPointerCapture() !void {
 pub fn hasPointerCapture() bool {
     return c.vex_window_has_pointer_capture();
 }
+/// Paints tab backgrounds before labels so moving selection never covers text.
+pub fn drawTabStripBackground(active_index: usize) void {
+    c.vex_draw_tab_strip_background(@intCast(active_index));
+}
+
 /// Publishes parsed tab-strip geometry before paint or hit testing; the bridge copies scalars, not model pointers.
 pub fn setTabStripLayout(layout: tab_strip.TabStripLayout) !void {
     if (c.vex_window_tab_strip(@intCast(layout.count), layout.tab_width) != 0) return error.InvalidTabStripGeometry;
@@ -540,16 +545,21 @@ pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalF
     const cursor = frame.cursor;
     const cursor_visible = focused and cursor_shown and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
     const block_cursor = cursor_visible and cursor.shape == .block;
-    const key = terminalGeometryKey(pane_id, frame, block_cursor, hovered_link, theme);
+    const key = terminalGeometryKey(pane_id, frame, hovered_link, theme);
     var reused = false;
     if (c.vex_terminal_geometry_begin(key, &reused) != 0) return error.NativeTextRenderingFailed;
     if (!reused) {
         var complete = false;
         defer c.vex_terminal_geometry_end(complete);
-        try drawTerminalCells(frame, block_cursor, hovered_link, theme);
+        try drawTerminalCells(frame, hovered_link, theme);
         complete = true;
     }
-    if (cursor_visible and cursor.shape != .block) {
+    if (block_cursor) {
+        if (blockCursorRun(frame, hovered_link, theme)) |run| {
+            for (0..run.cells) |offset| c.vex_draw_cursor(cursor.column + @as(u16, @intCast(offset)), cursor.row, 1, theme.cursor);
+            try drawRun(cursor.column, cursor.row, run.cells, run.text, run.style, theme.background);
+        }
+    } else if (cursor_visible) {
         c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), theme.cursor);
     }
 }
@@ -557,7 +567,6 @@ pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalF
 fn terminalGeometryKey(
     pane_id: panes.PaneId,
     frame: *const terminal.TerminalFrame,
-    block_cursor: bool,
     hovered_link: ?HoveredLinkSpan,
     theme: terminal_theme.TerminalTheme,
 ) c.VexTerminalGeometryKey {
@@ -573,8 +582,6 @@ fn terminalGeometryKey(
         .selection_background = theme.selection_background,
         .accent = theme.accent,
         .is_dark = @intFromBool(theme.is_dark),
-        .block_column = if (block_cursor) frame.cursor.column else absent,
-        .block_row = if (block_cursor) frame.cursor.row else absent,
         .link_row = if (hovered_link) |link| link.row else absent,
         .link_start = if (hovered_link) |link| link.start_col else absent,
         .link_end = if (hovered_link) |link| link.end_col else absent,
@@ -610,8 +617,23 @@ const ContrastCache = struct {
 // Window-thread-only. The transform depends solely on these two colors, not the active theme or pane.
 var contrast_cache: ContrastCache = .{};
 
-fn drawTerminalCells(frame: *const terminal.TerminalFrame, block_cursor: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
+const BlockCursorRun = struct { cells: usize, text: []const u8, style: terminal.TextStyle };
+
+fn blockCursorRun(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) ?BlockCursorRun {
     const cursor = frame.cursor;
+    if (cursor.column >= frame.columns or cursor.row >= frame.rows) return null;
+    const cell = frame.cells.items[@as(usize, cursor.row) * frame.columns + cursor.column];
+    if (cell.width == .tail) return null;
+    var style = cell.style;
+    style.background = theme.cursor;
+    style.foreground = theme.background;
+    if (hovered_link) |link| {
+        if (link.row == cursor.row and cursor.column >= link.start_col and cursor.column <= link.end_col) style.underline = true;
+    }
+    return .{ .cells = if (cell.width == .wide) 2 else 1, .text = frame.cellText(cell), .style = style };
+}
+
+fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
     var cached_fg: u32 = theme.foreground;
     var cached_bg: u32 = theme.background;
     var cached_corrected_fg: u32 = theme.foreground;
@@ -626,16 +648,12 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, block_cursor: bool, h
         for (cells, 0..) |cell, column| {
             if (cell.width == .tail) continue;
             const text = frame.cellText(cell);
-            const is_block_cursor_cell = block_cursor and row == cursor.row and column == cursor.column;
             const in_link = if (row_link) |hl| (column >= hl.start_col and column <= hl.end_col) else false;
             var cell_style = cell.style;
             if (in_link) {
                 cell_style.underline = true;
             }
-            if (is_block_cursor_cell) {
-                cell_style.background = theme.cursor;
-                cell_style.foreground = theme.background;
-            } else if (cell.selected) {
+            if (cell.selected) {
                 cell_style.background = theme.selection_background;
                 cell_style.foreground = if (theme.is_dark) 0xffffff else 0x111318;
             } else if (in_link) {
@@ -682,18 +700,44 @@ test "contrast cache preserves exact correction across hits, collisions and appe
     }
 }
 
-test "terminal geometry excludes overlay cursor motion but includes block cursor cells" {
+test "terminal geometry excludes cursor shape, blink and motion including block cursors" {
     const testing = std.testing;
     const theme = terminal_theme.themes[0];
     var frame: terminal.TerminalFrame = .{ .columns = 80, .rows = 24, .generation = 1 };
     const pane: panes.PaneId = @enumFromInt(1);
-    const initial = terminalGeometryKey(pane, &frame, false, null, theme);
+    const initial = terminalGeometryKey(pane, &frame, null, theme);
     frame.cursor = .{ .column = 12, .row = 3, .visible = true, .shape = .bar };
-    try testing.expect(std.meta.eql(initial, terminalGeometryKey(pane, &frame, false, null, theme)));
-    const block = terminalGeometryKey(pane, &frame, true, null, theme);
-    try testing.expect(!std.meta.eql(initial, block));
+    try testing.expect(std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, theme)));
+    frame.cursor.shape = .block;
     frame.cursor.column += 1;
-    try testing.expect(!std.meta.eql(block, terminalGeometryKey(pane, &frame, true, null, theme)));
+    try testing.expect(std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, theme)));
+    frame.cursor.visible = false;
+    try testing.expect(std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, theme)));
+}
+
+test "block cursor overlay preserves wide text and decorations without inheriting selection colors" {
+    const api = try @import("../terminal/api.zig").Api.load();
+    var emulator = try terminal.Terminal.init(std.testing.allocator, &api);
+    defer emulator.deinit();
+    try emulator.feedOutput("\x1b[1;3;9m界é\x1b[H\x1b[2 q");
+    try emulator.setKeyboardSelection(0, 0, 2, 0);
+    const frame = try emulator.readFrame();
+    try std.testing.expect(frame.cells.items[0].selected);
+    const theme = terminal_theme.themes[0];
+    const link: HoveredLinkSpan = .{ .row = 0, .start_col = 0, .end_col = 2 };
+    const run = blockCursorRun(frame, link, theme) orelse return error.MissingBlockCursor;
+    try std.testing.expectEqual(@as(usize, 2), run.cells);
+    try std.testing.expectEqualStrings("界", run.text);
+    try std.testing.expect(run.style.bold and run.style.italic and run.style.underline and run.style.strikethrough);
+    try std.testing.expectEqual(theme.cursor, run.style.background);
+    try std.testing.expectEqual(theme.background, run.style.foreground);
+    emulator.frame.cursor.column = 1;
+    try std.testing.expect(blockCursorRun(frame, null, theme) == null);
+    emulator.frame.cursor.column = 2;
+    const grapheme = blockCursorRun(frame, null, theme) orelse return error.MissingBlockCursor;
+    try std.testing.expectEqualStrings("é", grapheme.text);
+    emulator.frame.cursor.column = frame.columns;
+    try std.testing.expect(blockCursorRun(frame, null, theme) == null);
 }
 
 test "terminal geometry keys distinguish content owners, themes and hovered links" {
@@ -701,23 +745,23 @@ test "terminal geometry keys distinguish content owners, themes and hovered link
     const theme = terminal_theme.themes[0];
     var frame: terminal.TerminalFrame = .{ .columns = 80, .rows = 24, .generation = 1 };
     const pane: panes.PaneId = @enumFromInt(1);
-    const initial = terminalGeometryKey(pane, &frame, false, null, theme);
-    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(@enumFromInt(2), &frame, false, null, theme)));
+    const initial = terminalGeometryKey(pane, &frame, null, theme);
+    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(@enumFromInt(2), &frame, null, theme)));
     frame.generation += 1;
-    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, false, null, theme)));
+    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, theme)));
     frame.generation -= 1;
     frame.columns += 1;
-    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, false, null, theme)));
+    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, theme)));
     frame.columns -= 1;
     var changed_theme = theme;
     changed_theme.selection_background ^= 1;
-    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, false, null, changed_theme)));
+    try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, changed_theme)));
     const link: HoveredLinkSpan = .{ .row = 1, .start_col = 2, .end_col = 8 };
-    const linked = terminalGeometryKey(pane, &frame, false, link, theme);
+    const linked = terminalGeometryKey(pane, &frame, link, theme);
     try testing.expect(!std.meta.eql(initial, linked));
     var changed_link = link;
     changed_link.end_col += 1;
-    try testing.expect(!std.meta.eql(linked, terminalGeometryKey(pane, &frame, false, changed_link, theme)));
+    try testing.expect(!std.meta.eql(linked, terminalGeometryKey(pane, &frame, changed_link, theme)));
 }
 
 pub fn isBlockGraphic(text: []const u8) bool {

@@ -55,6 +55,7 @@ pub fn build(b: *std.Build) void {
     const fixture_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
     fixture_module.addIncludePath(b.path("src/windows"));
     fixture_module.addCSourceFile(.{ .file = b.path("tests/conpty_fixture.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/chrome_motion.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/windows_conpty.cpp"), .flags = native_flags });
     fixture_module.linkSystemLibrary("kernel32", .{});
     const fixture = b.addExecutable(.{ .name = "vex-conpty-fixture", .root_module = fixture_module });

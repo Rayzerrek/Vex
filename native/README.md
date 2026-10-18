@@ -70,6 +70,20 @@ argument string. Available shells depend on the local Windows/WSL installation.
 | Tab overview | Ctrl+Shift+Space |
 | Path completion | Ctrl+Shift+F |
 
+## Rendering and motion
+
+Dirty terminal snapshots still read every row to handle Ghostty's scroll dirty-state
+under-reporting. Repeated non-grapheme cells share decoded text/style within each
+row; the cache never crosses rows or snapshots. Grapheme clusters always use the
+public UTF-8 decoder. Selection remains cell-local.
+
+All cursor shapes, including inverted block cursors, draw over cached terminal
+geometry, so blinking does not rebuild the text grid. Tab selection and hover use
+short, interruptible ease-out transitions, paced to the monitor through the existing
+high-resolution output scheduler. They do not resize the terminal or keep a render
+loop running after settling. Windows' client-area animation preference is respected;
+unfocused windows and tab-strip resizes snap immediately.
+
 ## Lua configuration
 
 Vex runs without a configuration file. A missing file on first launch is normal:

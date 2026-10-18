@@ -2,6 +2,7 @@
 #include "drawing_color.h"
 #include "ui_renderer.h"
 #include "terminal_drawing.h"
+#include "chrome_motion.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -18,6 +19,11 @@ float tabWidthDip;
 uint32_t tabStripCount;
 int hoveredTabIndex;
 bool hoveredTabClose;
+double chromeTimeMs;
+bool chromeMotionEnabled, chromeMotionPending;
+ChromeMotion tabSelectionMotion, tabHoverMotion[8];
+float previousTabWidth;
+uint32_t previousTabCount;
 uint64_t activeTabIconKey, focusedPaneIconKey;
 size_t activeTabIconCount;
 constexpr float tabStripLeft = 8;
@@ -46,10 +52,14 @@ void beginWindowChromeFrame(const WindowChromeFrame& frame) {
     tabStripCount = frame.tabCount;
     hoveredTabIndex = frame.hoveredTab;
     hoveredTabClose = frame.hoveredClose;
+    chromeTimeMs = frame.timeMs;
+    chromeMotionEnabled = frame.motionEnabled;
+    chromeMotionPending = false;
     activeTabIconKey = 0; focusedPaneIconKey = 0; activeTabIconCount = 0;
 }
+bool windowChromeAnimationPending() { return chromeMotionPending; }
 WindowChromeDiagnostics windowChromeDiagnostics() {
-    return { activeTabIconKey, focusedPaneIconKey, activeTabIconCount };
+    return { activeTabIconKey, focusedPaneIconKey, activeTabIconCount, tabSelectionMotion.sample(chromeTimeMs) };
 }
 
 static uint64_t computeIconCacheKey(VexAppIcon icon, uint32_t sizeCode) {
@@ -204,15 +214,30 @@ extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
     shellName[count] = 0;
     return 0;
 }
+extern "C" void vex_draw_tab_strip_background(uint32_t active_index) {
+    if (active_index >= tabStripCount || tabStripCount > 8) return;
+    const bool animate = chromeMotionEnabled && previousTabWidth == tabWidthDip && previousTabCount <= tabStripCount;
+    previousTabWidth = tabWidthDip;
+    previousTabCount = tabStripCount;
+    for (uint32_t i = 0; i < 8; ++i) {
+        const float opacity = tabHoverMotion[i].update(i < tabStripCount && (int)i == hoveredTabIndex ? 1.0f : 0.0f, chromeTimeMs, animate);
+        chromeMotionPending |= tabHoverMotion[i].pending(chromeTimeMs);
+        if (i >= tabStripCount || opacity <= 0) continue;
+        const float x = tabStripLeft + i * (tabWidthDip + 4);
+        brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg, opacity));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5, x + tabWidthDip, 39), 10, 10), brush);
+    }
+    const float x = tabSelectionMotion.update(tabStripLeft + active_index * (tabWidthDip + 4), chromeTimeMs, animate);
+    chromeMotionPending |= tabSelectionMotion.pending(chromeTimeMs);
+    brush->SetColor(rgb(chromePalette.active_tab_bg));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5, x + tabWidthDip, 39), 10, 10), brush);
+}
+
 extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool editing, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention) {
     if (count != tabStripCount || index >= count) return;
     float width = tabWidthDip, x = tabStripLeft + index * (width + 4);
     if (active) activeTabIconCount = icon_count;
     const bool isHovered = (int)index == hoveredTabIndex;
-    if (active || isHovered) {
-        brush->SetColor(rgb(active ? chromePalette.active_tab_bg : chromePalette.inactive_tab_hover_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5.0f, x + width, 39.0f), 10.0f, 10.0f), brush);
-    }
     float inset = 8.0f;
     if (width >= 68.0f && icons && icon_count > 0) {
         const size_t maxVisible = width >= 120.0f ? 3 : 1;

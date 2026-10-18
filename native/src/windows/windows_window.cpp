@@ -379,8 +379,9 @@ static void renderUiVerificationScene() {
     target->DrawText(text, 192, chromeFont, rect(20, 340, 1060, 380), &paint, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
-static void renderScene() {
-    beginWindowChromeFrame({ target, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose });
+static void renderScene(double timeMs) {
+    beginWindowChromeFrame({ target, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
+        timeMs, vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window) });
     beginTerminalDrawingFrame({ &renderer, drawingFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
     target->Clear(rgb(chromePalette.window_bg));
     rectangle(0.0f, 0.0f, clientWidth, 44.0f, chromePalette.titlebar_bg);
@@ -410,7 +411,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
             frameRequestCounter.QuadPart = 0;
         }
     }
-    renderScene();
+    renderScene(1000.0 * sceneBegin.QuadPart / counterFrequency.QuadPart);
     if (measureFrameTiming) {
         LARGE_INTEGER sceneEnd; QueryPerformanceCounter(&sceneEnd);
         sceneDurationUs = (UINT64)((sceneEnd.QuadPart - sceneBegin.QuadPart) * 1000000 / counterFrequency.QuadPart);
@@ -420,6 +421,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     rendererRecoveryAttempts = 0;
     // Preparation and a blocking Present already consume the interval; do not add another full period afterward.
     nextOutputFrame = sceneBegin.QuadPart + outputFrameTicks;
+    if (windowChromeAnimationPending() && frameSchedule != FrameSchedule::synchronized) invalidateOutputFrame();
     if (SUCCEEDED(result) && !firstFrame) { firstFrame = true; startupMilestone("first frame"); }
     return SUCCEEDED(result);
 }
@@ -1024,6 +1026,9 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 53: renderer.terminal.geometryEnabled = false; return 1;
             case 54: renderer.terminal.geometryEnabled = true; return 1;
             case 55: return outputFrameTicks ? (LRESULT)(counterFrequency.QuadPart / outputFrameTicks) : 0;
+            case 56: return windowChromeAnimationPending() ? 1 : 0;
+            case 57: return (LRESULT)lroundf(windowChromeDiagnostics().tabSelectionX * 1000);
+            case 58: return vex_window_animations_enabled() ? 1 : 0;
             case 40: uiVerificationMode = 1; vex_window_invalidate(); return 1;
             case 41: uiVerificationMode = 0; vex_window_invalidate(); return 1;
             case 42: uiVerificationMode = 2; vex_window_invalidate(); return 1;
