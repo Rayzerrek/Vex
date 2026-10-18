@@ -7,6 +7,8 @@ pub const DirectoryContext = union(enum) { windows, wsl: wsl.WslDistribution };
 /// A fully qualified UTF-8 Windows directory; parsing does not probe the filesystem.
 pub const DirectoryPath = struct {
     bytes: []const u8,
+    /// WSL resolves its own user's home through --cd ~, not a Windows profile path.
+    shell_home: bool = false,
     pub const max_bytes = 32767 * 4;
 
     /// Reject relative/control paths before passing a directory to CreateProcessW.
@@ -27,6 +29,7 @@ pub const PaneDirectory = struct {
     allocator: std.mem.Allocator,
     launch: []u8,
     context: DirectoryContext = .windows,
+    launch_home: bool = false,
     reported: ?[]u8 = null,
     last_report: std.ArrayList(u8) = .empty,
 
@@ -40,7 +43,7 @@ pub const PaneDirectory = struct {
             .windows => return error.WslDirectoryRequiresShell,
             .wsl => |expected| if (!std.ascii.eqlIgnoreCase(distribution.bytes, expected.bytes)) return error.WslDistributionMismatch,
         };
-        return .{ .allocator = allocator, .launch = try allocator.dupe(u8, path.bytes), .context = context };
+        return .{ .allocator = allocator, .launch = try allocator.dupe(u8, path.bytes), .context = context, .launch_home = path.shell_home };
     }
     /// Releases both path owners and the raw-report cache.
     pub fn deinit(self: *PaneDirectory) void {
@@ -50,7 +53,7 @@ pub const PaneDirectory = struct {
     }
     /// Returns the last valid report, otherwise the original launch directory.
     pub fn current(self: *const PaneDirectory) DirectoryPath {
-        return .{ .bytes = self.reported orelse self.launch };
+        return .{ .bytes = self.reported orelse self.launch, .shell_home = self.reported == null and self.launch_home };
     }
     /// Invalid/remote/empty reports preserve the last local path, matching the WPF feed contract.
     pub fn applyReport(self: *PaneDirectory, bytes: []const u8, machine_name: []const u8) !void {
@@ -128,6 +131,20 @@ test "local OSC 7 paths decode Unicode/space escapes and local hostnames" {
         try pane.applyReport(report, "my-pc");
         try std.testing.expectEqualStrings("C:\\My files\\Żółć", pane.current().bytes);
     }
+}
+
+test "WSL home launch survives splits until a directory report arrives" {
+    const allocator = std.testing.allocator;
+    const context: DirectoryContext = .{ .wsl = try wsl.WslDistribution.parse("Ubuntu") };
+    var pane = try PaneDirectory.initForContext(allocator, .{ .bytes = "C:\\Users\\WindowsUser", .shell_home = true }, context);
+    defer pane.deinit();
+    var sibling = try PaneDirectory.initForContext(allocator, pane.current(), context);
+    defer sibling.deinit();
+    try std.testing.expect(sibling.current().shell_home);
+    try pane.applyReport("file://localhost/home/linux-user/project", "my-pc");
+    try std.testing.expect(!pane.current().shell_home);
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\Ubuntu\\home\\linux-user\\project", pane.current().bytes);
+    try std.testing.expect(sibling.current().shell_home);
 }
 
 test "rejected and empty reports preserve the last valid directory and isolated owners" {

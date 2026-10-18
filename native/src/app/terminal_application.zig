@@ -426,6 +426,14 @@ pub const TerminalApplication = struct {
     pub fn addSession(self: *TerminalApplication, path: directory.DirectoryPath) !*TerminalSession {
         return self.addSessionWithKind(path, self.default_shell_kind);
     }
+    fn addHomeSessionWithKind(self: *TerminalApplication, kind: shell.ShellKind) !*TerminalSession {
+        const launch_ptr = try self.resolveShellLaunch(kind);
+        const home = try std.process.getEnvVarOwned(self.allocator, "USERPROFILE");
+        defer self.allocator.free(home);
+        var path = try directory.DirectoryPath.parse(home);
+        path.shell_home = launch_ptr.backend == .wsl;
+        return self.addSessionWithKind(path, kind);
+    }
     fn addSessionWithKind(self: *TerminalApplication, path: directory.DirectoryPath, kind: shell.ShellKind) !*TerminalSession {
         const launch_ptr = try self.resolveShellLaunch(kind);
         // Reserving first prevents an allocation failure from stranding a live process.
@@ -461,7 +469,7 @@ pub const TerminalApplication = struct {
         };
     }
     fn initializeWorkspace(self: *TerminalApplication) !void {
-        const first = try self.addSession(self.startup_directory);
+        const first = try self.addHomeSessionWithKind(self.default_shell_kind);
         errdefer self.removeSession(first.id);
         self.model = try workspace.WorkspaceModel.init(self.allocator, first.id);
     }
@@ -891,7 +899,7 @@ pub const TerminalApplication = struct {
                     platform.invalidateWindow();
                     return;
                 }
-                const session = try self.addSessionWithKind(self.startup_directory, kind);
+                const session = try self.addHomeSessionWithKind(kind);
                 errdefer self.removeSession(session.id);
                 try model.newTab(session.id);
                 for (self.sessions.items) |s| {
@@ -1168,7 +1176,7 @@ pub const TerminalApplication = struct {
         switch (action) {
             .new_tab => {
                 if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) return;
-                const session = try self.addSession(self.startup_directory);
+                const session = try self.addHomeSessionWithKind(self.default_shell_kind);
                 errdefer self.removeSession(session.id);
                 try model.newTab(session.id);
             },

@@ -38,6 +38,7 @@ pub const WslLaunch = struct {
     }
     /// Creates fresh per-pane storage; Windows drive paths use WSL's own mount configuration via --cd.
     pub fn commandForDirectoryAlloc(self: *const WslLaunch, allocator: std.mem.Allocator, prefix: []const u8, path: directory.DirectoryPath) ![]u8 {
+        if (path.shell_home) return std.fmt.allocPrint(allocator, "{s} --cd ~ {s}", .{ prefix, self.suffix });
         const linux = if (try wsl.networkDistribution(path.bytes) != null) try wsl.linuxDirectoryFromNetworkAlloc(allocator, path.bytes, self.distribution) else null;
         defer if (linux) |owned| allocator.free(owned);
         if (linux == null and (!std.ascii.isAlphabetic(path.bytes[0]) or path.bytes[1] != ':')) return error.UnsupportedWslWorkingDirectory;

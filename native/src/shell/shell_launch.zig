@@ -497,6 +497,10 @@ fn checkWslLaunchAllocations(allocator: std.mem.Allocator, root: []const u8) !vo
             try std.testing.expect(std.mem.indexOf(u8, command, " -l") == null);
             try std.testing.expect(std.mem.endsWith(u8, command, request.wsl.command.program.arguments));
         }
+        const home = try launch.commandForDirectoryAlloc(allocator, .{ .bytes = "C:\\Users\\WindowsUser", .shell_home = true });
+        defer allocator.free(home);
+        try std.testing.expect(std.mem.indexOf(u8, home, " --cd ~ --exec env ") != null);
+        try std.testing.expect(std.mem.indexOf(u8, home, "WindowsUser") == null);
         const drive = try launch.commandForDirectoryAlloc(allocator, try directory.DirectoryPath.parse("D:\\custom mount\\project"));
         defer allocator.free(drive);
         try std.testing.expect(std.mem.indexOf(u8, drive, "--cd \"D:\\custom mount\\project\"") != null);
