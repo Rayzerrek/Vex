@@ -1,5 +1,6 @@
 #include "windows_platform.h"
 #include "windows_dialog.h"
+#include "windows_notification.h"
 #include "drawing_color.h"
 #include "windows_renderer.h"
 #include "windows_chrome.h"
@@ -27,6 +28,7 @@ static UiBrush uiBrush;
 static UiBrush* brush = &uiBrush;
 static IDWriteTextFormat* terminalFonts[4];
 static IDWriteTextFormat* chromeFont;
+static IDWriteTextFormat* notificationFont;
 static IDWriteTextFormat* paneTitleFont;
 static IDWriteTextFormat* chromeBoldFont;
 static IDWriteTextFormat* badgeFont;
@@ -386,6 +388,7 @@ static void renderScene() {
     callbacks.paint(callbacks.context);
     drawCaptionButtons();
     drawTerminalDialogBackdrop(*target, *brush, dpiScale);
+    drawTerminalNotification(*target, *brush, chromeBoldFont, notificationFont, chromePalette);
     if (uiVerificationMode) renderUiVerificationScene();
 }
 
@@ -749,6 +752,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         pointerCaptureState = PointerCaptureState::none;
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        if (message == WM_LBUTTONDOWN && dismissTerminalNotificationAt(x, y)) return 0;
         if (message != WM_MBUTTONDOWN && y < 44 && x >= clientWidth - 120) {
             pressedCaptionButton = (x >= clientWidth - 40) ? 3 : (x >= clientWidth - 80) ? 2 : 1;
             vex_window_invalidate();
@@ -1033,6 +1037,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_TIMER:
+        if (wparam == 4) { clearTerminalNotification(); return 0; }
         if (wparam == 3) {
             KillTimer(hwnd, 3); cursorWakeArmed = false;
             callbacks.cursor_wake(callbacks.context);
@@ -1085,7 +1090,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         motionPreferenceKnown = false;
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
-    case WM_DESTROY: destroyTerminalDialogs(); cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); cursorWakeArmed = false; PostQuitMessage(0); return 0;
+    case WM_DESTROY: clearTerminalNotification(); destroyTerminalDialogs(); cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); cursorWakeArmed = false; PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
@@ -1141,12 +1146,14 @@ extern "C" int vex_window_set_font_size(float font_size) {
     }
     return 0;
 }
-extern "C" int vex_window_set_font_family(const uint8_t* family) {
+extern "C" int vex_window_set_font_preferences(const uint8_t* family, float font_size) {
     wchar_t wide[128] = {};
     if (!family || !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(family), -1, wide, 128)) return E_INVALIDARG;
+    if (!isfinite(font_size)) return E_INVALIDARG;
+    if (wcscmp(terminalFontFamily, wide) == 0 && terminalFontSize == fminf(32.0f, fmaxf(9.0f, roundf(font_size)))) return 0;
     wchar_t previous[128]; memcpy(previous, terminalFontFamily, sizeof(previous));
     memcpy(terminalFontFamily, wide, sizeof(wide));
-    int result = vex_window_set_font_size(terminalFontSize);
+    int result = vex_window_set_font_size(font_size);
     if (result) memcpy(terminalFontFamily, previous, sizeof(previous));
     return result;
 }
@@ -1184,6 +1191,8 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     };
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.5f, L"en-us", &chromeFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(chromeFont);
+    if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.5f, L"en-us", &notificationFont);
+    if (SUCCEEDED(result)) result = notificationFont->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"en-us", &paneTitleFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(paneTitleFont);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us", &chromeBoldFont);
@@ -1238,7 +1247,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (iconSmall) DestroyIcon(iconSmall);
     HRESULT shutdown = releaseRenderer();
     if (FAILED(shutdown) && !WindowsRenderer::deviceLost(shutdown) && !platformError) platformError = (int)shutdown;
-    releaseCom(chromeFont); releaseCom(paneTitleFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
+    releaseCom(chromeFont); releaseCom(notificationFont); releaseCom(paneTitleFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
     for (auto& font : terminalFonts) releaseCom(font);
     releaseCom(textFactory); releaseCom(drawingFactory);
     return platformError;

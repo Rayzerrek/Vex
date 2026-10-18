@@ -505,11 +505,12 @@ pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: [
 pub fn setFontSize(size: f32) !void {
     if (c.vex_window_set_font_size(size) != 0) return error.InvalidFontSize;
 }
-/// Returns the active terminal font size in DIPs.
-pub fn setFontFamily(family: *const [128]u8) !void {
-    if (c.vex_window_set_font_family(family) != 0) return error.InvalidFontFamily;
+/// Updates font family and size together, rebuilding font resources and grid layout at most once.
+pub fn setFontPreferences(family: *const [128]u8, size: f32) !void {
+    if (c.vex_window_set_font_preferences(family, size) != 0) return error.InvalidFontPreferences;
 }
 
+/// Returns the active terminal font size in DIPs.
 pub fn fontSize() f32 {
     return c.vex_window_font_size();
 }

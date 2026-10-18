@@ -30,6 +30,19 @@ terminal control sequences, including erase-scrollback (ED3), reach its emulator
 on supported Windows versions. See `Vendor/conpty/README.md` for provenance and
 checksums, and `Vendor/conpty/LICENSE` for the upstream license.
 
+## Statically linked native dependencies
+
+### Lua 5.4.8
+
+- **Files:** `native/vendor/lua/src/`, statically linked into Vex Native
+- **Source:** https://www.lua.org/ftp/lua-5.4.8.tar.gz
+- **License:** MIT
+- **Copyright:** Copyright (c) 1994-2025 Lua.org, PUC-Rio.
+
+The unmodified Lua sources power native configuration. The full MIT license is
+reproduced in `native/vendor/lua/LICENSE`; the MIT text below also applies.
+No separately installed Lua runtime is required.
+
 ## NuGet dependencies
 
 | Package | License | Used by |

@@ -70,6 +70,57 @@ argument string. Available shells depend on the local Windows/WSL installation.
 | Tab overview | Ctrl+Shift+Space |
 | Path completion | Ctrl+Shift+F |
 
+## Lua configuration
+
+Vex runs without a configuration file. A missing file on first launch is normal:
+no warning is shown and nothing is created until you save settings.
+
+Configuration lives at `%LOCALAPPDATA%\Vex\init.lua`. Set `VEX_CONFIG` to an
+absolute path to use another file. This replaces the native `settings.json`
+format; JSON configuration is no longer read.
+
+```lua
+-- init.lua: vex.config starts with the defaults (and any saved GUI preferences).
+vex.config.theme = "Vex Obsidian" -- use a name from Theme Studio
+vex.config.font_family = "Cascadia Mono"
+vex.config.font_size = 14
+vex.config.cursor_blink = true
+vex.config.default_shell = "startup"
+
+-- Ordinary Lua expressions, functions, loops and modules work.
+-- require("appearance") -- loads appearance.lua beside init.lua
+```
+
+Use the current theme names shown in Theme Studio (see
+`src/workspace/terminal_theme.zig`). Font size must be an integer from 9 to 32, cursor blink a
+boolean, and shell one of `startup`, `cmd`, `powershell`, `pwsh`, `nu`, `gitbash`,
+`wsl`. `startup` respects the CLI launch choice. Shell changes affect new tabs and
+splits, not existing processes. Unknown settings and invalid values are errors.
+
+Settings written by the UI are saved atomically to `init.gui.lua` beside `init.lua`
+(or `<name>.gui.lua` for a custom configuration path).
+Vex applies that GUI file first, then your `init.lua`, so explicit script settings win
+on the next load. UI edits apply immediately, but script-owned values revert to
+the script on reload. Saving in Settings never destroys your code or comments.
+To configure a value exclusively through the UI, leave it out of `init.lua`.
+
+Select **Configuration: Reload init.lua** in the command palette
+(`Ctrl+Shift+P`) to reload without restarting. A configuration error keeps the
+previous settings; at startup it uses defaults instead. A nonblocking, themed
+notification reports Lua source/line diagnostics. Files are never rewritten to
+repair errors. There is no per-frame file polling or background Lua execution.
+Unchanged reload results do not rebuild fonts or reapply themes; unchanged GUI
+preferences do not write to disk.
+
+Lua 5.4.8 is statically linked. The VM is created only when a file exists, runs
+once per load and is destroyed before applying preferences. The bridge limits
+source files to 64 KiB, VM allocations to 8 MiB and Lua execution to roughly one
+million instructions per configuration evaluation (including its modules). Base, table, string, math, UTF-8 and Lua `require`
+are available. Process/IO/debug/coroutine APIs, native module loading, dynamic
+loaders, protected calls and `__gc` finalizers are deliberately unavailable. Configuration is
+local user code, not an untrusted-code security sandbox. Rex's keybinding,
+callback and server APIs are not implemented by this configuration migration.
+
 ## CI and packages
 
 - **Native Zig**: Linux cross-builds Debug and ReleaseSafe, checks Zig formatting

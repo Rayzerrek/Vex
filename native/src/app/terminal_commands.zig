@@ -23,6 +23,7 @@ pub const CommandId = enum {
     close_active,
     toggle_cursor_blink,
     open_settings,
+    reload_configuration,
 };
 
 pub const CommandDef = struct {
@@ -53,6 +54,7 @@ pub const command_defs = [_]CommandDef{
     .{ .id = .close_active, .title = "Terminal: Close Active Pane or Tab", .shortcut = "Ctrl+Shift+W" },
     .{ .id = .toggle_cursor_blink, .title = "Cursor: Toggle Blinking", .shortcut = "" },
     .{ .id = .open_settings, .title = "Settings: Open Preferences...", .shortcut = "Ctrl+," },
+    .{ .id = .reload_configuration, .title = "Configuration: Reload init.lua", .shortcut = "" },
 };
 
 pub fn filterCommands(query: []const u8, out: *[command_defs.len]CommandDef) usize {

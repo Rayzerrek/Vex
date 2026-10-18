@@ -10,12 +10,19 @@ pub fn build(b: *std.Build) void {
     const module = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize });
     module.addIncludePath(b.path("src/windows"));
     module.addIncludePath(b.path("vendor/include"));
+    module.addIncludePath(b.path("src/app"));
+    module.addIncludePath(b.path("vendor/lua/src"));
+    module.addCSourceFile(.{ .file = b.path("src/app/lua_settings.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    module.addCSourceFiles(.{ .root = b.path("vendor/lua/src"), .files = &.{
+        "lapi.c", "lauxlib.c", "lbaselib.c", "lcode.c", "lctype.c", "ldebug.c", "ldo.c", "ldump.c", "lfunc.c", "lgc.c", "llex.c", "lmathlib.c", "lmem.c", "loadlib.c", "lobject.c", "lopcodes.c", "lparser.c", "lstate.c", "lstring.c", "lstrlib.c", "ltable.c", "ltablib.c", "ltm.c", "lundump.c", "lutf8lib.c", "lvm.c", "lzio.c",
+    }, .flags = &.{"-std=c11"} });
     const native_flags = &.{ "-std=c++20", "-fno-exceptions", "-fno-rtti", "-Wall", "-Wextra", "-Werror" };
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_window.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_chrome.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/terminal_drawing.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_system.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_dialog.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/windows_notification.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_pty.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_conpty.cpp"), .flags = native_flags });
     const renderer_flags: []const []const u8 = if (b.option(bool, "graphics-debug", "Require the installed D3D12 debug layer") orelse false)

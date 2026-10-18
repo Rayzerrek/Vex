@@ -75,10 +75,11 @@ pub fn showSettingsFailure(err: anyerror) void {
     const message = std.fmt.bufPrint(&buffer, "Vex settings: preferences were not saved ({s}). Existing sessions are unchanged.", .{@errorName(err)}) catch "Vex settings: preferences were not saved. Existing sessions are unchanged.";
     c.vex_dialog_warning(nativeText(message));
 }
-/// A failed settings load uses defaults with an explicit warning; the original file is not rewritten.
-pub fn showSettingsLoadFailure(err: anyerror) void {
-    var buffer: [384]u8 = undefined;
-    const message = std.fmt.bufPrint(&buffer, "Vex settings: saved preferences could not be loaded ({s}). Defaults are in use. The original file is unchanged until you change a preference.", .{@errorName(err)}) catch "Vex settings: saved preferences could not be loaded. Defaults are in use; the original file is unchanged.";
+/// Reports configuration errors without blocking input or modifying the user's Lua source.
+pub fn showSettingsLoadFailure(err: anyerror, diagnostic: *const preferences.SettingsDiagnostic, context: enum { startup, reload }) void {
+    var buffer: [1024]u8 = undefined;
+    const reason = if (diagnostic.message().len > 0 and std.unicode.utf8ValidateSlice(diagnostic.message())) diagnostic.message() else @errorName(err);
+    const message = std.fmt.bufPrint(&buffer, "{s}\n{s} Your Lua files have not been changed.", .{ reason, if (context == .reload) "Previous settings are still active." else "Using default settings." }) catch "Vex configuration could not be loaded. Your Lua files have not been changed.";
     c.vex_dialog_warning(nativeText(message));
 }
 /// Parses bounded native control data, including settings enums, before entering the application.

@@ -45,6 +45,7 @@ pub const TerminalApplication = struct {
     default_shell_kind: shell.ShellKind,
     settings: preferences.UserSettings,
     settings_path: []u8,
+    settings_diagnostic: preferences.SettingsDiagnostic,
     startup_preferences: union(enum) { font_pending: ?anyerror, warning_pending: anyerror, applied },
     shell_launches: std.ArrayList(*shell.ShellLaunch) = .empty,
     available_shells: [6]shell.ShellKind = undefined,
@@ -84,7 +85,8 @@ pub const TerminalApplication = struct {
         const settings_path = try preferences.userSettingsPathAlloc(allocator);
         errdefer allocator.free(settings_path);
         var settings_load_error: ?anyerror = null;
-        const settings = preferences.loadUserSettings(allocator, settings_path) catch |err| blk: {
+        var settings_diagnostic: preferences.SettingsDiagnostic = .{};
+        const settings = preferences.loadUserSettingsDiagnostic(allocator, settings_path, &settings_diagnostic) catch |err| blk: {
             if (err == error.OutOfMemory) return err;
             settings_load_error = err;
             break :blk preferences.UserSettings{};
@@ -123,6 +125,7 @@ pub const TerminalApplication = struct {
             .default_shell_kind = default_kind,
             .settings = settings,
             .settings_path = settings_path,
+            .settings_diagnostic = settings_diagnostic,
             .startup_preferences = .{ .font_pending = settings_load_error },
             .theme_index = settings.theme_index,
             .last_dark_theme = if (terminal_theme.themes[settings.theme_index].is_dark) settings.theme_index else terminal_theme.default_dark_index,
@@ -239,11 +242,30 @@ pub const TerminalApplication = struct {
     pub fn currentPreferences(self: *TerminalApplication) preferences.UserSettings {
         return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
     }
-    /// Writes atomically before applying; storage failure never closes running terminals.
+    /// Writes GUI preferences only when changed; storage failure never closes running terminals.
     pub fn commitPreferences(self: *TerminalApplication, settings: preferences.UserSettings) !void {
+        if (std.meta.eql(self.settings, settings) and std.meta.eql(self.currentPreferences(), settings)) return;
+        try self.updatePreferences(settings, .gui);
+    }
+    /// Reloads Lua on demand, retaining the last valid preferences on configuration errors.
+    pub fn reloadUserConfiguration(self: *TerminalApplication) void {
+        self.settings_diagnostic = .{};
+        const settings = preferences.loadUserSettingsDiagnostic(self.allocator, self.settings_path, &self.settings_diagnostic) catch |err| {
+            dialogs.showSettingsLoadFailure(err, &self.settings_diagnostic, .reload);
+            return;
+        };
+        if (std.meta.eql(self.currentPreferences(), settings)) {
+            self.settings = settings;
+            return;
+        }
+        self.updatePreferences(settings, .lua) catch |err| {
+            dialogs.showSettingsLoadFailure(err, &self.settings_diagnostic, .reload);
+        };
+    }
+    fn updatePreferences(self: *TerminalApplication, settings: preferences.UserSettings, source: enum { gui, lua }) !void {
         try settings.validate();
         const kind: shell.ShellKind = if (settings.default_shell == .startup) self.launch.kind else std.meta.intToEnum(shell.ShellKind, @intFromEnum(settings.default_shell)) catch return error.InvalidDefaultShell;
-        if (settings.default_shell != .startup) {
+        if (settings.default_shell != .startup and settings.default_shell != self.settings.default_shell) {
             self.discoverAvailableShells();
             var available = false;
             for (self.available_shells[0..self.available_shell_count]) |candidate| if (candidate == kind) {
@@ -251,15 +273,14 @@ pub const TerminalApplication = struct {
             };
             if (!available) return error.UnavailableShellSelection;
         }
-        preferences.saveUserSettings(self.allocator, self.settings_path, settings) catch |err| {
+        if (source == .gui and !std.meta.eql(self.settings, settings)) preferences.saveUserSettings(self.allocator, self.settings_path, settings) catch |err| {
             dialogs.showSettingsFailure(err);
             platform.invalidateWindow();
             return;
         };
-        if (!std.mem.eql(u8, self.settings.fontFamily(), settings.fontFamily())) try platform.setFontFamily(&settings.font_family);
+        try platform.setFontPreferences(&settings.font_family, @floatFromInt(settings.font_size));
         self.settings = settings;
         if (self.theme_index != settings.theme_index) try self.applyTheme(settings.theme_index);
-        if (platform.fontSize() != @as(f32, @floatFromInt(settings.font_size))) _ = try platform.setFontSize(@floatFromInt(settings.font_size));
         self.cursor_blink_enabled = settings.cursor_blink;
         self.cursor_blink.synchronize(null, self.cursorNowMs());
         self.default_shell_kind = kind;
@@ -454,9 +475,8 @@ pub const TerminalApplication = struct {
         if (self.health == .failed) return;
         if (self.startup_preferences == .font_pending) {
             self.startup_preferences = if (self.startup_preferences.font_pending) |err| .{ .warning_pending = err } else .applied;
-            platform.setFontFamily(&self.settings.font_family) catch |err| self.fail(err);
-            if (self.settings.font_size != 14) {
-                _ = platform.setFontSize(@floatFromInt(self.settings.font_size)) catch |err| self.fail(err);
+            if (self.settings.font_size != 14 or !std.mem.eql(u8, self.settings.fontFamily(), "Cascadia Mono")) {
+                platform.setFontPreferences(&self.settings.font_family, @floatFromInt(self.settings.font_size)) catch |err| self.fail(err);
                 return;
             }
         }
@@ -524,7 +544,7 @@ pub const TerminalApplication = struct {
         if (self.startup_preferences == .warning_pending) {
             const err = self.startup_preferences.warning_pending;
             self.startup_preferences = .applied;
-            dialogs.showSettingsLoadFailure(err);
+            dialogs.showSettingsLoadFailure(err, &self.settings_diagnostic, .startup);
         }
         self.syncPathIndex() catch |err| {
             self.fail(err);
@@ -861,6 +881,7 @@ pub const TerminalApplication = struct {
             .open_path_completion => try self.openPathCompletion(),
             .open_theme_picker => self.openThemePicker(),
             .open_settings => try self.applyAction(.settings, 0),
+            .reload_configuration => self.reloadUserConfiguration(),
             .toggle_dark_light => try self.toggleDarkLightTheme(),
             .open_tab_peek => self.openTabPeek(),
             .new_tab => try self.applyAction(.new_tab, 0),

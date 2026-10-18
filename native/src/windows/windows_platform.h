@@ -86,7 +86,7 @@ void vex_window_close(void);
 void vex_window_paste_clipboard(void);
 void vex_window_set_chrome_palette(VexChromePalette palette);
 int vex_window_set_font_size(float font_size);
-int vex_window_set_font_family(const uint8_t* family);
+int vex_window_set_font_preferences(const uint8_t* family, float font_size);
 float vex_window_font_size(void);
 uint64_t vex_window_paint_count(void);
 /* One-shot cursor wake; zero cancels it. No animation timer exists for a steady/hidden cursor. */

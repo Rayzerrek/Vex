@@ -1106,10 +1106,6 @@ extern "C" uint32_t vex_dialog_first_visible() {
     LRESULT first = SendMessageW(list, LB_GETTOPINDEX, 0, 0);
     return first >= 0 && (uint64_t)first <= UINT32_MAX ? (uint32_t)first : 0;
 }
-extern "C" void vex_dialog_warning(VexDialogText message) {
-    wchar_t text[512];
-    if (decodeText(message, text, 512)) MessageBoxW(host.window ? host.window : host.owner, text, L"Vex settings", MB_OK | MB_ICONWARNING);
-}
 extern "C" int vex_dialog_open(VexDialogRequest request) {
     if (!IsWindow(host.owner) || request.kind < 1 || request.kind > 6 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
     if (!host.graphicsToken) {
