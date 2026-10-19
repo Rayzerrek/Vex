@@ -28,3 +28,4 @@ void beginWindowChromeFrame(const WindowChromeFrame& frame);
 WindowChromeDiagnostics windowChromeDiagnostics();
 // True only until a chrome transition settles; the window schedules refresh-paced wakes.
 bool windowChromeAnimationPending();
+bool windowChromeEffectsPending();

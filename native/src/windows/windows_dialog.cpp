@@ -564,8 +564,10 @@ LRESULT CALLBACK dialogControlInput(HWND control, UINT message, WPARAM wparam, L
         return 0;
     }
     if (message == WM_KEYDOWN && GetDlgCtrlID(control) == listId && navigateCommandList(wparam)) return 0;
-    // Only command rows follow hover; keep native dragging and avoid repainting unchanged rows.
-    if (message == WM_MOUSEMOVE && !(wparam & MK_LBUTTON) && host.model.kind == 2 && host.phase == DialogHost::Phase::active && GetDlgCtrlID(control) == listId) {
+    // Only command and shell picker rows follow hover; keep native dragging and avoid repainting unchanged rows.
+    wchar_t selftest[2];
+    const bool allowShellHover = host.model.kind == 5 && (GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", selftest, 2) != 1 || selftest[0] != L'1');
+    if (message == WM_MOUSEMOVE && !(wparam & MK_LBUTTON) && (host.model.kind == 2 || allowShellHover) && host.phase == DialogHost::Phase::active && GetDlgCtrlID(control) == listId) {
         const LRESULT hit = SendMessageW(control, LB_ITEMFROMPOINT, 0, lparam);
         RECT item;
         const POINT point = { (short)LOWORD(lparam), (short)HIWORD(lparam) };
@@ -958,12 +960,27 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
     FillRect(draw.hDC, &draw.rcItem, host.background);
     SetBkMode(draw.hDC, TRANSPARENT);
     SelectObject(draw.hDC, host.font);
-    RECT row = draw.rcItem; row.top += px(2); row.bottom -= px(2); row.left += px(2); row.right -= px(3);
+    RECT row = draw.rcItem;
+    row.top += px(host.model.kind == 5 ? 3 : 2);
+    row.bottom -= px(host.model.kind == 5 ? 3 : 2);
+    row.left += px(2);
+    row.right -= px(3);
     const bool commands = host.model.kind == 2;
-    COLORREF fill = selected ? (commands ? blend(surfaceColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.22f : 0.14f) : selectionColor()) : surfaceColor();
-    roundedFill(draw.hDC, row, fill, fill, px(commands ? 8 : 14));
+    const bool shells = host.model.kind == 5;
+    const bool dark = host.model.palette.is_dark;
+    COLORREF fill = selected
+        ? (commands ? blend(surfaceColor(), color(host.model.palette.accent), dark ? 0.34f : 0.18f)
+            : shells ? blend(surfaceColor(), color(host.model.palette.accent), dark ? 0.24f : 0.14f)
+            : selectionColor())
+        : (shells ? fieldColor() : surfaceColor());
+    COLORREF stroke = selected
+        ? (commands ? blend(surfaceColor(), color(host.model.palette.accent), dark ? 0.56f : 0.32f)
+            : shells ? blend(surfaceColor(), color(host.model.palette.accent), dark ? 0.68f : 0.42f)
+            : fill)
+        : (shells ? blend(surfaceColor(), color(host.model.palette.border), dark ? 0.68f : 0.52f) : fill);
+    roundedFill(draw.hDC, row, fill, stroke, px(commands ? 8 : 14));
     RECT text = row; text.left += px(12); text.right -= px(12);
-    if (host.model.kind == 2) {
+    if (commands) {
         RECT shortcut = text;
         SetTextColor(draw.hDC, color(selected ? host.model.palette.text_primary : host.model.palette.text_muted));
         DrawTextW(draw.hDC, item.detail, -1, &shortcut, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
@@ -972,24 +989,145 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
         DrawTextW(draw.hDC, item.detail, -1, &shortcut, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         if (shortcutWidth) text.right = shortcut.left - px(20);
         SetTextColor(draw.hDC, color(host.model.palette.text_primary));
-        DrawTextW(draw.hDC, item.label, -1, &text, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-    } else {
-        if (host.model.kind == 5) {
-            RECT icon = row; icon.left += px(10); icon.right = icon.left + px(34); icon.top += px(8); icon.bottom -= px(8);
-            COLORREF tile = blend(fill, color(host.model.palette.accent), 0.12f);
-            roundedFill(draw.hDC, icon, tile, tile, px(16));
-            drawSymbol(draw.hDC, L"\xE756", icon, color(host.model.palette.accent));
-            text.left += px(44);
+        DrawTextW(draw.hDC, item.label, -1, &text, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    } else if (shells) {
+        COLORREF brand = color(host.model.palette.accent);
+        const wchar_t* envDesc = item.detail;
+        switch (item.value) {
+        case 1:
+            brand = dark ? RGB(148, 163, 184) : RGB(100, 116, 139);
+            envDesc = L"Windows Command Processor";
+            break;
+        case 2:
+            brand = dark ? RGB(59, 130, 246) : RGB(37, 99, 235);
+            envDesc = L"Windows PowerShell 5.1";
+            break;
+        case 3:
+            brand = dark ? RGB(56, 189, 248) : RGB(14, 142, 208);
+            envDesc = L"PowerShell Core · Cross-platform";
+            break;
+        case 4:
+            brand = dark ? RGB(52, 211, 153) : RGB(16, 163, 108);
+            envDesc = L"Structured data shell";
+            break;
+        case 5:
+            brand = dark ? RGB(249, 115, 82) : RGB(218, 78, 46);
+            envDesc = L"MINGW64 Bourne Again Shell";
+            break;
+        case 7:
+            brand = dark ? RGB(251, 146, 60) : RGB(217, 107, 27);
+            envDesc = L"Windows Subsystem for Linux";
+            break;
         }
+        RECT icon = { row.left + px(11), row.top + px(8), row.left + px(47), row.bottom - px(8) };
+        COLORREF tileFill = blend(fill, brand, dark ? 0.20f : 0.14f);
+        COLORREF tileStroke = blend(fill, brand, dark ? 0.46f : 0.32f);
+        roundedFill(draw.hDC, icon, tileFill, tileStroke, px(12));
+        {
+            Gdiplus::Graphics g(draw.hDC);
+            g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            Gdiplus::Color gc(255, GetRValue(brand), GetGValue(brand), GetBValue(brand));
+            Gdiplus::Pen pen(gc, host.scale * 1.85f);
+            pen.SetStartCap(Gdiplus::LineCapRound);
+            pen.SetEndCap(Gdiplus::LineCapRound);
+            pen.SetLineJoin(Gdiplus::LineJoinRound);
+            const float cx = (icon.left + icon.right) * 0.5f;
+            const float cy = (icon.top + icon.bottom) * 0.5f;
+            const float s = host.scale;
+            if (item.value == 5) {
+                // Git branch vector glyph
+                g.DrawLine(&pen, cx - 4.5f * s, cy - 6.0f * s, cx - 4.5f * s, cy + 6.0f * s);
+                g.DrawLine(&pen, cx - 4.5f * s, cy + 1.5f * s, cx + 4.5f * s, cy - 2.5f * s);
+                g.DrawLine(&pen, cx + 4.5f * s, cy - 2.5f * s, cx + 4.5f * s, cy - 5.5f * s);
+                Gdiplus::SolidBrush dotBrush(gc);
+                g.FillEllipse(&dotBrush, cx - 6.8f * s, cy - 8.2f * s, 4.6f * s, 4.6f * s);
+                g.FillEllipse(&dotBrush, cx - 6.8f * s, cy + 3.8f * s, 4.6f * s, 4.6f * s);
+                g.FillEllipse(&dotBrush, cx + 2.2f * s, cy - 8.2f * s, 4.6f * s, 4.6f * s);
+            } else if (item.value == 7) {
+                // WSL / Linux tilde + prompt
+                Gdiplus::PointF wave[4] = {
+                    Gdiplus::PointF(cx - 7.5f * s, cy + 0.5f * s),
+                    Gdiplus::PointF(cx - 3.5f * s, cy - 4.5f * s),
+                    Gdiplus::PointF(cx + 0.5f * s, cy + 3.5f * s),
+                    Gdiplus::PointF(cx + 4.5f * s, cy - 1.5f * s),
+                };
+                g.DrawCurve(&pen, wave, 4, 0.5f);
+                g.DrawLine(&pen, cx + 3.0f * s, cy + 4.8f * s, cx + 8.0f * s, cy + 4.8f * s);
+            } else if (item.value == 4) {
+                // Nushell chevron + pipe
+                Gdiplus::PointF chev[3] = {
+                    Gdiplus::PointF(cx - 6.5f * s, cy - 4.8f * s),
+                    Gdiplus::PointF(cx - 1.0f * s, cy),
+                    Gdiplus::PointF(cx - 6.5f * s, cy + 4.8f * s),
+                };
+                g.DrawLines(&pen, chev, 3);
+                g.DrawLine(&pen, cx + 4.0f * s, cy - 5.5f * s, cx + 4.0f * s, cy + 5.5f * s);
+            } else {
+                // Terminal prompt chevron >_
+                Gdiplus::PointF chev[3] = {
+                    Gdiplus::PointF(cx - 6.8f * s, cy - 5.0f * s),
+                    Gdiplus::PointF(cx - 0.8f * s, cy + 0.2f * s),
+                    Gdiplus::PointF(cx - 6.8f * s, cy + 5.2f * s),
+                };
+                g.DrawLines(&pen, chev, 3);
+                g.DrawLine(&pen, cx + 1.5f * s, cy + 5.2f * s, cx + 7.2f * s, cy + 5.2f * s);
+                if (item.value == 3) {
+                    // PowerShell 7 core accent spark dot
+                    Gdiplus::SolidBrush sparkBrush(gc);
+                    g.FillEllipse(&sparkBrush, cx + 4.2f * s, cy - 6.8f * s, 3.8f * s, 3.8f * s);
+                }
+            }
+        }
+
+        RECT cmdCalc = text;
+        DrawTextW(draw.hDC, item.detail, -1, &cmdCalc, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+        const int cmdWidth = (cmdCalc.right - cmdCalc.left) + px(16);
+        const int midY = (row.top + row.bottom) / 2;
+        RECT cmdPill = { row.right - px(10) - cmdWidth, midY - px(11), row.right - px(10), midY + px(11) };
+        if (cmdPill.left > row.left + px(170)) {
+            COLORREF pillFill = selected
+                ? blend(fill, color(host.model.palette.accent), dark ? 0.22f : 0.14f)
+                : blend(fill, color(host.model.palette.pane_bg), 0.75f);
+            COLORREF pillStroke = selected
+                ? blend(fill, color(host.model.palette.accent), dark ? 0.48f : 0.30f)
+                : blend(fill, color(host.model.palette.border), 0.70f);
+            roundedFill(draw.hDC, cmdPill, pillFill, pillStroke, px(8));
+            SetTextColor(draw.hDC, color(selected ? host.model.palette.text_primary : host.model.palette.text_muted));
+            DrawTextW(draw.hDC, item.detail, -1, &cmdPill, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            text.right = cmdPill.left - px(10);
+        }
+
+        text.left = row.left + px(58);
+        RECT titleRect = { text.left, row.top + px(6), text.right, row.top + px(27) };
+        SetTextColor(draw.hDC, color(host.model.palette.text_primary));
+        DrawTextW(draw.hDC, item.label, -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        if (item.value == host.model.settings.shell) {
+            RECT nameCalc = titleRect;
+            DrawTextW(draw.hDC, item.label, -1, &nameCalc, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            RECT defPill = { nameCalc.right + px(8), row.top + px(8), nameCalc.right + px(64), row.top + px(25) };
+            if (defPill.right <= text.right) {
+                COLORREF defFill = blend(fill, color(host.model.palette.accent), dark ? 0.24f : 0.15f);
+                COLORREF defStroke = blend(fill, color(host.model.palette.accent), dark ? 0.52f : 0.35f);
+                roundedFill(draw.hDC, defPill, defFill, defStroke, px(6));
+                SetTextColor(draw.hDC, color(host.model.palette.accent));
+                DrawTextW(draw.hDC, L"default", -1, &defPill, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+        }
+
+        RECT subRect = { text.left, row.top + px(27), text.right, row.bottom - px(5) };
+        SetTextColor(draw.hDC, color(host.model.palette.text_muted));
+        DrawTextW(draw.hDC, envDesc, -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    } else {
         text.top += px(8);
         SetTextColor(draw.hDC, color(host.model.palette.text_primary));
         DrawTextW(draw.hDC, item.label, -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         text.top += px(21); SetTextColor(draw.hDC, color(host.model.palette.text_muted));
         DrawTextW(draw.hDC, item.detail, -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
-    if (GetFocus() == draw.hwndItem && selected) {
-        RECT mark = row; mark.left += px(2); mark.right = mark.left + px(2); mark.top += px(9); mark.bottom -= px(9);
-        roundedFill(draw.hDC, mark, color(host.model.palette.accent), color(host.model.palette.accent), px(2));
+    if ((shells || GetFocus() == draw.hwndItem) && selected) {
+        RECT mark = row; mark.left += px(3); mark.right = mark.left + px(3); mark.top += px(10); mark.bottom -= px(10);
+        roundedFill(draw.hDC, mark, color(host.model.palette.accent), color(host.model.palette.accent), px(3));
     }
 }
 void drawDialogButton(const DRAWITEMSTRUCT& draw) {
@@ -1043,12 +1181,12 @@ void drawComboItem(const DRAWITEMSTRUCT& draw) {
     SelectObject(draw.hDC, host.font); SetBkMode(draw.hDC, TRANSPARENT); SetTextColor(draw.hDC, color(host.model.palette.text_primary));
     DrawTextW(draw.hDC, text, -1, &bounds, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
-float dialogWidth() { return host.model.kind == 4 ? 760.0f : host.model.kind == 1 ? 580.0f : host.model.kind == 2 ? 560.0f : host.model.kind == 6 ? 460.0f : 480.0f; }
+float dialogWidth() { return host.model.kind == 4 ? 760.0f : host.model.kind == 1 ? 580.0f : host.model.kind == 2 ? 560.0f : host.model.kind == 5 ? 472.0f : host.model.kind == 6 ? 460.0f : 480.0f; }
 float dialogHeight() {
     if (host.model.kind == 2) return 112.0f + 12.0f * (float)px(listRowHeight()) / host.scale;
     if (host.model.kind == 5) {
         const size_t rows = host.model.count > shellLimit ? shellLimit : host.model.count;
-        return 170.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
+        return 120.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
     }
     return host.model.kind == 6 ? 240.0f : host.model.kind == 4 ? 620.0f : 520.0f;
 }
@@ -1124,6 +1262,55 @@ void paintDialogSurface(HDC dc) {
         DrawTextW(dc, L"↑ ↓  Navigate", -1, &footer, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         DrawTextW(dc, L"Enter  Run     Esc  Close", -1, &footer, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
+    if (host.model.kind == 5) {
+        RECT icon = { px(18), px(14), px(54), px(50) };
+        COLORREF accent = color(host.model.palette.accent);
+        COLORREF tint = blend(surfaceColor(), accent, host.model.palette.is_dark ? 0.20f : 0.12f);
+        COLORREF border = blend(surfaceColor(), accent, host.model.palette.is_dark ? 0.45f : 0.28f);
+        roundedFill(dc, icon, tint, border, px(12));
+        {
+            Gdiplus::Graphics g(dc);
+            g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(accent), GetGValue(accent), GetBValue(accent)), host.scale * 1.85f);
+            pen.SetStartCap(Gdiplus::LineCapRound);
+            pen.SetEndCap(Gdiplus::LineCapRound);
+            pen.SetLineJoin(Gdiplus::LineJoinRound);
+            const float cx = (icon.left + icon.right) * 0.5f;
+            const float cy = (icon.top + icon.bottom) * 0.5f;
+            const float s = host.scale;
+            Gdiplus::PointF chev[3] = {
+                Gdiplus::PointF(cx - 6.0f * s, cy - 4.5f * s),
+                Gdiplus::PointF(cx - 0.5f * s, cy + 0.2f * s),
+                Gdiplus::PointF(cx - 6.0f * s, cy + 4.8f * s),
+            };
+            g.DrawLines(&pen, chev, 3);
+            g.DrawLine(&pen, cx + 1.5f * s, cy + 4.8f * s, cx + 6.8f * s, cy + 4.8f * s);
+        }
+        SetBkMode(dc, TRANSPARENT);
+        RECT hdrTitle = { px(66), px(12), bounds.right - px(48), px(34) };
+        HGDIOBJ prevFont = SelectObject(dc, host.heading);
+        SetTextColor(dc, color(host.model.palette.text_primary));
+        DrawTextW(dc, host.model.title, -1, &hdrTitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        SelectObject(dc, host.font);
+        RECT hdrDesc = { px(66), px(34), bounds.right - px(48), px(54) };
+        SetTextColor(dc, color(host.model.palette.text_muted));
+        DrawTextW(dc, host.model.description, -1, &hdrDesc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        if (prevFont) SelectObject(dc, prevFont);
+
+        RECT topRule = { px(16), px(62), bounds.right - px(16), px(62) + 1 };
+        SetDCBrushColor(dc, color(host.model.palette.border));
+        FillRect(dc, &topRule, reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+
+        RECT rule = { px(16), bounds.bottom - px(43), bounds.right - px(16), bounds.bottom - px(43) + 1 };
+        SetDCBrushColor(dc, color(host.model.palette.border));
+        FillRect(dc, &rule, reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+
+        RECT footer = { px(20), bounds.bottom - px(38), bounds.right - px(20), bounds.bottom - px(8) };
+        SelectObject(dc, host.font);
+        SetTextColor(dc, color(host.model.palette.text_muted));
+        DrawTextW(dc, L"↑ ↓  Navigate", -1, &footer, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(dc, L"Enter  Open     Esc  Close", -1, &footer, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
     if (host.model.kind == 6) {
         RECT icon = { px(24), px(26), px(66), px(68) };
         COLORREF tint = blend(surfaceColor(), RGB(194, 101, 71), 0.16f);
@@ -1132,9 +1319,9 @@ void paintDialogSurface(HDC dc) {
     }
 }
 bool createControls(float width, float height) {
-    const bool settings = host.model.kind == 4, commands = host.model.kind == 2, closing = host.model.kind == 6;
+    const bool settings = host.model.kind == 4, commands = host.model.kind == 2, shells = host.model.kind == 5, closing = host.model.kind == 6;
     bool ok = true;
-    if (!commands) ok = control(L"EDIT", host.model.title, ES_READONLY | ES_AUTOHSCROLL | (settings ? ES_CENTER : 0), titleId, settings ? 120 : closing ? 82 : 24, settings ? 18 : closing ? 28 : 22, settings ? width - 240 : closing ? width - 110 : width - 80, 28) != nullptr;
+    if (!commands && !shells) ok = control(L"EDIT", host.model.title, ES_READONLY | ES_AUTOHSCROLL | (settings ? ES_CENTER : 0), titleId, settings ? 120 : closing ? 82 : 24, settings ? 18 : closing ? 28 : 22, settings ? width - 240 : closing ? width - 110 : width - 80, 28) != nullptr;
     if (settings) {
         const wchar_t* pages[] = { L"General", L"Appearance", L"Terminal", L"About" };
         for (int i = 0; i < 4; ++i) ok = control(L"BUTTON", pages[i], BS_OWNERDRAW | WS_TABSTOP, firstPageId + i, (width - 448) / 2 + i * 112.0f, 56, 108, 68) && ok;
@@ -1161,10 +1348,10 @@ bool createControls(float width, float height) {
         if (shell) fillCombo(shell, host.model.shells, host.model.shellCount, host.model.settings.shell);
         showPage(host.page);
     } else {
-        if (!commands) ok = control(L"EDIT", host.model.description, ES_READONLY | ES_MULTILINE, descriptionId, closing ? 82 : 24, closing ? 68 : 58, closing ? width - 110 : width - 48, closing ? height - 144 : 38) && ok;
+        if (!commands && !shells) ok = control(L"EDIT", host.model.description, ES_READONLY | ES_MULTILINE, descriptionId, closing ? 82 : 24, closing ? 68 : 58, closing ? width - 110 : width - 48, closing ? height - 144 : 38) && ok;
     }
     if (!settings && host.model.kind != 6) {
-        float top = 100;
+        float top = shells ? 70.0f : 100.0f;
         if (host.model.kind == 2) {
             HWND edit = control(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, queryId, 52, 22, width - 76, 22);
             ok = edit && ok;
@@ -1175,7 +1362,7 @@ bool createControls(float width, float height) {
             top = 62;
         }
         const bool themes = host.model.kind == 1;
-        HWND list = control(L"LISTBOX", L"", WS_TABSTOP | (themes ? WS_HSCROLL | LBS_MULTICOLUMN : WS_VSCROLL) | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, listId, commands ? 10 : 16, top, width - (commands ? 20 : 32), height - top - (commands ? 48 : 70));
+        HWND list = control(L"LISTBOX", L"", WS_TABSTOP | (themes ? WS_HSCROLL | LBS_MULTICOLUMN : WS_VSCROLL) | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, listId, (commands || shells) ? 12.0f : 16.0f, top, width - ((commands || shells) ? 24.0f : 32.0f), height - top - ((commands || shells) ? 50.0f : 70.0f));
         ok = list && ok;
         if (list) {
             SendMessageW(list, LB_SETITEMHEIGHT, 0, px(themes ? themeRowHeight() : listRowHeight()));
@@ -1184,8 +1371,8 @@ bool createControls(float width, float height) {
         }
     }
     if (!commands) {
-        if (!closing) ok = control(L"BUTTON", L"×", BS_OWNERDRAW | WS_TABSTOP, closeId, width - 42, 12, 28, 28) && ok;
-        if (!settings) {
+        if (!closing) ok = control(L"BUTTON", L"×", BS_OWNERDRAW | WS_TABSTOP, closeId, width - 42, shells ? 16.0f : 12.0f, 28, 28) && ok;
+        if (!settings && !shells) {
             ok = control(L"BUTTON", L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL, width - 244, height - 52, 96, 34) && ok;
             ok = control(L"BUTTON", host.model.accept, WS_TABSTOP | BS_OWNERDRAW, IDOK, width - 136, height - 52, 112, 34) && ok;
         }
@@ -1268,7 +1455,18 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         if (LOWORD(wparam) == queryId && HIWORD(wparam) == EN_CHANGE) { queryChanged(); return TRUE; }
         if (LOWORD(wparam) >= firstModeId && LOWORD(wparam) < firstModeId + 4) {
             host.model.mode = LOWORD(wparam) - firstModeId;
+            const wchar_t* modeDescriptions[] = {
+                L"Installed shells · Open a new terminal tab.",
+                L"Installed shells · Split the active pane to the right.",
+                L"Installed shells · Split the active pane downward.",
+                L"Installed shells · Choose the default shell for new sessions.",
+            };
+            const wchar_t* modeAccept[] = { L"Open tab", L"Split right", L"Split down", L"Set default" };
+            SetDlgItemTextW(window, descriptionId, modeDescriptions[host.model.mode]);
+            SetDlgItemTextW(window, IDOK, modeAccept[host.model.mode]);
             for (int i = 0; i < 4; ++i) InvalidateRect(GetDlgItem(window, firstModeId + i), nullptr, FALSE);
+            InvalidateRect(GetDlgItem(window, descriptionId), nullptr, FALSE);
+            InvalidateRect(GetDlgItem(window, IDOK), nullptr, FALSE);
             notify(5, host.model.mode);
             return TRUE;
         }
@@ -1496,16 +1694,17 @@ bool routeTerminalDialogMessage(MSG& message) { return host.window && IsDialogMe
 void drawTerminalDialogBackdrop(UiRenderer& target, UiBrush& brush, float scale) {
     if (!IsWindow(host.window) || !IsWindow(host.owner)) return;
     const auto size = target.GetSize();
-    if (host.model.kind != 2) {
-        brush.SetColor(D2D1::ColorF(0x000000, host.model.palette.is_dark ? 0.32f : 0.16f));
-        target.FillRectangle(D2D1::RectF(0, 0, size.width, size.height), &brush);
-    }
+    const float dimAlpha = host.model.kind == 2
+        ? (host.model.palette.is_dark ? 0.18f : 0.08f)
+        : (host.model.palette.is_dark ? 0.32f : 0.16f);
+    brush.SetColor(D2D1::ColorF(0x000000, dimAlpha));
+    target.FillRectangle(D2D1::RectF(0, 0, size.width, size.height), &brush);
     RECT bounds; if (!GetWindowRect(host.window, &bounds)) return;
     POINT origin = { bounds.left, bounds.top }; if (!ScreenToClient(host.owner, &origin)) return;
     float x = origin.x / scale, y = origin.y / scale, w = (bounds.right - bounds.left) / scale, h = (bounds.bottom - bounds.top) / scale;
-    for (int layer = 4; layer > 0; --layer) {
+    for (int layer = 5; layer > 0; --layer) {
         float spread = layer * 5.0f;
-        brush.SetColor(D2D1::ColorF(0x000000, 0.055f));
+        brush.SetColor(D2D1::ColorF(0x000000, 0.065f));
         target.FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - spread, y - spread + 6, x + w + spread, y + h + spread + 6), 12 + spread, 12 + spread), &brush);
     }
 }
@@ -1524,7 +1723,7 @@ void repositionTerminalDialogs() {
     host.width = fminf(dialogWidth(), (owner.right - owner.left) / scale - 32);
     host.height = fminf(dialogHeight(), (owner.bottom - owner.top) / scale - 40);
     if (host.width <= 0 || host.height <= 0) return;
-    const int top = host.model.kind == 2 ? (int)fminf((float)px(64), (owner.bottom - px(host.height)) / 2.0f) : (owner.bottom - px(host.height)) / 2;
+    const int top = (host.model.kind == 2 || host.model.kind == 5) ? (int)fminf((float)px(64), (owner.bottom - px(host.height)) / 2.0f) : (owner.bottom - px(host.height)) / 2;
     const int left = origin.x + (owner.right - px(host.width)) / 2;
     RECT current;
     // Activation/z-order changes also send WM_WINDOWPOSCHANGED to the owner.

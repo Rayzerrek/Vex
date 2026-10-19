@@ -79,14 +79,15 @@ static void rectangle(float x, float y, float width, float height, uint32_t colo
     target->FillRectangle(D2D1::RectF(x, y, x + width, y + height), brush);
 }
 static constexpr float tabStripLeft = 8;
-static float plusLeft() { return tabStripLeft + tabStripCount * (tabWidthDip + 4); }
+static float tabStripEnd() { return tabStripLeft + tabStripCount * (tabWidthDip + 4); }
+static float plusLeft() { return fmaxf(tabStripEnd(), clientWidth - 166.0f); }
 extern "C" int vex_window_tab_strip(uint32_t count, float tab_width) {
     if (!count || count > 8 || !isfinite(tab_width) || tab_width < 24 || tab_width > 200) return ERROR_INVALID_PARAMETER;
     tabStripCount = count; tabWidthDip = tab_width;
     return 0;
 }
 extern "C" int vex_draw_tab_insertion_marker(float x) {
-    if (!target || !brush || !isfinite(x) || x < tabStripLeft || x > plusLeft()) return ERROR_INVALID_PARAMETER;
+    if (!target || !brush || !isfinite(x) || x < tabStripLeft || x > tabStripEnd()) return ERROR_INVALID_PARAMETER;
     rectangle(x - 1, 7, 2, 30, chromePalette.accent);
     return 0;
 }
@@ -274,12 +275,18 @@ extern "C" int vex_window_schedule_cursor_wake(uint32_t delay_ms) {
 
 static void drawNewTabButton() {
     const float by = 8.0f;
-    // New Tab button [ + ]
     const float bx = plusLeft() + 1.0f;
+    const float sx = plusLeft() + 24.0f;
     const bool enabled = tabStripCount < 8;
+    const bool groupHot = (enabled && hoveredNewTab) || hoveredShellPicker;
+    if (groupHot) {
+        brush->SetColor(D2D1::ColorF(chromePalette.border, chromePalette.is_dark ? 0.55f : 0.45f));
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, sx + 15.0f, by + 28.0f), 6.0f, 6.0f), brush, 1.0f);
+    }
+    // New Tab button [ + ]
     if (enabled && hoveredNewTab) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + 22.0f, by + 28.0f), 5.0f, 5.0f), brush);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx + 1.0f, by + 1.0f, bx + 22.0f, by + 27.0f), 5.0f, 5.0f), brush);
     }
     const float cx = bx + 11.0f;
     const float cy = by + 14.0f;
@@ -287,11 +294,14 @@ static void drawNewTabButton() {
     target->DrawLine(D2D1::Point2F(cx - 4.5f, cy), D2D1::Point2F(cx + 4.5f, cy), brush, 1.35f, roundCaps);
     target->DrawLine(D2D1::Point2F(cx, cy - 4.5f), D2D1::Point2F(cx, cy + 4.5f), brush, 1.35f, roundCaps);
 
+    // Subtle divider between [+] and [v]
+    brush->SetColor(D2D1::ColorF(chromePalette.border, groupHot ? 0.65f : 0.32f));
+    target->FillRectangle(D2D1::RectF(sx - 0.5f, by + 6.0f, sx + 0.5f, by + 22.0f), brush);
+
     // Shell Picker dropdown caret [ v ]
-    const float sx = plusLeft() + 24.0f;
     if (hoveredShellPicker) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sx, by, sx + 15.0f, by + 28.0f), 4.0f, 4.0f), brush);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sx + 0.5f, by + 1.0f, sx + 14.0f, by + 27.0f), 4.0f, 4.0f), brush);
     }
     const float scx = sx + 7.5f;
     brush->SetColor(rgb(hoveredShellPicker ? chromePalette.accent : chromePalette.text_muted));
@@ -426,7 +436,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     rendererRecoveryAttempts = 0;
     // Preparation and a blocking Present already consume the interval; do not add another full period afterward.
     nextOutputFrame = sceneBegin.QuadPart + outputFrameTicks;
-    if (windowChromeAnimationPending() && frameSchedule != FrameSchedule::synchronized) invalidateOutputFrame();
+    if ((windowChromeAnimationPending() || windowChromeEffectsPending()) && frameSchedule != FrameSchedule::synchronized) invalidateOutputFrame();
     if (SUCCEEDED(result) && !firstFrame) { firstFrame = true; startupMilestone("first frame"); }
     return SUCCEEDED(result);
 }
@@ -656,7 +666,7 @@ static void updateTopChromeHover(float x, float y) {
             nextNewTab = true;
         } else if (x >= plusLeft() + 24.0f && x < plusLeft() + 42.0f && y >= 7.0f && y <= 37.0f) {
             nextShellPicker = true;
-        } else if (x >= tabStripLeft && x < plusLeft() && y >= 7.0f && y <= 37.0f) {
+        } else if (x >= tabStripLeft && x < tabStripEnd() && y >= 7.0f && y <= 37.0f) {
             uint32_t idx = (uint32_t)((x - tabStripLeft) / (tabWidthDip + 4.0f));
             float local = x - tabStripLeft - idx * (tabWidthDip + 4.0f);
             if (idx < tabStripCount && local >= 0.0f && local < tabWidthDip) {
@@ -714,7 +724,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = point.x / scale;
-        if (point.y / scale < 44 && x < clientWidth - 120 && (x < tabStripLeft || x > plusLeft() + 42)) return HTCAPTION;
+        if (point.y / scale < 44 && x < clientWidth - 120 && (x < tabStripLeft || (x >= tabStripEnd() && x < plusLeft()) || x >= plusLeft() + 42)) return HTCAPTION;
         return HTCLIENT;
     }
     case WM_GETMINMAXINFO: {
@@ -742,7 +752,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_LBUTTONDBLCLK: {
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
-        if (y < 44 && x >= tabStripLeft && x < plusLeft()) {
+        if (y < 44 && x >= tabStripLeft && x < tabStripEnd()) {
             uint32_t index = (uint32_t)((x - tabStripLeft) / (tabWidthDip + 4));
             float local = x - tabStripLeft - index * (tabWidthDip + 4);
             if (index < tabStripCount && local <= tabWidthDip - 22) {
@@ -765,7 +775,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             vex_window_invalidate();
             return 0;
         }
-        if (y < 44 && x >= tabStripLeft && x < plusLeft()) {
+        if (y < 44 && x >= tabStripLeft && x < tabStripEnd()) {
             uint32_t index = (uint32_t)((x - tabStripLeft) / (tabWidthDip + 4));
             float local = x - tabStripLeft - index * (tabWidthDip + 4);
             if (index >= tabStripCount || local >= tabWidthDip) return 0;

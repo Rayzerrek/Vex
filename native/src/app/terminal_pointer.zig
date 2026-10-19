@@ -371,6 +371,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                                 try reportMouseEvent(self, session, .press, .left, modifiers, vp, true);
                                 self.pointer_drag = .{ .mouse = .{ .pane_id = placement.id, .button = .left } };
                             } else {
+                                session.copy_feedback.clear();
                                 const click_count = try session.terminal.selectionPress(vp.column, vp.row, vp.x_px, vp.y_px);
                                 self.pointer_drag = .{ .selection = .{
                                     .pane_id = placement.id,
@@ -433,7 +434,9 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                                         // A single click without drag clears the 1-cell anchor while keeping multi-click history.
                                         try session.terminal.clearSelection(false);
                                     } else {
-                                        _ = try session.copySelectionToClipboard(self.allocator);
+                                        if (try session.copySelectionToClipboard(self.allocator)) {
+                                            session.recordCopyFeedback(self.cursorNowMs());
+                                        }
                                     }
                                     platform.invalidateWindow();
                                 } else {

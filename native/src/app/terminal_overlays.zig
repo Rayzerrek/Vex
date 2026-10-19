@@ -67,7 +67,17 @@ fn drawTabOverview(self: *Application) !void {
     platform.c.vex_draw_tab_overview(progress < 1);
     // The selected card is last so its expansion occludes neighbours without extra layers/textures.
     for (0..layout.count) |index| {
-        if (index != peek.selected_index) try drawTabCard(self, index, layout.card(index), false);
+        if (index != peek.selected_index) {
+            const card = layout.card(index);
+            const recessed: panes.PaneRect = .{
+                .x = card.x + card.width * 0.04,
+                .y = card.y + card.height * 0.04 + 6,
+                .width = card.width * 0.92,
+                .height = card.height * 0.92,
+            };
+            const card_bounds = if (peek.closing) overview.interpolate(card, recessed, progress) else overview.interpolate(recessed, card, progress);
+            try drawTabCard(self, index, card_bounds, false);
+        }
     }
     const full = @import("terminal_application.zig").windowContentBounds(metrics);
     const destination = layout.card(peek.selected_index);

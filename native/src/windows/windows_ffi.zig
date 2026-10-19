@@ -541,6 +541,11 @@ pub fn endPane() void {
 pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active: bool, opacity: f32) void {
     c.vex_draw_scrollbar(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, geometry.thumb_y, geometry.thumb_height, active, opacity);
 }
+/// Draws the specular sweep confirmation over recently copied terminal selection spans.
+pub fn drawCopyFeedback(bounds: panes.PaneRect, cell_width: f32, cell_height: f32, spans: []const c.VexCopySpan, progress: f32) void {
+    if (spans.len == 0) return;
+    c.vex_draw_copy_feedback(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, cell_width, cell_height, spans.ptr, spans.len, progress);
+}
 /// Draws the retained final session's exit code without writing UI text into terminal output.
 pub fn drawSessionExit(bounds: panes.PaneRect, exit_code: u32) void {
     c.vex_draw_session_exit(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, exit_code);

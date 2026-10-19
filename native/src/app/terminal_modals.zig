@@ -57,8 +57,18 @@ pub fn presentTerminalModal(self: *Application) !void {
         .shell_picker => |picker| {
             request.kind = .shell;
             request.title = "Choose a shell";
-            request.description = "Installed shells · Open a new terminal tab.";
-            request.accept_label = "Open tab";
+            request.description = switch (picker.mode) {
+                .new_tab => "Installed shells · Open a new terminal tab.",
+                .split_right => "Installed shells · Split the active pane to the right.",
+                .split_down => "Installed shells · Split the active pane downward.",
+                .set_default => "Installed shells · Choose the default shell for new sessions.",
+            };
+            request.accept_label = switch (picker.mode) {
+                .new_tab => "Open tab",
+                .split_right => "Split right",
+                .split_down => "Split down",
+                .set_default => "Set default",
+            };
             request.mode = @intFromEnum(picker.mode);
             self.discoverAvailableShells();
             for (self.available_shells[0..self.available_shell_count]) |kind| {

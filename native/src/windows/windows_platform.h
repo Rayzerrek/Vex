@@ -26,6 +26,9 @@ typedef struct {
     const uint8_t* name; size_t name_length;
     bool is_directory, selected, hovered;
 } VexPathCompletionItem;
+typedef struct {
+    uint16_t row, start_col, end_col;
+} VexCopySpan;
 /* Borrowed UTF-16 strings exclude sentinel lengths; environment includes its final double NUL. */
 typedef struct {
     const uint16_t* program; size_t program_length;
@@ -123,6 +126,7 @@ void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool editing, con
 void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status);
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity);
+void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress);
 void vex_draw_session_exit(VexPaneRect bounds, uint32_t exit_code);
 void vex_draw_split_preview(VexPaneRect bounds);
 void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns, uint16_t rows);

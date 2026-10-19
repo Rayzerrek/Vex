@@ -13,6 +13,35 @@ const terminal_title = @import("../terminal/terminal_title.zig");
 const status_presentation = @import("../terminal/status_presentation.zig");
 
 const SessionState = union(enum) { running, exited: u32 };
+
+pub const CopyFeedback = struct {
+    spans: [64]platform.c.VexCopySpan = undefined,
+    count: u8 = 0,
+    scroll_offset: u64 = 0,
+    started_ms: ?u64 = null,
+
+    pub const duration_ms: u64 = 440;
+
+    pub fn clear(self: *CopyFeedback) void {
+        self.started_ms = null;
+        self.count = 0;
+    }
+
+    pub fn progress(self: *CopyFeedback, now_ms: u64, scroll_offset: u64, animations_enabled: bool) ?f32 {
+        const started = self.started_ms orelse return null;
+        if (!animations_enabled or self.count == 0 or scroll_offset != self.scroll_offset) {
+            self.clear();
+            return null;
+        }
+        const elapsed = now_ms -| started;
+        if (elapsed >= duration_ms) {
+            self.clear();
+            return null;
+        }
+        return @as(f32, @floatFromInt(elapsed)) / @as(f32, @floatFromInt(duration_ms));
+    }
+};
+
 /// Stable-address owner of one emulator, ConPTY process and directory; borrows the application API/hostname.
 pub const TerminalSession = struct {
     id: panes.PaneId,
@@ -24,6 +53,7 @@ pub const TerminalSession = struct {
     state: SessionState = .running,
     needs_attention: bool = false,
     scrollbar_visibility: @import("../workspace/scrollbar_visibility.zig").ScrollbarVisibility = .{},
+    copy_feedback: CopyFeedback = .{},
     wheel_scroll: @import("../workspace/wheel_scroll.zig").WheelScroll = .{},
     sync_defer_since_ms: ?i64 = null,
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
@@ -97,6 +127,44 @@ pub const TerminalSession = struct {
         defer allocator.free(selected);
         if (selected.len > 0) try platform.writeClipboardText(selected);
         return true;
+    }
+    /// Snapshots visible selected cell runs so the copy shimmer can animate even after selection clears.
+    pub fn recordCopyFeedback(self: *TerminalSession, now_ms: u64) void {
+        if (!platform.animationsEnabled()) return;
+        const frame = self.terminal.readFrame() catch return;
+        const sb = self.terminal.scrollbar() catch return;
+        var count: u8 = 0;
+        for (0..frame.rows) |r| {
+            const row_cells = frame.cells.items[r * frame.columns ..][0..frame.columns];
+            var in_span = false;
+            var start_col: u16 = 0;
+            var end_col: u16 = 0;
+            for (row_cells, 0..) |cell, c_idx| {
+                const col: u16 = @intCast(c_idx);
+                if (cell.selected) {
+                    if (!in_span) {
+                        in_span = true;
+                        start_col = col;
+                    }
+                    end_col = col + 1;
+                } else if (in_span) {
+                    if (count < self.copy_feedback.spans.len) {
+                        self.copy_feedback.spans[count] = .{ .row = @intCast(r), .start_col = start_col, .end_col = end_col };
+                        count += 1;
+                    }
+                    in_span = false;
+                }
+            }
+            if (in_span and count < self.copy_feedback.spans.len) {
+                self.copy_feedback.spans[count] = .{ .row = @intCast(r), .start_col = start_col, .end_col = end_col };
+                count += 1;
+            }
+        }
+        if (count > 0) {
+            self.copy_feedback.count = count;
+            self.copy_feedback.scroll_offset = sb.offset;
+            self.copy_feedback.started_ms = now_ms;
+        }
     }
     /// Deletes a cursor-anchored keyboard selection by sending one DEL (0x7f) per selected character.
     pub fn deleteKeyboardSelection(self: *TerminalSession) !bool {
@@ -218,4 +286,26 @@ fn resolveForegroundProcessTitle(proc_name: ?[]const u8, proc_cmd: ?[]const u8) 
     }
     const name = command_line.executableStem(raw_exe);
     return if (name.len > 0) name else null;
+}
+
+test "copy feedback progress advances and clears on duration or scroll change" {
+    var fb: CopyFeedback = .{};
+    try std.testing.expectEqual(@as(?f32, null), fb.progress(1000, 0, true));
+
+    fb.spans[0] = .{ .row = 2, .start_col = 4, .end_col = 18 };
+    fb.count = 1;
+    fb.scroll_offset = 5;
+    fb.started_ms = 1000;
+
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), fb.progress(1000, 5, true).?, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), fb.progress(1220, 5, true).?, 0.001);
+    try std.testing.expectEqual(@as(?f32, null), fb.progress(1440, 5, true));
+    try std.testing.expectEqual(@as(u8, 0), fb.count);
+
+    fb.spans[0] = .{ .row = 0, .start_col = 0, .end_col = 10 };
+    fb.count = 1;
+    fb.scroll_offset = 5;
+    fb.started_ms = 2000;
+    try std.testing.expectEqual(@as(?f32, null), fb.progress(2050, 6, true));
+    try std.testing.expectEqual(@as(?u64, null), fb.started_ms);
 }

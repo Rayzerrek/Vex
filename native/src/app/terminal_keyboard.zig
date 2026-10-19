@@ -85,20 +85,25 @@ fn handleSessionKey(self: *Application, session: *TerminalSession, key: u32, mod
     }
     if ((modifiers == 3 and key == 'C') or (modifiers == 2 and key == 0x2D)) {
         if (try session.copySelectionToClipboard(self.allocator)) {
+            session.recordCopyFeedback(self.cursorNowMs());
             try session.terminal.clearSelection(true);
             platform.invalidateWindow();
         }
         return true;
     }
     if (modifiers == 2 and key == 'C' and try session.terminal.hasSelection()) {
-        _ = try session.copySelectionToClipboard(self.allocator);
+        if (try session.copySelectionToClipboard(self.allocator)) {
+            session.recordCopyFeedback(self.cursorNowMs());
+        }
         try session.terminal.clearSelection(true);
         platform.invalidateWindow();
         return true;
     }
     if (modifiers == 3 and key == 'X') {
         if (try session.terminal.hasSelection()) {
-            _ = try session.copySelectionToClipboard(self.allocator);
+            if (try session.copySelectionToClipboard(self.allocator)) {
+                session.recordCopyFeedback(self.cursorNowMs());
+            }
             if (!try session.deleteKeyboardSelection()) try session.terminal.clearSelection(true);
             platform.invalidateWindow();
         }
