@@ -6,6 +6,8 @@ const workspace = @import("../workspace/workspace_model.zig");
 const directory = @import("../shell/directory.zig");
 const status = @import("../terminal/program_status.zig");
 const status_presentation = @import("../terminal/status_presentation.zig");
+const terminal_paint = @import("terminal_paint.zig");
+const terminal_shells = @import("terminal_shells.zig");
 const shell = @import("../shell/shell_launch.zig");
 const TerminalSession = @import("terminal_session.zig").TerminalSession;
 const wsl_registry = @import("../windows/wsl_registry.zig");
@@ -216,7 +218,7 @@ pub const TerminalApplication = struct {
         return false;
     }
     /// Cursor blink and status pulse share one Win32 wake, armed to the earliest pending step.
-    fn syncAnimationWake(self: *TerminalApplication) !void {
+    pub fn syncAnimationWake(self: *TerminalApplication) !void {
         const now = self.cursorNowMs();
         self.status_pulse.synchronize(self.anyAnimatedStatus(), now);
         const blink_delay = self.cursor_blink.nextDelayMs(now);
@@ -261,7 +263,7 @@ pub const TerminalApplication = struct {
         if (repaint) platform.invalidateWindow();
         self.syncAnimationWake() catch |err| self.fail(err);
     }
-    fn scrollbarActive(self: *const TerminalApplication, id: panes.PaneId) bool {
+    pub fn scrollbarActive(self: *const TerminalApplication, id: panes.PaneId) bool {
         return self.overlay == .none and (self.hovered_scrollbar == id or
             (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == id));
     }
@@ -333,7 +335,7 @@ pub const TerminalApplication = struct {
                 available = true;
             };
             if (!available) return error.UnavailableShellSelection;
-            if (@intFromEnum(kind) >= 256) _ = try self.resolveShellLaunch(kind);
+            if (@intFromEnum(kind) >= 256) _ = try terminal_shells.resolveShellLaunch(self, kind);
         }
         if (source == .gui and !std.meta.eql(self.settings, settings)) preferences.saveUserSettings(self.allocator, self.settings_path, settings) catch |err| {
             dialogs.showSettingsFailure(err);
@@ -400,133 +402,23 @@ pub const TerminalApplication = struct {
         const model = if (self.model) |*model| model else return null;
         return self.findSession(model.activeTab().active_pane);
     }
-    /// Refresh only when opening shell-selection UI or validating an external configuration change.
-    /// Modal updates reuse the snapshot so sliders and theme previews never scan PATH.
     pub fn discoverAvailableShells(self: *TerminalApplication) void {
-        const system_directory = platform.systemDirectoryAlloc(self.allocator) catch null;
-        defer if (system_directory) |dir| self.allocator.free(dir);
-        var environment = platform.shellEnvironment(self.allocator) catch null;
-        defer if (environment) |*env| env.deinit();
-
-        const candidates = [_]shell.ShellKind{ .pwsh, .powershell, .cmd, .nu, .gitbash, .wsl };
-        var count: u8 = 0;
-        for (candidates) |candidate| {
-            var available = candidate == self.launch.kind;
-            if (!available) if (system_directory) |sys_dir| if (environment) |*env_ptr| {
-                if (candidate == .wsl) {
-                    if (shell.isWslLauncherAvailable(self.allocator, sys_dir) catch false) {
-                        if (wsl_registry.readDefaultWslDistributionAlloc(self.allocator)) |distro| {
-                            self.allocator.free(distro.bytes);
-                            available = true;
-                        } else |_| {}
-                    }
-                } else if (candidate.builtinProfile()) |profile| {
-                    available = shell.isBuiltinShellAvailable(self.allocator, profile, sys_dir, env_ptr) catch false;
-                }
-            };
-            if (available and count < self.available_shells.len) {
-                self.available_shells[count] = candidate;
-                count += 1;
-            }
-        }
-        if (self.launch.kind == .custom) {
-            self.available_shells[count] = .custom;
-            count += 1;
-        }
-        for (self.custom_shells.profiles.items) |profile| {
-            self.available_shells[count] = @enumFromInt(profile.id);
-            count += 1;
-        }
-        if (count == 0) {
-            self.available_shells[0] = self.launch.kind;
-            count = 1;
-        }
-        self.available_shell_count = count;
+        terminal_shells.discoverAvailableShells(self);
     }
     pub fn shellLabel(self: *const TerminalApplication, kind: shell.ShellKind) []const u8 {
-        if (self.custom_shells.find(@intFromEnum(kind))) |profile| return profile.name;
-        return if (kind == .custom) self.launch.shellName() else kind.displayName();
+        return terminal_shells.shellLabel(self, kind);
     }
     pub fn shellDetail(self: *const TerminalApplication, kind: shell.ShellKind) []const u8 {
-        if (self.custom_shells.find(@intFromEnum(kind))) |profile| return profile.displayProgram();
-        return if (kind == .custom) self.launch.program else kind.subtitle();
+        return terminal_shells.shellDetail(self, kind);
     }
     pub fn addCustomShell(self: *TerminalApplication, name: []const u8, program: []const u8, arguments: []const u8) !void {
-        const edit_lock = try custom_profiles.Catalog.editLock(self.allocator, self.settings_path);
-        defer edit_lock.close();
-        var latest = custom_profiles.Catalog.load(self.allocator, self.settings_path, &self.settings_diagnostic) catch |err| {
-            self.custom_shell_load_error = err;
-            return if (err == error.OutOfMemory) err else error.InvalidLuaShellProfiles;
-        };
-        defer latest.deinit();
-        if (@intFromEnum(self.settings.default_shell) >= 256 and latest.find(@intFromEnum(self.settings.default_shell)) == null) return error.UnavailableShellSelection;
-        const id = @max(try latest.nextId(), try self.custom_shells.nextId());
-        const profile: custom_profiles.Profile = .{ .id = id, .name = name, .program = program, .arguments = arguments };
-        try profile.validate();
-        var request = try profile.request();
-        const distribution = if (request == .wsl) try wsl_registry.readDefaultWslDistributionAlloc(self.allocator) else null;
-        defer if (distribution) |value| self.allocator.free(value.bytes);
-        if (distribution) |value| request.wsl.distribution = .{ .named = value };
-        const system_directory = try platform.systemDirectoryAlloc(self.allocator);
-        defer self.allocator.free(system_directory);
-        var environment = try platform.shellEnvironment(self.allocator);
-        defer environment.deinit();
-        var launch = try shell.ShellLaunch.resolve(self.allocator, request, system_directory, &environment);
-        defer launch.deinit();
-        try latest.appendAndSave(self.settings_path, profile);
-        const previous = self.custom_shells;
-        self.custom_shells = latest;
-        latest = previous;
-        self.custom_shell_load_error = null;
-        self.discoverAvailableShells();
-    }
-    fn resolveShellLaunch(self: *TerminalApplication, kind: shell.ShellKind) !*const shell.ShellLaunch {
-        const custom = self.custom_shells.find(@intFromEnum(kind));
-        if (custom) |profile| {
-            if (self.launch.matchesProfile(profile.id, profile.name, profile.program, profile.arguments) and (self.launch.programAvailable() catch false)) return &self.launch;
-            for (self.shell_launches.items) |cached| {
-                if (cached.matchesProfile(profile.id, profile.name, profile.program, profile.arguments) and (cached.programAvailable() catch false)) return cached;
-            }
-        } else {
-            if (kind == self.launch.kind) return &self.launch;
-            if (@intFromEnum(kind) >= 256) return error.UnavailableShellSelection;
-            for (self.shell_launches.items) |cached| if (cached.kind == kind) return cached;
-        }
-        try self.shell_launches.ensureUnusedCapacity(self.allocator, 1);
-        const system_directory = try platform.systemDirectoryAlloc(self.allocator);
-        defer self.allocator.free(system_directory);
-        var environment = try platform.shellEnvironment(self.allocator);
-        defer environment.deinit();
-
-        const is_wsl = kind == .wsl or (custom != null and std.mem.startsWith(u8, custom.?.program, "wsl:"));
-        const default_distribution = if (is_wsl) wsl_registry.readDefaultWslDistributionAlloc(self.allocator) catch null else null;
-        defer if (default_distribution) |name| self.allocator.free(name.bytes);
-        var request: shell.ShellRequest = undefined;
-        if (custom) |profile| {
-            request = try profile.request();
-            if (default_distribution) |name| request.wsl.distribution = .{ .named = name };
-        } else if (kind == .wsl) {
-            request = .{ .wsl = .{
-                .distribution = if (default_distribution) |name| .{ .named = name } else .automatic,
-                .command = .default,
-            } };
-        } else {
-            const profile = kind.builtinProfile() orelse return &self.launch;
-            request = .{ .builtin = profile };
-        }
-        const owned = try self.allocator.create(shell.ShellLaunch);
-        errdefer self.allocator.destroy(owned);
-        owned.* = try shell.ShellLaunch.resolve(self.allocator, request, system_directory, &environment);
-        errdefer owned.deinit();
-        if (custom) |profile| try owned.identifyProfile(profile.id, profile.name, profile.program, profile.arguments);
-        self.shell_launches.appendAssumeCapacity(owned);
-        return owned;
+        try terminal_shells.addCustomShell(self, name, program, arguments);
     }
     pub fn addSession(self: *TerminalApplication, path: directory.DirectoryPath) !*TerminalSession {
         return self.addSessionWithKind(path, self.default_shell_kind);
     }
     fn addHomeSessionWithKind(self: *TerminalApplication, kind: shell.ShellKind) !*TerminalSession {
-        const launch_ptr = try self.resolveShellLaunch(kind);
+        const launch_ptr = try terminal_shells.resolveShellLaunch(self, kind);
         const home = try std.process.getEnvVarOwned(self.allocator, "USERPROFILE");
         defer self.allocator.free(home);
         var path = try directory.DirectoryPath.parse(home);
@@ -534,7 +426,7 @@ pub const TerminalApplication = struct {
         return self.addSessionWithKind(path, kind);
     }
     fn addSessionWithKind(self: *TerminalApplication, path: directory.DirectoryPath, kind: shell.ShellKind) !*TerminalSession {
-        const launch_ptr = try self.resolveShellLaunch(kind);
+        const launch_ptr = try terminal_shells.resolveShellLaunch(self, kind);
         // Reserving first prevents an allocation failure from stranding a live process.
         try self.sessions.ensureUnusedCapacity(self.allocator, 1);
         const token = self.next_token;
@@ -690,90 +582,7 @@ pub const TerminalApplication = struct {
     }
     pub fn onPaint(self: *TerminalApplication) void {
         if (self.health == .failed) return;
-        self.paintWorkspace() catch |err| self.fail(err);
-    }
-    fn paintWorkspace(self: *TerminalApplication) !void {
-        try overlays.finishPeek(self);
-        const model = if (self.model) |*model| model else return;
-        const active_theme = self.currentTheme();
-        platform.drawTabStripBackground(model.selected_tab);
-        for (model.tabs.items, 0..) |tab, index| {
-            const presentation = try self.tabProgramStatus(tab.tree.root);
-            const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
-            var tab_icons: [8]app_icon.AppIcon = undefined;
-            var icon_count: usize = 0;
-            try self.collectTabIcons(tab.tree.root, &tab_icons, &icon_count);
-            if (icon_count == 0) {
-                tab_icons[0] = active_session.icon;
-                icon_count = 1;
-            }
-            const is_editing = if (self.editing_tab) |edit| edit.tab_id == tab.id else false;
-            const reported_title = status_presentation.statusTitle(presentation.summary, active_session.displayTitle());
-            const default_title = tab.customTitle() orelse reported_title;
-            const tab_title = if (self.editing_tab) |*edit| (if (edit.tab_id == tab.id) edit.buf[0..edit.len] else default_title) else default_title;
-            platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, is_editing, tab_title, tab_icons[0..icon_count], presentation.summary, self.status_pulse.phaseIndex(), presentation.attention);
-        }
-        if (self.pointer_drag == .tab) {
-            const metrics = self.metrics orelse return;
-            if (try self.pointer_drag.tab.markerX(model, try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len))) |x| try platform.drawTabInsertionMarker(x);
-        }
-        const active_tab = model.activeTab();
-        const can_focus = active_tab.tree.paneCount() > 1;
-        var saw_active_pane = false;
-        for (self.placements.items) |placement| {
-            if (self.overlay == .tab_peek) break;
-            if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
-            const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
-            const focused = active_tab.active_pane == placement.id and self.overlay == .none and self.editing_tab == null;
-            const hovered = self.hovered_pane == placement.id and self.overlay == .none;
-            const hovered_action = if (hovered) self.hovered_header_action else null;
-            const frame = try session.terminal.readFrame();
-            if (active_tab.active_pane == placement.id) {
-                saw_active_pane = true;
-                const key = if (focused and self.cursor_blink_enabled and self.cursor_window_active and session.state == .running)
-                    cursor_blink.CursorKey.fromFrame(placement.id, frame)
-                else
-                    null;
-                self.cursor_blink.synchronize(key, self.cursorNowMs());
-            }
-            const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
-            {
-                const summary = session.terminal.program_status.programStatus();
-                platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex());
-                defer platform.endPane();
-                try platform.drawTerminalFrame(placement.id, frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
-            }
-            const scrollbar = try session.terminal.scrollbar();
-            if (self.metrics) |metrics| {
-                if (session.copy_feedback.progress(self.cursorNowMs(), scrollbar.offset, platform.animationsEnabled())) |copy_progress| {
-                    platform.drawCopyFeedback(placement.bounds, metrics.cell_width, metrics.cell_height, session.copy_feedback.spans[0..session.copy_feedback.count], copy_progress);
-                }
-            }
-            var geometry = platform.ScrollbarGeometry.compute(placement.bounds, scrollbar);
-            if (geometry) |*sb| {
-                if (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id) {
-                    const drag = self.pointer_drag.scrollbar;
-                    sb.thumb_y = sb.thumbTopForY(drag.pointer_y, drag.grab_offset);
-                }
-            }
-            const sb_active = self.scrollbarActive(placement.id);
-            const opacity = session.scrollbar_visibility.opacity(self.cursorNowMs(), geometry != null, sb_active, platform.animationsEnabled());
-            if (geometry) |sb| {
-                if (opacity > 0) platform.drawScrollbar(placement.bounds, sb, sb_active, opacity);
-            }
-            if (session.state == .exited and scrollbar.offset == scrollbar.scrollable())
-                platform.drawSessionExit(placement.bounds, session.state.exited);
-        }
-        if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging and self.pointer_drag.pane.zone != .none) {
-            if (self.findPlacement(self.pointer_drag.pane.pane_id)) |placement| {
-                if (placement.bounds.splitPreviewRect(self.pointer_drag.pane.zone)) |preview| {
-                    platform.drawSplitPreview(preview);
-                }
-            }
-        }
-        if (!saw_active_pane) self.cursor_blink.synchronize(null, self.cursorNowMs());
-        try self.syncAnimationWake();
-        try overlays.drawActiveOverlay(self);
+        terminal_paint.paintWorkspace(self) catch |err| self.fail(err);
     }
     fn reviewTabClose(self: *TerminalApplication, node: anytype, review: *close_confirmation.TabCloseReview) anyerror!void {
         if (review.isComplete()) return;
@@ -1055,25 +864,6 @@ pub const TerminalApplication = struct {
             .toggle_cursor_blink => try self.applyAction(.toggle_cursor_blink, 0),
         }
     }
-    fn collectTabIcons(self: *TerminalApplication, node: anytype, out: *[8]app_icon.AppIcon, count: *usize) anyerror!void {
-        switch (node.*) {
-            .leaf => |id| {
-                const session = self.findSession(id) orelse return error.MissingPaneSession;
-                if (session.icon.is_shell) return;
-                for (out[0..count.*]) |existing| {
-                    if (existing.eql(session.icon)) return;
-                }
-                if (count.* < out.len) {
-                    out[count.*] = session.icon;
-                    count.* += 1;
-                }
-            },
-            .split => |split| {
-                try self.collectTabIcons(split.first, out, count);
-                try self.collectTabIcons(split.second, out, count);
-            },
-        }
-    }
     const TabStatus = struct {
         summary: status.ProgramStatusSummary,
         attention: bool,
@@ -1250,22 +1040,14 @@ pub const TerminalApplication = struct {
                     }
                     return;
                 }
-                if (index >= 1 and index <= 7) {
-                    try self.executeShellPickerChoice(.new_tab, @enumFromInt(index));
-                    return;
-                }
-                if (index >= 11 and index <= 17) {
-                    try self.executeShellPickerChoice(.split_right, @enumFromInt(index - 10));
-                    return;
-                }
-                if (index >= 21 and index <= 27) {
-                    try self.executeShellPickerChoice(.split_down, @enumFromInt(index - 20));
-                    return;
-                }
-                if (index >= 31 and index <= 37) {
-                    try self.executeShellPickerChoice(.set_default, @enumFromInt(index - 30));
-                    return;
-                }
+                const mode: overlays.ShellPickerMode = switch (index) {
+                    1...7 => .new_tab,
+                    11...17 => .split_right,
+                    21...27 => .split_down,
+                    31...37 => .set_default,
+                    else => return,
+                };
+                try self.executeShellPickerChoice(mode, @enumFromInt(index % 10));
                 return;
             },
             else => {},
@@ -1385,7 +1167,7 @@ pub const TerminalApplication = struct {
     }
 };
 
-/// Packs up to eight ASCII bytes of a diagnostic probe string without allocating.
+/// Keeps workspace layout below the custom title bar.
 pub fn windowContentBounds(metrics: platform.WindowMetrics) panes.PaneRect {
     return .{ .x = 0, .y = 44, .width = @max(0, metrics.width), .height = @max(0, metrics.height - 44) };
 }
