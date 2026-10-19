@@ -40,7 +40,7 @@ struct ThemeCardCache {
     float scale = 0;
 };
 struct DialogHost {
-    HWND owner, window, previousFocus;
+    HWND owner, window, backdrop, previousFocus;
     ULONG_PTR graphicsToken = 0;
     VexWindowCallbacks callbacks;
     DialogModel model;
@@ -157,6 +157,11 @@ void closeDialog(bool restoreFocus) {
     host.motion = {};
     host.layered = false;
     host.window = nullptr;
+    if (IsWindow(host.backdrop)) {
+        if (GetCapture() == host.backdrop) ReleaseCapture();
+        DestroyWindow(host.backdrop);
+    }
+    host.backdrop = nullptr;
     // Destroying the active popup while its owner is disabled can activate another app.
     if (IsWindow(host.owner)) EnableWindow(host.owner, TRUE);
     if (IsWindow(dialog)) DestroyWindow(dialog);
@@ -184,6 +189,39 @@ void finish(uint32_t event, uint32_t value = 0) {
     host.phase = DialogHost::Phase::active;
     closeDialog(true);
     notify(event, value);
+}
+LRESULT CALLBACK backdropProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    case WM_LBUTTONDOWN:
+        SetCapture(window);
+        return 0;
+    case WM_LBUTTONUP:
+        if (GetCapture() == window) {
+            // Consume the entire click before restoring input to the terminal underneath.
+            ReleaseCapture();
+            finish(0);
+        }
+        return 0;
+    case WM_CANCELMODE:
+        if (GetCapture() == window) ReleaseCapture();
+        return 0;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+bool createDialogBackdrop() {
+    WNDCLASSW klass = {};
+    klass.lpfnWndProc = backdropProcedure;
+    klass.hInstance = GetModuleHandleW(nullptr);
+    klass.lpszClassName = L"VexDialogBackdrop";
+    klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+    klass.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+    // The owner stays disabled. A nearly transparent owned surface receives only backdrop clicks;
+    // the renderer still draws the dimming and shadow, and the popup remains above this surface.
+    host.backdrop = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+        klass.lpszClassName, L"", WS_POPUP, 0, 0, 1, 1, host.owner, nullptr, klass.hInstance, nullptr);
+    return host.backdrop && SetLayeredWindowAttributes(host.backdrop, 0, 1, LWA_ALPHA);
 }
 bool navigateCommandList(WPARAM key) {
     if (host.model.kind != 2 || GetKeyState(VK_CONTROL) < 0 || GetKeyState(VK_MENU) < 0) return false;
@@ -1158,6 +1196,18 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
         border = surface;
     }
     roundedFill(draw.hDC, bounds, surface, border, px(navigation ? 22 : 14));
+    if (id == closeId) {
+        Gdiplus::Graphics graphics(draw.hDC);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        const COLORREF ink = color(pressed ? host.model.palette.text_primary : host.model.palette.text_muted);
+        Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(ink), GetGValue(ink), GetBValue(ink)), 1.35f * host.scale);
+        pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound);
+        const float cx = (bounds.left + bounds.right) * 0.5f, cy = (bounds.top + bounds.bottom) * 0.5f;
+        const float radius = 4.5f * host.scale;
+        graphics.DrawLine(&pen, cx - radius, cy - radius, cx + radius, cy + radius);
+        graphics.DrawLine(&pen, cx + radius, cy - radius, cx - radius, cy + radius);
+        return;
+    }
     SetBkMode(draw.hDC, TRANSPARENT); SelectObject(draw.hDC, host.font);
     SetTextColor(draw.hDC, primary && host.model.kind == 6 ? RGB(255, 245, 241) : color(checked && navigation ? host.model.palette.accent : host.model.palette.text_primary));
     wchar_t label[96]; GetWindowTextW(draw.hwndItem, label, 96);
@@ -1394,7 +1444,7 @@ bool createControls(float width, float height) {
         }
     }
     if (!commands) {
-        if (!closing) ok = control(L"BUTTON", L"×", BS_OWNERDRAW | WS_TABSTOP, closeId, width - 42, shells ? 16.0f : 12.0f, 28, 28) && ok;
+        if (!closing) ok = control(L"BUTTON", L"Close", BS_OWNERDRAW | WS_TABSTOP, closeId, width - 42, shells ? 16.0f : 12.0f, 28, 28) && ok;
         if (!settings && !shells) {
             ok = control(L"BUTTON", L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL, width - 244, height - 52, 96, 34) && ok;
             ok = control(L"BUTTON", host.model.accept, WS_TABSTOP | BS_OWNERDRAW, IDOK, width - 136, height - 52, 112, 34) && ok;
@@ -1755,6 +1805,11 @@ void repositionTerminalDialogs() {
     if (host.width <= 0 || host.height <= 0) return;
     const int top = (host.model.kind == 2 || host.model.kind == 5) ? (int)fminf((float)px(64), (owner.bottom - px(host.height)) / 2.0f) : (owner.bottom - px(host.height)) / 2;
     const int left = origin.x + (owner.right - px(host.width)) / 2;
+    RECT backdropBounds;
+    if (IsWindow(host.backdrop) && (!GetWindowRect(host.backdrop, &backdropBounds) ||
+        backdropBounds.left != origin.x || backdropBounds.top != origin.y ||
+        backdropBounds.right - backdropBounds.left != owner.right || backdropBounds.bottom - backdropBounds.top != owner.bottom))
+        SetWindowPos(host.backdrop, nullptr, origin.x, origin.y, owner.right, owner.bottom, SWP_NOACTIVATE | SWP_NOZORDER);
     RECT current;
     // Activation/z-order changes also send WM_WINDOWPOSCHANGED to the owner.
     // They must not relayout and repaint every child of an otherwise stationary popup.
@@ -1911,6 +1966,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     HWND result = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), &layout.dialog, host.owner, dialogProcedure, 0);
     if (!result || !IsWindow(result)) { closeDialog(false); return ERROR_NOT_ENOUGH_MEMORY; }
     host.window = result;
+    if (!createDialogBackdrop()) { closeDialog(true); return ERROR_NOT_ENOUGH_MEMORY; }
     host.phase = DialogHost::Phase::active;
     repositionTerminalDialogs();
     // Theme thumbnails are cached on first visible paint, never on the opening path.
@@ -1928,6 +1984,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     EnableWindow(host.owner, FALSE);
     // The backdrop is part of the owner, not the popup's GDI surface.
     vex_window_invalidate();
+    SetWindowPos(host.backdrop, result, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     ShowWindow(result, SW_SHOW);
     SetActiveWindow(result);
     HWND focus = GetDlgItem(result, request.kind == 4 ? shellId : request.kind == 6 ? IDCANCEL : request.kind == 2 ? queryId : listId);
