@@ -21,14 +21,13 @@ int hoveredTabIndex;
 bool hoveredTabClose;
 double chromeTimeMs;
 bool chromeMotionEnabled, chromeMotionPending, chromeEffectsPending;
-ChromeMotion tabSelectionMotion, tabHoverMotion[8], tabCloseHoverMotion[8];
+ChromeMotion tabSelectionMotion, tabSelectionWidthMotion, tabHoverMotion[8], tabCloseHoverMotion[8];
 ChromeMotion paneActionHoverMotion[4];
 ChromeMotion splitPreviewRectMotion[4], splitPreviewAlphaMotion;
 ChromeMotion pathOpenMotion, pathRowMotion;
 bool splitPreviewSeenLastFrame, splitPreviewSeenThisFrame;
 bool pathCompletionSeenLastFrame, pathCompletionSeenThisFrame;
 float previousTabWidth;
-uint32_t previousTabCount;
 uint64_t activeTabIconKey, focusedPaneIconKey;
 size_t activeTabIconCount;
 constexpr float tabStripLeft = 8;
@@ -237,9 +236,8 @@ extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
 }
 extern "C" void vex_draw_tab_strip_background(uint32_t active_index) {
     if (active_index >= tabStripCount || tabStripCount > 8) return;
-    const bool animate = chromeMotionEnabled && previousTabWidth == tabWidthDip && previousTabCount <= tabStripCount;
+    const bool animate = chromeMotionEnabled && previousTabWidth == tabWidthDip;
     previousTabWidth = tabWidthDip;
-    previousTabCount = tabStripCount;
     for (uint32_t i = 0; i < 8; ++i) {
         const float opacity = tabHoverMotion[i].update(i < tabStripCount && (int)i == hoveredTabIndex ? 1.0f : 0.0f, chromeTimeMs, animate);
         chromeMotionPending |= tabHoverMotion[i].pending(chromeTimeMs);
@@ -248,9 +246,11 @@ extern "C" void vex_draw_tab_strip_background(uint32_t active_index) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg, opacity));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, 5, x + tabWidthDip, 39), 10, 10), brush);
     }
-    const float x = tabSelectionMotion.update(tabStripLeft + active_index * (tabWidthDip + 4), chromeTimeMs, animate);
-    chromeMotionPending |= tabSelectionMotion.pending(chromeTimeMs);
-    const D2D1_ROUNDED_RECT activeRect = D2D1::RoundedRect(D2D1::RectF(x, 5, x + tabWidthDip, 39), 10, 10);
+    // Closing a tab can also change slot widths; keep the selection continuous in both dimensions.
+    const float x = tabSelectionMotion.update(tabStripLeft + active_index * (tabWidthDip + 4), chromeTimeMs, chromeMotionEnabled);
+    const float width = tabSelectionWidthMotion.update(tabWidthDip, chromeTimeMs, chromeMotionEnabled);
+    chromeMotionPending |= tabSelectionMotion.pending(chromeTimeMs) || tabSelectionWidthMotion.pending(chromeTimeMs);
+    const D2D1_ROUNDED_RECT activeRect = D2D1::RoundedRect(D2D1::RectF(x, 5, x + width, 39), 10, 10);
     brush->SetColor(rgb(chromePalette.active_tab_bg));
     target->FillRoundedRectangle(activeRect, brush);
     brush->SetColor(rgb(blendRgb(chromePalette.border, chromePalette.active_tab_border, 0.42f), chromePalette.is_dark ? 0.55f : 0.40f));

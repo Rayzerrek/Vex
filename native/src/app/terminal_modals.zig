@@ -58,10 +58,10 @@ pub fn presentTerminalModal(self: *Application) !void {
             request.kind = .shell;
             request.title = "Choose a shell";
             request.description = switch (picker.mode) {
-                .new_tab => "Installed shells · Open a new terminal tab.",
-                .split_right => "Installed shells · Split the active pane to the right.",
-                .split_down => "Installed shells · Split the active pane downward.",
-                .set_default => "Installed shells · Choose the default shell for new sessions.",
+                .new_tab => "",
+                .split_right => "Split the active pane to the right.",
+                .split_down => "Split the active pane downward.",
+                .set_default => "Choose the default shell for new sessions.",
             };
             request.accept_label = switch (picker.mode) {
                 .new_tab => "Open tab",

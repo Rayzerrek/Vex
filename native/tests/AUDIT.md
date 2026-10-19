@@ -56,7 +56,7 @@ assertions. These exercise existing behavior rather than loosening validation.
   boundary, acknowledgement, progress suppression and exit-state assertions.
 - `tests/conpty_fixture.cpp`: actually launched by the real terminal tests for
   screen/history/alternate-screen erase behavior.
-- `tests/chrome_motion.cpp`: seven `static_assert` checks are compiled into the
+- `tests/chrome_motion.cpp`: nine `static_assert` checks are compiled into the
   fixture build; lack of runtime output does not make them unused.
 - Allocation-failure helpers, Lua decode/load test conveniences, and badge
   accessors: these still exercise active parsers/owners, not replaced features.

@@ -25,6 +25,23 @@ constexpr bool chromeMotionReducedMotionSnapsAndStops() {
     motion.update(160, 0, true);
     return motion.update(80, 40, false) == 80 && !motion.pending(40) && motion.sample(1000) == 80;
 }
+constexpr bool tabSelectionCloseRetargetsPositionAndWidth() {
+    ChromeMotion x, width;
+    x.update(416, 0, true); width.update(200, 0, true);
+    if (x.update(212, 10, true) != 416 || width.update(180, 10, true) != 200) return false;
+    if (x.sample(90) != 237.5f || width.sample(90) != 182.5f) return false;
+    const float current = x.sample(90);
+    if (x.update(8, 90, true) != current) return false;
+    return x.sample(250) == 8 && width.sample(250) == 180 && !x.pending(250) && !width.pending(250);
+}
+constexpr bool switchMotionReversesAndRespectsReducedMotion() {
+    ChromeMotion motion;
+    motion.update(0, 0, false);
+    if (motion.update(1, 10, true) != 0 || motion.sample(90) != 0.875f) return false;
+    if (motion.update(0, 90, true) != 0.875f) return false;
+    if (motion.sample(170) != 0.109375f) return false;
+    return motion.update(1, 170, false) == 1 && !motion.pending(170);
+}
 constexpr bool overlayScrollbarGeometryAndDrag() {
     if (OverlayScrollbar::compute(8, 8, 0, 240, 24).maximum != 0) return false;
     if (OverlayScrollbar::compute(8, 0, 0, 0, 24).maximum != 0) return false;
@@ -73,6 +90,8 @@ constexpr bool pixelScrollRetargetsClampsAndStops() {
     scroll.range(0, 500);
     return scroll.sample(500) == 0 && !scroll.pending(500);
 }
+static_assert(tabSelectionCloseRetargetsPositionAndWidth());
+static_assert(switchMotionReversesAndRespectsReducedMotion());
 static_assert(pixelScrollRetargetsClampsAndStops());
 static_assert(dialogMotionRetargetsAndSettles());
 static_assert(overlayScrollbarGeometryAndDrag());

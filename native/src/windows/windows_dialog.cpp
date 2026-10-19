@@ -2,6 +2,7 @@
 #include "ui_renderer.h"
 #include "overlay_scrollbar.h"
 #include "dialog_motion.h"
+#include "chrome_motion.h"
 #include "pixel_scroll.h"
 #include <commctrl.h>
 #include <gdiplus.h>
@@ -49,6 +50,7 @@ struct DialogHost {
     enum class Phase { closed, creating, active, closing } phase = Phase::closed;
     bool synchronizing = false;
     DialogMotion motion;
+    ChromeMotion cursorBlinkMotion;
     uint32_t pendingEvent = 0, pendingValue = 0;
     bool layered = false, layoutReady = false;
     SettingsPage page = SettingsPage::general;
@@ -682,7 +684,14 @@ LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARA
         if (focused) ShowCaret(control);
         return 0;
     }
-    return DefSubclassProc(control, message, wparam, lparam);
+    const LRESULT result = DefSubclassProc(control, message, wparam, lparam);
+    if (GetDlgCtrlID(control) == sizeId && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
+        RECT bounds; GetWindowRect(control, &bounds);
+        MapWindowPoints(nullptr, host.window, reinterpret_cast<POINT*>(&bounds), 2);
+        InflateRect(&bounds, px(8), px(6));
+        InvalidateRect(host.window, &bounds, FALSE);
+    }
+    return result;
 }
 HWND control(const wchar_t* klass, const wchar_t* text, DWORD style, int id, float x, float y, float width, float height) {
     if (host.controlCount >= 40) return nullptr;
@@ -1160,11 +1169,22 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
         SetTextColor(draw.hDC, color(checked ? host.model.palette.accent : host.model.palette.text_muted));
     }
     if (id == blinkId) {
-        RECT toggle = bounds; toggle.left = toggle.right - px(48); toggle.right -= px(8); toggle.top += px(6); toggle.bottom -= px(6);
-        roundedFill(draw.hDC, toggle, color(checked ? host.model.palette.accent : host.model.palette.border), color(checked ? host.model.palette.accent : host.model.palette.border), px(22));
-        RECT knob = toggle; knob.left += checked ? px(20) : px(3); knob.right = knob.left + px(14); knob.top += px(3); knob.bottom -= px(3);
-        roundedFill(draw.hDC, knob, RGB(245,245,245), RGB(245,245,245), px(16));
-        bounds.right -= px(52);
+        const auto now = GetTickCount64();
+        float position = host.cursorBlinkMotion.update(checked ? 1.0f : 0.0f, now, vex_window_animations_enabled());
+        if (host.cursorBlinkMotion.pending(now) && !SetTimer(host.window, 8, 16, nullptr))
+            position = host.cursorBlinkMotion.update(checked ? 1.0f : 0.0f, now, false);
+        RECT toggle = bounds;
+        toggle.right -= px(12); toggle.left = toggle.right - px(36);
+        toggle.top = (bounds.top + bounds.bottom - px(20)) / 2; toggle.bottom = toggle.top + px(20);
+        const COLORREF track = blend(fieldColor(), color(host.model.palette.accent), position);
+        const COLORREF stroke = blend(color(host.model.palette.border), color(host.model.palette.accent), position);
+        roundedFill(draw.hDC, toggle, track, stroke, px(20));
+        Gdiplus::Graphics graphics(draw.hDC);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        const COLORREF thumb = host.model.palette.is_dark ? RGB(238, 241, 244) : RGB(255, 255, 255);
+        Gdiplus::SolidBrush ink(Gdiplus::Color(255, GetRValue(thumb), GetGValue(thumb), GetBValue(thumb)));
+        graphics.FillEllipse(&ink, toggle.left + host.scale * (3.0f + 16.0f * position), toggle.top + host.scale * 3.0f, host.scale * 14.0f, host.scale * 14.0f);
+        bounds.right -= px(60);
     }
     if (id == blinkId) bounds.left += px(12);
     DrawTextW(draw.hDC, label, -1, &bounds, DT_SINGLELINE | DT_VCENTER | (id == blinkId ? DT_LEFT : DT_CENTER) | DT_NOPREFIX);
@@ -1237,6 +1257,13 @@ void paintDialogSurface(HDC dc) {
         const bool compact = host.height < 430;
         RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 422 : 310) - (compact ? 46 : 0)) };
         roundedFill(dc, card, color(host.model.palette.pane_bg), color(host.model.palette.pane_bg), px(28));
+        if (host.page == SettingsPage::terminal) {
+            HWND edit = GetDlgItem(host.window, sizeId);
+            RECT field; GetWindowRect(edit, &field);
+            MapWindowPoints(nullptr, host.window, reinterpret_cast<POINT*>(&field), 2);
+            InflateRect(&field, px(8), px(6));
+            roundedFill(dc, field, fieldColor(), color(GetFocus() == edit ? host.model.palette.accent : host.model.palette.border), px(12));
+        }
     }
     if (host.model.kind == 2) {
         RECT search = { px(12), px(12), bounds.right - px(12), px(52) };
@@ -1287,14 +1314,10 @@ void paintDialogSurface(HDC dc) {
             g.DrawLine(&pen, cx + 1.5f * s, cy + 4.8f * s, cx + 6.8f * s, cy + 4.8f * s);
         }
         SetBkMode(dc, TRANSPARENT);
-        RECT hdrTitle = { px(66), px(12), bounds.right - px(48), px(34) };
+        RECT hdrTitle = { px(66), px(14), bounds.right - px(48), px(50) };
         HGDIOBJ prevFont = SelectObject(dc, host.heading);
         SetTextColor(dc, color(host.model.palette.text_primary));
         DrawTextW(dc, host.model.title, -1, &hdrTitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-        SelectObject(dc, host.font);
-        RECT hdrDesc = { px(66), px(34), bounds.right - px(48), px(54) };
-        SetTextColor(dc, color(host.model.palette.text_muted));
-        DrawTextW(dc, host.model.description, -1, &hdrDesc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         if (prevFont) SelectObject(dc, prevFont);
 
         RECT topRule = { px(16), px(62), bounds.right - px(16), px(62) + 1 };
@@ -1321,12 +1344,12 @@ void paintDialogSurface(HDC dc) {
 bool createControls(float width, float height) {
     const bool settings = host.model.kind == 4, commands = host.model.kind == 2, shells = host.model.kind == 5, closing = host.model.kind == 6;
     bool ok = true;
-    if (!commands && !shells) ok = control(L"EDIT", host.model.title, ES_READONLY | ES_AUTOHSCROLL | (settings ? ES_CENTER : 0), titleId, settings ? 120 : closing ? 82 : 24, settings ? 18 : closing ? 28 : 22, settings ? width - 240 : closing ? width - 110 : width - 80, 28) != nullptr;
+    if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | (settings ? SS_CENTER : SS_LEFT), titleId, settings ? 120 : closing ? 82 : 24, settings ? 18 : closing ? 28 : 22, settings ? width - 240 : closing ? width - 110 : width - 80, 28) != nullptr;
     if (settings) {
         const wchar_t* pages[] = { L"General", L"Appearance", L"Terminal", L"About" };
         for (int i = 0; i < 4; ++i) ok = control(L"BUTTON", pages[i], BS_OWNERDRAW | WS_TABSTOP, firstPageId + i, (width - 448) / 2 + i * 112.0f, 56, 108, 68) && ok;
-        ok = control(L"EDIT", L"General", ES_READONLY | ES_AUTOHSCROLL, pageTitleId, 32, 146, width - 64, 28) && ok;
-        ok = control(L"EDIT", L"Defaults for new terminal sessions.", ES_READONLY | ES_MULTILINE, pageDetailId, 32, 181, width - 64, 32) && ok;
+        ok = control(L"STATIC", L"General", SS_NOPREFIX, pageTitleId, 32, 146, width - 64, 28) && ok;
+        ok = control(L"STATIC", L"Defaults for new terminal sessions.", SS_NOPREFIX, pageDetailId, 32, 181, width - 64, 32) && ok;
         HWND grid = control(L"LISTBOX", L"", WS_TABSTOP | WS_HSCROLL | LBS_MULTICOLUMN | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, themeGridId, 16, 222, width - 32, height - 246);
         ok = grid && ok;
         if (grid) { SendMessageW(grid, LB_SETITEMHEIGHT, 0, px(themeRowHeight())); SendMessageW(grid, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0); fillList(themeGridId); }
@@ -1348,7 +1371,7 @@ bool createControls(float width, float height) {
         if (shell) fillCombo(shell, host.model.shells, host.model.shellCount, host.model.settings.shell);
         showPage(host.page);
     } else {
-        if (!commands && !shells) ok = control(L"EDIT", host.model.description, ES_READONLY | ES_MULTILINE, descriptionId, closing ? 82 : 24, closing ? 68 : 58, closing ? width - 110 : width - 48, closing ? height - 144 : 38) && ok;
+        if (!commands && !shells) ok = control(L"STATIC", host.model.description, SS_NOPREFIX, descriptionId, closing ? 82 : 24, closing ? 68 : 58, closing ? width - 110 : width - 48, closing ? height - 144 : 38) && ok;
     }
     if (!settings && host.model.kind != 6) {
         float top = shells ? 70.0f : 100.0f;
@@ -1456,10 +1479,10 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         if (LOWORD(wparam) >= firstModeId && LOWORD(wparam) < firstModeId + 4) {
             host.model.mode = LOWORD(wparam) - firstModeId;
             const wchar_t* modeDescriptions[] = {
-                L"Installed shells · Open a new terminal tab.",
-                L"Installed shells · Split the active pane to the right.",
-                L"Installed shells · Split the active pane downward.",
-                L"Installed shells · Choose the default shell for new sessions.",
+                L"",
+                L"Split the active pane to the right.",
+                L"Split the active pane downward.",
+                L"Choose the default shell for new sessions.",
             };
             const wchar_t* modeAccept[] = { L"Open tab", L"Split right", L"Split down", L"Set default" };
             SetDlgItemTextW(window, descriptionId, modeDescriptions[host.model.mode]);
@@ -1583,6 +1606,13 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         return TRUE;
     }
     case WM_TIMER:
+        if (wparam == 8) {
+            const auto now = GetTickCount64();
+            host.cursorBlinkMotion.update(host.draft.cursor_blink ? 1.0f : 0.0f, now, vex_window_animations_enabled());
+            if (!host.cursorBlinkMotion.pending(now) || host.page != SettingsPage::terminal) KillTimer(window, 8);
+            InvalidateRect(GetDlgItem(window, blinkId), nullptr, FALSE);
+            return TRUE;
+        }
         if (wparam == 7 && host.layered) {
             const auto now = GetTickCount64();
             const bool done = !host.motion.pending(now) || !vex_window_animations_enabled();
@@ -1651,7 +1681,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         const bool muted = id == descriptionId || id == pageDetailId || id == 123 || id == 126;
         SetTextColor(dc, color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
         const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == 121 || id == 122 || id == 123 || id == 126);
-        if (id == queryId) {
+        if (id == queryId || id == sizeId) {
             SetBkColor(dc, fieldColor());
             SetDCBrushColor(dc, fieldColor());
             return reinterpret_cast<INT_PTR>(GetStockObject(DC_BRUSH));
@@ -1867,6 +1897,8 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     if (host.phase != DialogHost::Phase::closed) return ERROR_BUSY;
     host.model = next;
     host.draft = request.settings;
+    host.cursorBlinkMotion = {};
+    host.cursorBlinkMotion.update(host.draft.cursor_blink ? 1.0f : 0.0f, GetTickCount64(), false);
     host.page = SettingsPage::general;
     host.layoutReady = false;
     host.phase = DialogHost::Phase::creating;

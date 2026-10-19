@@ -40,7 +40,7 @@ static uint32_t tabStripCount = 1;
 static float tabWidthDip = 160;
 enum class FrameSchedule { none, posted, synchronized, output };
 static FrameSchedule frameSchedule = FrameSchedule::none;
-static bool firstOutput, firstFrame;
+static bool firstOutput, firstFrame, startupCloaked;
 static bool cursorWakeArmed;
 static ULONGLONG frameDeadline;
 static int platformError;
@@ -437,7 +437,17 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     // Preparation and a blocking Present already consume the interval; do not add another full period afterward.
     nextOutputFrame = sceneBegin.QuadPart + outputFrameTicks;
     if ((windowChromeAnimationPending() || windowChromeEffectsPending()) && frameSchedule != FrameSchedule::synchronized) invalidateOutputFrame();
-    if (SUCCEEDED(result) && !firstFrame) { firstFrame = true; startupMilestone("first frame"); }
+    if (SUCCEEDED(result) && !firstFrame) {
+        firstFrame = true;
+        startupMilestone("first frame");
+        if (startupCloaked) {
+            // Let DWM consume the prepared surface before exposing the non-client frame.
+            DwmFlush();
+            const BOOL cloak = FALSE;
+            DwmSetWindowAttribute(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
+            startupCloaked = false;
+        }
+    }
     return SUCCEEDED(result);
 }
 
@@ -1248,6 +1258,9 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 SetTimer(window, 2, 250, nullptr);
                 SetEnvironmentVariableW(L"TERM", L"xterm-256color"); SetEnvironmentVariableW(L"COLORTERM", L"truecolor");
                 updateWindowMetrics();
+                const BOOL cloak = TRUE;
+                startupCloaked = SUCCEEDED(DwmSetWindowAttribute(window, DWMWA_CLOAK, &cloak, sizeof(cloak)));
+                if (!startupCloaked) drawWindow();
                 ShowWindow(window, SW_SHOW); UpdateWindow(window);
                 MSG message; BOOL status;
                 while ((status = nextWindowMessage(message)) > 0) {
