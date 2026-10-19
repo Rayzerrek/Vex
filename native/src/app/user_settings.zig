@@ -22,6 +22,7 @@ pub const UserSettings = struct {
     font_size: u8 = 14,
     font_family: [128]u8 = default_font,
     cursor_blink: bool = true,
+    copy_on_select: bool = true,
     default_shell: DefaultShell = .startup,
 
     pub fn fontFamily(self: *const UserSettings) []const u8 {
@@ -54,9 +55,10 @@ pub const UserSettings = struct {
             \\vex.config.font_family = {s}
             \\vex.config.font_size = {d}
             \\vex.config.cursor_blink = {s}
+            \\vex.config.copy_on_select = {s}
             \\vex.config.default_shell = "{s}"
             \\
-        , .{ theme, family, self.font_size, if (self.cursor_blink) "true" else "false", @tagName(self.default_shell) });
+        , .{ theme, family, self.font_size, if (self.cursor_blink) "true" else "false", if (self.copy_on_select) "true" else "false", @tagName(self.default_shell) });
     }
 };
 
@@ -93,6 +95,7 @@ fn decodeLuaSettings(allocator: std.mem.Allocator, bytes: []const u8, path: []co
     @memcpy(raw.default_shell[0..shell.len], shell);
     raw.font_size = defaults.font_size;
     raw.cursor_blink = defaults.cursor_blink;
+    raw.copy_on_select = defaults.copy_on_select;
     diagnostic.* = .{};
     const source = if (std.mem.startsWith(u8, bytes, "\xef\xbb\xbf")) bytes[3..] else bytes;
     switch (lua.vex_lua_settings_decode(source.ptr, source.len, source_path.ptr, &raw, &diagnostic.bytes, diagnostic.bytes.len)) {
@@ -109,6 +112,7 @@ fn decodeLuaSettings(allocator: std.mem.Allocator, bytes: []const u8, path: []co
         .font_size = @intCast(raw.font_size),
         .font_family = raw.font_family,
         .cursor_blink = raw.cursor_blink,
+        .copy_on_select = raw.copy_on_select,
         .default_shell = std.meta.stringToEnum(DefaultShell, std.mem.sliceTo(&raw.default_shell, 0)) orelse return error.InvalidDefaultShell,
     };
     try result.validate();
@@ -192,10 +196,14 @@ test "Lua configuration evaluates expressions and validates settings" {
         \\local sizes = { small = 12, large = 20 }
         \\vex.config.font_size = sizes.large - 1
         \\vex.config.cursor_blink = false
+        \\vex.config.copy_on_select = false
         \\vex.config.default_shell = "pwsh"
     );
     try std.testing.expectEqual(@as(u8, 19), settings.font_size);
     try std.testing.expect(!settings.cursor_blink);
+    try std.testing.expect(!settings.copy_on_select);
+    try std.testing.expect((try UserSettings.decode(std.testing.allocator, "")).copy_on_select);
+    try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.copy_on_select = 0"));
     try std.testing.expectEqual(DefaultShell.pwsh, settings.default_shell);
     try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.font_size = 0"));
     try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.font_size = '14'"));
@@ -215,7 +223,7 @@ test "Lua execution is bounded and excludes process and native IO APIs" {
 
 test "Lua settings round trip quoted font names and all themes" {
     for (themes.themes, 0..) |_, i| {
-        var input: UserSettings = .{ .theme_index = @intCast(i), .font_size = 19, .cursor_blink = false, .default_shell = .pwsh };
+        var input: UserSettings = .{ .theme_index = @intCast(i), .font_size = 19, .cursor_blink = false, .copy_on_select = i % 2 == 0, .default_shell = .pwsh };
         const family = "A \\\"quoted\\\" font";
         input.font_family = [_]u8{0} ** 128;
         @memcpy(input.font_family[0..family.len], family);
@@ -237,7 +245,7 @@ test "first launch uses defaults and GUI saves preserve user Lua and modules" {
     var files = try temp.dir.openDir("zażółć", .{});
     defer files.close();
     try std.testing.expectError(error.FileNotFound, files.statFile("init.lua"));
-    const next: UserSettings = .{ .font_size = 21, .cursor_blink = false };
+    const next: UserSettings = .{ .font_size = 21, .cursor_blink = false, .copy_on_select = false };
     try saveUserSettings(std.testing.allocator, path, next);
     try std.testing.expectEqualDeep(next, try loadUserSettings(std.testing.allocator, path));
     const source = "-- Keep my comments\nvex.config.font_size = require('font').size";

@@ -16,7 +16,7 @@
 namespace {
 constexpr int titleId = 100, descriptionId = 101, queryId = 102, listId = 103;
 constexpr int fontId = 116, fontLabelId = 117;
-constexpr int sizeId = 111, blinkId = 112, shellId = 113, themeGridId = 115;
+constexpr int sizeId = 111, blinkId = 112, shellId = 113, copyOnSelectId = 114, themeGridId = 115;
 constexpr int pageTitleId = 104, pageDetailId = 105, closeId = 125, firstPageId = 130;
 enum class SettingsPage { general, appearance, terminal, about };
 constexpr size_t itemLimit = 64, shellLimit = 8;
@@ -50,7 +50,7 @@ struct DialogHost {
     enum class Phase { closed, creating, active, closing } phase = Phase::closed;
     bool synchronizing = false;
     DialogMotion motion;
-    ChromeMotion cursorBlinkMotion;
+    ChromeMotion cursorBlinkMotion, copyOnSelectMotion;
     uint32_t pendingEvent = 0, pendingValue = 0;
     bool layered = false, layoutReady = false;
     SettingsPage page = SettingsPage::general;
@@ -1180,12 +1180,13 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
 void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     const int id = (int)draw.CtlID;
     const bool navigation = id >= firstPageId && id < firstPageId + 4;
-    const bool checked = navigation ? (int)host.page == id - firstPageId : id == blinkId && host.draft.cursor_blink;
+    const bool toggle = id == blinkId || id == copyOnSelectId;
+    const bool checked = navigation ? (int)host.page == id - firstPageId : id == blinkId ? host.draft.cursor_blink : id == copyOnSelectId && host.draft.copy_on_select;
     const bool pressed = (draw.itemState & ODS_SELECTED) != 0;
     RECT bounds = draw.rcItem; InflateRect(&bounds, -1, -1);
-    FillRect(draw.hDC, &draw.rcItem, id == blinkId ? host.field : host.background);
+    FillRect(draw.hDC, &draw.rcItem, toggle ? host.field : host.background);
     COLORREF surface = checked || pressed ? fieldColor() : surfaceColor();
-    if (id == blinkId) surface = color(host.model.palette.pane_bg);
+    if (toggle) surface = color(host.model.palette.pane_bg);
     COLORREF border = navigation && checked ? color(host.model.palette.border) : surface;
     if (GetFocus() == draw.hwndItem) border = color(host.model.palette.accent);
     const bool primary = id == IDOK;
@@ -1217,11 +1218,12 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
         bounds.top = icon.bottom;
         SetTextColor(draw.hDC, color(checked ? host.model.palette.accent : host.model.palette.text_muted));
     }
-    if (id == blinkId) {
+    if (toggle) {
         const auto now = GetTickCount64();
-        float position = host.cursorBlinkMotion.update(checked ? 1.0f : 0.0f, now, vex_window_animations_enabled());
-        if (host.cursorBlinkMotion.pending(now) && !SetTimer(host.window, 8, 16, nullptr))
-            position = host.cursorBlinkMotion.update(checked ? 1.0f : 0.0f, now, false);
+        auto& motion = id == blinkId ? host.cursorBlinkMotion : host.copyOnSelectMotion;
+        float position = motion.update(checked ? 1.0f : 0.0f, now, vex_window_animations_enabled());
+        if (motion.pending(now) && !SetTimer(host.window, 8, 16, nullptr))
+            position = motion.update(checked ? 1.0f : 0.0f, now, false);
         RECT toggle = bounds;
         toggle.right -= px(12); toggle.left = toggle.right - px(36);
         toggle.top = (bounds.top + bounds.bottom - px(20)) / 2; toggle.bottom = toggle.top + px(20);
@@ -1235,8 +1237,8 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
         graphics.FillEllipse(&ink, toggle.left + host.scale * (3.0f + 16.0f * position), toggle.top + host.scale * 3.0f, host.scale * 14.0f, host.scale * 14.0f);
         bounds.right -= px(60);
     }
-    if (id == blinkId) bounds.left += px(12);
-    DrawTextW(draw.hDC, label, -1, &bounds, DT_SINGLELINE | DT_VCENTER | (id == blinkId ? DT_LEFT : DT_CENTER) | DT_NOPREFIX);
+    if (toggle) bounds.left += px(12);
+    DrawTextW(draw.hDC, label, -1, &bounds, DT_SINGLELINE | DT_VCENTER | (toggle ? DT_LEFT : DT_CENTER) | DT_NOPREFIX);
 
 }
 void drawComboItem(const DRAWITEMSTRUCT& draw) {
@@ -1267,7 +1269,7 @@ void setPageControlVisibility(int id, bool visible) {
 void showPage(SettingsPage previousPage) {
     const bool general = host.page == SettingsPage::general, appearance = host.page == SettingsPage::appearance, terminal = host.page == SettingsPage::terminal;
     const struct PageControl { int id; bool visible; } controls[] = {
-        { shellId, general }, { 122, general }, { 123, general }, { themeGridId, appearance },
+        { shellId, general }, { 122, general }, { 123, general }, { copyOnSelectId, general }, { themeGridId, appearance },
         { sizeId, terminal }, { blinkId, terminal }, { 121, terminal }, { 126, terminal }, { fontId, terminal }, { fontLabelId, terminal },
     };
     constexpr UINT visibilityFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
@@ -1279,7 +1281,7 @@ void showPage(SettingsPage previousPage) {
     }
     if (!batch || !EndDeferWindowPos(batch)) for (const auto& entry : controls) setPageControlVisibility(entry.id, entry.visible);
     const wchar_t* names[] = { L"General", L"Theme Studio", L"Terminal", L"About" };
-    const wchar_t* descriptions[] = { L"Defaults for new terminal sessions.", host.model.palette.is_dark ? L"Dark collection · Click a theme to apply. Changes save automatically." : L"Light collection · Click a theme to apply. Changes save automatically.", L"Font size and cursor behavior.", L"Vex native terminal\r\nWindows + WSL · ConPTY · libghostty" };
+    const wchar_t* descriptions[] = { L"Shell defaults and clipboard behavior.", host.model.palette.is_dark ? L"Dark collection · Click a theme to apply. Changes save automatically." : L"Light collection · Click a theme to apply. Changes save automatically.", L"Font size and cursor behavior.", L"Vex native terminal\r\nWindows + WSL · ConPTY · libghostty" };
     const bool active = host.phase == DialogHost::Phase::active;
     if (active) {
         SendDlgItemMessageW(host.window, pageTitleId, WM_SETREDRAW, FALSE, 0);
@@ -1304,7 +1306,7 @@ void paintDialogSurface(HDC dc) {
     roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(24));
     if (host.model.kind == 4 && (host.page == SettingsPage::general || host.page == SettingsPage::terminal)) {
         const bool compact = host.height < 430;
-        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 422 : 310) - (compact ? 46 : 0)) };
+        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 422 : 360) - (compact ? 46 : 0)) };
         roundedFill(dc, card, color(host.model.palette.pane_bg), color(host.model.palette.pane_bg), px(28));
         if (host.page == SettingsPage::terminal) {
             HWND edit = GetDlgItem(host.window, sizeId);
@@ -1418,6 +1420,7 @@ bool createControls(float width, float height) {
         HWND shell = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, shellId, width - 300, 244, 248, 220);
         ok = shell && ok;
         if (shell) fillCombo(shell, host.model.shells, host.model.shellCount, host.model.settings.shell);
+        ok = control(L"BUTTON", L"Copy on selection", BS_OWNERDRAW | WS_TABSTOP, copyOnSelectId, 34, 304, width - 68, 40) && ok;
         showPage(host.page);
     } else {
         if (!commands && !shells) ok = control(L"STATIC", host.model.description, SS_NOPREFIX, descriptionId, closing ? 82 : 24, closing ? 68 : 58, closing ? width - 110 : width - 48, closing ? height - 144 : 38) && ok;
@@ -1487,10 +1490,12 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
             if (page != host.page) { const auto previousPage = host.page; host.page = page; showPage(previousPage); }
             return TRUE;
         }
-        if (LOWORD(wparam) == blinkId) {
-            host.draft.cursor_blink = !host.draft.cursor_blink;
+        if (LOWORD(wparam) == blinkId || LOWORD(wparam) == copyOnSelectId) {
+            const bool blink = LOWORD(wparam) == blinkId;
+            if (blink) host.draft.cursor_blink = !host.draft.cursor_blink;
+            else host.draft.copy_on_select = !host.draft.copy_on_select;
             notify(4, 0, nullptr, 0, host.draft);
-            InvalidateRect(GetDlgItem(window, blinkId), nullptr, FALSE);
+            InvalidateRect(GetDlgItem(window, blink ? blinkId : copyOnSelectId), nullptr, FALSE);
             return TRUE;
         }
         if (LOWORD(wparam) == sizeId && (HIWORD(wparam) == EN_CHANGE || HIWORD(wparam) == EN_KILLFOCUS)) {
@@ -1641,8 +1646,11 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         if (wparam == 8) {
             const auto now = GetTickCount64();
             host.cursorBlinkMotion.update(host.draft.cursor_blink ? 1.0f : 0.0f, now, vex_window_animations_enabled());
-            if (!host.cursorBlinkMotion.pending(now) || host.page != SettingsPage::terminal) KillTimer(window, 8);
+            host.copyOnSelectMotion.update(host.draft.copy_on_select ? 1.0f : 0.0f, now, vex_window_animations_enabled());
+            if ((!host.cursorBlinkMotion.pending(now) && !host.copyOnSelectMotion.pending(now)) ||
+                (host.page != SettingsPage::terminal && host.page != SettingsPage::general)) KillTimer(window, 8);
             InvalidateRect(GetDlgItem(window, blinkId), nullptr, FALSE);
+            InvalidateRect(GetDlgItem(window, copyOnSelectId), nullptr, FALSE);
             return TRUE;
         }
         if (wparam == 7 && host.layered) {
@@ -1823,7 +1831,7 @@ void repositionTerminalDialogs() {
         if (id == 123 || id == 126) w = fminf(w, host.width - 350);
         if (compact) {
             if (id >= firstPageId && id < firstPageId + 4) { y = 44; h = 44; }
-            if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == blinkId) y -= 46;
+            if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == blinkId || id == copyOnSelectId) y -= 46;
             if (id == pageDetailId) h = 30;
             if (id == themeGridId) { y = 174; h = host.height - 198; }
         }
@@ -1889,6 +1897,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
         }
         const bool emptyChanged = (host.model.count == 0) != (next.count == 0);
         const bool blinkChanged = host.model.settings.cursor_blink != next.settings.cursor_blink;
+        const bool copyChanged = host.model.settings.copy_on_select != next.settings.copy_on_select;
         if (itemsChanged || paletteChanged) clearThemeCardCache();
         host.model = next;
         if (host.model.kind == 4) {
@@ -1903,6 +1912,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
             if (!comboSelection(shellId, selectedShell) || selectedShell != host.draft.shell)
                 fillCombo(GetDlgItem(host.window, shellId), host.model.shells, host.model.shellCount, host.draft.shell);
             if (blinkChanged) InvalidateRect(GetDlgItem(host.window, blinkId), nullptr, FALSE);
+            if (copyChanged) InvalidateRect(GetDlgItem(host.window, copyOnSelectId), nullptr, FALSE);
         }
         const int listControlId = host.model.kind == 4 ? themeGridId : listId;
         HWND list = GetDlgItem(host.window, listControlId);
@@ -1935,6 +1945,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     host.draft = request.settings;
     host.cursorBlinkMotion = {};
     host.cursorBlinkMotion.update(host.draft.cursor_blink ? 1.0f : 0.0f, GetTickCount64(), false);
+    host.copyOnSelectMotion.update(host.draft.copy_on_select ? 1.0f : 0.0f, GetTickCount64(), false);
     host.page = SettingsPage::general;
     host.layoutReady = false;
     host.phase = DialogHost::Phase::creating;

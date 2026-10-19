@@ -258,7 +258,7 @@ pub const TerminalApplication = struct {
     }
     /// Captures runtime values without serializing any live session or launch command.
     pub fn currentPreferences(self: *TerminalApplication) preferences.UserSettings {
-        return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
+        return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .copy_on_select = self.settings.copy_on_select, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
     }
     /// Writes GUI preferences only when changed; storage failure never closes running terminals.
     pub fn commitPreferences(self: *TerminalApplication, settings: preferences.UserSettings) !void {

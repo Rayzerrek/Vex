@@ -8,6 +8,7 @@ typedef struct VexLuaSettings {
     char default_shell[32];
     int font_size;
     bool cursor_blink;
+    bool copy_on_select;
 } VexLuaSettings;
 
 // Runs configuration in a fresh, bounded Lua VM. No process, native module or IO APIs.

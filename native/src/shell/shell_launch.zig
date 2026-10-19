@@ -277,11 +277,34 @@ fn normalizeTerminalEnvironment(environment: *std.process.EnvMap) !void {
     if ((environment.get("COLORTERM") orelse "").len == 0) try environment.put("COLORTERM", "truecolor");
 }
 fn shellFileExists(path: []const u8) !bool {
+    if (@import("builtin").os.tag == .windows) {
+        const windows = std.os.windows;
+        // NtCreateFile/stat cannot follow Store AppExecLink aliases; CreateProcessW can launch them.
+        const attributes = windows.GetFileAttributes(path) catch |err| switch (err) {
+            error.FileNotFound => return false,
+            else => return err,
+        };
+        if ((attributes & (windows.FILE_ATTRIBUTE_DIRECTORY | windows.FILE_ATTRIBUTE_DEVICE)) != 0) return false;
+        if ((attributes & windows.FILE_ATTRIBUTE_REPARSE_POINT) == 0) return true;
+        const wide = try windows.sliceToPrefixedFileW(null, path);
+        var data: windows.WIN32_FIND_DATAW = undefined;
+        const handle = windows.kernel32.FindFirstFileW(wide.span().ptr, &data);
+        if (handle != windows.INVALID_HANDLE_VALUE) {
+            defer _ = windows.kernel32.FindClose(handle);
+            if (isAppExecutionAlias(data.dwFileAttributes, data.dwReserved0)) return true;
+        }
+    }
     const info = std.fs.cwd().statFile(path) catch |err| switch (err) {
         error.FileNotFound, error.NotDir, error.BadPathName => return false,
         else => return err,
     };
     return info.kind == .file;
+}
+fn isAppExecutionAlias(attributes: u32, tag: u32) bool {
+    const reparse_point = 0x400;
+    const directory_attribute = 0x10;
+    const app_exec_link_tag = 0x8000001B;
+    return (attributes & (reparse_point | directory_attribute)) == reparse_point and tag == app_exec_link_tag;
 }
 fn probeShellPath(allocator: std.mem.Allocator, root: []const u8, relative: []const u8) !?[]u8 {
     _ = directory.DirectoryPath.parse(root) catch return null;
@@ -355,6 +378,26 @@ pub fn isWslLauncherAvailable(allocator: std.mem.Allocator, system_directory: []
     const path = (try probeShellPath(allocator, system_directory, "wsl.exe")) orelse return false;
     allocator.free(path);
     return true;
+}
+
+test "Store execution aliases are launchable files, not ordinary symlinks or directories" {
+    try std.testing.expect(isAppExecutionAlias(0x420, 0x8000001B));
+    try std.testing.expect(!isAppExecutionAlias(0x430, 0x8000001B));
+    try std.testing.expect(!isAppExecutionAlias(0x20, 0x8000001B));
+    try std.testing.expect(!isAppExecutionAlias(0x420, 0xA000000C));
+    var fixture = std.testing.tmpDir(.{});
+    defer fixture.cleanup();
+    const allocator = std.testing.allocator;
+    const root = try fixture.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    try std.testing.expect(!try shellFileExists(root));
+    const file = try fixture.dir.createFile("shell.exe", .{});
+    file.close();
+    const path = try std.fs.path.join(allocator, &.{ root, "shell.exe" });
+    defer allocator.free(path);
+    try std.testing.expect(try shellFileExists(path));
+    try fixture.dir.deleteFile("shell.exe");
+    try std.testing.expect(!try shellFileExists(path));
 }
 
 test "shell requests reject duplicates and relative/custom control paths without guessing" {

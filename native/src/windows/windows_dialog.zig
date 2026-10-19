@@ -54,7 +54,7 @@ pub fn showDialog(presentation: DialogPresentation) !void {
         .count = presentation.items.len,
         .shells = if (presentation.shells.len == 0) null else &shells,
         .shell_count = presentation.shells.len,
-        .settings = .{ .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .font_family = presentation.settings.font_family },
+        .settings = .{ .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .copy_on_select = presentation.settings.copy_on_select, .font_family = presentation.settings.font_family },
         .palette = platform.nativeChromePalette(presentation.palette),
     });
     if (result != 0) return error.NativeDialogFailure;
@@ -97,6 +97,7 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
                 .theme_index = @intCast(raw.theme),
                 .font_size = @intCast(raw.font_size),
                 .cursor_blink = raw.cursor_blink,
+                .copy_on_select = raw.copy_on_select,
                 .font_family = raw.font_family,
                 .default_shell = std.meta.intToEnum(preferences.DefaultShell, raw.shell) catch return error.InvalidDefaultShell,
             };
@@ -108,10 +109,11 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
 }
 
 test "native dialog events validate settings and query data before entering the terminal owner" {
-    const raw: c.VexUserSettings = .{ .theme = 2, .font_size = 19, .shell = 3, .cursor_blink = true, .font_family = preferences.default_font };
+    const raw: c.VexUserSettings = .{ .theme = 2, .font_size = 19, .shell = 3, .cursor_blink = true, .copy_on_select = false, .font_family = preferences.default_font };
     const result = try decodeDialogEvent(4, 0, "", raw);
     try std.testing.expectEqual(@as(u8, 19), result.settings.font_size);
     try std.testing.expectEqual(preferences.DefaultShell.pwsh, result.settings.default_shell);
+    try std.testing.expect(!result.settings.copy_on_select);
     var invalid = raw;
     invalid.font_size = 0;
     try std.testing.expectError(error.InvalidUserSettings, decodeDialogEvent(4, 0, "", invalid));

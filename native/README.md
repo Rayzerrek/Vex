@@ -120,6 +120,7 @@ vex.config.theme = "Vex Obsidian" -- use a name from Theme Studio
 vex.config.font_family = "Cascadia Mono"
 vex.config.font_size = 14
 vex.config.cursor_blink = true
+vex.config.copy_on_select = true -- false: selecting text leaves the clipboard unchanged
 vex.config.default_shell = "startup"
 
 -- Ordinary Lua expressions, functions, loops and modules work.
@@ -128,7 +129,7 @@ vex.config.default_shell = "startup"
 
 Use the current theme names shown in Theme Studio (see
 `src/workspace/terminal_theme.zig`). Font size must be an integer from 9 to 32, cursor blink a
-boolean, and shell one of `startup`, `cmd`, `powershell`, `pwsh`, `nu`, `gitbash`,
+boolean, `copy_on_select` a boolean (also available in Settings → General), and shell one of `startup`, `cmd`, `powershell`, `pwsh`, `nu`, `gitbash`,
 `wsl`. `startup` respects the CLI launch choice. Shell changes affect new tabs and
 splits, not existing processes. Unknown settings and invalid values are errors.
 

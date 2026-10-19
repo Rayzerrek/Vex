@@ -42,7 +42,7 @@ typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN =
 /* Owned dialog controls copy all request strings before returning to the caller. */
 typedef struct { const uint8_t* bytes; size_t length; } VexDialogText;
 typedef struct { uint32_t value; VexDialogText label, detail; uint32_t background, foreground, accent; uint32_t swatches[5]; } VexDialogItem;
-typedef struct { uint32_t theme, font_size, shell; bool cursor_blink; uint8_t font_family[128]; } VexUserSettings;
+typedef struct { uint32_t theme, font_size, shell; bool cursor_blink, copy_on_select; uint8_t font_family[128]; } VexUserSettings;
 /* Kind: appearance=1, commands=2, settings=4, shell=5, close=6. */
 typedef struct {
     uint32_t kind, selected;

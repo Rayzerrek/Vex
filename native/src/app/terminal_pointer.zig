@@ -433,7 +433,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                                     if (!sel.dragged and sel.click_count <= 1) {
                                         // A single click without drag clears the 1-cell anchor while keeping multi-click history.
                                         try session.terminal.clearSelection(false);
-                                    } else {
+                                    } else if (self.settings.copy_on_select) {
                                         if (try session.copySelectionToClipboard(self.allocator)) {
                                             session.recordCopyFeedback(self.cursorNowMs());
                                         }
