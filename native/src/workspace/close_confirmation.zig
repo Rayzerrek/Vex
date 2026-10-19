@@ -21,6 +21,7 @@ pub const PaneCloseSnapshot = struct {
     status_app: []const u8 = "",
     status_active: bool = false,
     has_foreground_process: bool = false,
+    foreground_shell_command: bool = false,
     active_process_title: []const u8 = "",
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
 };
@@ -51,7 +52,13 @@ pub fn evaluatePane(snapshot: PaneCloseSnapshot, target: CloseTargetKind) ?Close
     if (!snapshot.is_running) return null;
     const title = std.mem.trim(u8, snapshot.title, " \t\r\n");
     const dirty = std.mem.endsWith(u8, title, "*");
-    if (!dirty and !snapshot.has_foreground_process and !snapshot.status_active) return null;
+    // A parent shell can report work while waiting for a nested interactive shell.
+    // Keep explicit application activity and dirty-buffer warnings authoritative.
+    const foreground_shell = snapshot.has_foreground_process and !snapshot.foreground_shell_command and
+        snapshot.active_process_title.len > 0 and app_icon.isShellName(snapshot.active_process_title);
+    const foreground_work = snapshot.has_foreground_process and !foreground_shell;
+    const reported_work = snapshot.status_active and (!foreground_shell or snapshot.status_app.len > 0);
+    if (!dirty and !foreground_work and !reported_work) return null;
     const name = if (snapshot.active_process_title.len > 0) snapshot.active_process_title else if (snapshot.status_active and snapshot.status_app.len > 0) snapshot.status_app else "A program";
     var result: CloseConfirmation = .{
         .reason = if (dirty) .dirty_buffer else if (snapshot.status_active) .reported_activity else .foreground_process,
@@ -122,6 +129,23 @@ test "unknown and familiar processes have identical close protection; titles do 
     for (0..64) |i| @memcpy(text[i * 4 ..][0..4], "😀");
     const unicode = evaluatePane(.{ .is_running = true, .active_process_title = &text, .has_foreground_process = true }, .pane) orelse return error.MissingCloseWarning;
     try std.testing.expect(std.unicode.utf8ValidateSlice(unicode.titleSlice()));
+}
+
+test "nested shells are not foreground work but their applications remain protected" {
+    for ([_][]const u8{ "pwsh", "powershell.exe", "cmd", "bash", "zsh", "fish", "nu", "elvish", "sh", "dash", "ash", "ksh", "tcsh", "csh" }) |name| {
+        const snapshot: PaneCloseSnapshot = .{ .is_running = true, .has_foreground_process = true, .active_process_title = name, .status_active = true };
+        try std.testing.expect(evaluatePane(snapshot, .pane) == null);
+        var dirty = snapshot;
+        dirty.title = "file*";
+        try std.testing.expect(evaluatePane(dirty, .pane) != null);
+        var command = snapshot;
+        command.foreground_shell_command = true;
+        try std.testing.expect(evaluatePane(command, .pane) != null);
+        var active = snapshot;
+        active.status_app = "editor";
+        try std.testing.expect(evaluatePane(active, .pane) != null);
+    }
+    try std.testing.expect(evaluatePane(.{ .is_running = true, .has_foreground_process = true, .active_process_title = "unknown-tool" }, .pane) != null);
 }
 
 test "tab close review has no pane-count cap and preserves highest-risk ordering" {

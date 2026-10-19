@@ -118,6 +118,26 @@ pub fn parseCommandLineApp(raw: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Only known interactive switches prove a shell is idle; source/options we cannot decode retain close protection.
+pub fn shellHasCommand(raw: []const u8) bool {
+    if (raw.len == 0 or !std.unicode.utf8ValidateSlice(raw)) return true;
+    const first = nextToken(raw);
+    if (first.token.len == 0) return true;
+    var rest = first.rest;
+    while (rest.len > 0) {
+        const argument = nextToken(rest);
+        if (argument.token.len == 0) return true;
+        if (equals(argument.token, "/k")) return argument.rest.len > 0;
+        const interactive_flags = [_][]const u8{ "-NoLogo", "-NoProfile", "-NoExit", "--login", "-l", "--interactive", "-i", "/d", "/q" };
+        const interactive = for (interactive_flags) |flag| {
+            if (equals(argument.token, flag)) break true;
+        } else false;
+        if (!interactive) return true;
+        rest = argument.rest;
+    }
+    return false;
+}
+
 fn hostMode(name: []const u8) ?Mode {
     for (hosts) |host| if (equals(name, host.name)) return host.mode;
     return null;
@@ -161,6 +181,15 @@ fn programName(raw: []const u8) []const u8 {
         package = if (equals(next, ".bin")) null else if (next[0] == '@') parts.next() else next;
     }
     return if (package) |name| name else executableStem(raw);
+}
+
+test "interactive shell switches do not hide scripts or inline shell commands" {
+    for ([_][]const u8{ "pwsh", "powershell.exe -NoLogo -NoProfile", "cmd /d /q /k", "bash --login -i", "fish -i", "nu" }) |raw| {
+        try std.testing.expect(!shellHasCommand(raw));
+    }
+    for ([_][]const u8{ "", "pwsh -Command Start-Sleep", "powershell -NoExit -EncodedCommand AAAA", "bash -c 'sleep 100'", "fish script.fish", "cmd /k task.cmd", "nu --commands sleep", "zsh --unknown-option", "pwsh -File powershell.ps1" }) |raw| {
+        try std.testing.expect(shellHasCommand(raw));
+    }
 }
 
 test "command identity decodes unknown targets and keeps full package names" {

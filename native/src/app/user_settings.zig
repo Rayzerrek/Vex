@@ -258,6 +258,30 @@ test "first launch uses defaults and GUI saves preserve user Lua and modules" {
     try std.testing.expectEqualStrings("vex.config.font_size = ", malformed);
 }
 
+test "obsolete JSON settings are ignored and never modified by Lua preferences" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const allocator = std.testing.allocator;
+    const root = try temp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const path = try std.fs.path.join(allocator, &.{ root, "init.lua" });
+    defer allocator.free(path);
+    // Even malformed legacy data must not trigger fallback, migration or a load error.
+    const obsolete = "{ invalid old settings";
+    try temp.dir.writeFile(.{ .sub_path = "settings.json", .data = obsolete });
+    try std.testing.expectEqualDeep(UserSettings{}, try loadUserSettings(allocator, path));
+    const saved: UserSettings = .{ .font_size = 21, .cursor_blink = false };
+    try saveUserSettings(allocator, path, saved);
+    try std.testing.expectEqualDeep(saved, try loadUserSettings(allocator, path));
+    try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = "vex.config.font_size = 18" });
+    const loaded = try loadUserSettings(allocator, path);
+    try std.testing.expectEqual(@as(u8, 18), loaded.font_size);
+    try std.testing.expect(!loaded.cursor_blink);
+    const unchanged = try temp.dir.readFileAlloc(allocator, "settings.json", max_config_bytes);
+    defer allocator.free(unchanged);
+    try std.testing.expectEqualStrings(obsolete, unchanged);
+}
+
 test "Lua modules reject traversal, bytecode and oversized sources; reload sees module changes" {
     var temp = std.testing.tmpDir(.{});
     defer temp.cleanup();

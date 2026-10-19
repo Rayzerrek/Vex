@@ -1,5 +1,6 @@
 #include "windows_platform.h"
 #include <windows.h>
+#include <userenv.h>
 #include <limits.h>
 #include <string.h>
 
@@ -24,6 +25,28 @@ extern "C" int vex_system_directory(uint8_t* bytes, size_t capacity, size_t* len
     if (!count) return (int)GetLastError();
     *length = (size_t)count;
     return 0;
+}
+
+// Installers update the persisted environment, not the environment of an already running Vex.
+extern "C" int vex_shell_path(uint8_t* bytes, size_t capacity, size_t* length) {
+    if (!bytes || !length || capacity > INT_MAX) return ERROR_INVALID_PARAMETER;
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &token)) return (int)GetLastError();
+    void* block = nullptr;
+    const BOOL created = CreateEnvironmentBlock(&block, token, FALSE);
+    const DWORD error = created ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(token);
+    if (!created) return (int)error;
+    int result = ERROR_ENVVAR_NOT_FOUND;
+    for (const wchar_t* entry = static_cast<const wchar_t*>(block); *entry; entry += wcslen(entry) + 1) {
+        if (_wcsnicmp(entry, L"PATH=", 5) != 0) continue;
+        const int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry + 5, (int)wcslen(entry + 5), (char*)bytes, (int)capacity, nullptr, nullptr);
+        result = count ? ERROR_SUCCESS : (int)GetLastError();
+        if (count) *length = (size_t)count;
+        break;
+    }
+    DestroyEnvironmentBlock(block);
+    return result;
 }
 
 extern "C" int vex_clipboard_write(const uint8_t* bytes, size_t length) {

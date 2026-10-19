@@ -1,16 +1,9 @@
 const Application = @import("terminal_application.zig").TerminalApplication;
 const std = @import("std");
 const platform = @import("../windows/windows_ffi.zig");
-const workspace = @import("../workspace/workspace_model.zig");
+pub const TabRename = @import("../workspace/tab_rename.zig").TabRename;
 const TerminalSession = @import("terminal_session.zig").TerminalSession;
 const overlays = @import("terminal_overlays.zig");
-
-pub const TabRename = struct {
-    tab_id: workspace.TabId,
-    buf: [64]u8 = undefined,
-    len: u8 = 0,
-    select_all: bool = true,
-};
 
 pub fn onKey(self: *Application, key: u32, modifiers: u32) bool {
     if (self.health == .failed) return true;
@@ -158,15 +151,7 @@ pub fn onText(self: *Application, bytes: []const u8) void {
     if (self.overlay != .none) return;
     if (self.editing_tab) |*edit| {
         if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
-        if (edit.select_all) {
-            edit.len = 0;
-            edit.select_all = false;
-        }
-        if (@as(usize, edit.len) + bytes.len <= edit.buf.len) {
-            @memcpy(edit.buf[edit.len .. edit.len + bytes.len], bytes);
-            edit.len += @intCast(bytes.len);
-            platform.invalidateWindow();
-        }
+        if (edit.append(bytes)) platform.invalidateWindow();
         return;
     }
     const session = self.activeSession() orelse return;
@@ -214,17 +199,7 @@ pub fn onPaste(self: *Application, bytes: []const u8) void {
     if (self.overlay != .none) return;
     if (self.editing_tab) |*edit| {
         const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
-        if (trimmed.len > 0) {
-            if (edit.select_all) {
-                edit.len = 0;
-                edit.select_all = false;
-            }
-            const space = edit.buf.len - edit.len;
-            const n = @min(trimmed.len, space);
-            @memcpy(edit.buf[edit.len .. edit.len + n], trimmed[0..n]);
-            edit.len += @intCast(n);
-            platform.invalidateWindow();
-        }
+        if (edit.append(trimmed)) platform.invalidateWindow();
         return;
     }
     const session = self.activeSession() orelse return;

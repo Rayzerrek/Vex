@@ -398,6 +398,22 @@ pub fn systemDirectoryAlloc(allocator: std.mem.Allocator) ![]u8 {
     _ = try directory.DirectoryPath.parse(buffer[0..length]);
     return allocator.dupe(u8, buffer[0..length]);
 }
+/// Preserves launcher overrides while making newly installed PATH executables discoverable.
+pub fn shellEnvironment(allocator: std.mem.Allocator) !std.process.EnvMap {
+    var environment = try std.process.getEnvMap(allocator);
+    errdefer environment.deinit();
+    var buffer: [128 * 1024]u8 = undefined;
+    var length: usize = 0;
+    if (c.vex_shell_path(&buffer, buffer.len, &length) == 0 and length > 0 and length <= buffer.len) {
+        const inherited_path = environment.get("PATH") orelse "";
+        // Usually the persisted and inherited PATH agree; don't probe every directory twice.
+        if (std.ascii.eqlIgnoreCase(buffer[0..length], inherited_path)) return environment;
+        const path = try std.fmt.allocPrint(allocator, "{s};{s}", .{ buffer[0..length], inherited_path });
+        defer allocator.free(path);
+        try environment.put("PATH", path);
+    }
+    return environment;
+}
 /// Publishes validated UTF-8 text to the system clipboard; transient lock contention is ignored by the bridge.
 pub fn writeClipboardText(text: []const u8) !void {
     if (text.len == 0 or std.mem.indexOfScalar(u8, text, 0) != null or !std.unicode.utf8ValidateSlice(text)) return error.InvalidClipboardText;

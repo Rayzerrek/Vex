@@ -113,7 +113,7 @@ pub const TerminalApplication = struct {
         if (default_distribution) |name| request.wsl.distribution = .{ .named = name };
         const system_directory = try platform.systemDirectoryAlloc(allocator);
         defer allocator.free(system_directory);
-        var environment = try std.process.getEnvMap(allocator);
+        var environment = try platform.shellEnvironment(allocator);
         defer environment.deinit();
         var launch = try shell.ShellLaunch.resolve(allocator, request, system_directory, &environment);
         errdefer launch.deinit();
@@ -284,7 +284,7 @@ pub const TerminalApplication = struct {
         try settings.validate();
         const kind: shell.ShellKind = if (settings.default_shell == .startup) self.launch.kind else std.meta.intToEnum(shell.ShellKind, @intFromEnum(settings.default_shell)) catch return error.InvalidDefaultShell;
         if (settings.default_shell != .startup and settings.default_shell != self.settings.default_shell) {
-            self.discoverAvailableShells();
+            if (source == .lua or self.available_shell_count == 0) self.discoverAvailableShells();
             var available = false;
             for (self.available_shells[0..self.available_shell_count]) |candidate| if (candidate == kind) {
                 available = true;
@@ -327,11 +327,7 @@ pub const TerminalApplication = struct {
         const tab = model.tabs.items[index];
         const active_session = self.findSession(tab.active_pane) orelse return;
         const initial = tab.customTitle() orelse active_session.displayTitle();
-        var edit: keyboard.TabRename = .{ .tab_id = tab.id, .select_all = true };
-        const n = @min(initial.len, edit.buf.len);
-        @memcpy(edit.buf[0..n], initial[0..n]);
-        edit.len = @intCast(n);
-        self.editing_tab = edit;
+        self.editing_tab = keyboard.TabRename.init(tab.id, initial);
         platform.invalidateWindow();
     }
     pub fn commitTabRename(self: *TerminalApplication) void {
@@ -360,11 +356,12 @@ pub const TerminalApplication = struct {
         const model = if (self.model) |*model| model else return null;
         return self.findSession(model.activeTab().active_pane);
     }
+    /// Refresh only when opening shell-selection UI or validating an external configuration change.
+    /// Modal updates reuse the snapshot so sliders and theme previews never scan PATH.
     pub fn discoverAvailableShells(self: *TerminalApplication) void {
-        if (self.available_shell_count > 0) return;
         const system_directory = platform.systemDirectoryAlloc(self.allocator) catch null;
         defer if (system_directory) |dir| self.allocator.free(dir);
-        var environment = std.process.getEnvMap(self.allocator) catch null;
+        var environment = platform.shellEnvironment(self.allocator) catch null;
         defer if (environment) |*env| env.deinit();
 
         const candidates = [_]shell.ShellKind{ .pwsh, .powershell, .cmd, .nu, .gitbash, .wsl };
@@ -402,7 +399,7 @@ pub const TerminalApplication = struct {
         try self.shell_launches.ensureUnusedCapacity(self.allocator, 1);
         const system_directory = try platform.systemDirectoryAlloc(self.allocator);
         defer self.allocator.free(system_directory);
-        var environment = try std.process.getEnvMap(self.allocator);
+        var environment = try platform.shellEnvironment(self.allocator);
         defer environment.deinit();
 
         const default_distribution = if (kind == .wsl) wsl_registry.readDefaultWslDistributionAlloc(self.allocator) catch null else null;
@@ -1036,6 +1033,7 @@ pub const TerminalApplication = struct {
         switch (action) {
             .settings => {
                 self.commitTabRename();
+                self.discoverAvailableShells();
                 self.overlay = .settings;
                 try modals.presentTerminalModal(self);
                 platform.invalidateWindow();

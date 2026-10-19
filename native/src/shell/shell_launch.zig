@@ -291,9 +291,14 @@ fn probeShellPath(allocator: std.mem.Allocator, root: []const u8, relative: []co
     allocator.free(path);
     return null;
 }
-fn shellOnPath(allocator: std.mem.Allocator, environment: *const std.process.EnvMap, executable: []const u8) !?[]u8 {
+fn shellOnPath(allocator: std.mem.Allocator, environment: *const std.process.EnvMap, executable: []const u8, excluded_directory: ?[]const u8) !?[]u8 {
     var paths = std.mem.splitScalar(u8, environment.get("PATH") orelse "", ';');
-    while (paths.next()) |root| if (try probeShellPath(allocator, std.mem.trim(u8, root, " \t\""), executable)) |path| return path;
+    while (paths.next()) |raw_root| {
+        const root = std.mem.trim(u8, raw_root, " \t\"");
+        // System32's bash.exe launches WSL, not the Git Bash profile/bootstrap.
+        if (excluded_directory) |excluded| if (std.ascii.eqlIgnoreCase(std.mem.trimRight(u8, root, "\\/"), excluded)) continue;
+        if (try probeShellPath(allocator, root, executable)) |path| return path;
+    }
     return null;
 }
 fn resolvedShellKind(profile: BuiltinShellProfile) ShellKind {
@@ -306,16 +311,27 @@ fn resolvedShellKind(profile: BuiltinShellProfile) ShellKind {
     };
 }
 fn resolveBuiltinProgram(allocator: std.mem.Allocator, kind: BuiltinShellProfile, system_directory: []const u8, environment: *const std.process.EnvMap) !?[]u8 {
+    if (try resolveCanonicalProgram(allocator, kind, system_directory, environment)) |path| return path;
+    const executable = switch (kind) {
+        .system, .cmd => "cmd.exe",
+        .powershell => "powershell.exe",
+        .pwsh => "pwsh.exe",
+        .nu => "nu.exe",
+        .gitbash => "bash.exe",
+    };
+    return shellOnPath(allocator, environment, executable, if (kind == .gitbash) system_directory else null);
+}
+fn resolveCanonicalProgram(allocator: std.mem.Allocator, kind: BuiltinShellProfile, system_directory: []const u8, environment: *const std.process.EnvMap) !?[]u8 {
     switch (kind) {
         .system, .cmd => return probeShellPath(allocator, system_directory, "cmd.exe"),
         .powershell => return probeShellPath(allocator, system_directory, "WindowsPowerShell\\v1.0\\powershell.exe"),
         .pwsh => {
             if (try probeShellPath(allocator, environment.get("ProgramFiles") orelse "", "PowerShell\\7\\pwsh.exe")) |path| return path;
-            return shellOnPath(allocator, environment, "pwsh.exe");
+            return null;
         },
         .nu => {
             if (try probeShellPath(allocator, environment.get("USERPROFILE") orelse "", "scoop\\apps\\nu\\current\\nu.exe")) |path| return path;
-            return shellOnPath(allocator, environment, "nu.exe");
+            return null;
         },
         .gitbash => {
             for ([_][]const u8{ "ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA" }) |name| {
@@ -418,6 +434,47 @@ test "canonical/PATH resolution, missing-profile fallback and environment alloca
     const root = try fixture.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(root);
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkShellResolveAllocations, .{root});
+}
+
+test "every built-in shell supports PATH discovery outside canonical install directories" {
+    const allocator = std.testing.allocator;
+    var fixture = std.testing.tmpDir(.{});
+    defer fixture.cleanup();
+    try fixture.dir.makePath("bin");
+    for ([_][]const u8{ "cmd.exe", "powershell.exe", "pwsh.exe", "nu.exe", "bash.exe" }) |name| {
+        const path = try std.fmt.allocPrint(allocator, "bin/{s}", .{name});
+        defer allocator.free(path);
+        const file = try fixture.dir.createFile(path, .{});
+        file.close();
+    }
+    const root = try fixture.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const path = try std.fmt.allocPrint(allocator, "{s}\\bin", .{root});
+    defer allocator.free(path);
+    var environment = std.process.EnvMap.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", path);
+    for ([_]BuiltinShellProfile{ .system, .cmd, .powershell, .pwsh, .nu, .gitbash }) |kind| {
+        try std.testing.expect(try isBuiltinShellAvailable(allocator, kind, root, &environment));
+        var launch = try ShellLaunch.resolve(allocator, .{ .builtin = kind }, root, &environment);
+        defer launch.deinit();
+        try std.testing.expectEqual(resolvedShellKind(kind), launch.kind);
+        try std.testing.expect(std.mem.startsWith(u8, launch.program, path));
+    }
+}
+
+test "Git Bash discovery does not mistake the system WSL bash launcher for Git Bash" {
+    const allocator = std.testing.allocator;
+    var fixture = std.testing.tmpDir(.{});
+    defer fixture.cleanup();
+    const file = try fixture.dir.createFile("bash.exe", .{});
+    file.close();
+    const root = try fixture.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    var environment = std.process.EnvMap.init(allocator);
+    defer environment.deinit();
+    try environment.put("PATH", root);
+    try std.testing.expect(!try isBuiltinShellAvailable(allocator, .gitbash, root, &environment));
 }
 
 test "launch lengths count UTF-16 units after argv quoting, not only the raw argument length" {

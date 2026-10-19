@@ -32,7 +32,6 @@ pub fn presentTerminalModal(self: *Application) !void {
                 request.kind = .settings;
                 request.title = "Settings";
                 request.description = "Changes are applied and saved automatically.";
-                self.discoverAvailableShells();
                 shells[0] = .{ .value = 0, .label = "Launch shell", .detail = "Keep the shell selected at startup" };
                 for (self.available_shells[0..self.available_shell_count], 1..) |kind, i| {
                     shells[i] = .{ .value = @intFromEnum(kind), .label = kind.displayName(), .detail = kind.subtitle() };
@@ -57,20 +56,7 @@ pub fn presentTerminalModal(self: *Application) !void {
         .shell_picker => |picker| {
             request.kind = .shell;
             request.title = "Choose a shell";
-            request.description = switch (picker.mode) {
-                .new_tab => "",
-                .split_right => "Split the active pane to the right.",
-                .split_down => "Split the active pane downward.",
-                .set_default => "Choose the default shell for new sessions.",
-            };
-            request.accept_label = switch (picker.mode) {
-                .new_tab => "Open tab",
-                .split_right => "Split right",
-                .split_down => "Split down",
-                .set_default => "Set default",
-            };
-            request.mode = @intFromEnum(picker.mode);
-            self.discoverAvailableShells();
+            request.description = "";
             for (self.available_shells[0..self.available_shell_count]) |kind| {
                 items[count] = .{ .value = @intFromEnum(kind), .label = kind.displayName(), .detail = kind.subtitle() };
                 count += 1;
@@ -105,7 +91,7 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
         },
         .query => |query| {
             if (self.overlay != .command_palette) return;
-            self.overlay.command_palette.eraseQuery(true);
+            self.overlay.command_palette.clearQuery();
             _ = self.overlay.command_palette.appendQuery(query);
             try presentTerminalModal(self);
         },
@@ -123,9 +109,6 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
                 }
             },
             else => {},
-        },
-        .shell_mode => |mode| {
-            if (self.overlay == .shell_picker) self.overlay.shell_picker.mode = @enumFromInt(@as(u8, @intCast(mode)));
         },
         .settings => |settings| {
             if (self.overlay != .settings) return;

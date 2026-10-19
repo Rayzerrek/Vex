@@ -17,7 +17,7 @@ namespace {
 constexpr int titleId = 100, descriptionId = 101, queryId = 102, listId = 103;
 constexpr int fontId = 116, fontLabelId = 117;
 constexpr int sizeId = 111, blinkId = 112, shellId = 113, themeGridId = 115;
-constexpr int pageTitleId = 104, pageDetailId = 105, closeId = 125, firstPageId = 130, firstModeId = 140;
+constexpr int pageTitleId = 104, pageDetailId = 105, closeId = 125, firstPageId = 130;
 enum class SettingsPage { general, appearance, terminal, about };
 constexpr size_t itemLimit = 64, shellLimit = 8;
 struct DialogItem {
@@ -26,7 +26,7 @@ struct DialogItem {
     COLORREF background, foreground, accent, swatches[5];
 };
 struct DialogModel {
-    uint32_t kind, selected, mode;
+    uint32_t kind, selected;
     wchar_t title[128], description[512], accept[64];
     DialogItem items[itemLimit], shells[shellLimit];
     size_t count, shellCount;
@@ -1180,8 +1180,7 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
 void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     const int id = (int)draw.CtlID;
     const bool navigation = id >= firstPageId && id < firstPageId + 4;
-    const bool mode = id >= firstModeId && id < firstModeId + 4;
-    const bool checked = navigation ? (int)host.page == id - firstPageId : mode ? host.model.mode == (uint32_t)(id - firstModeId) : id == blinkId && host.draft.cursor_blink;
+    const bool checked = navigation ? (int)host.page == id - firstPageId : id == blinkId && host.draft.cursor_blink;
     const bool pressed = (draw.itemState & ODS_SELECTED) != 0;
     RECT bounds = draw.rcItem; InflateRect(&bounds, -1, -1);
     FillRect(draw.hDC, &draw.rcItem, id == blinkId ? host.field : host.background);
@@ -1526,23 +1525,6 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         }
         if (LOWORD(wparam) == IDOK) { acceptDialog(); return TRUE; }
         if (LOWORD(wparam) == queryId && HIWORD(wparam) == EN_CHANGE) { queryChanged(); return TRUE; }
-        if (LOWORD(wparam) >= firstModeId && LOWORD(wparam) < firstModeId + 4) {
-            host.model.mode = LOWORD(wparam) - firstModeId;
-            const wchar_t* modeDescriptions[] = {
-                L"",
-                L"Split the active pane to the right.",
-                L"Split the active pane downward.",
-                L"Choose the default shell for new sessions.",
-            };
-            const wchar_t* modeAccept[] = { L"Open tab", L"Split right", L"Split down", L"Set default" };
-            SetDlgItemTextW(window, descriptionId, modeDescriptions[host.model.mode]);
-            SetDlgItemTextW(window, IDOK, modeAccept[host.model.mode]);
-            for (int i = 0; i < 4; ++i) InvalidateRect(GetDlgItem(window, firstModeId + i), nullptr, FALSE);
-            InvalidateRect(GetDlgItem(window, descriptionId), nullptr, FALSE);
-            InvalidateRect(GetDlgItem(window, IDOK), nullptr, FALSE);
-            notify(5, host.model.mode);
-            return TRUE;
-        }
         if (LOWORD(wparam) == listId && HIWORD(wparam) == LBN_DBLCLK) { acceptDialog(); return TRUE; }
         if (LOWORD(wparam) == listId && HIWORD(wparam) == LBN_SELCHANGE) { uint32_t value; if (listSelection(value)) notify(2, value); return TRUE; }
         break;
@@ -1834,7 +1816,6 @@ void repositionTerminalDialogs() {
         const int id = GetDlgCtrlID(c.window);
         float x = c.x, y = c.y, w = c.width, h = c.height;
         if (id >= firstPageId && id < firstPageId + 4) x += dx / 2;
-        else if (id >= firstModeId && id < firstModeId + 4) { x += (id - firstModeId) * dx / 4; w += dx / 4; }
         else if (id == IDOK || id == IDCANCEL || id == closeId || id == sizeId || id == shellId || id == fontId) x += dx;
         else if (w > host.baseWidth * 0.5f) w += dx;
         if (id == IDOK || id == IDCANCEL) y += dy;
@@ -1888,7 +1869,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     memset(&next, 0, sizeof(next));
     if (!decodeText(request.title, next.title, 128) || !decodeText(request.description, next.description, 512) || !decodeText(request.accept_label, next.accept, 64) ||
         !copyItems(request.items, request.count, next.items, itemLimit) || !copyItems(request.shells, request.shell_count, next.shells, shellLimit)) return ERROR_INVALID_DATA;
-    next.kind = request.kind; next.selected = request.selected; next.mode = request.mode; next.count = request.count; next.shellCount = request.shell_count; next.settings = request.settings; next.palette = request.palette;
+    next.kind = request.kind; next.selected = request.selected; next.count = request.count; next.shellCount = request.shell_count; next.settings = request.settings; next.palette = request.palette;
     if (host.phase == DialogHost::Phase::active) {
         if (host.model.kind != request.kind) closeDialog(true);
     }

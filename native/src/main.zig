@@ -18,6 +18,7 @@ pub fn main() void {
 test {
     _ = application;
     _ = @import("app/terminal_commands.zig");
+    _ = @import("app/terminal_session.zig");
     _ = @import("terminal/terminal.zig");
     _ = @import("terminal/terminal_title.zig");
     _ = @import("terminal/status_presentation.zig");
@@ -37,6 +38,7 @@ test {
     _ = @import("workspace/scrollbar_visibility.zig");
     _ = @import("workspace/tab_strip.zig");
     _ = @import("workspace/tab_drag.zig");
+    _ = @import("workspace/tab_rename.zig");
     _ = @import("workspace/tab_overview.zig");
     _ = @import("workspace/terminal_theme.zig");
     _ = @import("workspace/close_confirmation.zig");

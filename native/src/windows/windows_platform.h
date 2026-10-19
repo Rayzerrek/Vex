@@ -45,7 +45,7 @@ typedef struct { uint32_t value; VexDialogText label, detail; uint32_t backgroun
 typedef struct { uint32_t theme, font_size, shell; bool cursor_blink; uint8_t font_family[128]; } VexUserSettings;
 /* Kind: appearance=1, commands=2, settings=4, shell=5, close=6. */
 typedef struct {
-    uint32_t kind, selected, mode;
+    uint32_t kind, selected;
     VexDialogText title, description, accept_label;
     const VexDialogItem* items; size_t count;
     const VexDialogItem* shells; size_t shell_count;
@@ -78,7 +78,7 @@ typedef struct {
     void (*cursor_wake)(void*);
     void (*cursor_activity)(void*, bool);
     uint64_t (*probe)(void*, uint32_t);
-    /* Event: cancel/choose/preview/query/settings/mode = 0..5; text is borrowed for this call only. */
+    /* Event: cancel/choose/preview/query/settings = 0..4; text is borrowed for this call only. */
     void (*dialog)(void*, uint32_t, uint32_t, const uint8_t*, size_t, VexUserSettings);
 } VexWindowCallbacks;
 /* Zero is success; nonzero values are Win32/HRESULT error codes. */
@@ -111,6 +111,7 @@ int vex_window_shell_name(const uint8_t* bytes, size_t length);
 int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPtyLaunch launch, VexPty** output);
 int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length);
 int vex_system_directory(uint8_t* bytes, size_t capacity, size_t* length);
+int vex_shell_path(uint8_t* bytes, size_t capacity, size_t* length);
 int vex_clipboard_write(const uint8_t* bytes, size_t length);
 int vex_open_url(const uint8_t* bytes, size_t length);
 void vex_pty_close(VexPty* session);

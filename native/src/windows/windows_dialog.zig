@@ -17,7 +17,7 @@ pub const DialogItem = struct {
     swatches: [5]u32 = .{ 0, 0, 0, 0, 0 },
 };
 /// Native control notifications are decoded before application code receives them.
-pub const DialogEvent = union(enum) { cancel, choose: u32, preview: u32, query: []const u8, settings: preferences.UserSettings, shell_mode: u32 };
+pub const DialogEvent = union(enum) { cancel, choose: u32, preview: u32, query: []const u8, settings: preferences.UserSettings };
 /// One window-thread-owned dialog, with copied presentation and no retained application pointers.
 pub const DialogPresentation = struct {
     kind: DialogKind,
@@ -27,7 +27,6 @@ pub const DialogPresentation = struct {
     items: []const DialogItem = &.{},
     shells: []const DialogItem = &.{},
     selected: u32 = 0,
-    mode: u32 = 0,
     settings: preferences.UserSettings = .{},
     palette: themes.ChromePalette,
 };
@@ -48,7 +47,6 @@ pub fn showDialog(presentation: DialogPresentation) !void {
     const result = c.vex_dialog_open(.{
         .kind = @intFromEnum(presentation.kind),
         .selected = presentation.selected,
-        .mode = presentation.mode,
         .title = nativeText(presentation.title),
         .description = nativeText(presentation.description),
         .accept_label = nativeText(presentation.accept_label),
@@ -105,7 +103,6 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
             try settings.validate();
             break :blk .{ .settings = settings };
         },
-        5 => if (value <= 3) .{ .shell_mode = value } else error.InvalidShellPickerMode,
         else => error.InvalidDialogEvent,
     };
 }
@@ -122,6 +119,8 @@ test "native dialog events validate settings and query data before entering the 
     invalid.shell = 6;
     try std.testing.expectError(error.InvalidDefaultShell, decodeDialogEvent(4, 0, "", invalid));
     try std.testing.expectError(error.InvalidDialogEvent, decodeDialogEvent(99, 0, "", raw));
+    // Mode controls no longer exist; retired event IDs must not mutate shell-picker intent.
+    for (0..4) |mode| try std.testing.expectError(error.InvalidDialogEvent, decodeDialogEvent(5, @intCast(mode), "", raw));
     try std.testing.expectError(error.InvalidDialogQuery, decodeDialogEvent(3, 0, "bad\nquery", raw));
     try std.testing.expectError(error.InvalidDialogQuery, decodeDialogEvent(3, 0, "\xff", raw));
     try std.testing.expectEqualStrings("future tool", (try decodeDialogEvent(3, 0, "future tool", raw)).query);

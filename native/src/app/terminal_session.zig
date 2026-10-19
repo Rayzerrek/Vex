@@ -62,6 +62,7 @@ pub const TerminalSession = struct {
     active_process_title: [64]u8 = undefined,
     active_process_title_len: usize = 0,
     has_foreground_process: bool = false,
+    foreground_shell_command: bool = false,
     shell_kind: shell.ShellKind = .cmd,
     shell_name: []const u8 = "Command Prompt",
     shell_program: []const u8 = "cmd.exe",
@@ -213,6 +214,7 @@ pub const TerminalSession = struct {
             self.process_icon = app_icon.AppIcon.terminal_shell;
             self.active_process_title_len = 0;
             self.has_foreground_process = false;
+            self.foreground_shell_command = false;
             return !previous_icon.eql(self.icon) or previous_title_len != 0;
         }
         if (query_process) {
@@ -221,6 +223,7 @@ pub const TerminalSession = struct {
             const fg = self.pty.foregroundProcess(&exe_buf, &cmd_buf);
             const proc_name: ?[]const u8 = if (fg.exe.len > 0) fg.exe else null;
             const proc_cmd: ?[]const u8 = if (fg.cmd.len > 0) fg.cmd else null;
+            self.foreground_shell_command = if (proc_name) |name| app_icon.isShellName(name) and command_line.shellHasCommand(fg.cmd) else false;
             const resolved_proc_title = resolveForegroundProcessTitle(proc_name, proc_cmd);
             if (resolved_proc_title) |title_slice| {
                 const display = terminal_title.sanitizeDisplayText(title_slice, &self.active_process_title);
@@ -268,6 +271,7 @@ pub const TerminalSession = struct {
             .status_app = if (status_running) status_app else "",
             .status_active = status_running or shell_activity == .working or shell_activity == .blocked,
             .has_foreground_process = self.has_foreground_process,
+            .foreground_shell_command = self.foreground_shell_command,
             .active_process_title = if (self.active_process_title_len > 0)
                 self.active_process_title[0..self.active_process_title_len]
             else if (status_running)

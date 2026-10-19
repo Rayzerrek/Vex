@@ -293,11 +293,23 @@ const aliases = [_]AliasEntry{
 };
 
 const shell_icon_names = [_][]const u8{
-    "cmd",  "wsl",       "wslhost", "nu",   "nushell", "pwsh", "powershell", "bash",   "sh", "gnubash",
-    "fish", "fishshell", "zsh",     "dash", "ksh",     "ash",  "gitbash",    "system",
+    "cmd",  "wsl",       "wslhost", "nu",   "nushell", "pwsh", "powershell", "bash",   "sh",     "gnubash",
+    "fish", "fishshell", "zsh",     "dash", "ksh",     "ash",  "gitbash",    "system", "elvish", "tcsh",
+    "csh",
 };
 
 const whitespace = " \t\r\n";
+
+test "shell classification shares the icon catalog and rejects unknown applications" {
+    for (shell_icon_names) |name| {
+        try std.testing.expect(isShellName(name));
+        try std.testing.expect(resolveDirect(name).?.is_shell);
+    }
+    try std.testing.expect(isShellName("C:\\Program Files\\PowerShell\\7\\PWSH.EXE"));
+    try std.testing.expect(!isShellName(""));
+    try std.testing.expect(!isShellName("unknown-tool.exe"));
+    try std.testing.expect(!isShellName("powershell-editor.exe"));
+}
 
 /// Near-black brand colors (rust, bun, github, cursor) vanish on dark chrome; lift to `#B8B8BE`.
 pub fn adjustDarkBrandColor(rgb: u32) u32 {
@@ -315,14 +327,21 @@ pub fn isShimHost(name: []const u8) bool {
     return command_identity.isCommandHost(clean) or std.ascii.eqlIgnoreCase(clean, "wsl") or std.ascii.eqlIgnoreCase(clean, "wslhost");
 }
 
+/// Classifies shells without resolving glyphs or hashing unknown application names.
+pub fn isShellName(raw_name: []const u8) bool {
+    const clean = cleanExecutableName(raw_name);
+    for (shell_icon_names) |name| {
+        if (std.ascii.eqlIgnoreCase(clean, name)) return true;
+    }
+    return false;
+}
+
 /// Resolves a known shell, special badge, alias, or brand glyph directly by name. Returns `null` if unknown.
 pub fn resolveDirect(raw_name: []const u8) ?AppIcon {
     const clean = cleanExecutableName(raw_name);
     if (clean.len == 0) return null;
 
-    for (shell_icon_names) |shell_name| {
-        if (std.ascii.eqlIgnoreCase(clean, shell_name)) return AppIcon.terminal_shell;
-    }
+    if (isShellName(clean)) return AppIcon.terminal_shell;
     var canonical = clean;
     for (aliases) |entry| {
         if (std.ascii.eqlIgnoreCase(clean, entry.alias)) {

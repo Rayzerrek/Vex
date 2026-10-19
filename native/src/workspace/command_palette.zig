@@ -1,6 +1,6 @@
 const std = @import("std");
 
-/// Inline command-palette query and viewport; selection indices always address the full result list.
+/// Native command-palette query snapshot; selection indices address the full result list.
 pub const CommandPalette = struct {
     query_buf: [128]u8 = undefined,
     query_len: usize = 0,
@@ -18,12 +18,9 @@ pub const CommandPalette = struct {
         self.selected_index = 0;
         return true;
     }
-    /// Backspace removes one codepoint; clear resets the entire query and pointer selection.
-    pub fn eraseQuery(self: *CommandPalette, clear: bool) void {
-        if (clear) self.query_len = 0 else if (self.query_len > 0) {
-            self.query_len -= 1;
-            while (self.query_len > 0 and self.query_buf[self.query_len] & 0xc0 == 0x80) : (self.query_len -= 1) {}
-        }
+    /// Native controls own editing; each query event replaces the previous snapshot.
+    pub fn clearQuery(self: *CommandPalette) void {
+        self.query_len = 0;
         self.selected_index = 0;
     }
 };
@@ -61,8 +58,10 @@ fn tokenScore(text: []const u8, query: []const u8) ?i32 {
 test "palette input preserves UTF-8 and fuzzy matching ranks exact shortcuts" {
     var palette: CommandPalette = .{};
     try std.testing.expect(palette.appendQuery("😀"));
-    palette.eraseQuery(false);
+    palette.selected_index = 4;
+    palette.clearQuery();
     try std.testing.expectEqual(@as(usize, 0), palette.query_len);
+    try std.testing.expectEqual(@as(usize, 0), palette.selected_index);
     const fill = [_]u8{'x'} ** 127;
     try std.testing.expect(palette.appendQuery(&fill));
     try std.testing.expect(!palette.appendQuery("😀"));

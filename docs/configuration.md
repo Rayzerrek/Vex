@@ -1,4 +1,9 @@
-# Configuration
+# Configuration (legacy WPF)
+
+This page describes the previous application in `windows/`, not the current
+native application. For `init.lua`, saved GUI preferences and configuration
+reload, see [native Lua configuration](../native/README.md#lua-configuration).
+The native app does not read or migrate the JSON files described below.
 
 Vex keeps its state in `%LocalAppData%\Vex\`:
 
