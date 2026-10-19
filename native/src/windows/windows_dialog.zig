@@ -5,7 +5,7 @@ const themes = @import("../workspace/terminal_theme.zig");
 const c = platform.c;
 
 /// Owned dialog kind; path completion deliberately remains an in-terminal popup.
-pub const DialogKind = enum(u32) { appearance = 1, commands = 2, settings = 4, shell = 5, close = 6 };
+pub const DialogKind = enum(u32) { appearance = 1, commands = 2, settings = 4, shell = 5, close = 6, custom_shell = 7 };
 /// Borrowed presentation strings are copied by the native dialog before showDialog returns.
 pub const DialogItem = struct {
     value: u32,
@@ -17,7 +17,7 @@ pub const DialogItem = struct {
     swatches: [5]u32 = .{ 0, 0, 0, 0, 0 },
 };
 /// Native control notifications are decoded before application code receives them.
-pub const DialogEvent = union(enum) { cancel, choose: u32, preview: u32, query: []const u8, settings: preferences.UserSettings };
+pub const DialogEvent = union(enum) { cancel, choose: u32, preview: u32, query: []const u8, settings: preferences.UserSettings, add_shell, save_shell: struct { name: []const u8, program: []const u8, arguments: []const u8 } };
 /// One window-thread-owned dialog, with copied presentation and no retained application pointers.
 pub const DialogPresentation = struct {
     kind: DialogKind,
@@ -39,9 +39,9 @@ fn nativeItem(item: DialogItem) c.VexDialogItem {
 }
 /// Opens/updates copied native controls; Win32 disables only their owning terminal window.
 pub fn showDialog(presentation: DialogPresentation) !void {
-    if (presentation.items.len > 64 or presentation.shells.len > 8) return error.DialogItemLimit;
+    if (presentation.items.len > 64 or presentation.shells.len > 64) return error.DialogItemLimit;
     var items: [64]c.VexDialogItem = undefined;
-    var shells: [8]c.VexDialogItem = undefined;
+    var shells: [64]c.VexDialogItem = undefined;
     for (presentation.items, 0..) |item, i| items[i] = nativeItem(item);
     for (presentation.shells, 0..) |item, i| shells[i] = nativeItem(item);
     const result = c.vex_dialog_open(.{
@@ -59,6 +59,9 @@ pub fn showDialog(presentation: DialogPresentation) !void {
     });
     if (result != 0) return error.NativeDialogFailure;
 }
+pub fn showFormError(message: []const u8) void {
+    c.vex_dialog_form_error(nativeText(message));
+}
 /// Reads native list scrolling on the window thread; there is no shadow Zig viewport.
 pub fn firstVisibleRow() usize {
     return c.vex_dialog_first_visible();
@@ -71,6 +74,11 @@ pub fn closeDialog() void {
 pub fn showSettingsFailure(err: anyerror) void {
     var buffer: [256]u8 = undefined;
     const message = std.fmt.bufPrint(&buffer, "Vex settings: preferences were not saved ({s}). Existing sessions are unchanged.", .{@errorName(err)}) catch "Vex settings: preferences were not saved. Existing sessions are unchanged.";
+    c.vex_dialog_warning(nativeText(message));
+}
+pub fn showShellLaunchFailure(err: anyerror) void {
+    var buffer: [256]u8 = undefined;
+    const message = std.fmt.bufPrint(&buffer, "The selected shell could not be started ({s}). Existing sessions are unchanged.", .{@errorName(err)}) catch "The selected shell could not be started. Existing sessions are unchanged.";
     c.vex_dialog_warning(nativeText(message));
 }
 /// Reports configuration errors without blocking input or modifying the user's Lua source.
@@ -104,6 +112,16 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
             try settings.validate();
             break :blk .{ .settings = settings };
         },
+        6 => .add_shell,
+        7 => blk: {
+            if (text.len > 256 * 1024 or !std.unicode.utf8ValidateSlice(text)) return error.InvalidShellForm;
+            var fields = std.mem.splitScalar(u8, text, 0);
+            const name = fields.next() orelse return error.InvalidShellForm;
+            const program = fields.next() orelse return error.InvalidShellForm;
+            const arguments = fields.next() orelse return error.InvalidShellForm;
+            if (fields.next() != null) return error.InvalidShellForm;
+            break :blk .{ .save_shell = .{ .name = name, .program = program, .arguments = arguments } };
+        },
         else => error.InvalidDialogEvent,
     };
 }
@@ -126,6 +144,20 @@ test "native dialog events validate settings and query data before entering the 
     try std.testing.expectError(error.InvalidDialogQuery, decodeDialogEvent(3, 0, "bad\nquery", raw));
     try std.testing.expectError(error.InvalidDialogQuery, decodeDialogEvent(3, 0, "\xff", raw));
     try std.testing.expectEqualStrings("future tool", (try decodeDialogEvent(3, 0, "future tool", raw)).query);
+}
+
+test "custom shell form separates arguments without interpreting quotes or command syntax" {
+    const raw: c.VexUserSettings = .{ .theme = 0, .font_size = 14, .shell = 1, .cursor_blink = true, .copy_on_select = true, .font_family = preferences.default_font };
+    const form = (try decodeDialogEvent(7, 0, "Future 音\x00C:\\My Shell\\shell.exe\x00--interactive \"hello world\"", raw)).save_shell;
+    try std.testing.expectEqualStrings("Future 音", form.name);
+    try std.testing.expectEqualStrings("C:\\My Shell\\shell.exe", form.program);
+    try std.testing.expectEqualStrings("--interactive \"hello world\"", form.arguments);
+    try std.testing.expectEqualStrings("", (try decodeDialogEvent(7, 0, "Name\x00shell.exe\x00", raw)).save_shell.arguments);
+    try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "missing separator", raw));
+    try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "a\x00b\x00c\x00d", raw));
+    try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "a\x00b\x00\xff", raw));
+    const custom = try decodeDialogEvent(4, 0, "", .{ .theme = 0, .font_size = 14, .shell = 256, .cursor_blink = true, .copy_on_select = true, .font_family = preferences.default_font });
+    try std.testing.expectEqual(@as(u32, 256), @intFromEnum(custom.settings.default_shell));
 }
 
 test "dialog item budgets reject oversized presentations before native window access" {

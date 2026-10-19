@@ -18,6 +18,7 @@ pub const ShellKind = enum(u32) {
     gitbash = 5,
     custom = 6,
     wsl = 7,
+    _,
 
     /// Human-readable shell label matching WPF ShellProfile display names.
     pub fn displayName(self: ShellKind) []const u8 {
@@ -29,6 +30,7 @@ pub const ShellKind = enum(u32) {
             .gitbash => "Git Bash",
             .custom => "Custom shell",
             .wsl => "WSL",
+            else => "Custom shell",
         };
     }
 
@@ -41,6 +43,7 @@ pub const ShellKind = enum(u32) {
             .nu => "nu.exe",
             .gitbash => "bash.exe --login -i",
             .custom => "custom program",
+            else => "custom program",
             .wsl => "wsl.exe",
         };
     }
@@ -54,6 +57,7 @@ pub const ShellKind = enum(u32) {
             .nu => .nu,
             .gitbash => .gitbash,
             .custom, .wsl => null,
+            else => null,
         };
     }
 };
@@ -139,6 +143,9 @@ pub const ShellLaunch = struct {
     program: []const u8,
     command_line: []const u8,
     environment: []const u16,
+    display_name: ?[]const u8 = null,
+    profile_program: ?[]const u8 = null,
+    profile_arguments: ?[]const u8 = null,
     backend: union(enum) { windows, wsl: wsl_launch.WslLaunch } = .windows,
 
     /// Resolves cheap canonical/PATH probes once per application, not once per pane.
@@ -151,10 +158,8 @@ pub const ShellLaunch = struct {
         var resolved_kind = kind;
         const program = switch (request) {
             .custom => |custom| blk: {
-                try validateShellProgram(custom.program);
                 try validateShellText(custom.arguments);
-                if (!try shellFileExists(custom.program)) return error.ShellProgramUnavailable;
-                break :blk try allocator.dupe(u8, custom.program);
+                break :blk try resolveCustomProgramAlloc(allocator, custom.program, environment);
             },
             .wsl => (try probeShellPath(allocator, system_directory, "wsl.exe")) orelse return error.WslLauncherUnavailable,
             .builtin => |builtin| blk: {
@@ -200,6 +205,9 @@ pub const ShellLaunch = struct {
         self.allocator.free(self.program);
         self.allocator.free(self.command_line);
         self.allocator.free(self.environment);
+        if (self.display_name) |name| self.allocator.free(name);
+        if (self.profile_program) |text| self.allocator.free(text);
+        if (self.profile_arguments) |text| self.allocator.free(text);
         if (self.backend == .wsl) self.backend.wsl.deinit();
     }
     /// Borrows launch metadata until the final pane directory owner has been released.
@@ -219,15 +227,28 @@ pub const ShellLaunch = struct {
     }
     /// Resolved display names are not raw terminal titles or untrusted profile text.
     pub fn shellName(self: *const ShellLaunch) []const u8 {
-        return switch (self.kind) {
-            .cmd => "Command Prompt",
-            .powershell => "Windows PowerShell",
-            .pwsh => "PowerShell 7",
-            .nu => "Nushell",
-            .gitbash => "Git Bash",
-            .custom => "Custom shell",
-            .wsl => "WSL",
-        };
+        return self.display_name orelse self.kind.displayName();
+    }
+    pub fn identifyProfile(self: *ShellLaunch, id: u32, name: []const u8, source_program: []const u8, source_arguments: []const u8) !void {
+        const owned = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned);
+        const program = try self.allocator.dupe(u8, source_program);
+        errdefer self.allocator.free(program);
+        const arguments = try self.allocator.dupe(u8, source_arguments);
+        if (self.display_name) |previous| self.allocator.free(previous);
+        if (self.profile_program) |previous| self.allocator.free(previous);
+        if (self.profile_arguments) |previous| self.allocator.free(previous);
+        self.display_name = owned;
+        self.profile_program = program;
+        self.profile_arguments = arguments;
+        self.kind = @enumFromInt(id);
+    }
+    pub fn programAvailable(self: *const ShellLaunch) !bool {
+        return shellFileExists(self.program);
+    }
+    pub fn matchesProfile(self: *const ShellLaunch, id: u32, name: []const u8, program: []const u8, arguments: []const u8) bool {
+        return @intFromEnum(self.kind) == id and std.mem.eql(u8, self.display_name orelse "", name) and
+            std.mem.eql(u8, self.profile_program orelse "", program) and std.mem.eql(u8, self.profile_arguments orelse "", arguments);
     }
 };
 
@@ -263,12 +284,30 @@ pub fn buildShellCommandLine(allocator: std.mem.Allocator, kind: ShellKind, prog
             try validateShellText(raw_arguments);
             break :blk try allocator.dupe(u8, raw_arguments);
         },
+        else => return error.InvalidShellSelection,
     };
     defer allocator.free(arguments);
     const command = try std.fmt.allocPrint(allocator, "{s} {s}", .{ quoted, arguments });
     errdefer allocator.free(command);
     try validateShellText(command);
     return command;
+}
+
+pub fn validateCustomProgram(program: []const u8) !void {
+    if (program.len == 0) return error.InvalidShellProgram;
+    try validateShellText(program);
+    if (std.fs.path.isAbsoluteWindows(program)) return validateShellProgram(program);
+    if (std.mem.indexOfAny(u8, program, "\\/\" \t\r\n:*") != null or std.mem.eql(u8, program, ".") or std.mem.eql(u8, program, "..")) return error.InvalidShellProgram;
+}
+pub fn resolveCustomProgramAlloc(allocator: std.mem.Allocator, program: []const u8, environment: *const std.process.EnvMap) ![]u8 {
+    try validateCustomProgram(program);
+    if (std.fs.path.isAbsoluteWindows(program)) {
+        if (!try shellFileExists(program)) return error.ShellProgramUnavailable;
+        return allocator.dupe(u8, program);
+    }
+    const executable = if (std.fs.path.extension(program).len == 0) try std.fmt.allocPrint(allocator, "{s}.exe", .{program}) else try allocator.dupe(u8, program);
+    defer allocator.free(executable);
+    return (try shellOnPath(allocator, environment, executable, null)) orelse error.ShellProgramUnavailable;
 }
 
 fn normalizeTerminalEnvironment(environment: *std.process.EnvMap) !void {
@@ -464,6 +503,11 @@ fn checkShellResolveAllocations(allocator: std.mem.Allocator, root: []const u8) 
     defer custom.deinit();
     try std.testing.expectEqual(.custom, custom.kind);
     try std.testing.expect(std.mem.endsWith(u8, custom.command_line, " /d"));
+    try custom.identifyProfile(256, "Future shell", custom.program, "/d");
+    try std.testing.expectEqualStrings("Future shell", custom.shellName());
+    try std.testing.expect(custom.matchesProfile(256, "Future shell", custom.program, "/d"));
+    try std.testing.expect(!custom.matchesProfile(256, "Future shell", custom.program, "/different"));
+    try std.testing.expect(try custom.programAvailable());
 }
 
 test "canonical/PATH resolution, missing-profile fallback and environment allocation failures release every owner" {

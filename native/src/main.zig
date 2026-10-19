@@ -50,4 +50,5 @@ test {
     _ = @import("workspace/workspace_model.zig");
     _ = platform;
     _ = @import("shell/shell_launch.zig");
+    _ = @import("shell/custom_profiles.zig");
 }

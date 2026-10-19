@@ -128,6 +128,7 @@ pub fn onProbe(self: *Application, query: u32) u64 {
             .close_confirm => 5,
             .shell_picker => 6,
             .settings => 7,
+            .custom_shell => 8,
         },
         54 => return @intFromFloat(@round(platform.fontSize())),
         55 => return self.path_completion.matches.items.len,

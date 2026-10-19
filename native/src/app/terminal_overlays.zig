@@ -22,6 +22,7 @@ pub const OverlayState = union(enum) {
     close_confirm: struct { target: CloseTarget, confirmation: close_confirmation.CloseConfirmation, return_to_peek: ?usize = null },
     shell_picker: struct { mode: ShellPickerMode = .new_tab, selected_index: usize = 0 },
     settings,
+    custom_shell,
 };
 
 const peek_duration_ms = 180;

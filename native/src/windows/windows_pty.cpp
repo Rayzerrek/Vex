@@ -25,6 +25,7 @@ struct VexPty {
     volatile LONG stopping, outputPending;
     DWORD fgPid;
     wchar_t rootStem[64];
+    bool declaredShell;
     uint64_t fgCreateTime;
     uint8_t fgExe[256];
     size_t fgExeLen;
@@ -112,6 +113,7 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
     DWORD apiError = session->conpty.load();
     if (apiError) return apiError;
     extractLowerStem(reinterpret_cast<const wchar_t*>(launch.program), session->rootStem);
+    session->declaredShell = launch.declared_shell;
     session->outputConsumed = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!session->outputConsumed) return GetLastError();
     session->inputReady = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -373,8 +375,9 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
     DWORD chosenPid = 0;
     const wchar_t* chosenExe = nullptr;
     wchar_t chosenStem[64] = {};
-    // Custom roots own their workers. Their identity comes from launch metadata, not a capped system scan.
-    if (!isShellStem(session->rootStem)) {
+    // A user-declared shell is a shell even when its executable has an unknown name.
+    // Arbitrary CLI programs still own their workers rather than masquerading as interactive shells.
+    if (!session->declaredShell && !isShellStem(session->rootStem)) {
         chosenPid = rootPid;
         chosenExe = session->rootStem;
         wcscpy_s(chosenStem, session->rootStem);

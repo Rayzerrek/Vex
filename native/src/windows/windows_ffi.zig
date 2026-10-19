@@ -153,7 +153,7 @@ pub const PtyOwner = struct {
         const working_directory = try std.unicode.utf8ToUtf16LeAllocZ(allocator, windows_directory);
         defer allocator.free(working_directory);
         var pointer: ?*c.VexPty = null;
-        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len };
+        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = @intFromEnum(launch.kind) >= 256 };
         if (c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer) != 0) return error.PtyLaunchFailed;
         return .{ .handle = pointer orelse return error.PtyNullHandle };
     }
@@ -336,7 +336,7 @@ pub fn runWindow(owner: anytype) !void {
         }
         fn dialog(context: ?*anyopaque, event: u32, value: u32, bytes: [*c]const u8, length: usize, settings: c.VexUserSettings) callconv(.c) void {
             const app = recover(context) orelse return;
-            if (length > 128 or (length != 0 and bytes == null)) {
+            if (length > (if (event == 7) @as(usize, 256 * 1024) else 128) or (length != 0 and bytes == null)) {
                 app.fail(error.InvalidDialogInput);
                 return;
             }
@@ -388,6 +388,13 @@ pub fn machineNameAlloc(allocator: std.mem.Allocator) ![]u8 {
 /// Copies a resolved shell display name into native chrome before opening the window.
 pub fn setShellName(name: []const u8) !void {
     if (c.vex_window_shell_name(name.ptr, name.len) != 0) return error.InvalidShellDisplayName;
+}
+test "custom shell names fit native chrome without imposing a second shorter name limit" {
+    defer setShellName("Command Prompt") catch {};
+    try setShellName("x" ** 255);
+    try setShellName("音" ** 85);
+    try std.testing.expectError(error.InvalidShellDisplayName, setShellName("x" ** 256));
+    try std.testing.expectError(error.InvalidShellDisplayName, setShellName("\xff"));
 }
 /// Resolves the actual Windows system directory without trusting WINDIR/SystemRoot environment variables.
 pub fn systemDirectoryAlloc(allocator: std.mem.Allocator) ![]u8 {

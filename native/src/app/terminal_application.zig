@@ -26,6 +26,7 @@ const diagnostics = @import("terminal_diagnostics.zig");
 const modals = @import("terminal_modals.zig");
 const dialogs = @import("../windows/windows_dialog.zig");
 const preferences = @import("user_settings.zig");
+const custom_profiles = @import("../shell/custom_profiles.zig");
 
 /// Owns stable sessions on the window thread; feature modules borrow this owner, never copy it.
 pub const TerminalApplication = struct {
@@ -49,7 +50,9 @@ pub const TerminalApplication = struct {
     settings_diagnostic: preferences.SettingsDiagnostic,
     startup_preferences: union(enum) { font_pending: ?anyerror, warning_pending: anyerror, applied },
     shell_launches: std.ArrayList(*shell.ShellLaunch) = .empty,
-    available_shells: [6]shell.ShellKind = undefined,
+    custom_shells: custom_profiles.Catalog,
+    custom_shell_load_error: ?anyerror = null,
+    available_shells: [63]shell.ShellKind = undefined,
     available_shell_count: u8 = 0,
     sessions: std.ArrayList(*TerminalSession) = .empty,
     model: ?workspace.WorkspaceModel = null,
@@ -95,16 +98,31 @@ pub const TerminalApplication = struct {
             settings_load_error = err;
             break :blk preferences.UserSettings{};
         };
+        var custom_shell_load_error: ?anyerror = null;
+        var custom_shells = custom_profiles.Catalog.load(allocator, settings_path, &settings_diagnostic) catch |err| blk: {
+            if (err == error.OutOfMemory) return err;
+            custom_shell_load_error = err;
+            settings_load_error = err;
+            break :blk custom_profiles.Catalog.init(allocator);
+        };
+        errdefer custom_shells.deinit();
         const machine_name = try platform.machineNameAlloc(allocator);
         errdefer allocator.free(machine_name);
         const argv = try std.process.argsAlloc(allocator);
         defer std.process.argsFree(allocator, argv);
         var parsed_request = try shell.ShellRequest.parseArguments(if (argv.len > 0) argv[1..] else &.{});
+        var selected_custom: ?custom_profiles.Profile = null;
         if (argv.len <= 1) {
             parsed_request = switch (settings.default_shell) {
                 .startup => parsed_request,
                 .wsl => .{ .wsl = .{ .distribution = .automatic, .command = .default } },
-                else => .{ .builtin = std.meta.stringToEnum(shell.BuiltinShellProfile, @tagName(settings.default_shell)) orelse return error.InvalidDefaultShell },
+                .cmd, .powershell, .pwsh, .nu, .gitbash => .{ .builtin = std.meta.stringToEnum(shell.BuiltinShellProfile, @tagName(settings.default_shell)).? },
+                else => blk: {
+                    selected_custom = custom_shells.find(@intFromEnum(settings.default_shell));
+                    if (selected_custom) |profile| break :blk try profile.request();
+                    settings_load_error = error.UnavailableShellSelection;
+                    break :blk parsed_request;
+                },
             };
         }
         var request = try parsed_request.forWorkingDirectory(parsed);
@@ -115,8 +133,14 @@ pub const TerminalApplication = struct {
         defer allocator.free(system_directory);
         var environment = try platform.shellEnvironment(allocator);
         defer environment.deinit();
-        var launch = try shell.ShellLaunch.resolve(allocator, request, system_directory, &environment);
+        var launch = shell.ShellLaunch.resolve(allocator, request, system_directory, &environment) catch |err| blk: {
+            if (selected_custom == null or err == error.OutOfMemory) return err;
+            settings_load_error = err;
+            selected_custom = null;
+            break :blk try shell.ShellLaunch.resolve(allocator, .{ .builtin = .system }, system_directory, &environment);
+        };
         errdefer launch.deinit();
+        if (selected_custom) |profile| try launch.identifyProfile(profile.id, profile.name, profile.program, profile.arguments);
         const default_kind = launch.kind;
         try platform.setShellName(launch.shellName());
         platform.setChromePalette(terminal_theme.themes[settings.theme_index].chromePalette());
@@ -129,6 +153,8 @@ pub const TerminalApplication = struct {
             .default_shell_kind = default_kind,
             .settings = settings,
             .settings_path = settings_path,
+            .custom_shells = custom_shells,
+            .custom_shell_load_error = custom_shell_load_error,
             .settings_diagnostic = settings_diagnostic,
             .startup_preferences = .{ .font_pending = settings_load_error },
             .theme_index = settings.theme_index,
@@ -157,6 +183,7 @@ pub const TerminalApplication = struct {
         }
         self.shell_launches.deinit(self.allocator);
         self.launch.deinit();
+        self.custom_shells.deinit();
     }
     pub fn fail(self: *TerminalApplication, err: anyerror) void {
         if (self.health == .failed) return;
@@ -272,17 +299,33 @@ pub const TerminalApplication = struct {
             dialogs.showSettingsLoadFailure(err, &self.settings_diagnostic, .reload);
             return;
         };
-        if (std.meta.eql(self.currentPreferences(), settings)) {
-            self.settings = settings;
+        var catalog = custom_profiles.Catalog.load(self.allocator, self.settings_path, &self.settings_diagnostic) catch |err| {
+            dialogs.showSettingsLoadFailure(err, &self.settings_diagnostic, .reload);
+            return;
+        };
+        if (@intFromEnum(settings.default_shell) >= 256 and catalog.find(@intFromEnum(settings.default_shell)) == null) {
+            catalog.deinit();
+            dialogs.showSettingsLoadFailure(error.UnavailableShellSelection, &self.settings_diagnostic, .reload);
             return;
         }
-        self.updatePreferences(settings, .lua) catch |err| {
-            dialogs.showSettingsLoadFailure(err, &self.settings_diagnostic, .reload);
-        };
+        var previous = self.custom_shells;
+        self.custom_shells = catalog;
+        self.discoverAvailableShells();
+        if (!std.meta.eql(self.currentPreferences(), settings)) {
+            self.updatePreferences(settings, .lua) catch |err| {
+                self.custom_shells.deinit();
+                self.custom_shells = previous;
+                self.discoverAvailableShells();
+                dialogs.showSettingsLoadFailure(err, &self.settings_diagnostic, .reload);
+                return;
+            };
+        } else self.settings = settings;
+        previous.deinit();
+        self.custom_shell_load_error = null;
     }
     fn updatePreferences(self: *TerminalApplication, settings: preferences.UserSettings, source: enum { gui, lua }) !void {
         try settings.validate();
-        const kind: shell.ShellKind = if (settings.default_shell == .startup) self.launch.kind else std.meta.intToEnum(shell.ShellKind, @intFromEnum(settings.default_shell)) catch return error.InvalidDefaultShell;
+        const kind: shell.ShellKind = if (settings.default_shell == .startup) self.launch.kind else @enumFromInt(@intFromEnum(settings.default_shell));
         if (settings.default_shell != .startup and settings.default_shell != self.settings.default_shell) {
             if (source == .lua or self.available_shell_count == 0) self.discoverAvailableShells();
             var available = false;
@@ -290,6 +333,7 @@ pub const TerminalApplication = struct {
                 available = true;
             };
             if (!available) return error.UnavailableShellSelection;
+            if (@intFromEnum(kind) >= 256) _ = try self.resolveShellLaunch(kind);
         }
         if (source == .gui and !std.meta.eql(self.settings, settings)) preferences.saveUserSettings(self.allocator, self.settings_path, settings) catch |err| {
             dialogs.showSettingsFailure(err);
@@ -302,7 +346,7 @@ pub const TerminalApplication = struct {
         self.cursor_blink_enabled = settings.cursor_blink;
         self.cursor_blink.synchronize(null, self.cursorNowMs());
         self.default_shell_kind = kind;
-        try platform.setShellName(if (settings.default_shell == .startup) self.launch.shellName() else kind.displayName());
+        try platform.setShellName(if (settings.default_shell == .startup) self.launch.shellName() else self.shellLabel(kind));
         try self.syncAnimationWake();
         platform.invalidateWindow();
     }
@@ -385,16 +429,68 @@ pub const TerminalApplication = struct {
                 count += 1;
             }
         }
+        if (self.launch.kind == .custom) {
+            self.available_shells[count] = .custom;
+            count += 1;
+        }
+        for (self.custom_shells.profiles.items) |profile| {
+            self.available_shells[count] = @enumFromInt(profile.id);
+            count += 1;
+        }
         if (count == 0) {
             self.available_shells[0] = self.launch.kind;
             count = 1;
         }
         self.available_shell_count = count;
     }
+    pub fn shellLabel(self: *const TerminalApplication, kind: shell.ShellKind) []const u8 {
+        if (self.custom_shells.find(@intFromEnum(kind))) |profile| return profile.name;
+        return if (kind == .custom) self.launch.shellName() else kind.displayName();
+    }
+    pub fn shellDetail(self: *const TerminalApplication, kind: shell.ShellKind) []const u8 {
+        if (self.custom_shells.find(@intFromEnum(kind))) |profile| return profile.displayProgram();
+        return if (kind == .custom) self.launch.program else kind.subtitle();
+    }
+    pub fn addCustomShell(self: *TerminalApplication, name: []const u8, program: []const u8, arguments: []const u8) !void {
+        const edit_lock = try custom_profiles.Catalog.editLock(self.allocator, self.settings_path);
+        defer edit_lock.close();
+        var latest = custom_profiles.Catalog.load(self.allocator, self.settings_path, &self.settings_diagnostic) catch |err| {
+            self.custom_shell_load_error = err;
+            return if (err == error.OutOfMemory) err else error.InvalidLuaShellProfiles;
+        };
+        defer latest.deinit();
+        if (@intFromEnum(self.settings.default_shell) >= 256 and latest.find(@intFromEnum(self.settings.default_shell)) == null) return error.UnavailableShellSelection;
+        const id = @max(try latest.nextId(), try self.custom_shells.nextId());
+        const profile: custom_profiles.Profile = .{ .id = id, .name = name, .program = program, .arguments = arguments };
+        try profile.validate();
+        var request = try profile.request();
+        const distribution = if (request == .wsl) try wsl_registry.readDefaultWslDistributionAlloc(self.allocator) else null;
+        defer if (distribution) |value| self.allocator.free(value.bytes);
+        if (distribution) |value| request.wsl.distribution = .{ .named = value };
+        const system_directory = try platform.systemDirectoryAlloc(self.allocator);
+        defer self.allocator.free(system_directory);
+        var environment = try platform.shellEnvironment(self.allocator);
+        defer environment.deinit();
+        var launch = try shell.ShellLaunch.resolve(self.allocator, request, system_directory, &environment);
+        defer launch.deinit();
+        try latest.appendAndSave(self.settings_path, profile);
+        const previous = self.custom_shells;
+        self.custom_shells = latest;
+        latest = previous;
+        self.custom_shell_load_error = null;
+        self.discoverAvailableShells();
+    }
     fn resolveShellLaunch(self: *TerminalApplication, kind: shell.ShellKind) !*const shell.ShellLaunch {
-        if (kind == self.launch.kind) return &self.launch;
-        for (self.shell_launches.items) |cached| {
-            if (cached.kind == kind) return cached;
+        const custom = self.custom_shells.find(@intFromEnum(kind));
+        if (custom) |profile| {
+            if (self.launch.matchesProfile(profile.id, profile.name, profile.program, profile.arguments) and (self.launch.programAvailable() catch false)) return &self.launch;
+            for (self.shell_launches.items) |cached| {
+                if (cached.matchesProfile(profile.id, profile.name, profile.program, profile.arguments) and (cached.programAvailable() catch false)) return cached;
+            }
+        } else {
+            if (kind == self.launch.kind) return &self.launch;
+            if (@intFromEnum(kind) >= 256) return error.UnavailableShellSelection;
+            for (self.shell_launches.items) |cached| if (cached.kind == kind) return cached;
         }
         try self.shell_launches.ensureUnusedCapacity(self.allocator, 1);
         const system_directory = try platform.systemDirectoryAlloc(self.allocator);
@@ -402,10 +498,14 @@ pub const TerminalApplication = struct {
         var environment = try platform.shellEnvironment(self.allocator);
         defer environment.deinit();
 
-        const default_distribution = if (kind == .wsl) wsl_registry.readDefaultWslDistributionAlloc(self.allocator) catch null else null;
+        const is_wsl = kind == .wsl or (custom != null and std.mem.startsWith(u8, custom.?.program, "wsl:"));
+        const default_distribution = if (is_wsl) wsl_registry.readDefaultWslDistributionAlloc(self.allocator) catch null else null;
         defer if (default_distribution) |name| self.allocator.free(name.bytes);
         var request: shell.ShellRequest = undefined;
-        if (kind == .wsl) {
+        if (custom) |profile| {
+            request = try profile.request();
+            if (default_distribution) |name| request.wsl.distribution = .{ .named = name };
+        } else if (kind == .wsl) {
             request = .{ .wsl = .{
                 .distribution = if (default_distribution) |name| .{ .named = name } else .automatic,
                 .command = .default,
@@ -417,6 +517,8 @@ pub const TerminalApplication = struct {
         const owned = try self.allocator.create(shell.ShellLaunch);
         errdefer self.allocator.destroy(owned);
         owned.* = try shell.ShellLaunch.resolve(self.allocator, request, system_directory, &environment);
+        errdefer owned.deinit();
+        if (custom) |profile| try owned.identifyProfile(profile.id, profile.name, profile.program, profile.arguments);
         self.shell_launches.appendAssumeCapacity(owned);
         return owned;
     }
@@ -893,7 +995,7 @@ pub const TerminalApplication = struct {
         switch (mode) {
             .set_default => {
                 var settings = self.currentPreferences();
-                settings.default_shell = std.meta.intToEnum(preferences.DefaultShell, @intFromEnum(kind)) catch return error.InvalidDefaultShell;
+                settings.default_shell = if (kind == .custom) .startup else @enumFromInt(@intFromEnum(kind));
                 try self.commitPreferences(settings);
             },
             .new_tab => {

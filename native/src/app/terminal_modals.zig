@@ -10,7 +10,7 @@ const shell = @import("../shell/shell_launch.zig");
 /// Builds a synchronous, copied presentation; terminal/session storage never escapes into native controls.
 pub fn presentTerminalModal(self: *Application) !void {
     var items: [64]native.DialogItem = undefined;
-    var shells: [8]native.DialogItem = undefined;
+    var shells: [64]native.DialogItem = undefined;
     var count: usize = 0;
     var request: native.DialogPresentation = .{
         .kind = .appearance,
@@ -33,10 +33,13 @@ pub fn presentTerminalModal(self: *Application) !void {
                 request.title = "Settings";
                 request.description = "Changes are applied and saved automatically.";
                 shells[0] = .{ .value = 0, .label = "Launch shell", .detail = "Keep the shell selected at startup" };
-                for (self.available_shells[0..self.available_shell_count], 1..) |kind, i| {
-                    shells[i] = .{ .value = @intFromEnum(kind), .label = kind.displayName(), .detail = kind.subtitle() };
+                var shell_count: usize = 1;
+                for (self.available_shells[0..self.available_shell_count]) |kind| {
+                    if (kind == .custom) continue;
+                    shells[shell_count] = .{ .value = @intFromEnum(kind), .label = self.shellLabel(kind), .detail = self.shellDetail(kind) };
+                    shell_count += 1;
                 }
-                request.shells = shells[0 .. self.available_shell_count + 1];
+                request.shells = shells[0..shell_count];
             }
         },
         .command_palette => |*cp| {
@@ -58,10 +61,16 @@ pub fn presentTerminalModal(self: *Application) !void {
             request.title = "Choose a shell";
             request.description = "";
             for (self.available_shells[0..self.available_shell_count]) |kind| {
-                items[count] = .{ .value = @intFromEnum(kind), .label = kind.displayName(), .detail = kind.subtitle() };
+                items[count] = .{ .value = @intFromEnum(kind), .label = self.shellLabel(kind), .detail = self.shellDetail(kind) };
                 count += 1;
             }
             request.selected = if (count > 0) items[@min(picker.selected_index, count - 1)].value else 0;
+        },
+        .custom_shell => {
+            request.kind = .custom_shell;
+            request.title = "Add custom shell";
+            request.description = "Choose how to start your shell. Arguments are passed directly, not through another shell.";
+            request.accept_label = "Add shell";
         },
         .close_confirm => |*confirmation| {
             request.kind = .close;
@@ -85,6 +94,11 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
         .cancel => {
             const return_to_peek = if (self.overlay == .close_confirm) self.overlay.close_confirm.return_to_peek else null;
             if (self.overlay == .theme_picker) try self.applyTheme(self.overlay.theme_picker.initial_theme_index);
+            if (self.overlay == .custom_shell) {
+                self.overlay = .settings;
+                try presentTerminalModal(self);
+                return;
+            }
             self.overlay = .none;
             if (return_to_peek) |index| overlays.restorePeek(self, index);
             platform.invalidateWindow();
@@ -110,9 +124,39 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
             },
             else => {},
         },
+        .add_shell => {
+            if (self.overlay != .settings) return;
+            self.overlay = .custom_shell;
+            try presentTerminalModal(self);
+        },
+        .save_shell => |form| {
+            if (self.overlay != .custom_shell) return;
+            self.addCustomShell(std.mem.trim(u8, form.name, " \t"), std.mem.trim(u8, form.program, " \t"), form.arguments) catch |err| {
+                native.showFormError(switch (err) {
+                    error.InvalidShellName => "Enter a name shorter than 256 UTF-8 bytes.",
+                    error.DuplicateShellProfile => "A shell with that name already exists. Choose another name.",
+                    error.ShellProgramUnavailable => "Program not found. Choose an executable or check your PATH.",
+                    error.InvalidShellProgram, error.InvalidDirectoryPath => "Use an absolute executable path, a PATH command, or wsl:/absolute/program.",
+                    error.TooManyShellProfiles => "The custom shell limit has been reached (56 profiles).",
+                    error.SettingsFileTooLarge => "Custom profiles exceed the 64 KiB storage limit. Shorten the profile arguments.",
+                    error.InvalidLuaShellProfiles => "Fix the .shells.lua configuration before adding another shell.",
+                    error.ProfileStoreBusy => "Another Vex window is saving profiles. Try again in a moment.",
+                    error.UnavailableShellSelection => "The default profile is missing from .shells.lua. Choose another default first.",
+                    error.InvalidLinuxDirectory, error.InvalidWslProgram, error.InvalidWslPathText => "Use wsl:/ followed by the absolute Linux executable path.",
+                    error.InvalidShellText, error.ShellCommandLineTooLong => "Check the program and arguments: valid UTF-8, no controls, and fewer than 32767 UTF-16 units.",
+                    else => "The profile could not be saved. Check the configuration folder and try again.",
+                });
+                return;
+            };
+            self.overlay = .settings;
+            try presentTerminalModal(self);
+        },
         .settings => |settings| {
             if (self.overlay != .settings) return;
-            try self.commitPreferences(settings);
+            self.commitPreferences(settings) catch |err| {
+                native.showSettingsFailure(err);
+                return;
+            };
             try presentTerminalModal(self);
         },
         .choose => |value| switch (self.overlay) {
@@ -138,7 +182,11 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
                     found = true;
                 };
                 if (!found) return error.UnavailableShellSelection;
-                try self.executeShellPickerChoice(picker.mode, kind);
+                self.executeShellPickerChoice(picker.mode, kind) catch |err| {
+                    native.showShellLaunchFailure(err);
+                    self.overlay = .{ .shell_picker = picker };
+                    try presentTerminalModal(self);
+                };
             },
             .close_confirm => try self.confirmCloseOverlay(),
             else => {},

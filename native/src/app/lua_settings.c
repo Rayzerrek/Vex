@@ -16,6 +16,8 @@ typedef struct ConfigRuntime {
     size_t length;
     const char* path;
     VexLuaSettings* settings;
+    void* shell_context;
+    VexShellCallback shell_callback;
 } ConfigRuntime;
 
 static void* configAllocate(void* context, void* pointer, size_t old_size, size_t new_size) {
@@ -115,6 +117,23 @@ static int configSetMetatable(lua_State* state) {
     return 1;
 }
 
+static int configAddShell(lua_State* state) {
+    ConfigRuntime* runtime = *(ConfigRuntime**)lua_getextraspace(state);
+    if (!runtime->shell_callback) return luaL_error(state, "Custom shells belong in the .shells.lua file");
+    if (lua_gettop(state) != 4 || !lua_isinteger(state, 1)) return luaL_error(state, "add_shell expects id, name, program and arguments");
+    lua_Integer id = lua_tointeger(state, 1);
+    if (id < 256 || id >= 4294967295LL) return luaL_error(state, "Invalid custom shell id");
+    size_t lengths[3];
+    const char* values[3];
+    for (int i = 0; i < 3; ++i) {
+        if (lua_type(state, i + 2) != LUA_TSTRING) return luaL_error(state, "Shell fields must be strings");
+        values[i] = lua_tolstring(state, i + 2, &lengths[i]);
+    }
+    if (runtime->shell_callback(runtime->shell_context, (unsigned)id, values[0], lengths[0], values[1], lengths[1], values[2], lengths[2]))
+        return luaL_error(state, "Invalid or duplicate custom shell profile");
+    return 0;
+}
+
 static int configExecute(lua_State* state) {
     ConfigRuntime* runtime = lua_touserdata(state, 1);
     VexLuaSettings* settings = runtime->settings;
@@ -142,6 +161,7 @@ static int configExecute(lua_State* state) {
     lua_pushcclosure(state, configSetMetatable, 1);
     lua_setglobal(state, "setmetatable");
     lua_newtable(state);
+    lua_pushcfunction(state, configAddShell); lua_setfield(state, -2, "add_shell");
     lua_newtable(state);
     setString(state, "theme", settings->theme);
     setString(state, "font_family", settings->font_family);
@@ -187,14 +207,12 @@ static int configExecute(lua_State* state) {
     return 0;
 }
 
-int vex_lua_settings_decode(const char* bytes, size_t length, const char* path,
-                            VexLuaSettings* settings, char* diagnostic, size_t capacity) {
-    ConfigRuntime runtime = { .bytes = bytes, .length = length, .path = path, .settings = settings };
-    lua_State* state = lua_newstate(configAllocate, &runtime);
+static int configDecode(ConfigRuntime* runtime, char* diagnostic, size_t capacity) {
+    lua_State* state = lua_newstate(configAllocate, runtime);
     if (!state) return 2;
-    *(ConfigRuntime**)lua_getextraspace(state) = &runtime;
+    *(ConfigRuntime**)lua_getextraspace(state) = runtime;
     lua_pushcfunction(state, configExecute);
-    lua_pushlightuserdata(state, &runtime);
+    lua_pushlightuserdata(state, runtime);
     int status = lua_pcall(state, 1, 0, 0);
     if (status != LUA_OK && capacity) {
         const char* message = lua_tostring(state, -1);
@@ -202,4 +220,18 @@ int vex_lua_settings_decode(const char* bytes, size_t length, const char* path,
     }
     lua_close(state);
     return status == LUA_OK ? 0 : status == LUA_ERRMEM ? 2 : 1;
+}
+
+int vex_lua_settings_decode(const char* bytes, size_t length, const char* path,
+                            VexLuaSettings* settings, char* diagnostic, size_t capacity) {
+    ConfigRuntime runtime = { .bytes = bytes, .length = length, .path = path, .settings = settings };
+    return configDecode(&runtime, diagnostic, capacity);
+}
+
+int vex_lua_shells_decode(const char* bytes, size_t length, const char* path, void* context,
+                         VexShellCallback callback, char* diagnostic, size_t capacity) {
+    VexLuaSettings defaults = { .theme = "unused", .font_family = "unused", .default_shell = "startup", .font_size = 14, .cursor_blink = true, .copy_on_select = true };
+    ConfigRuntime runtime = { .bytes = bytes, .length = length, .path = path, .settings = &defaults,
+                              .shell_context = context, .shell_callback = callback };
+    return configDecode(&runtime, diagnostic, capacity);
 }

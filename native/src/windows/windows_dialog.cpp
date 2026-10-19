@@ -12,14 +12,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <wctype.h>
+#include <shobjidl.h>
+#include <stdlib.h>
 
 namespace {
 constexpr int titleId = 100, descriptionId = 101, queryId = 102, listId = 103;
-constexpr int fontId = 116, fontLabelId = 117;
+constexpr int fontId = 116, fontLabelId = 117, addShellId = 118;
+constexpr int shellNameId = 201, shellProgramId = 202, shellArgumentsId = 203, shellBrowseId = 204, shellErrorId = 205;
 constexpr int sizeId = 111, blinkId = 112, shellId = 113, copyOnSelectId = 114, themeGridId = 115;
 constexpr int pageTitleId = 104, pageDetailId = 105, closeId = 125, firstPageId = 130;
 enum class SettingsPage { general, appearance, terminal, about };
-constexpr size_t itemLimit = 64, shellLimit = 8;
+constexpr size_t itemLimit = 64, shellLimit = 64;
 struct DialogItem {
     uint32_t value;
     wchar_t label[256], detail[256];
@@ -680,12 +683,13 @@ LRESULT CALLBACK themedCombo(HWND control, UINT message, WPARAM wparam, LPARAM l
 }
 LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
     // Classic Win32 edits insert DEL for Ctrl+Backspace instead of deleting a word.
-    if (GetDlgCtrlID(control) == queryId && message == WM_CHAR && wparam == 127) {
+    const int id = GetDlgCtrlID(control);
+    if ((id == queryId || id == shellNameId || id == shellProgramId || id == shellArgumentsId) && message == WM_CHAR && wparam == 127) {
         DWORD start = 0, end = 0;
         SendMessageW(control, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
         if (start == end && start > 0) {
-            wchar_t text[129];
-            const int length = GetWindowTextW(control, text, 129);
+            wchar_t text[32768];
+            const int length = GetWindowTextW(control, text, 32768);
             if (start > (DWORD)length) start = (DWORD)length;
             while (start > 0 && iswspace(text[start - 1])) --start;
             while (start > 0 && !iswspace(text[start - 1])) --start;
@@ -723,7 +727,7 @@ LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARA
         return 0;
     }
     const LRESULT result = DefSubclassProc(control, message, wparam, lparam);
-    if (GetDlgCtrlID(control) == sizeId && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
+    if ((id == sizeId || id == shellNameId || id == shellProgramId || id == shellArgumentsId) && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
         RECT bounds; GetWindowRect(control, &bounds);
         MapWindowPoints(nullptr, host.window, reinterpret_cast<POINT*>(&bounds), 2);
         InflateRect(&bounds, px(8), px(6));
@@ -835,7 +839,59 @@ void applySettingsFontSize(bool restoreInvalid) {
         notify(4, 0, nullptr, 0, host.draft);
     }
 }
+void shellFormError(const wchar_t* message) {
+    SetDlgItemTextW(host.window, shellErrorId, message);
+    InvalidateRect(GetDlgItem(host.window, shellErrorId), nullptr, FALSE);
+}
+void browseShellProgram() {
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE) { shellFormError(L"The file chooser could not be opened. Enter the path manually."); return; }
+    IFileOpenDialog* dialog = nullptr;
+    HRESULT result = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (SUCCEEDED(result)) {
+        const COMDLG_FILTERSPEC filters[] = { { L"Programs", L"*.exe;*.com" }, { L"All files", L"*.*" } };
+        dialog->SetFileTypes(2, filters);
+        dialog->SetTitle(L"Choose a shell executable");
+        dialog->SetOptions(FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM | FOS_DONTADDTORECENT);
+        result = dialog->Show(host.window);
+        if (SUCCEEDED(result)) {
+            IShellItem* item = nullptr;
+            result = dialog->GetResult(&item);
+            if (SUCCEEDED(result)) {
+                PWSTR path = nullptr;
+                result = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+                if (SUCCEEDED(result)) { SetDlgItemTextW(host.window, shellProgramId, path); CoTaskMemFree(path); }
+                item->Release();
+            }
+        }
+        dialog->Release();
+    }
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    if (FAILED(result) && result != HRESULT_FROM_WIN32(ERROR_CANCELLED)) shellFormError(L"The file chooser could not be opened. Enter the path manually.");
+}
+void submitCustomShell() {
+    constexpr int capacity = 256 * 1024;
+    auto* bytes = static_cast<uint8_t*>(malloc(capacity));
+    if (!bytes) { shellFormError(L"Not enough memory to save this shell. Try again."); return; }
+    const int ids[] = { shellNameId, shellProgramId, shellArgumentsId };
+    size_t length = 0;
+    wchar_t wide[32768];
+    bool valid = true;
+    for (int i = 0; i < 3; ++i) {
+        const int units = GetDlgItemTextW(host.window, ids[i], wide, 32768);
+        if (units) {
+            const int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, units, reinterpret_cast<char*>(bytes + length), capacity - (int)length - 2, nullptr, nullptr);
+            if (!count) { valid = false; break; }
+            length += (size_t)count;
+        }
+        if (i < 2) bytes[length++] = 0;
+    }
+    if (valid) notify(7, 0, bytes, length);
+    else shellFormError(L"The fields are too long or contain incomplete Unicode characters.");
+    free(bytes);
+}
 void acceptDialog() {
+    if (host.model.kind == 7) { submitCustomShell(); return; }
     if (host.model.kind == 4) applySettingsFontSize(false);
     else if (host.model.kind == 6) finish(1);
     else {
@@ -1252,8 +1308,9 @@ void drawComboItem(const DRAWITEMSTRUCT& draw) {
     SelectObject(draw.hDC, host.font); SetBkMode(draw.hDC, TRANSPARENT); SetTextColor(draw.hDC, color(host.model.palette.text_primary));
     DrawTextW(draw.hDC, text, -1, &bounds, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
-float dialogWidth() { return host.model.kind == 4 ? 760.0f : host.model.kind == 1 ? 580.0f : host.model.kind == 2 ? 560.0f : host.model.kind == 5 ? 472.0f : host.model.kind == 6 ? 460.0f : 480.0f; }
+float dialogWidth() { return host.model.kind == 7 ? 600.0f : host.model.kind == 4 ? 760.0f : host.model.kind == 1 ? 580.0f : host.model.kind == 2 ? 560.0f : host.model.kind == 5 ? 472.0f : host.model.kind == 6 ? 460.0f : 480.0f; }
 float dialogHeight() {
+    if (host.model.kind == 7) return 500.0f;
     if (host.model.kind == 2) return 112.0f + 12.0f * (float)px(listRowHeight()) / host.scale;
     if (host.model.kind == 5) {
         const size_t rows = host.model.count > shellLimit ? shellLimit : host.model.count;
@@ -1269,7 +1326,7 @@ void setPageControlVisibility(int id, bool visible) {
 void showPage(SettingsPage previousPage) {
     const bool general = host.page == SettingsPage::general, appearance = host.page == SettingsPage::appearance, terminal = host.page == SettingsPage::terminal;
     const struct PageControl { int id; bool visible; } controls[] = {
-        { shellId, general }, { 122, general }, { 123, general }, { copyOnSelectId, general }, { themeGridId, appearance },
+        { shellId, general }, { 122, general }, { 123, general }, { copyOnSelectId, general }, { addShellId, general }, { themeGridId, appearance },
         { sizeId, terminal }, { blinkId, terminal }, { 121, terminal }, { 126, terminal }, { fontId, terminal }, { fontLabelId, terminal },
     };
     constexpr UINT visibilityFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
@@ -1306,7 +1363,7 @@ void paintDialogSurface(HDC dc) {
     roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(24));
     if (host.model.kind == 4 && (host.page == SettingsPage::general || host.page == SettingsPage::terminal)) {
         const bool compact = host.height < 430;
-        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 422 : 360) - (compact ? 46 : 0)) };
+        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 422 : 408) - (compact ? 46 : 0)) };
         roundedFill(dc, card, color(host.model.palette.pane_bg), color(host.model.palette.pane_bg), px(28));
         if (host.page == SettingsPage::terminal) {
             HWND edit = GetDlgItem(host.window, sizeId);
@@ -1314,6 +1371,15 @@ void paintDialogSurface(HDC dc) {
             MapWindowPoints(nullptr, host.window, reinterpret_cast<POINT*>(&field), 2);
             InflateRect(&field, px(8), px(6));
             roundedFill(dc, field, fieldColor(), color(GetFocus() == edit ? host.model.palette.accent : host.model.palette.border), px(12));
+        }
+    }
+    if (host.model.kind == 7) {
+        const int fields[] = { shellNameId, shellProgramId, shellArgumentsId };
+        for (int id : fields) {
+            RECT field; GetWindowRect(GetDlgItem(host.window, id), &field);
+            MapWindowPoints(nullptr, host.window, reinterpret_cast<POINT*>(&field), 2);
+            InflateRect(&field, px(8), px(5));
+            roundedFill(dc, field, fieldColor(), color(GetFocus() == GetDlgItem(host.window, id) ? host.model.palette.accent : host.model.palette.border), px(12));
         }
     }
     if (host.model.kind == 2) {
@@ -1420,12 +1486,30 @@ bool createControls(float width, float height) {
         HWND shell = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, shellId, width - 300, 244, 248, 220);
         ok = shell && ok;
         if (shell) fillCombo(shell, host.model.shells, host.model.shellCount, host.model.settings.shell);
-        ok = control(L"BUTTON", L"Copy on selection", BS_OWNERDRAW | WS_TABSTOP, copyOnSelectId, 34, 304, width - 68, 40) && ok;
+        ok = control(L"BUTTON", L"Add custom shell...", BS_OWNERDRAW | WS_TABSTOP, addShellId, 46, 300, 184, 32) && ok;
+        ok = control(L"BUTTON", L"Copy on selection", BS_OWNERDRAW | WS_TABSTOP, copyOnSelectId, 34, 352, width - 68, 40) && ok;
         showPage(host.page);
     } else {
         if (!commands && !shells) ok = control(L"STATIC", host.model.description, SS_NOPREFIX, descriptionId, closing ? 82 : 24, closing ? 68 : 58, closing ? width - 110 : width - 48, closing ? height - 144 : 38) && ok;
     }
-    if (!settings && host.model.kind != 6) {
+    if (host.model.kind == 7) {
+        ok = control(L"STATIC", L"Name", SS_NOPREFIX, 211, 32, 102, width - 64, 22) && ok;
+        HWND name = control(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, shellNameId, 40, 130, width - 80, 26);
+        ok = name && ok;
+        if (name) SendMessageW(name, EM_SETLIMITTEXT, 255, 0);
+        ok = control(L"STATIC", L"Program", SS_NOPREFIX, 212, 32, 178, width - 64, 22) && ok;
+        HWND program = control(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, shellProgramId, 40, 206, width - 190, 26);
+        ok = program && ok;
+        if (program) SendMessageW(program, EM_SETLIMITTEXT, 32766, 0);
+        ok = control(L"BUTTON", L"Browse...", BS_OWNERDRAW | WS_TABSTOP, shellBrowseId, width - 130, 202, 98, 34) && ok;
+        ok = control(L"STATIC", L"An executable path, a PATH command, or wsl:/absolute/program for a Linux shell in your default WSL distribution.", SS_NOPREFIX, 213, 32, 248, width - 64, 42) && ok;
+        ok = control(L"STATIC", L"Arguments (optional)", SS_NOPREFIX, 214, 32, 304, width - 64, 22) && ok;
+        HWND args = control(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, shellArgumentsId, 40, 332, width - 80, 26);
+        ok = args && ok;
+        if (args) SendMessageW(args, EM_SETLIMITTEXT, 32766, 0);
+        ok = control(L"STATIC", L"", SS_NOPREFIX, shellErrorId, 32, 376, width - 64, 54) && ok;
+    }
+    if (!settings && host.model.kind != 6 && host.model.kind != 7) {
         float top = shells ? 70.0f : 100.0f;
         if (host.model.kind == 2) {
             HWND edit = control(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, queryId, 52, 22, width - 76, 22);
@@ -1478,7 +1562,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         if (rounded && !SetWindowRgn(window, rounded, FALSE)) DeleteObject(rounded);
         DWORD corner = 2; DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
         if (!host.font || !host.heading || !host.symbols || !host.background || !host.field || !createControls(host.baseWidth, host.baseHeight)) { closeDialog(false); return FALSE; }
-        HWND focus = GetDlgItem(window, host.model.kind == 4 ? shellId : host.model.kind == 6 ? IDCANCEL : host.model.kind == 2 ? queryId : listId);
+        HWND focus = GetDlgItem(window, host.model.kind == 7 ? shellNameId : host.model.kind == 4 ? shellId : host.model.kind == 6 ? IDCANCEL : host.model.kind == 2 ? queryId : listId);
         SetFocus(focus);
         return FALSE;
     }
@@ -1528,6 +1612,13 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
             }
             return TRUE;
         }
+        if (host.model.kind == 7 && HIWORD(wparam) == EN_CHANGE &&
+            (LOWORD(wparam) == shellNameId || LOWORD(wparam) == shellProgramId || LOWORD(wparam) == shellArgumentsId)) {
+            if (GetWindowTextLengthW(GetDlgItem(window, shellErrorId))) shellFormError(L"");
+            return TRUE;
+        }
+        if (LOWORD(wparam) == addShellId && host.model.kind == 4) { notify(6); return TRUE; }
+        if (LOWORD(wparam) == shellBrowseId && host.model.kind == 7) { browseShellProgram(); return TRUE; }
         if (LOWORD(wparam) == IDOK) { acceptDialog(); return TRUE; }
         if (LOWORD(wparam) == queryId && HIWORD(wparam) == EN_CHANGE) { queryChanged(); return TRUE; }
         if (LOWORD(wparam) == listId && HIWORD(wparam) == LBN_DBLCLK) { acceptDialog(); return TRUE; }
@@ -1718,10 +1809,10 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
     case WM_CTLCOLORSTATIC: case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX: {
         HDC dc = reinterpret_cast<HDC>(wparam);
         const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
-        const bool muted = id == descriptionId || id == pageDetailId || id == 123 || id == 126;
-        SetTextColor(dc, color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
+        const bool muted = id == descriptionId || id == pageDetailId || id == 123 || id == 126 || id == 213;
+        SetTextColor(dc, id == shellErrorId ? (host.model.palette.is_dark ? RGB(229, 164, 124) : RGB(155, 75, 40)) : color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
         const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == 121 || id == 122 || id == 123 || id == 126);
-        if (id == queryId || id == sizeId) {
+        if (id == queryId || id == sizeId || id == shellNameId || id == shellProgramId || id == shellArgumentsId) {
             SetBkColor(dc, fieldColor());
             SetDCBrushColor(dc, fieldColor());
             return reinterpret_cast<INT_PTR>(GetStockObject(DC_BRUSH));
@@ -1824,14 +1915,14 @@ void repositionTerminalDialogs() {
         const int id = GetDlgCtrlID(c.window);
         float x = c.x, y = c.y, w = c.width, h = c.height;
         if (id >= firstPageId && id < firstPageId + 4) x += dx / 2;
-        else if (id == IDOK || id == IDCANCEL || id == closeId || id == sizeId || id == shellId || id == fontId) x += dx;
+        else if (id == IDOK || id == IDCANCEL || id == closeId || id == sizeId || id == shellId || id == fontId || id == shellBrowseId) x += dx;
         else if (w > host.baseWidth * 0.5f) w += dx;
         if (id == IDOK || id == IDCANCEL) y += dy;
         if (id == listId || id == themeGridId) h += dy;
         if (id == 123 || id == 126) w = fminf(w, host.width - 350);
         if (compact) {
             if (id >= firstPageId && id < firstPageId + 4) { y = 44; h = 44; }
-            if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == blinkId || id == copyOnSelectId) y -= 46;
+            if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == blinkId || id == copyOnSelectId || id == addShellId) y -= 46;
             if (id == pageDetailId) h = 30;
             if (id == themeGridId) { y = 174; h = host.height - 198; }
         }
@@ -1839,6 +1930,23 @@ void repositionTerminalDialogs() {
             const int rowPixels = px(listRowHeight());
             const int rows = px(h) / rowPixels;
             if (rows > 0) h = (float)(rows * rowPixels) / host.scale;
+        }
+        if (host.model.kind == 7) {
+            const bool small = host.height < 440;
+            if (id == descriptionId || id == 213) setPageControlVisibility(id, !small);
+            if (id == titleId) { x = 24; y = 22; w = host.width - 80; }
+            if (id == descriptionId) { x = 24; y = 58; w = host.width - 48; }
+            if (id == 211 || id == 212 || id == 214 || id == 213 || id == shellErrorId) { x = 32; w = host.width - 64; }
+            if (id == 211) y = small ? 68 : 102;
+            if (id == shellNameId) { x = 40; y = small ? 94 : 130; w = host.width - 80; }
+            if (id == 212) y = small ? 132 : 178;
+            if (id == shellProgramId) { x = 40; y = small ? 158 : 206; w = host.width - 190; }
+            if (id == shellBrowseId) { x = host.width - 130; y = small ? 154 : 202; }
+            if (id == 214) y = small ? 206 : 304;
+            if (id == shellArgumentsId) { x = 40; y = small ? 232 : 332; w = host.width - 80; }
+            if (id == shellErrorId) { y = small ? 266 : 376; h = small ? 36 : 54; }
+            if (id == IDOK || id == IDCANCEL) { x = host.width - (id == IDOK ? 136 : 244); y = host.height - 52; }
+            if (id == closeId) x = host.width - 42;
         }
         MoveWindow(c.window, px(x), px(y), px(fmaxf(w, 1)), px(fmaxf(h, 1)), FALSE);
         if (oldFont) SendMessageW(c.window, WM_SETFONT, reinterpret_cast<WPARAM>(id == pageTitleId || (id == titleId && host.model.kind != 4) ? host.heading : host.font), FALSE);
@@ -1857,6 +1965,11 @@ void repositionTerminalDialogs() {
     host.layoutReady = true;
     RedrawWindow(host.window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE);
 }
+extern "C" void vex_dialog_form_error(VexDialogText message) {
+    if (host.model.kind != 7 || !IsWindow(host.window)) return;
+    wchar_t text[512];
+    if (decodeText(message, text, 512)) shellFormError(text);
+}
 extern "C" void vex_dialog_close() { closeDialog(true); }
 extern "C" uint32_t vex_dialog_first_visible() {
     HWND list = host.window ? GetDlgItem(host.window, listId) : nullptr;
@@ -1865,7 +1978,7 @@ extern "C" uint32_t vex_dialog_first_visible() {
     return first >= 0 && (uint64_t)first <= UINT32_MAX ? (uint32_t)first : 0;
 }
 extern "C" int vex_dialog_open(VexDialogRequest request) {
-    if (!IsWindow(host.owner) || request.kind < 1 || request.kind == 3 || request.kind > 6 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
+    if (!IsWindow(host.owner) || request.kind < 1 || request.kind == 3 || request.kind > 7 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
     if (!host.graphicsToken) {
         Gdiplus::GdiplusStartupInput startup;
         if (Gdiplus::GdiplusStartup(&host.graphicsToken, &startup, nullptr) != Gdiplus::Ok) {
@@ -1979,7 +2092,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     SetWindowPos(host.backdrop, result, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     ShowWindow(result, SW_SHOW);
     SetActiveWindow(result);
-    HWND focus = GetDlgItem(result, request.kind == 4 ? shellId : request.kind == 6 ? IDCANCEL : request.kind == 2 ? queryId : listId);
+    HWND focus = GetDlgItem(result, request.kind == 7 ? shellNameId : request.kind == 4 ? shellId : request.kind == 6 ? IDCANCEL : request.kind == 2 ? queryId : listId);
     SetFocus(focus);
     RedrawWindow(result, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     return 0;

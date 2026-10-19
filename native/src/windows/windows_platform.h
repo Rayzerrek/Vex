@@ -35,6 +35,7 @@ typedef struct {
     uint16_t* command; size_t command_length;
     const uint16_t* directory; size_t directory_length;
     const uint16_t* environment; size_t environment_length;
+    bool declared_shell;
 } VexPtyLaunch;
 /* Pointer event/cursor values are shared with the checked Zig adapter. */
 typedef enum { VEX_POINTER_HOVER = 0, VEX_POINTER_BEGIN = 1, VEX_POINTER_MOVE = 2, VEX_POINTER_END = 3, VEX_POINTER_CANCEL = 4 } VexPointerEvent;
@@ -53,6 +54,7 @@ typedef struct {
     VexChromePalette palette;
 } VexDialogRequest;
 int vex_dialog_open(VexDialogRequest request);
+void vex_dialog_form_error(VexDialogText message);
 void vex_dialog_close(void);
 void vex_dialog_warning(VexDialogText message);
 uint32_t vex_dialog_first_visible(void);
@@ -78,7 +80,7 @@ typedef struct {
     void (*cursor_wake)(void*);
     void (*cursor_activity)(void*, bool);
     uint64_t (*probe)(void*, uint32_t);
-    /* Event: cancel/choose/preview/query/settings = 0..4; text is borrowed for this call only. */
+    /* Events 0..4: cancel/choose/preview/query/settings; 6/7: add/save custom shell. Text is borrowed. */
     void (*dialog)(void*, uint32_t, uint32_t, const uint8_t*, size_t, VexUserSettings);
 } VexWindowCallbacks;
 /* Zero is success; nonzero values are Win32/HRESULT error codes. */

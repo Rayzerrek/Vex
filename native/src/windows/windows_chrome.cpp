@@ -204,7 +204,7 @@ static void drawProgramStatus(VexProgramStatus status, float x, float y, float w
         labelWithFont(badgeFont, caption, x + width - 30, y + 2, 30, color);
     }
 }
-static wchar_t shellName[64] = L"Command Prompt";
+static wchar_t shellName[256] = L"Command Prompt";
 static void labelUtf8WithFont(IDWriteTextFormat* format, const uint8_t* bytes, size_t length, float x, float y, float width, uint32_t color) {
     if (bytes && length > 0 && length <= 256) {
         wchar_t text[257];
@@ -228,8 +228,8 @@ static void labelUtf8OrDefault(const uint8_t* bytes, size_t length, float x, flo
     labelWithFont(font, shellName, x, y, width, color);
 }
 extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
-    if (!bytes || !length || length > 128 || memchr(bytes, 0, length)) return ERROR_INVALID_PARAMETER;
-    int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(bytes), (int)length, shellName, 63);
+    if (!bytes || !length || length >= sizeof(shellName) / sizeof(shellName[0]) || memchr(bytes, 0, length)) return ERROR_INVALID_PARAMETER;
+    int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(bytes), (int)length, shellName, (int)(sizeof(shellName) / sizeof(shellName[0]) - 1));
     if (!count) return (int)GetLastError();
     shellName[count] = 0;
     return 0;
