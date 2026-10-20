@@ -115,7 +115,7 @@ absolute path to use another file. This replaces the native `settings.json`
 format; JSON configuration is no longer read.
 
 ```lua
--- init.lua: vex.config starts with the defaults (and any saved GUI preferences).
+-- init.lua: vex.config starts with the defaults.
 vex.config.theme = "Vex Obsidian" -- use a name from Theme Studio
 vex.config.font_family = "Cascadia Mono"
 vex.config.font_size = 14
@@ -133,12 +133,8 @@ boolean, `copy_on_select` a boolean (also available in Settings → General), an
 `wsl`, or a saved custom profile reference such as `custom:256`. `startup` respects the CLI launch choice. Shell changes affect new tabs and
 splits, not existing processes. Unknown settings and invalid values are errors.
 
-Settings written by the UI are saved atomically to `init.gui.lua` beside `init.lua`
-(or `<name>.gui.lua` for a custom configuration path).
-Vex applies that GUI file first, then your `init.lua`, so explicit script settings win
-on the next load. UI edits apply immediately, but script-owned values revert to
-the script on reload. Saving in Settings never destroys your code or comments.
-To configure a value exclusively through the UI, leave it out of `init.lua`.
+Settings written by the UI are saved atomically to `init.lua`
+(or the file selected by `VEX_CONFIG`), replacing its contents.
 
 Select **Configuration: Reload init.lua** in the command palette
 (`Ctrl+Shift+P`) to reload without restarting. A configuration error keeps the
