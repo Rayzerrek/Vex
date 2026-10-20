@@ -4,13 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vex-mark.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f6f5" />
+    <meta name="theme-color" content="#f8f9fc" />
     <meta
       name="description"
-      content="A native terminal workspace for Windows. Keep your projects, shells, and split panes together."
+      content="A native terminal workspace for Windows. Your shells, tabs, and split panes, without the extra layers."
     />
-    <title>Vex — Your terminals. One workspace.</title>
+    <title>Vex — Room for the real work.</title>
     <script>
+      document.documentElement.dataset.js = "true";
       try {
         var t = localStorage.getItem("vex-theme");
         if (
@@ -20,7 +21,7 @@
           document.documentElement.classList.add("dark");
           document
             .querySelector('meta[name="theme-color"]')
-            .setAttribute("content", "#111214");
+            .setAttribute("content", "#101117");
         }
       } catch (e) {}
     </script>

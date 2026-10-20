@@ -5,6 +5,7 @@ import "@fontsource/ibm-plex-sans/latin-500.css";
 import "@fontsource/ibm-plex-sans/latin-600.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import "./index.css";
+import "./motion.css";
 import { App } from "./app.tsx";
 
 const root = document.getElementById("root")!;

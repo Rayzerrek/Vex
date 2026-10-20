@@ -27,6 +27,11 @@ for (const page of staticPages) {
       : resolve("dist", `.${page.path}`, "index.html");
   await mkdir(resolve(target, ".."), { recursive: true });
   await writeFile(target, html);
+  // Some static servers resolve clean URLs to .html but do not redirect directories.
+  // Ship both forms so direct guide links hydrate the same article in either case.
+  if (page.path !== "/" && page.path !== "/404") {
+    await writeFile(resolve("dist", `.${page.path}.html`), html);
+  }
 }
 
 // Keep only deployable files; the server bundle is a build-time tool.
