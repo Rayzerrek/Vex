@@ -174,11 +174,6 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
         RECT detail = name; detail.top += px(23); detail.bottom += px(23);
         SetTextColor(draw.hDC, color(host.model.palette.text_muted));
         DrawTextW(draw.hDC, item.detail, -1, &detail, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
-        if (draw.itemID + 1 < host.model.count) {
-            RECT line = { name.left, row.bottom - 1, row.right - px(12), row.bottom };
-            SetDCBrushColor(draw.hDC, color(host.model.palette.border));
-            FillRect(draw.hDC, &line, (HBRUSH)GetStockObject(DC_BRUSH));
-        }
         return;
     }
     const bool theme = host.model.kind == 1 || draw.CtlID == themeGridId;
