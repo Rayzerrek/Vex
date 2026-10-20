@@ -80,7 +80,7 @@ void closeDialog(bool restoreFocus) {
 void finish(uint32_t event, uint32_t value = 0) {
     if (host.phase != DialogHost::Phase::active) return;
     // Dispatch commands immediately; a closing animation must never delay an action or the next picker.
-    if (event == 0 && host.model.kind != 2 && host.layered && vex_window_animations_enabled()) {
+    if (event == 0 && host.model.kind != 2 && host.model.kind != 8 && host.layered && vex_window_animations_enabled()) {
         host.pendingEvent = event; host.pendingValue = value;
         host.phase = DialogHost::Phase::closing;
         host.motion.start(0, GetTickCount64(), true);
@@ -220,7 +220,7 @@ void submitCustomShell() {
 void acceptDialog() {
     if (host.model.kind == 7) { submitCustomShell(); return; }
     if (host.model.kind == 4) applySettingsFontSize(false);
-    else if (host.model.kind == 6) finish(1);
+    else if (host.model.kind == 6 || host.model.kind == 8) finish(1);
     else {
         uint32_t value;
         if (listSelection(value)) finish(1, value);
@@ -275,7 +275,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         SetWindowTextW(window, host.model.title);
         host.scale = GetDpiForWindow(host.owner) / 96.0f;
         host.font = CreateFontW(-px(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        host.heading = CreateFontW(-px(20), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        host.heading = CreateFontW(-px(host.model.kind == 8 ? 16 : 20), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         host.symbols = CreateFontW(-px(22), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
         host.background = CreateSolidBrush(surfaceColor());
         host.field = CreateSolidBrush(color(host.model.palette.pane_bg));
@@ -290,10 +290,18 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         if (rounded && !SetWindowRgn(window, rounded, FALSE)) DeleteObject(rounded);
         DWORD corner = 2; DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
         if (!host.font || !host.heading || !host.symbols || !host.background || !host.field || !createControls(host.baseWidth, host.baseHeight)) { closeDialog(false); return FALSE; }
-        HWND focus = GetDlgItem(window, host.model.kind == 7 ? shellNameId : host.model.kind == 4 ? shellId : host.model.kind == 6 ? IDCANCEL : host.model.kind == 2 ? queryId : listId);
+        HWND focus = GetDlgItem(window, host.model.kind == 7 ? shellNameId : host.model.kind == 4 ? shellId : (host.model.kind == 6 || host.model.kind == 8) ? IDCANCEL : host.model.kind == 2 ? queryId : listId);
         SetFocus(focus);
         return FALSE;
     }
+    case WM_ACTIVATE:
+        if (host.model.kind == 8 && LOWORD(wparam) == WA_INACTIVE && host.phase == DialogHost::Phase::active) {
+            // Let the click reach the owner without a closing animation or focus theft.
+            closeDialog(false);
+            notify(0);
+            return TRUE;
+        }
+        break;
     case WM_COMMAND:
         if (host.phase != DialogHost::Phase::active || host.synchronizing) return TRUE;
         if (LOWORD(wparam) == IDCANCEL || LOWORD(wparam) == closeId) { finish(0); return TRUE; }
@@ -455,7 +463,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         return TRUE;
     } break;
     case DM_GETDEFID:
-        SetWindowLongPtrW(window, DWLP_MSGRESULT, host.model.kind == 4 ? 0 : MAKELRESULT(host.model.kind == 6 ? IDCANCEL : IDOK, DC_HASDEFID));
+        SetWindowLongPtrW(window, DWLP_MSGRESULT, host.model.kind == 4 ? 0 : MAKELRESULT((host.model.kind == 6 || host.model.kind == 8) ? IDCANCEL : IDOK, DC_HASDEFID));
         return TRUE;
     case DM_SETDEFID: SetWindowLongPtrW(window, DWLP_MSGRESULT, TRUE); return TRUE;
     case WM_DRAWITEM:
@@ -518,7 +526,7 @@ void initializeTerminalDialogs(HWND owner, VexWindowCallbacks callbacks) {
 HWND terminalDialogWindow() { return host.window; }
 bool routeTerminalDialogMessage(MSG& message) { return host.window && IsDialogMessageW(host.window, &message); }
 void drawTerminalDialogBackdrop(UiRenderer& target, UiBrush& brush, float scale) {
-    if (!IsWindow(host.window) || !IsWindow(host.owner)) return;
+    if (!IsWindow(host.window) || !IsWindow(host.owner) || host.model.kind == 8) return;
     const auto size = target.GetSize();
     const float dimAlpha = host.model.kind == 2
         ? (host.model.palette.is_dark ? 0.18f : 0.08f)
@@ -549,8 +557,9 @@ void repositionTerminalDialogs() {
     host.width = fminf(dialogWidth(), (owner.right - owner.left) / scale - 32);
     host.height = fminf(dialogHeight(), (owner.bottom - owner.top) / scale - 40);
     if (host.width <= 0 || host.height <= 0) return;
-    const int top = (host.model.kind == 2 || host.model.kind == 5) ? (int)fminf((float)px(64), (owner.bottom - px(host.height)) / 2.0f) : (owner.bottom - px(host.height)) / 2;
-    const int left = origin.x + (owner.right - px(host.width)) / 2;
+    const int top = host.model.kind == 8 ? (int)fmaxf(0, fminf((float)px(host.model.anchorY + 4), (float)(owner.bottom - px(host.height))))
+        : (host.model.kind == 2 || host.model.kind == 5) ? (int)fminf((float)px(64), (owner.bottom - px(host.height)) / 2.0f) : (owner.bottom - px(host.height)) / 2;
+    const int left = origin.x + (host.model.kind == 8 ? (int)fmaxf((float)px(8), fminf((float)px(host.model.anchorX), (float)(owner.right - px(host.width) - px(8)))) : (owner.right - px(host.width)) / 2);
     RECT backdropBounds;
     if (IsWindow(host.backdrop) && (!GetWindowRect(host.backdrop, &backdropBounds) ||
         backdropBounds.left != origin.x || backdropBounds.top != origin.y ||
@@ -565,7 +574,7 @@ void repositionTerminalDialogs() {
     HFONT oldFont = nullptr, oldHeading = nullptr, oldSymbols = nullptr;
     if (dpiChanged) {
         HFONT font = CreateFontW(-px(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        HFONT heading = CreateFontW(-px(20), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        HFONT heading = CreateFontW(-px(host.model.kind == 8 ? 16 : 20), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         HFONT symbols = CreateFontW(-px(22), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
         if (font && heading && symbols) { oldFont = host.font; oldHeading = host.heading; oldSymbols = host.symbols; host.font = font; host.heading = heading; host.symbols = symbols; }
         else { if (font) DeleteObject(font); if (heading) DeleteObject(heading); if (symbols) DeleteObject(symbols); }
@@ -643,7 +652,7 @@ extern "C" uint32_t vex_dialog_first_visible() {
     return first >= 0 && (uint64_t)first <= UINT32_MAX ? (uint32_t)first : 0;
 }
 extern "C" int vex_dialog_open(VexDialogRequest request) {
-    if (!IsWindow(host.owner) || request.kind < 1 || request.kind == 3 || request.kind > 7 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
+    if (!IsWindow(host.owner) || request.kind < 1 || request.kind == 3 || request.kind > 8 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
     if (!host.graphicsToken) {
         Gdiplus::GdiplusStartupInput startup;
         if (Gdiplus::GdiplusStartup(&host.graphicsToken, &startup, nullptr) != Gdiplus::Ok) {
@@ -655,6 +664,8 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     memset(&next, 0, sizeof(next));
     if (!decodeText(request.title, next.title, 128) || !decodeText(request.description, next.description, 512) || !decodeText(request.accept_label, next.accept, 64) ||
         !copyItems(request.items, request.count, next.items, itemLimit) || !copyItems(request.shells, request.shell_count, next.shells, shellLimit)) return ERROR_INVALID_DATA;
+    if (!isfinite(request.anchor_x) || !isfinite(request.anchor_y)) return ERROR_INVALID_DATA;
+    next.icon = request.icon; next.anchorX = request.anchor_x; next.anchorY = request.anchor_y;
     next.kind = request.kind; next.selected = request.selected; next.count = request.count; next.shellCount = request.shell_count; next.settings = request.settings; next.palette = request.palette;
     if (host.phase == DialogHost::Phase::active) {
         if (host.model.kind != request.kind) closeDialog(true);
@@ -736,7 +747,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     HWND result = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), &layout.dialog, host.owner, dialogProcedure, 0);
     if (!result || !IsWindow(result)) { closeDialog(false); return ERROR_NOT_ENOUGH_MEMORY; }
     host.window = result;
-    if (!createDialogBackdrop()) { closeDialog(true); return ERROR_NOT_ENOUGH_MEMORY; }
+    if (request.kind != 8 && !createDialogBackdrop()) { closeDialog(true); return ERROR_NOT_ENOUGH_MEMORY; }
     host.phase = DialogHost::Phase::active;
     repositionTerminalDialogs();
     // Theme thumbnails are cached on first visible paint, never on the opening path.
@@ -751,13 +762,13 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
             if (!SetTimer(result, 7, 16, nullptr)) SetLayeredWindowAttributes(result, 0, 255, LWA_ALPHA);
         } else SetWindowLongPtrW(result, GWL_EXSTYLE, style);
     }
-    EnableWindow(host.owner, FALSE);
+    if (request.kind != 8) EnableWindow(host.owner, FALSE);
     // The backdrop is part of the owner, not the popup's GDI surface.
     vex_window_invalidate();
-    SetWindowPos(host.backdrop, result, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (IsWindow(host.backdrop)) SetWindowPos(host.backdrop, result, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     ShowWindow(result, SW_SHOW);
     SetActiveWindow(result);
-    HWND focus = GetDlgItem(result, request.kind == 7 ? shellNameId : request.kind == 4 ? shellId : request.kind == 6 ? IDCANCEL : request.kind == 2 ? queryId : listId);
+    HWND focus = GetDlgItem(result, request.kind == 7 ? shellNameId : request.kind == 4 ? shellId : (request.kind == 6 || request.kind == 8) ? IDCANCEL : request.kind == 2 ? queryId : listId);
     SetFocus(focus);
     RedrawWindow(result, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     return 0;

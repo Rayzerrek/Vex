@@ -63,6 +63,8 @@ pub const TerminalSession = struct {
     active_process_title_len: usize = 0,
     has_foreground_process: bool = false,
     foreground_shell_command: bool = false,
+    foreground_is_shell: bool = false,
+    foreground_is_root: bool = false,
     shell_kind: shell.ShellKind = .cmd,
     shell_name: []const u8 = "Command Prompt",
     shell_program: []const u8 = "cmd.exe",
@@ -223,12 +225,16 @@ pub const TerminalSession = struct {
             const fg = self.pty.foregroundProcess(&exe_buf, &cmd_buf);
             const proc_name: ?[]const u8 = if (fg.exe.len > 0) fg.exe else null;
             const proc_cmd: ?[]const u8 = if (fg.cmd.len > 0) fg.cmd else null;
-            self.foreground_shell_command = if (proc_name) |name| app_icon.isShellName(name) and command_line.shellHasCommand(fg.cmd) else false;
+            self.foreground_is_shell = fg.is_shell;
+            self.foreground_is_root = fg.is_root;
+            self.foreground_shell_command = self.foreground_is_shell and shellRunsCommand(fg.is_root, fg.cmd);
             const resolved_proc_title = resolveForegroundProcessTitle(proc_name, proc_cmd);
             if (resolved_proc_title) |title_slice| {
                 const display = terminal_title.sanitizeDisplayText(title_slice, &self.active_process_title);
                 self.active_process_title_len = if (display) |text| text.len else 0;
-                self.has_foreground_process = true;
+                const working = !self.foreground_is_shell or self.foreground_shell_command;
+                if (self.has_foreground_process and !working and self.terminal.title.appSlice().len > 0) self.terminal.title.reset();
+                self.has_foreground_process = working;
             } else {
                 if (self.has_foreground_process and self.terminal.title.appSlice().len > 0) {
                     self.terminal.title.reset();
@@ -255,11 +261,9 @@ pub const TerminalSession = struct {
     /// Captures a borrowed close-evaluation snapshot of the session's running/title/process state.
     pub fn closeSnapshot(self: *TerminalSession, query_process: bool) close_confirmation.PaneCloseSnapshot {
         if (query_process and self.state == .running) {
-            const now = std.time.milliTimestamp();
-            if (now - self.last_icon_probe_ms >= 100) {
-                self.last_icon_probe_ms = now;
-                _ = self.refreshAppIcon(true);
-            }
+            // A destructive action must not reuse an idle-shell result from the UI polling interval.
+            self.last_icon_probe_ms = std.time.milliTimestamp();
+            _ = self.refreshAppIcon(true);
         }
         const prog_status = self.terminal.program_status.programStatus();
         const status_app = prog_status.app orelse "";
@@ -272,6 +276,8 @@ pub const TerminalSession = struct {
             .status_active = status_running or shell_activity == .working or shell_activity == .blocked,
             .has_foreground_process = self.has_foreground_process,
             .foreground_shell_command = self.foreground_shell_command,
+            .foreground_is_shell = self.foreground_is_shell,
+            .foreground_is_root = self.foreground_is_root,
             .active_process_title = if (self.active_process_title_len > 0)
                 self.active_process_title[0..self.active_process_title_len]
             else if (status_running)
@@ -282,6 +288,24 @@ pub const TerminalSession = struct {
         };
     }
 };
+
+fn shellRunsCommand(is_root: bool, cmd: []const u8) bool {
+    // A shell profile owns its startup arguments. OSC 133 and children describe its live work.
+    if (is_root) return false;
+    return command_line.shellHasCommand(cmd);
+}
+
+test "profile shells are name-independent and startup options do not imply live work" {
+    for ([_][]const u8{
+        "pwsh -NoExit -EncodedCommand AAAA",
+        "never-seen-shell --config 'my config'",
+        "my-shell --initialize 'prompt setup'",
+    }) |cmd| try std.testing.expect(!shellRunsCommand(true, cmd));
+    try std.testing.expect(shellRunsCommand(false, "pwsh -File work.ps1"));
+    try std.testing.expect(shellRunsCommand(false, "bash -c 'sleep 100'"));
+    try std.testing.expect(!shellRunsCommand(false, "never-seen-shell"));
+    try std.testing.expect(!shellRunsCommand(false, "bash -il"));
+}
 
 fn resolveForegroundProcessTitle(proc_name: ?[]const u8, proc_cmd: ?[]const u8) ?[]const u8 {
     const raw_exe = proc_name orelse return null;

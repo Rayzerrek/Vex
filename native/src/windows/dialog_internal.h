@@ -25,6 +25,8 @@ struct DialogModel {
     size_t count, shellCount;
     VexUserSettings settings;
     VexChromePalette palette;
+    VexAppIcon icon;
+    float anchorX, anchorY;
 };
 struct ControlLayout { HWND window; float x, y, width, height; };
 struct ThemeCardCache {

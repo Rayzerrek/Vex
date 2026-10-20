@@ -586,7 +586,8 @@ float dialogWidth() {
     case 2: return 560;
     case 4: return 760;
     case 5: return 472;
-    case 6: return 460;
+    case 6: return 440;
+    case 8: return 352;
     case 7: return 600;
     default: return 480;
     }
@@ -598,7 +599,7 @@ float dialogHeight() {
         const size_t rows = host.model.count > shellLimit ? shellLimit : host.model.count;
         return 120.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
     }
-    return host.model.kind == 6 ? 240.0f : host.model.kind == 4 ? 620.0f : 520.0f;
+    return host.model.kind == 8 ? 184.0f : host.model.kind == 6 ? 208.0f : host.model.kind == 4 ? 620.0f : 520.0f;
 }
 void setPageControlVisibility(int id, bool visible) {
     HWND child = GetDlgItem(host.window, id);
@@ -640,9 +641,9 @@ void showPage(SettingsPage previousPage) {
     }
 }
 bool createControls(float width, float height) {
-    const bool settings = host.model.kind == 4, commands = host.model.kind == 2, shells = host.model.kind == 5, closing = host.model.kind == 6;
+    const bool settings = host.model.kind == 4, commands = host.model.kind == 2, shells = host.model.kind == 5, closing = host.model.kind == 6 || host.model.kind == 8;
     bool ok = true;
-    if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | (settings ? SS_CENTER : SS_LEFT), titleId, settings ? 120 : closing ? 82 : 24, settings ? 18 : closing ? 28 : 22, settings ? width - 240 : closing ? width - 110 : width - 80, 28) != nullptr;
+    if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | (settings ? SS_CENTER : SS_LEFT) | (closing ? SS_ENDELLIPSIS : 0), titleId, settings ? 120 : closing ? 68 : 24, settings ? 18 : closing ? 24 : 22, settings ? width - 240 : closing ? width - 88 : width - 80, 28) != nullptr;
     if (settings) {
         const wchar_t* pages[] = { L"General", L"Appearance", L"Terminal", L"About" };
         for (int i = 0; i < 4; ++i) ok = control(L"BUTTON", pages[i], BS_OWNERDRAW | WS_TABSTOP, firstPageId + i, (width - 448) / 2 + i * 112.0f, 56, 108, 68) && ok;
@@ -671,7 +672,7 @@ bool createControls(float width, float height) {
         ok = control(L"BUTTON", L"Copy on selection", BS_OWNERDRAW | WS_TABSTOP, copyOnSelectId, 34, 352, width - 68, 40) && ok;
         showPage(host.page);
     } else {
-        if (!commands && !shells) ok = control(L"STATIC", host.model.description, SS_NOPREFIX, descriptionId, closing ? 82 : 24, closing ? 68 : 58, closing ? width - 110 : width - 48, closing ? height - 144 : 38) && ok;
+        if (!commands && !shells) ok = control(L"STATIC", host.model.description, SS_NOPREFIX, descriptionId, 24, closing ? 68 : 58, width - 48, closing ? height - 132 : 38) && ok;
     }
     if (host.model.kind == 7) {
         ok = control(L"STATIC", L"Name", SS_NOPREFIX, 211, 32, 102, width - 64, 22) && ok;
@@ -690,7 +691,7 @@ bool createControls(float width, float height) {
         if (args) SendMessageW(args, EM_SETLIMITTEXT, 32766, 0);
         ok = control(L"STATIC", L"", SS_NOPREFIX, shellErrorId, 32, 376, width - 64, 54) && ok;
     }
-    if (!settings && host.model.kind != 6 && host.model.kind != 7) {
+    if (!settings && !closing && host.model.kind != 7) {
         float top = shells ? 70.0f : 100.0f;
         if (host.model.kind == 2) {
             HWND edit = control(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, queryId, 52, 22, width - 76, 22);
@@ -713,11 +714,11 @@ bool createControls(float width, float height) {
     if (!commands) {
         if (!closing) ok = control(L"BUTTON", L"Close", BS_OWNERDRAW | WS_TABSTOP, closeId, width - 42, shells ? 16.0f : 12.0f, 28, 28) && ok;
         if (!settings && !shells) {
-            ok = control(L"BUTTON", L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL, width - 244, height - 52, 96, 34) && ok;
-            ok = control(L"BUTTON", host.model.accept, WS_TABSTOP | BS_OWNERDRAW, IDOK, width - 136, height - 52, 112, 34) && ok;
+            ok = control(L"BUTTON", closing ? L"Keep open" : L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL, width - 260, height - 54, 104, 34) && ok;
+            ok = control(L"BUTTON", host.model.accept, WS_TABSTOP | BS_OWNERDRAW, IDOK, width - 144, height - 54, 120, 34) && ok;
         }
     }
-    if (!settings) SendMessageW(host.window, DM_SETDEFID, host.model.kind == 6 ? IDCANCEL : IDOK, 0);
+    if (!settings) SendMessageW(host.window, DM_SETDEFID, closing ? IDCANCEL : IDOK, 0);
     return ok;
 }
 

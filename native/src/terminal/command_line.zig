@@ -123,16 +123,36 @@ pub fn shellHasCommand(raw: []const u8) bool {
     if (raw.len == 0 or !std.unicode.utf8ValidateSlice(raw)) return true;
     const first = nextToken(raw);
     if (first.token.len == 0) return true;
+    const name = executableStem(first.token);
+    const powershell = equals(name, "pwsh") or equals(name, "powershell");
+    const cmd = equals(name, "cmd");
     var rest = first.rest;
     while (rest.len > 0) {
         const argument = nextToken(rest);
-        if (argument.token.len == 0) return true;
-        if (equals(argument.token, "/k")) return argument.rest.len > 0;
-        const interactive_flags = [_][]const u8{ "-NoLogo", "-NoProfile", "-NoExit", "--login", "-l", "--interactive", "-i", "/d", "/q" };
-        const interactive = for (interactive_flags) |flag| {
-            if (equals(argument.token, flag)) break true;
-        } else false;
-        if (!interactive) return true;
+        const flag = argument.token;
+        if (flag.len == 0) return true;
+        if (cmd) {
+            if (equals(flag, "/k")) return argument.rest.len > 0;
+            if (!equals(flag, "/d") and !equals(flag, "/q") and !equals(flag, "/a") and !equals(flag, "/u") and
+                !equals(flag, "/s") and !equals(flag, "/e:on") and !equals(flag, "/e:off") and
+                !equals(flag, "/v:on") and !equals(flag, "/v:off")) return true;
+        } else if (powershell) {
+            if (equals(flag, "-ExecutionPolicy") or equals(flag, "-ep") or equals(flag, "-WorkingDirectory") or equals(flag, "-wd")) {
+                const value = nextToken(argument.rest);
+                if (value.token.len == 0) return true;
+                rest = value.rest;
+                continue;
+            }
+            if (!equals(flag, "-NoLogo") and !equals(flag, "-NoProfile") and !equals(flag, "-NoExit") and !equals(flag, "-Interactive")) return true;
+        } else {
+            if (equals(flag, "--login") or equals(flag, "--interactive") or equals(flag, "--noprofile") or equals(flag, "--norc") or equals(flag, "--no-config-file")) {
+                rest = argument.rest;
+                continue;
+            }
+            // Combined login/interactive flags are common in Git Bash and nested Unix shells.
+            if (flag.len < 2 or flag[0] != '-') return true;
+            for (flag[1..]) |byte| if (byte != 'l' and byte != 'i') return true;
+        }
         rest = argument.rest;
     }
     return false;
@@ -184,10 +204,10 @@ fn programName(raw: []const u8) []const u8 {
 }
 
 test "interactive shell switches do not hide scripts or inline shell commands" {
-    for ([_][]const u8{ "pwsh", "powershell.exe -NoLogo -NoProfile", "cmd /d /q /k", "bash --login -i", "fish -i", "nu" }) |raw| {
+    for ([_][]const u8{ "pwsh", "powershell.exe -NoLogo -NoProfile", "cmd /d /q /k", "bash --login -i", "fish -i", "nu", "zsh -il", "bash --noprofile --norc -il", "pwsh -NoLogo -ExecutionPolicy Bypass -WorkingDirectory 'C:\\My Projects'", "cmd /d /v:on /k" }) |raw| {
         try std.testing.expect(!shellHasCommand(raw));
     }
-    for ([_][]const u8{ "", "pwsh -Command Start-Sleep", "powershell -NoExit -EncodedCommand AAAA", "bash -c 'sleep 100'", "fish script.fish", "cmd /k task.cmd", "nu --commands sleep", "zsh --unknown-option", "pwsh -File powershell.ps1" }) |raw| {
+    for ([_][]const u8{ "", "pwsh -Command Start-Sleep", "powershell -NoExit -EncodedCommand AAAA", "bash -c 'sleep 100'", "fish script.fish", "cmd /k task.cmd", "nu --commands sleep", "zsh --unknown-option", "pwsh -File powershell.ps1", "pwsh -c sleep", "cmd -i", "bash -NoProfile", "pwsh -ExecutionPolicy", "zsh -lic 'sleep 100'" }) |raw| {
         try std.testing.expect(shellHasCommand(raw));
     }
 }

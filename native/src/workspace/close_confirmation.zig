@@ -9,7 +9,7 @@ pub const CloseTargetKind = enum(u8) {
         return if (self == .pane) "pane" else "tab";
     }
     pub fn closeButtonText(self: CloseTargetKind) []const u8 {
-        return if (self == .pane) "Close Pane" else "Close Tab";
+        return if (self == .pane) "Close pane" else "Close tab";
     }
 };
 /// Warnings rank by observed data-loss risk, never by application brand.
@@ -22,10 +22,12 @@ pub const PaneCloseSnapshot = struct {
     status_active: bool = false,
     has_foreground_process: bool = false,
     foreground_shell_command: bool = false,
+    foreground_is_shell: bool = false,
+    foreground_is_root: bool = false,
     active_process_title: []const u8 = "",
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
 };
-/// Owns bounded modal text; no borrowed title survives a session mutation.
+/// Owns bounded confirmation text; no borrowed title survives a session mutation.
 pub const CloseConfirmation = struct {
     reason: ConfirmationReason,
     target_kind: CloseTargetKind,
@@ -54,24 +56,24 @@ pub fn evaluatePane(snapshot: PaneCloseSnapshot, target: CloseTargetKind) ?Close
     const dirty = std.mem.endsWith(u8, title, "*");
     // A parent shell can report work while waiting for a nested interactive shell.
     // Keep explicit application activity and dirty-buffer warnings authoritative.
-    const foreground_shell = snapshot.has_foreground_process and !snapshot.foreground_shell_command and
-        snapshot.active_process_title.len > 0 and app_icon.isShellName(snapshot.active_process_title);
+    const foreground_shell = (snapshot.has_foreground_process or snapshot.active_process_title.len > 0) and !snapshot.foreground_shell_command and
+        snapshot.foreground_is_shell;
     const foreground_work = snapshot.has_foreground_process and !foreground_shell;
-    const reported_work = snapshot.status_active and (!foreground_shell or snapshot.status_app.len > 0);
+    const reported_work = snapshot.status_active and (!foreground_shell or snapshot.status_app.len > 0 or snapshot.foreground_is_root);
     if (!dirty and !foreground_work and !reported_work) return null;
-    const name = if (snapshot.active_process_title.len > 0) snapshot.active_process_title else if (snapshot.status_active and snapshot.status_app.len > 0) snapshot.status_app else "A program";
+    const name = if (snapshot.status_active and snapshot.status_app.len > 0 and !app_icon.isShellName(snapshot.status_app)) snapshot.status_app else if (snapshot.active_process_title.len > 0) snapshot.active_process_title else "A program";
     var result: CloseConfirmation = .{
         .reason = if (dirty) .dirty_buffer else if (snapshot.status_active) .reported_activity else .foreground_process,
         .target_kind = target,
         .icon = if (!snapshot.icon.is_shell) snapshot.icon else app_icon.fromProcess(name),
     };
     if (dirty) {
-        setFormatted(&result.title_buf, &result.title_len, "Possible Unsaved Changes", .{});
-        setFormatted(&result.message_buf, &result.message_len, "The title indicates modified content. Closing this {s} may discard unsaved work.", .{target.noun()});
-        setFormatted(&result.confirm_buf, &result.confirm_len, "Discard & Close", .{});
+        setFormatted(&result.title_buf, &result.title_len, "Close {s}?", .{name});
+        setFormatted(&result.message_buf, &result.message_len, "This {s} may have unsaved changes. Closing it will stop its programs and discard that work.", .{target.noun()});
+        setFormatted(&result.confirm_buf, &result.confirm_len, "Discard & close", .{});
     } else {
-        setFormatted(&result.title_buf, &result.title_len, "{s} is running", .{name});
-        setFormatted(&result.message_buf, &result.message_len, "Closing this {s} will terminate its running programs. Unsaved work may be lost.", .{target.noun()});
+        setFormatted(&result.title_buf, &result.title_len, "Close {s}?", .{name});
+        setFormatted(&result.message_buf, &result.message_len, "{s} is still running. Closing this {s} will stop it. Unsaved work may be lost.", .{ name, target.noun() });
         setFormatted(&result.confirm_buf, &result.confirm_len, "{s}", .{target.closeButtonText()});
     }
     return result;
@@ -132,8 +134,8 @@ test "unknown and familiar processes have identical close protection; titles do 
 }
 
 test "nested shells are not foreground work but their applications remain protected" {
-    for ([_][]const u8{ "pwsh", "powershell.exe", "cmd", "bash", "zsh", "fish", "nu", "elvish", "sh", "dash", "ash", "ksh", "tcsh", "csh" }) |name| {
-        const snapshot: PaneCloseSnapshot = .{ .is_running = true, .has_foreground_process = true, .active_process_title = name, .status_active = true };
+    for ([_][]const u8{ "pwsh", "powershell.exe", "cmd", "bash", "zsh", "fish", "nu", "elvish", "sh", "dash", "ash", "ksh", "tcsh", "csh", "never-seen-shell" }) |name| {
+        const snapshot: PaneCloseSnapshot = .{ .is_running = true, .has_foreground_process = true, .foreground_is_shell = true, .active_process_title = name, .status_active = true };
         try std.testing.expect(evaluatePane(snapshot, .pane) == null);
         var dirty = snapshot;
         dirty.title = "file*";
@@ -146,6 +148,42 @@ test "nested shells are not foreground work but their applications remain protec
         try std.testing.expect(evaluatePane(active, .pane) != null);
     }
     try std.testing.expect(evaluatePane(.{ .is_running = true, .has_foreground_process = true, .active_process_title = "unknown-tool" }, .pane) != null);
+}
+
+test "close warnings retain executable classification and explicit program identity" {
+    const script = evaluatePane(.{
+        .is_running = true,
+        .has_foreground_process = true,
+        .foreground_is_shell = false,
+        .active_process_title = "powershell",
+    }, .tab) orelse return error.MissingCloseWarning;
+    try std.testing.expectEqualStrings("Close powershell?", script.titleSlice());
+    const reported = evaluatePane(.{
+        .is_running = true,
+        .foreground_is_shell = true,
+        .active_process_title = "pwsh",
+        .status_active = true,
+        .status_app = "nvim",
+    }, .pane) orelse return error.MissingCloseWarning;
+    try std.testing.expectEqualStrings("Close nvim?", reported.titleSlice());
+    try std.testing.expect(!reported.icon.is_shell);
+    try std.testing.expect(std.mem.indexOf(u8, reported.messageSlice(), "nvim") != null);
+    var idle: PaneCloseSnapshot = .{
+        .is_running = true,
+        .foreground_is_shell = true,
+        .foreground_is_root = true,
+        .active_process_title = "my-own-shell",
+    };
+    try std.testing.expect(evaluatePane(idle, .pane) == null);
+    idle.status_active = true;
+    try std.testing.expect(evaluatePane(idle, .pane) != null);
+    idle.foreground_is_root = false;
+    try std.testing.expect(evaluatePane(idle, .pane) == null);
+    idle.status_app = "nvim";
+    idle.title = "notes*";
+    const dirty = evaluatePane(idle, .pane) orelse return error.MissingCloseWarning;
+    try std.testing.expectEqualStrings("Close nvim?", dirty.titleSlice());
+    try std.testing.expectEqual(ConfirmationReason.dirty_buffer, dirty.reason);
 }
 
 test "tab close review has no pane-count cap and preserves highest-risk ordering" {

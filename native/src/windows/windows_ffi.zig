@@ -153,7 +153,7 @@ pub const PtyOwner = struct {
         const working_directory = try std.unicode.utf8ToUtf16LeAllocZ(allocator, windows_directory);
         defer allocator.free(working_directory);
         var pointer: ?*c.VexPty = null;
-        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = @intFromEnum(launch.kind) >= 256 };
+        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.kind != .custom };
         if (c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer) != 0) return error.PtyLaunchFailed;
         return .{ .handle = pointer orelse return error.PtyNullHandle };
     }
@@ -173,17 +173,19 @@ pub const PtyOwner = struct {
     pub fn processId(self: *const PtyOwner) u32 {
         return c.vex_pty_process_id(self.handle);
     }
-    /// Queries the cached deepest non-shell child executable and wrapper command line without heap allocation.
-    pub fn foregroundProcess(self: *const PtyOwner, exe_buf: []u8, cmd_buf: []u8) struct { exe: []const u8, cmd: []const u8 } {
+    /// Queries the foreground application or fallback shell, preserving root identity for bootstrap handling.
+    pub fn foregroundProcess(self: *const PtyOwner, exe_buf: []u8, cmd_buf: []u8) struct { exe: []const u8, cmd: []const u8, is_root: bool = false, is_shell: bool = false } {
         if (exe_buf.len == 0 or cmd_buf.len == 0) return .{ .exe = &.{}, .cmd = &.{} };
         var exe_len: usize = 0;
         var cmd_len: usize = 0;
-        if (c.vex_pty_foreground_process(self.handle, exe_buf.ptr, exe_buf.len, &exe_len, cmd_buf.ptr, cmd_buf.len, &cmd_len) != 0) {
+        var is_root = false;
+        var is_shell = false;
+        if (c.vex_pty_foreground_process(self.handle, exe_buf.ptr, exe_buf.len, &exe_len, cmd_buf.ptr, cmd_buf.len, &cmd_len, &is_root, &is_shell) != 0) {
             return .{ .exe = &.{}, .cmd = &.{} };
         }
         const safe_exe = if (exe_len <= exe_buf.len and std.unicode.utf8ValidateSlice(exe_buf[0..exe_len])) exe_buf[0..exe_len] else &.{};
         const safe_cmd = if (cmd_len <= cmd_buf.len and std.unicode.utf8ValidateSlice(cmd_buf[0..cmd_len])) cmd_buf[0..cmd_len] else &.{};
-        return .{ .exe = safe_exe, .cmd = safe_cmd };
+        return .{ .exe = safe_exe, .cmd = safe_cmd, .is_root = is_root, .is_shell = is_shell };
     }
     /// The reply context is the native handle, not a pointer into a movable Zig array.
     pub fn responseSink(self: *const PtyOwner) terminal.ResponseSink {

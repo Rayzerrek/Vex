@@ -4,8 +4,8 @@ const preferences = @import("../app/user_settings.zig");
 const themes = @import("../workspace/terminal_theme.zig");
 const c = platform.c;
 
-/// Owned dialog kind; path completion deliberately remains an in-terminal popup.
-pub const DialogKind = enum(u32) { appearance = 1, commands = 2, settings = 4, shell = 5, close = 6, custom_shell = 7 };
+/// Owned dialogs include a nonmodal close popover; path completion remains in-terminal.
+pub const DialogKind = enum(u32) { appearance = 1, commands = 2, settings = 4, shell = 5, close = 6, custom_shell = 7, close_popover = 8 };
 /// Borrowed presentation strings are copied by the native dialog before showDialog returns.
 pub const DialogItem = struct {
     value: u32,
@@ -29,6 +29,9 @@ pub const DialogPresentation = struct {
     selected: u32 = 0,
     settings: preferences.UserSettings = .{},
     palette: themes.ChromePalette,
+    icon: @import("../terminal/app_icon.zig").AppIcon = .terminal_shell,
+    anchor_x: f32 = 0,
+    anchor_y: f32 = 44,
 };
 
 fn nativeText(text: []const u8) c.VexDialogText {
@@ -37,7 +40,7 @@ fn nativeText(text: []const u8) c.VexDialogText {
 fn nativeItem(item: DialogItem) c.VexDialogItem {
     return .{ .value = item.value, .label = nativeText(item.label), .detail = nativeText(item.detail), .background = item.background, .foreground = item.foreground, .accent = item.accent, .swatches = item.swatches };
 }
-/// Opens/updates copied native controls; Win32 disables only their owning terminal window.
+/// Opens/updates copied native controls; close popovers do not disable the terminal.
 pub fn showDialog(presentation: DialogPresentation) !void {
     if (presentation.items.len > 64 or presentation.shells.len > 64) return error.DialogItemLimit;
     var items: [64]c.VexDialogItem = undefined;
@@ -56,6 +59,9 @@ pub fn showDialog(presentation: DialogPresentation) !void {
         .shell_count = presentation.shells.len,
         .settings = .{ .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .copy_on_select = presentation.settings.copy_on_select, .font_family = presentation.settings.font_family },
         .palette = platform.nativeChromePalette(presentation.palette),
+        .icon = platform.nativeAppIcon(presentation.icon),
+        .anchor_x = presentation.anchor_x,
+        .anchor_y = presentation.anchor_y,
     });
     if (result != 0) return error.NativeDialogFailure;
 }

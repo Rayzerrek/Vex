@@ -44,7 +44,7 @@ typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN =
 typedef struct { const uint8_t* bytes; size_t length; } VexDialogText;
 typedef struct { uint32_t value; VexDialogText label, detail; uint32_t background, foreground, accent; uint32_t swatches[5]; } VexDialogItem;
 typedef struct { uint32_t theme, font_size, shell; bool cursor_blink, copy_on_select; uint8_t font_family[128]; } VexUserSettings;
-/* Kind: appearance=1, commands=2, settings=4, shell=5, close=6. */
+/* Kind: appearance=1, commands=2, settings=4, shell=5, close=6, custom_shell=7, close_popover=8. */
 typedef struct {
     uint32_t kind, selected;
     VexDialogText title, description, accept_label;
@@ -52,6 +52,8 @@ typedef struct {
     const VexDialogItem* shells; size_t shell_count;
     VexUserSettings settings;
     VexChromePalette palette;
+    VexAppIcon icon;
+    float anchor_x, anchor_y;
 } VexDialogRequest;
 int vex_dialog_open(VexDialogRequest request);
 void vex_dialog_form_error(VexDialogText message);
@@ -120,7 +122,7 @@ void vex_pty_close(VexPty* session);
 bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);
 uint32_t vex_pty_process_id(VexPty* session);
-int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length);
+int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length, bool* is_root, bool* is_shell);
 /* Private window/pipe bridge: borrowing succeeds once per posted block. */
 bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length);
 void vex_pty_ack_output(uint32_t token);

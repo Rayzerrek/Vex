@@ -174,6 +174,15 @@ saving. Errors remain in the editor without discarding its fields. Missing
 programs at launch report an error without terminating existing sessions; an
 unavailable custom startup default falls back to the system shell.
 
+Close protection trusts the selected profile's root as a shell, not an executable
+name allowlist. Startup arguments alone do not indicate live work: child processes,
+OSC 133 command activity and explicit OSC 7501 application activity supply that
+information. Nested Windows shells matching a live profile are recognized by
+executable file identity, not just their filename. An unfamiliar nested process
+without integration remains protected as an application; Windows has no universal
+interactive-shell flag. WSL work detection relies on terminal integration because
+the Windows process tree cannot enumerate Linux applications.
+
 Profiles are saved atomically to `init.shells.lua` beside `init.lua` (or
 `<name>.shells.lua` for `VEX_CONFIG`). Settings manages this file separately from
 hand-written `init.lua`; adding a profile never rewrites user Lua. The format is

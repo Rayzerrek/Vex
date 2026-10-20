@@ -74,6 +74,24 @@ pub fn presentTerminalModal(self: *Application) !void {
         },
         .close_confirm => |*confirmation| {
             request.kind = .close;
+            request.icon = confirmation.confirmation.icon;
+            if (self.model) |*model| {
+                const owner = switch (confirmation.target) {
+                    .tab => |id| model.tabIndex(id),
+                    .pane => |id| for (model.tabs.items, 0..) |tab, i| {
+                        if (tab.tree.containsPane(id)) break i;
+                    } else null,
+                };
+                if (owner) |index| {
+                    if (index != model.selected_tab) {
+                        request.kind = .close_popover;
+                        if (self.metrics) |metrics| {
+                            const strip = try @import("../workspace/tab_strip.zig").TabStripLayout.init(metrics.width, model.tabs.items.len);
+                            request.anchor_x = @TypeOf(strip).left + @as(f32, @floatFromInt(index)) * strip.slotWidth();
+                        }
+                    }
+                }
+            }
             request.title = confirmation.confirmation.titleSlice();
             request.description = confirmation.confirmation.messageSlice();
             request.accept_label = confirmation.confirmation.confirmSlice();

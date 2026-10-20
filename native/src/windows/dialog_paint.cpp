@@ -1,6 +1,8 @@
 #include "dialog_internal.h"
 #include <gdiplus.h>
 #include <math.h>
+#include <d2d1.h>
+#include "app_icon_geometry.generated.h"
 
 namespace vex::dialog {
 COLORREF color(uint32_t rgb) { return RGB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255); }
@@ -331,12 +333,14 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     COLORREF border = navigation && checked ? color(host.model.palette.border) : surface;
     if (GetFocus() == draw.hwndItem) border = color(host.model.palette.accent);
     const bool primary = id == IDOK;
+    const bool closing = host.model.kind == 6 || host.model.kind == 8;
     if (primary) {
-        surface = host.model.kind == 6 ? RGB(174, 66, 48) : selectionColor();
+        surface = closing ? (host.model.palette.is_dark ? RGB(158, 57, 65) : RGB(177, 47, 59)) : selectionColor();
         if (pressed) surface = blend(surface, color(host.model.palette.text_primary), 0.16f);
-        border = surface;
+        border = GetFocus() == draw.hwndItem ? color(host.model.palette.text_primary) : surface;
     }
-    roundedFill(draw.hDC, bounds, surface, border, px(navigation ? 22 : 14));
+    if (closing && !primary) border = GetFocus() == draw.hwndItem ? color(host.model.palette.accent) : color(host.model.palette.border);
+    roundedFill(draw.hDC, bounds, surface, border, px(navigation ? 22 : closing ? 12 : 14));
     if (id == closeId) {
         Gdiplus::Graphics graphics(draw.hDC);
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
@@ -350,7 +354,7 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
         return;
     }
     SetBkMode(draw.hDC, TRANSPARENT); SelectObject(draw.hDC, host.font);
-    SetTextColor(draw.hDC, primary && host.model.kind == 6 ? RGB(255, 245, 241) : color(checked && navigation ? host.model.palette.accent : host.model.palette.text_primary));
+    SetTextColor(draw.hDC, primary && closing ? RGB(255, 255, 255) : color(checked && navigation ? host.model.palette.accent : host.model.palette.text_primary));
     wchar_t label[96]; GetWindowTextW(draw.hwndItem, label, 96);
     if (navigation) {
         const wchar_t* icons[] = { L"\xE713", L"\xE790", L"\xE756", L"\xE946" };
@@ -487,11 +491,39 @@ void paintDialogSurface(HDC dc) {
         DrawTextW(dc, L"↑ ↓  Navigate", -1, &footer, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         DrawTextW(dc, L"Enter  Open     Esc  Close", -1, &footer, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
-    if (host.model.kind == 6) {
-        RECT icon = { px(24), px(26), px(66), px(68) };
-        COLORREF tint = blend(surfaceColor(), RGB(194, 101, 71), 0.16f);
-        roundedFill(dc, icon, tint, tint, px(24));
-        drawSymbol(dc, L"\xE7BA", icon, host.model.palette.is_dark ? RGB(229, 164, 124) : RGB(155, 75, 40));
+    if (host.model.kind == 6 || host.model.kind == 8) {
+        const auto& icon = host.model.icon;
+        RECT bounds = { px(24), px(22), px(56), px(54) };
+        const COLORREF ink = icon.kind ? color(icon.color_rgb) : color(host.model.palette.text_muted);
+        const COLORREF tile = blend(surfaceColor(), ink, 0.08f);
+        roundedFill(dc, bounds, tile, tile, px(12));
+        if (icon.kind == 1 && icon.glyph < sizeof(appIconGeometries) / sizeof(appIconGeometries[0]) && appIconGeometries[icon.glyph].figureCount) {
+            const auto& geometry = appIconGeometries[icon.glyph];
+            Gdiplus::Graphics graphics(dc);
+            graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            Gdiplus::GraphicsPath path(geometry.fill == D2D1_FILL_MODE_WINDING ? Gdiplus::FillModeWinding : Gdiplus::FillModeAlternate);
+            for (uint32_t i = 0; i < geometry.figureCount; ++i) {
+                const auto& figure = geometry.figures[i];
+                path.StartFigure();
+                for (uint32_t j = 1; j < figure.count; ++j) {
+                    const auto a = geometry.points[figure.offset + j - 1], b = geometry.points[figure.offset + j];
+                    path.AddLine(px(30) + a.x * px(20) / 24.0f, px(28) + a.y * px(20) / 24.0f,
+                        px(30) + b.x * px(20) / 24.0f, px(28) + b.y * px(20) / 24.0f);
+                }
+                if (figure.closed) path.CloseFigure();
+            }
+            Gdiplus::SolidBrush brush(Gdiplus::Color(255, GetRValue(ink), GetGValue(ink), GetBValue(ink)));
+            graphics.FillPath(&brush, &path);
+        } else if (icon.kind) {
+            wchar_t badge[5] = {};
+            if (icon.kind == 2) for (int i = 0; i < icon.badge_len && i < 4; ++i) badge[i] = icon.badge[i];
+            else if (icon.glyph < sizeof(appIconGeometries) / sizeof(appIconGeometries[0])) {
+                const char* text = appIconGeometries[icon.glyph].badge;
+                for (int i = 0; i < 4 && text[i]; ++i) badge[i] = text[i];
+            }
+            SelectObject(dc, host.font); SetTextColor(dc, ink);
+            DrawTextW(dc, badge, -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        } else drawSymbol(dc, L"\xE756", bounds, ink);
     }
 }
 }

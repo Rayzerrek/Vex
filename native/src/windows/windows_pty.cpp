@@ -8,7 +8,6 @@
 
 HWND vex_native_window();
 static void extractLowerStem(const wchar_t* path, wchar_t (&stem)[64]);
-static bool isShellStem(const wchar_t* stem);
 
 struct VexPty {
     uint32_t token;
@@ -26,6 +25,8 @@ struct VexPty {
     DWORD fgPid;
     wchar_t rootStem[64];
     bool declaredShell;
+    DWORD shellVolume, shellFileHigh, shellFileLow;
+    bool shellIdentityKnown;
     uint64_t fgCreateTime;
     uint8_t fgExe[256];
     size_t fgExeLen;
@@ -156,6 +157,18 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
             const_cast<uint16_t*>(launch.environment), reinterpret_cast<const wchar_t*>(launch.directory), &startup.StartupInfo, &process)) error = GetLastError();
         else {
             session->process = process.hProcess;
+            if (session->declaredShell) {
+                HANDLE image = CreateFileW(reinterpret_cast<const wchar_t*>(launch.program), FILE_READ_ATTRIBUTES,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+                BY_HANDLE_FILE_INFORMATION info = {};
+                if (image != INVALID_HANDLE_VALUE) {
+                    session->shellIdentityKnown = GetFileInformationByHandle(image, &info) != FALSE;
+                    session->shellVolume = info.dwVolumeSerialNumber;
+                    session->shellFileHigh = info.nFileIndexHigh;
+                    session->shellFileLow = info.nFileIndexLow;
+                    CloseHandle(image);
+                }
+            }
             if (!AssignProcessToJobObject(session->job, process.hProcess)) error = GetLastError();
             else if (ResumeThread(process.hThread) == (DWORD)-1) error = GetLastError();
             CloseHandle(process.hThread);
@@ -288,12 +301,35 @@ static bool isIgnoredHelper(const wchar_t* stem) {
     return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
 }
 
-static bool isShellStem(const wchar_t* stem) {
-    static const wchar_t* const list[] = {
-        L"pwsh", L"powershell", L"cmd", L"bash", L"zsh", L"fish", L"nu",
-        L"elvish", L"sh", L"dash", L"ash", L"ksh", L"tcsh", L"csh", L"wsl"
-    };
-    return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
+static bool isConfiguredShell(DWORD pid, const wchar_t* stem) {
+    // Names only avoid unnecessary process/file queries; file identity makes the decision.
+    bool candidate = false;
+    for (auto profile = sessions; profile; profile = profile->next) {
+        if (profile->declaredShell && profile->shellIdentityKnown && wcscmp(profile->rootStem, stem) == 0) {
+            candidate = true;
+            break;
+        }
+    }
+    if (!candidate) return false;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return false;
+    wchar_t path[32768];
+    DWORD length = sizeof(path) / sizeof(path[0]);
+    const bool queried = QueryFullProcessImageNameW(process, 0, path, &length) != FALSE;
+    CloseHandle(process);
+    if (!queried) return false;
+    HANDLE image = CreateFileW(path, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+    if (image == INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION info = {};
+    const bool known = GetFileInformationByHandle(image, &info) != FALSE;
+    CloseHandle(image);
+    if (!known) return false;
+    for (auto profile = sessions; profile; profile = profile->next) {
+        if (profile->declaredShell && profile->shellIdentityKnown && profile->shellVolume == info.dwVolumeSerialNumber &&
+            profile->shellFileHigh == info.nFileIndexHigh && profile->shellFileLow == info.nFileIndexLow) return true;
+    }
+    return false;
 }
 
 typedef NTSTATUS(NTAPI* NtQueryInformationProcessFn)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
@@ -355,10 +391,12 @@ static void refreshProcessSnapshot() {
     snapshotTickMs = now;
 }
 
-extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length) {
-    if (!session || !exe_bytes || !exe_length || !cmd_bytes || !cmd_length || !exe_capacity || !cmd_capacity) return ERROR_INVALID_PARAMETER;
+extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length, bool* is_root, bool* is_shell) {
+    if (!session || !exe_bytes || !exe_length || !cmd_bytes || !cmd_length || !is_root || !is_shell || !exe_capacity || !cmd_capacity) return ERROR_INVALID_PARAMETER;
     *exe_length = 0;
     *cmd_length = 0;
+    *is_root = false;
+    *is_shell = false;
     if (!session->process || InterlockedCompareExchange(&session->stopping, 0, 0)) return 0;
     DWORD rootPid = GetProcessId(session->process);
     if (!rootPid) return 0;
@@ -373,11 +411,12 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
     queue[qTail++] = { rootPid, 0 };
 
     DWORD chosenPid = 0;
+    bool chosenShell = false;
     const wchar_t* chosenExe = nullptr;
     wchar_t chosenStem[64] = {};
     // A user-declared shell is a shell even when its executable has an unknown name.
     // Arbitrary CLI programs still own their workers rather than masquerading as interactive shells.
-    if (!session->declaredShell && !isShellStem(session->rootStem)) {
+    if (!session->declaredShell) {
         chosenPid = rootPid;
         chosenExe = session->rootStem;
         wcscpy_s(chosenStem, session->rootStem);
@@ -411,7 +450,7 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
             extractLowerStem(snapshotNodes[i].exe, stem);
             if (isIgnoredHelper(stem)) continue;
 
-            bool isShell = isShellStem(stem) && wcscmp(stem, L"wsl") != 0;
+            bool isShell = isConfiguredShell(childPid, stem);
             if (!isShell && !chosenPid) {
                 chosenPid = childPid;
                 chosenExe = snapshotNodes[i].exe;
@@ -430,11 +469,19 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
         }
     }
 
-    // A nested shell is itself live foreground work even before it starts another application.
+    // Preserve nested shell identity; Zig distinguishes interactive shells from scripts.
     if (!chosenPid && fallbackShellPid) {
         chosenPid = fallbackShellPid;
         chosenExe = fallbackShellExe;
         wcscpy_s(chosenStem, fallbackShellStem);
+        chosenShell = true;
+    }
+    // A profile defines its root as a shell, regardless of executable name or startup flags.
+    if (!chosenPid && session->declaredShell) {
+        chosenPid = rootPid;
+        chosenExe = session->rootStem;
+        wcscpy_s(chosenStem, session->rootStem);
+        chosenShell = true;
     }
     if (!chosenPid || !chosenExe || !chosenStem[0]) {
         session->fgPid = 0;
@@ -444,6 +491,8 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
         return 0;
     }
 
+    *is_root = chosenPid == rootPid;
+    *is_shell = chosenShell;
     uint64_t createTime = 0;
     HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, chosenPid);
     if (proc) {
