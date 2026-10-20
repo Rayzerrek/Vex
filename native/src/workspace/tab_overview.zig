@@ -69,6 +69,14 @@ pub const Layout = struct {
     }
 };
 
+pub const CloseShortcut = enum { tab, active_pane };
+
+pub fn closeShortcut(key: u32, modifiers: u32) ?CloseShortcut {
+    if (key == 0x2E and modifiers == 0) return .tab;
+    if (key == 'W' and modifiers == 3) return .active_pane;
+    return null;
+}
+
 pub fn content(bounds: PaneRect) PaneRect {
     return .{ .x = bounds.x + 6, .y = bounds.y + 30, .width = @max(1, bounds.width - 12), .height = @max(1, bounds.height - 36) };
 }
@@ -138,6 +146,18 @@ test "seven tabs remain together at equal size and compact layouts prefer three-
     const b = compact.card(1);
     try std.testing.expectEqual(a, interpolate(a, b, 0));
     try std.testing.expectEqual(b, interpolate(a, b, 1));
+}
+
+test "overview close shortcuts require exact modifiers" {
+    try std.testing.expectEqual(@as(?CloseShortcut, .tab), closeShortcut(0x2E, 0));
+    try std.testing.expectEqual(@as(?CloseShortcut, .active_pane), closeShortcut('W', 3));
+    for ([_]u32{ 1, 2, 3, 4, 7 }) |modifiers| {
+        try std.testing.expectEqual(@as(?CloseShortcut, null), closeShortcut(0x2E, modifiers));
+    }
+    for ([_]u32{ 0, 1, 2, 4, 7 }) |modifiers| {
+        try std.testing.expectEqual(@as(?CloseShortcut, null), closeShortcut('W', modifiers));
+    }
+    try std.testing.expectEqual(@as(?CloseShortcut, null), closeShortcut(0x0D, 0));
 }
 
 test "close controls reserve a separate header target and omit undersized splits" {

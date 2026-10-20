@@ -169,6 +169,16 @@ pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
     if (self.overlay == .tab_peek) {
         if (self.overlay.tab_peek.closing) return true;
         const model = if (self.model) |*model| model else return true;
+        if (overview.closeShortcut(key, modifiers)) |shortcut| {
+            const index = @min(self.overlay.tab_peek.selected_index, model.tabs.items.len - 1);
+            const tab = &model.tabs.items[index];
+            const target: CloseTarget = switch (shortcut) {
+                .tab => .{ .tab = tab.id },
+                .active_pane => if (tab.tree.paneCount() > 1) .{ .pane = tab.active_pane } else .{ .tab = tab.id },
+            };
+            try requestPeekClose(self, target);
+            return true;
+        }
         const metrics = self.metrics orelse return true;
         const layout = overview.Layout.init(metrics.width, metrics.height, model.tabs.items.len);
         const selected = &self.overlay.tab_peek.selected_index;

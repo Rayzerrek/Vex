@@ -396,7 +396,7 @@ static void renderUiVerificationScene() {
 }
 
 static void renderScene(double timeMs) {
-    beginWindowChromeFrame({ target, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
+    beginWindowChromeFrame({ target, textFactory, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
         timeMs, vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window) });
     beginTerminalDrawingFrame({ &renderer, drawingFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
     target->Clear(rgb(chromePalette.window_bg));

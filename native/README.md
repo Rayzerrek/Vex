@@ -74,7 +74,9 @@ The tab overview uses terminal frames (including split panes), not window captur
 Use arrows or Tab/Shift+Tab to choose, Home/End to jump to the first/last tab, Enter or a
 card click to switch, and Escape to return without switching. Each card has a close
 button (except the final tab); split previews also have individual close buttons
-when large enough for a usable target. Closing keeps the overview open and uses
+when large enough for a usable target. Delete closes the selected tab;
+Ctrl+Shift+W closes its active split pane (or the tab if it has no splits).
+The final tab cannot be closed. Closing keeps the overview open and uses
 the usual running-process confirmation, including when closing an inactive tab.
 The centered grid shows all tabs together (the workspace limit is eight), with
 uniform card sizes and a centered final row. Columns adapt to window proportions.

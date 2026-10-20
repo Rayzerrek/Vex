@@ -8,6 +8,7 @@
 
 namespace {
 UiRenderer* target;
+IDWriteFactory* textFactory;
 UiBrush paint;
 UiBrush* brush = &paint;
 IDWriteTextFormat* chromeFont;
@@ -61,6 +62,7 @@ void beginWindowChromeFrame(const WindowChromeFrame& frame) {
     pathCompletionSeenLastFrame = pathCompletionSeenThisFrame;
     pathCompletionSeenThisFrame = false;
     target = frame.target;
+    textFactory = frame.textFactory;
     chromeFont = frame.normalFont;
     chromeBoldFont = frame.boldFont;
     badgeFont = frame.badgeFont;
@@ -424,12 +426,24 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
         if (focused) focusedPaneIconKey = computeIconCacheKey(icon, 12);
         titleInset = 30.0f;
     }
-    // Keep activity with the program identity, not the pane actions.
-    if (statusWidth > 0) {
-        drawProgramStatus(status, bounds.x + titleInset, bounds.y + 4, statusWidth, true);
-        titleInset += statusWidth;
+    const float titleWidth = fmaxf(0, remainingWidth - titleInset - statusWidth - 12);
+    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4.0f, titleWidth, focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont);
+    if (statusWidth > 0 && titleWidth > 0) {
+        wchar_t text[257];
+        int count = title && title_length > 0 && title_length <= 256
+            ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(title), (int)title_length, text, 256) : 0;
+        const wchar_t* caption = count > 0 ? text : shellName;
+        const UINT32 units = count > 0 ? (UINT32)count : (UINT32)wcslen(shellName);
+        float captionWidth = titleWidth;
+        IDWriteTextLayout* layout = nullptr;
+        if (SUCCEEDED(textFactory->CreateTextLayout(caption, units, paneTitleFont, titleWidth, 24, &layout))) {
+            DWRITE_TEXT_METRICS metrics = {};
+            if (SUCCEEDED(layout->GetMetrics(&metrics))) captionWidth = fminf(titleWidth, metrics.width);
+            layout->Release();
+        }
+        // Follow short titles closely, but reserve the indicator's space when text is clipped.
+        drawProgramStatus(status, bounds.x + titleInset + captionWidth + 4, bounds.y + 4, statusWidth, true);
     }
-    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4.0f, fmaxf(0, remainingWidth - titleInset - 12), focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont);
     beginTerminalPane(bounds);
 }
 extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity) {
@@ -534,6 +548,7 @@ extern "C" void vex_draw_tab_overview(bool animating) {
     const auto size = target->GetSize();
     rectangle(0, 44, size.width, fmaxf(0, size.height - 44), chromePalette.titlebar_bg);
     labelWithFont(chromeBoldFont, L"Tabs", 28, 58, size.width - 56, chromePalette.text_primary);
+    label(L"Del: close tab    Ctrl+Shift+W: close active pane", 28, 80, size.width - 56, chromePalette.text_muted);
     label(L"Arrows / Tab to choose    Home / End    Enter to switch    Esc to return", 28, size.height - 32, size.width - 56, chromePalette.text_muted);
 }
 extern "C" void vex_draw_preview_close(VexPaneRect bounds, bool hovered) {

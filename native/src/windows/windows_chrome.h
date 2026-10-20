@@ -3,10 +3,12 @@
 
 class UiRenderer;
 struct IDWriteTextFormat;
+struct IDWriteFactory;
 
 // Borrowed window-thread paint values; formats and target must outlive the entire frame.
 struct WindowChromeFrame {
     UiRenderer* target;
+    IDWriteFactory* textFactory;
     IDWriteTextFormat* normalFont;
     IDWriteTextFormat* boldFont;
     IDWriteTextFormat* badgeFont;
