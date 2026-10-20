@@ -64,10 +64,11 @@ pub fn evaluatePane(snapshot: PaneCloseSnapshot, target: CloseTargetKind) ?Close
     // Keep explicit application activity and dirty-buffer warnings authoritative.
     const foreground_shell = (snapshot.has_foreground_process or snapshot.active_process_title.len > 0) and !snapshot.foreground_shell_command and
         snapshot.foreground_is_shell;
-    const foreground_work = snapshot.has_foreground_process and !foreground_shell;
+    const foreground_work = snapshot.has_foreground_process and !foreground_shell and !snapshot.foreground_is_transport;
     const reported_work = snapshot.status_active and (!foreground_shell or snapshot.status_app.len > 0 or snapshot.foreground_is_root);
-    // An unavailable Linux probe is unknown, not evidence that the transport's session is idle.
-    if (!dirty and !foreground_work and !reported_work and !snapshot.foreground_is_transport) return null;
+    // WSL's Windows transport exists before the Linux shell is ready, and outlives probe failures.
+    // Neither fact proves that there is application work to interrupt.
+    if (!dirty and !foreground_work and !reported_work) return null;
     // Captions can be a distribution or a task description, never an executable identity.
     const metadata_name = if (snapshot.status_active and snapshot.status_app.len > 0) snapshot.status_app else "";
     const name = if (metadata_name.len > 0) metadata_name else if (!snapshot.foreground_is_transport and snapshot.active_process_title.len > 0) snapshot.active_process_title else "A program";
@@ -179,6 +180,8 @@ test "exit rows own names and locations, preserve UTF-8 and distinguish dirty or
     try std.testing.expectEqualStrings("agy", review.rows.items[0].nameSlice());
     try std.testing.expectEqualStrings("Tab 1: Editor · Pane 2 · Unsaved changes", review.rows.items[0].detailSlice());
     try review.includePane(std.testing.allocator, .{ .is_running = true, .foreground_is_transport = true }, 1, 0, "");
+    try std.testing.expectEqual(@as(usize, 1), review.rows.items.len);
+    try review.includePane(std.testing.allocator, .{ .is_running = true, .foreground_is_transport = true, .status_active = true }, 1, 0, "");
     try std.testing.expectEqualStrings("Unverified session", review.rows.items[1].nameSlice());
     try review.includePane(std.testing.allocator, .{ .is_running = false, .title = "file*", .has_foreground_process = true }, 1, 1, "Exited");
     try std.testing.expectEqual(@as(usize, 2), review.rows.items.len);
@@ -296,10 +299,18 @@ test "close prompts use process identity across backends and never mistake a dis
         .foreground_is_transport = true,
         .active_process_title = "wsl",
     };
+    try std.testing.expect(evaluatePane(transport, .tab) == null);
+    transport.has_foreground_process = true;
+    transport.foreground_is_shell = false;
+    try std.testing.expect(evaluatePane(transport, .pane) == null);
+    transport.title = "notes*";
+    const dirty = evaluatePane(transport, .pane) orelse return error.MissingCloseWarning;
+    try std.testing.expectEqual(ConfirmationReason.dirty_buffer, dirty.reason);
+    transport.title = "NixOS";
+    transport.status_active = true;
     const unknown = evaluatePane(transport, .tab) orelse return error.MissingCloseWarning;
     try std.testing.expectEqualStrings("Close tab?", unknown.titleSlice());
     try std.testing.expect(std.mem.indexOf(u8, unknown.messageSlice(), "could not be verified") != null);
-    transport.status_active = true;
     transport.status_app = "codex";
     const reported = evaluatePane(transport, .pane) orelse return error.MissingCloseWarning;
     try std.testing.expectEqualStrings("Close codex?", reported.titleSlice());
