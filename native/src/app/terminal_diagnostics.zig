@@ -61,6 +61,8 @@ pub fn onProbe(self: *Application, query: u32) u64 {
             };
             return @intFromFloat(@round(value * 1000));
         },
+        124 => return self.exit_review.rows.items.len,
+        125 => return @intFromBool(self.settings.confirm_close),
         107 => return if (self.activeSession()) |session| @intFromEnum(session.terminal.program_status.shellActivityState()) else 0,
         108 => return if (model.tabs.items.len > 1) if (self.findSession(model.tabs.items[1].active_pane)) |session| session.terminal.title.generation else 0 else 0,
         109 => return if (self.activeSession()) |session| session.terminal.title.generation else 0,
@@ -129,6 +131,7 @@ pub fn onProbe(self: *Application, query: u32) u64 {
             .shell_picker => 6,
             .settings => 7,
             .custom_shell => 8,
+            .exit_confirm => 9,
         },
         54 => return @intFromFloat(@round(platform.fontSize())),
         55 => return self.path_completion.matches.items.len,

@@ -20,6 +20,7 @@ pub const OverlayState = union(enum) {
     tab_peek: struct { selected_index: usize = 0, started_ms: u64 = 0, closing: bool = false, accept: bool = false, hovered_close: ?CloseTarget = null },
     path_completion: struct { pane_id: panes.PaneId, anchor: ?completion_popup.Anchor = null },
     close_confirm: struct { target: CloseTarget, confirmation: close_confirmation.CloseConfirmation, return_to_peek: ?usize = null },
+    exit_confirm,
     shell_picker: struct { mode: ShellPickerMode = .new_tab, selected_index: usize = 0 },
     settings,
     custom_shell,

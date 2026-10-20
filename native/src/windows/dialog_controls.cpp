@@ -551,10 +551,11 @@ void fillList(int id) {
     SendMessageW(list, LB_RESETCONTENT, 0, 0);
     int selected = -1;
     for (size_t i = 0; i < host.model.count; ++i) {
-        LRESULT row = SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(host.model.items[i].label));
+        const auto& item = listItem(i);
+        LRESULT row = SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.label));
         if (row >= 0) {
-            SendMessageW(list, LB_SETITEMDATA, (WPARAM)row, host.model.items[i].value);
-            if (host.model.items[i].value == (id == themeGridId ? host.draft.theme : host.model.selected)) selected = (int)row;
+            SendMessageW(list, LB_SETITEMDATA, (WPARAM)row, item.value);
+            if (item.value == (id == themeGridId ? host.draft.theme : host.model.selected)) selected = (int)row;
         }
     }
     SendMessageW(list, LB_SETCURSEL, selected, 0);
@@ -588,11 +589,13 @@ float dialogWidth() {
     case 5: return 472;
     case 6: return 440;
     case 8: return 352;
+    case 9: return 480;
     case 7: return 600;
     default: return 480;
     }
 }
 float dialogHeight() {
+    if (host.model.kind == 9) return 186.0f + 64.0f * (float)(host.model.count < 5 ? host.model.count : 5);
     if (host.model.kind == 7) return 500.0f;
     if (host.model.kind == 2) return 112.0f + 12.0f * (float)px(listRowHeight()) / host.scale;
     if (host.model.kind == 5) {
@@ -609,7 +612,7 @@ void setPageControlVisibility(int id, bool visible) {
 void showPage(SettingsPage previousPage) {
     const bool general = host.page == SettingsPage::general, appearance = host.page == SettingsPage::appearance, terminal = host.page == SettingsPage::terminal;
     const struct PageControl { int id; bool visible; } controls[] = {
-        { shellId, general }, { 122, general }, { 123, general }, { copyOnSelectId, general }, { addShellId, general }, { themeGridId, appearance },
+        { shellId, general }, { 122, general }, { 123, general && host.height >= 430 }, { copyOnSelectId, general }, { confirmCloseId, general }, { confirmCloseDetailId, general && host.height >= 430 }, { addShellId, general }, { themeGridId, appearance },
         { sizeId, terminal }, { blinkId, terminal }, { 121, terminal }, { 126, terminal }, { fontId, terminal }, { fontLabelId, terminal },
     };
     constexpr UINT visibilityFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
@@ -641,9 +644,10 @@ void showPage(SettingsPage previousPage) {
     }
 }
 bool createControls(float width, float height) {
-    const bool settings = host.model.kind == 4, commands = host.model.kind == 2, shells = host.model.kind == 5, closing = host.model.kind == 6 || host.model.kind == 8;
+    const bool settings = host.model.kind == 4, commands = host.model.kind == 2, shells = host.model.kind == 5, closing = destructiveDialog();
+    const bool exiting = host.model.kind == 9;
     bool ok = true;
-    if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | (settings ? SS_CENTER : SS_LEFT) | (closing ? SS_ENDELLIPSIS : 0), titleId, settings ? 120 : closing ? 68 : 24, settings ? 18 : closing ? 24 : 22, settings ? width - 240 : closing ? width - 88 : width - 80, 28) != nullptr;
+    if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | (settings ? SS_CENTER : SS_LEFT) | (closing ? SS_ENDELLIPSIS : 0), titleId, settings ? 120 : closing && !exiting ? 68 : 24, settings ? 18 : closing ? 24 : 22, settings ? width - 240 : closing && !exiting ? width - 88 : width - 48, 28) != nullptr;
     if (settings) {
         const wchar_t* pages[] = { L"General", L"Appearance", L"Terminal", L"About" };
         for (int i = 0; i < 4; ++i) ok = control(L"BUTTON", pages[i], BS_OWNERDRAW | WS_TABSTOP, firstPageId + i, (width - 448) / 2 + i * 112.0f, 56, 108, 68) && ok;
@@ -670,9 +674,11 @@ bool createControls(float width, float height) {
         if (shell) fillCombo(shell, host.model.shells, host.model.shellCount, host.model.settings.shell);
         ok = control(L"BUTTON", L"Add custom shell...", BS_OWNERDRAW | WS_TABSTOP, addShellId, 46, 300, 184, 32) && ok;
         ok = control(L"BUTTON", L"Copy on selection", BS_OWNERDRAW | WS_TABSTOP, copyOnSelectId, 34, 352, width - 68, 40) && ok;
+        ok = control(L"BUTTON", L"Confirm before closing active programs", BS_OWNERDRAW | WS_TABSTOP, confirmCloseId, 34, 408, width - 68, 40) && ok;
+        ok = control(L"STATIC", L"For panes, tabs and quitting Vex. When off, running programs close immediately.", SS_NOPREFIX, confirmCloseDetailId, 46, 454, width - 92, 40) && ok;
         showPage(host.page);
     } else {
-        if (!commands && !shells) ok = control(L"STATIC", host.model.description, SS_NOPREFIX, descriptionId, 24, closing ? 68 : 58, width - 48, closing ? height - 132 : 38) && ok;
+        if (!commands && !shells) ok = control(L"STATIC", host.model.description, SS_NOPREFIX, descriptionId, 24, exiting ? 58 : closing ? 68 : 58, width - 48, exiting ? 40 : closing ? height - 132 : 38) && ok;
     }
     if (host.model.kind == 7) {
         ok = control(L"STATIC", L"Name", SS_NOPREFIX, 211, 32, 102, width - 64, 22) && ok;
@@ -690,6 +696,11 @@ bool createControls(float width, float height) {
         ok = args && ok;
         if (args) SendMessageW(args, EM_SETLIMITTEXT, 32766, 0);
         ok = control(L"STATIC", L"", SS_NOPREFIX, shellErrorId, 32, 376, width - 64, 54) && ok;
+    }
+    if (exiting) {
+        HWND list = control(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, listId, 16, 110, width - 32, height - 186);
+        ok = list && ok;
+        if (list) { SendMessageW(list, LB_SETITEMHEIGHT, 0, px(listRowHeight())); fillList(); }
     }
     if (!settings && !closing && host.model.kind != 7) {
         float top = shells ? 70.0f : 100.0f;
@@ -714,7 +725,7 @@ bool createControls(float width, float height) {
     if (!commands) {
         if (!closing) ok = control(L"BUTTON", L"Close", BS_OWNERDRAW | WS_TABSTOP, closeId, width - 42, shells ? 16.0f : 12.0f, 28, 28) && ok;
         if (!settings && !shells) {
-            ok = control(L"BUTTON", closing ? L"Keep open" : L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL, width - 260, height - 54, 104, 34) && ok;
+            ok = control(L"BUTTON", exiting ? L"Keep Vex open" : closing ? L"Keep open" : L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL, width - (exiting ? 284 : 260), height - 54, exiting ? 128 : 104, 34) && ok;
             ok = control(L"BUTTON", host.model.accept, WS_TABSTOP | BS_OWNERDRAW, IDOK, width - 144, height - 54, 120, 34) && ok;
         }
     }

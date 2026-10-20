@@ -72,6 +72,19 @@ pub fn presentTerminalModal(self: *Application) !void {
             request.description = "Choose how to start your shell. Arguments are passed directly, not through another shell.";
             request.accept_label = "Add shell";
         },
+        .exit_confirm => {
+            request.kind = .exit;
+            request.title = "Quit Vex?";
+            request.description = "These programs are still running. Quitting will stop them and may discard unsaved work.";
+            request.accept_label = "Quit Vex";
+            const rows = self.exit_review.rows.items;
+            const exit_items = try self.allocator.alloc(native.DialogItem, rows.len);
+            defer self.allocator.free(exit_items);
+            for (rows, 0..) |*row, i| exit_items[i] = .{ .value = @intCast(i), .label = row.nameSlice(), .detail = row.detailSlice(), .icon = row.icon };
+            request.items = exit_items;
+            try native.showDialog(request);
+            return;
+        },
         .close_confirm => |*confirmation| {
             request.kind = .close;
             request.icon = confirmation.confirmation.icon;
@@ -117,6 +130,7 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
                 try presentTerminalModal(self);
                 return;
             }
+            if (self.overlay == .exit_confirm) self.exit_review.rows.clearRetainingCapacity();
             self.overlay = .none;
             if (return_to_peek) |index| overlays.restorePeek(self, index);
             platform.invalidateWindow();
@@ -207,6 +221,7 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
                 };
             },
             .close_confirm => try self.confirmCloseOverlay(),
+            .exit_confirm => self.confirmExit(),
             else => {},
         },
     }

@@ -9,6 +9,7 @@ typedef struct VexLuaSettings {
     int font_size;
     bool cursor_blink;
     bool copy_on_select;
+    bool confirm_close;
 } VexLuaSettings;
 
 typedef int (*VexShellCallback)(void* context, unsigned id, const char* name, size_t name_length,

@@ -1,5 +1,6 @@
 #include "windows_platform.h"
 #include "windows_conpty.h"
+#include "windows_wsl_probe.h"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <winternl.h>
@@ -16,6 +17,7 @@ struct VexPty {
     HANDLE input, output, process, job, reader, writer, exitWatcher, outputConsumed, inputReady;
     HPCON console;
     VexConptyApi conpty;
+    WslProcessProbe* wslProbe;
     CRITICAL_SECTION inputLock;
     uint8_t inputQueue[1024 * 1024];
     size_t inputHead, inputLength;
@@ -202,6 +204,13 @@ extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, Vex
     session->next = sessions;
     sessions = session;
     DWORD error = startPty(session, columns, rows, launch);
+    if (!error && launch.wsl_probe_command_length) {
+        if (!validLaunchString(launch.wsl_probe_command, launch.wsl_probe_command_length)) error = ERROR_INVALID_PARAMETER;
+        else {
+            session->wslProbe = createWslProcessProbe(reinterpret_cast<const wchar_t*>(launch.wsl_probe_command));
+            if (!session->wslProbe) error = ERROR_NOT_ENOUGH_MEMORY;
+        }
+    }
     if (error) { vex_pty_close(session); return (int)error; }
     *output = session;
     return 0;
@@ -216,6 +225,7 @@ extern "C" void vex_pty_close(VexPty* session) {
     InterlockedExchange(&session->stopping, 1);
     if (session->outputConsumed) SetEvent(session->outputConsumed);
     if (session->inputReady) SetEvent(session->inputReady);
+    destroyWslProcessProbe(session->wslProbe);
     if (session->process) TerminateProcess(session->process, 0);
     if (session->job) { CloseHandle(session->job); session->job = nullptr; }
     // No reader means thread creation failed; close its pipe before closing ConPTY.
@@ -268,6 +278,9 @@ extern "C" void vex_pty_ack_output(uint32_t token) {
 }
 extern "C" bool vex_pty_exists(uint32_t token) { return findSession(token) != nullptr; }
 extern "C" uint32_t vex_pty_process_id(VexPty* session) { return session && session->process ? GetProcessId(session->process) : 0; }
+extern "C" bool vex_pty_wsl_snapshot(VexPty* session, uint8_t* bytes, size_t capacity, size_t* length) {
+    return session && readWslProcessSnapshot(session->wslProbe, bytes, capacity, length);
+}
 
 static void extractLowerStem(const wchar_t* path, wchar_t (&stem)[64]) {
     const wchar_t* start = path;

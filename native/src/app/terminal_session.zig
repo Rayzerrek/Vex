@@ -65,6 +65,7 @@ pub const TerminalSession = struct {
     foreground_shell_command: bool = false,
     foreground_is_shell: bool = false,
     foreground_is_root: bool = false,
+    foreground_is_transport: bool = false,
     shell_kind: shell.ShellKind = .cmd,
     shell_name: []const u8 = "Command Prompt",
     shell_program: []const u8 = "cmd.exe",
@@ -227,8 +228,9 @@ pub const TerminalSession = struct {
             const proc_cmd: ?[]const u8 = if (fg.cmd.len > 0) fg.cmd else null;
             self.foreground_is_shell = fg.is_shell;
             self.foreground_is_root = fg.is_root;
+            self.foreground_is_transport = !fg.is_linux and isWindowsTransport(proc_name orelse "");
             self.foreground_shell_command = self.foreground_is_shell and shellRunsCommand(fg.is_root, fg.cmd);
-            const resolved_proc_title = resolveForegroundProcessTitle(proc_name, proc_cmd);
+            const resolved_proc_title = if (fg.is_linux) proc_name else resolveForegroundProcessTitle(proc_name, proc_cmd);
             if (resolved_proc_title) |title_slice| {
                 const display = terminal_title.sanitizeDisplayText(title_slice, &self.active_process_title);
                 self.active_process_title_len = if (display) |text| text.len else 0;
@@ -278,6 +280,7 @@ pub const TerminalSession = struct {
             .foreground_shell_command = self.foreground_shell_command,
             .foreground_is_shell = self.foreground_is_shell,
             .foreground_is_root = self.foreground_is_root,
+            .foreground_is_transport = self.foreground_is_transport,
             .active_process_title = if (self.active_process_title_len > 0)
                 self.active_process_title[0..self.active_process_title_len]
             else if (status_running)
@@ -288,6 +291,20 @@ pub const TerminalSession = struct {
         };
     }
 };
+
+fn isWindowsTransport(executable: []const u8) bool {
+    const stem = command_line.executableStem(executable);
+    return std.ascii.eqlIgnoreCase(stem, "wsl") or std.ascii.eqlIgnoreCase(stem, "wslhost");
+}
+
+test "WSL transport identity is separate from shell and application identity" {
+    for ([_][]const u8{ "wsl", "WSL.EXE", "C:\\Windows\\System32\\wsl.exe", "wslhost.exe" }) |exe| {
+        try std.testing.expect(isWindowsTransport(exe));
+    }
+    for ([_][]const u8{ "", "codex.exe", "my-shell.exe", "wsl-editor.exe", "pwsh.exe" }) |exe| {
+        try std.testing.expect(!isWindowsTransport(exe));
+    }
+}
 
 fn shellRunsCommand(is_root: bool, cmd: []const u8) bool {
     // A shell profile owns its startup arguments. OSC 133 and children describe its live work.

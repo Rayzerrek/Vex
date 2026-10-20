@@ -93,6 +93,17 @@ keyboard navigation with seven/eight tabs, cancellation, process exit, and disab
 that opening/closing the overview never emits terminal resizes. This is a local
 interactive check, not covered by Linux cross-compilation.
 
+Closing the entire window (including Alt+F4) reviews every tab and split. If any
+programs are active, a scrollable **Quit Vex?** list shows their names, icons and
+workspace locations. Idle shells are omitted; unverified sessions and possible
+unsaved changes stay protected. **Keep Vex open** is the default action. Escape
+cancels, and only **Quit Vex** terminates the workspace.
+
+Settings → General → **Confirm before closing active programs** controls all
+pane, tab and whole-window confirmations. It is on by default. Turning it off
+saves immediately and closes running programs without further warnings; the same
+preference is available as `vex.config.confirm_close = false`.
+
 ## Rendering and motion
 
 Dirty terminal snapshots still read every row to handle Ghostty's scroll dirty-state
@@ -123,6 +134,7 @@ vex.config.font_family = "Cascadia Mono"
 vex.config.font_size = 14
 vex.config.cursor_blink = true
 vex.config.copy_on_select = true -- false: selecting text leaves the clipboard unchanged
+vex.config.confirm_close = true -- false: close panes, tabs and Vex without confirmation
 vex.config.default_shell = "startup"
 
 -- Ordinary Lua expressions, functions, loops and modules work.
@@ -131,7 +143,7 @@ vex.config.default_shell = "startup"
 
 Use the current theme names shown in Theme Studio (see
 `src/workspace/terminal_theme.zig`). Font size must be an integer from 9 to 32, cursor blink a
-boolean, `copy_on_select` a boolean (also available in Settings → General), and shell one of `startup`, `cmd`, `powershell`, `pwsh`, `nu`, `gitbash`,
+boolean, `copy_on_select` and `confirm_close` booleans (also available in Settings → General), and shell one of `startup`, `cmd`, `powershell`, `pwsh`, `nu`, `gitbash`,
 `wsl`, or a saved custom profile reference such as `custom:256`. `startup` respects the CLI launch choice. Shell changes affect new tabs and
 splits, not existing processes. Unknown settings and invalid values are errors.
 
@@ -182,8 +194,17 @@ OSC 133 command activity and explicit OSC 7501 application activity supply that
 information. Nested Windows shells matching a live profile are recognized by
 executable file identity, not just their filename. An unfamiliar nested process
 without integration remains protected as an application; Windows has no universal
-interactive-shell flag. WSL work detection relies on terminal integration because
-the Windows process tree cannot enumerate Linux applications.
+interactive-shell flag.
+
+WSL panes also carry a random session token. A bounded background probe in the
+selected distribution finds that pane's Linux shell and foreground process group
+through `/proc` and `ps`, independently of the shell name or terminal caption.
+Application identity is decoded from the foreground command line; background jobs
+and unrelated panes are excluded. The probe requires `sh`, `grep` and `ps`, never
+Python or application-specific hooks, and does not modify user profiles. Unknown,
+failed or stale probe results retain close protection instead of treating
+`wsl.exe` as an idle shell. Titled distributions such as `NixOS` are never used as
+program identities in close confirmations.
 
 Profiles are saved atomically to `init.shells.lua` beside `init.lua` (or
 `<name>.shells.lua` for `VEX_CONFIG`). Settings manages this file separately from

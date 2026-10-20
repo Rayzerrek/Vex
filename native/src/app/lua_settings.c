@@ -169,6 +169,7 @@ static int configExecute(lua_State* state) {
     lua_pushinteger(state, settings->font_size); lua_setfield(state, -2, "font_size");
     lua_pushboolean(state, settings->cursor_blink); lua_setfield(state, -2, "cursor_blink");
     lua_pushboolean(state, settings->copy_on_select); lua_setfield(state, -2, "copy_on_select");
+    lua_pushboolean(state, settings->confirm_close); lua_setfield(state, -2, "confirm_close");
     lua_setfield(state, -2, "config");
     lua_setglobal(state, "vex");
     lua_sethook(state, configInstructionHook, LUA_MASKCOUNT, 10000);
@@ -185,7 +186,7 @@ static int configExecute(lua_State* state) {
     while (lua_next(state, -2)) {
         size_t key_length = 0;
         const char* key = lua_type(state, -2) == LUA_TSTRING ? lua_tolstring(state, -2, &key_length) : NULL;
-        if (!key || strlen(key) != key_length || (strcmp(key, "theme") && strcmp(key, "font_family") && strcmp(key, "default_shell") && strcmp(key, "font_size") && strcmp(key, "cursor_blink") && strcmp(key, "copy_on_select")))
+        if (!key || strlen(key) != key_length || (strcmp(key, "theme") && strcmp(key, "font_family") && strcmp(key, "default_shell") && strcmp(key, "font_size") && strcmp(key, "cursor_blink") && strcmp(key, "copy_on_select") && strcmp(key, "confirm_close")))
             return luaL_error(state, "Vex configuration: unknown setting '%s'", key ? key : "non-string key");
         lua_pop(state, 1);
     }
@@ -204,6 +205,10 @@ static int configExecute(lua_State* state) {
     lua_pushliteral(state, "copy_on_select"); lua_rawget(state, -2);
     if (!lua_isboolean(state, -1)) return luaL_error(state, "Vex configuration: copy_on_select must be a boolean");
     settings->copy_on_select = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_pushliteral(state, "confirm_close"); lua_rawget(state, -2);
+    if (!lua_isboolean(state, -1)) return luaL_error(state, "Vex configuration: confirm_close must be a boolean");
+    settings->confirm_close = lua_toboolean(state, -1) != 0;
     return 0;
 }
 
@@ -230,7 +235,7 @@ int vex_lua_settings_decode(const char* bytes, size_t length, const char* path,
 
 int vex_lua_shells_decode(const char* bytes, size_t length, const char* path, void* context,
                          VexShellCallback callback, char* diagnostic, size_t capacity) {
-    VexLuaSettings defaults = { .theme = "unused", .font_family = "unused", .default_shell = "startup", .font_size = 14, .cursor_blink = true, .copy_on_select = true };
+    VexLuaSettings defaults = { .theme = "unused", .font_family = "unused", .default_shell = "startup", .font_size = 14, .cursor_blink = true, .copy_on_select = true, .confirm_close = true };
     ConfigRuntime runtime = { .bytes = bytes, .length = length, .path = path, .settings = &defaults,
                               .shell_context = context, .shell_callback = callback };
     return configDecode(&runtime, diagnostic, capacity);

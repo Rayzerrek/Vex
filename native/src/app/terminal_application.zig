@@ -64,6 +64,7 @@ pub const TerminalApplication = struct {
     pointer_drag: pointer.PointerDrag = .none,
     editing_tab: ?keyboard.TabRename = null,
     overlay: overlays.OverlayState = .none,
+    exit_review: close_confirmation.ExitReview = .{},
     path_completion: path_completion.PathCompletion,
     path_index: ?*PathIndex = null,
     path_index_revision: u64 = 0,
@@ -171,6 +172,7 @@ pub const TerminalApplication = struct {
         // Window callbacks have stopped before this runs. Native worker teardown precedes VT free.
         for (self.sessions.items) |session| session.destroy(self.allocator);
         self.sessions.deinit(self.allocator);
+        self.exit_review.deinit(self.allocator);
         if (self.model) |*model| model.deinit();
         self.placements.deinit(self.allocator);
         self.preview_placements.deinit(self.allocator);
@@ -287,7 +289,7 @@ pub const TerminalApplication = struct {
     }
     /// Captures runtime values without serializing any live session or launch command.
     pub fn currentPreferences(self: *TerminalApplication) preferences.UserSettings {
-        return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .copy_on_select = self.settings.copy_on_select, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
+        return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .copy_on_select = self.settings.copy_on_select, .confirm_close = self.settings.confirm_close, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
     }
     /// Writes GUI preferences only when changed; storage failure never closes running terminals.
     pub fn commitPreferences(self: *TerminalApplication, settings: preferences.UserSettings) !void {
@@ -597,6 +599,53 @@ pub const TerminalApplication = struct {
             },
         }
     }
+    pub fn onCloseRequested(self: *TerminalApplication) bool {
+        if (self.health == .failed or !self.settings.confirm_close) return true;
+        return self.reviewWindowClose() catch |err| {
+            var buffer: [256]u8 = undefined;
+            const message = std.fmt.bufPrint(&buffer, "Could not review running programs ({s}). Vex was not closed. Please try again.", .{@errorName(err)}) catch "Could not review running programs. Vex was not closed.";
+            dialogs.showCloseFailure(message);
+            return false;
+        };
+    }
+    fn reviewWindowClose(self: *TerminalApplication) !bool {
+        if (self.overlay == .exit_confirm) return false;
+        self.commitTabRename();
+        self.exit_review.rows.clearRetainingCapacity();
+        const model = if (self.model) |*model| model else return true;
+        for (model.tabs.items, 0..) |tab, index| {
+            var pane_index: usize = 0;
+            try self.reviewExitNode(tab.tree.root, index, &pane_index, tab.customTitle() orelse "");
+        }
+        if (self.exit_review.rows.items.len == 0) return true;
+        if (self.overlay == .theme_picker) try self.applyTheme(self.overlay.theme_picker.initial_theme_index);
+        dialogs.closeDialog();
+        self.overlay = .exit_confirm;
+        errdefer self.overlay = .none;
+        try modals.presentTerminalModal(self);
+        platform.invalidateWindow();
+        return false;
+    }
+    fn reviewExitNode(self: *TerminalApplication, node: anytype, tab_index: usize, pane_index: *usize, tab_title: []const u8) anyerror!void {
+        switch (node.*) {
+            .leaf => |id| {
+                const session = self.findSession(id) orelse return error.MissingPaneSession;
+                try self.exit_review.includePane(self.allocator, session.closeSnapshot(true), tab_index, pane_index.*, tab_title);
+                pane_index.* += 1;
+            },
+            .split => |split| {
+                try self.reviewExitNode(split.first, tab_index, pane_index, tab_title);
+                try self.reviewExitNode(split.second, tab_index, pane_index, tab_title);
+            },
+        }
+    }
+    pub fn confirmExit(self: *TerminalApplication) void {
+        if (self.overlay != .exit_confirm) return;
+        dialogs.closeDialog();
+        self.overlay = .none;
+        self.exit_review.rows.clearRetainingCapacity();
+        platform.closeWindow();
+    }
     pub fn requestClosePane(self: *TerminalApplication, pane_id: panes.PaneId) !void {
         self.commitTabRename();
         const model = if (self.model) |*model| model else return;
@@ -607,7 +656,7 @@ pub const TerminalApplication = struct {
             return self.requestCloseTab(owner);
         }
         const session = self.findSession(pane_id) orelse return;
-        if (close_confirmation.evaluatePane(session.closeSnapshot(true), .pane)) |confirmation| {
+        if (if (self.settings.confirm_close) close_confirmation.evaluatePane(session.closeSnapshot(true), .pane) else null) |confirmation| {
             self.overlay = .{ .close_confirm = .{
                 .target = .{ .pane = pane_id },
                 .confirmation = confirmation,
@@ -626,7 +675,7 @@ pub const TerminalApplication = struct {
         const model = if (self.model) |*model| model else return;
         if (index >= model.tabs.items.len or model.tabs.items.len <= 1) return;
         var review: close_confirmation.TabCloseReview = .{};
-        try self.reviewTabClose(model.tabs.items[index].tree.root, &review);
+        if (self.settings.confirm_close) try self.reviewTabClose(model.tabs.items[index].tree.root, &review);
         if (review.confirmation) |confirmation| {
             self.overlay = .{ .close_confirm = .{
                 .target = .{ .tab = model.tabs.items[index].id },

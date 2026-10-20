@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/dialog_paint.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_notification.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_pty.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/windows_wsl_probe.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/windows_conpty.cpp"), .flags = native_flags });
     const renderer_flags: []const []const u8 = if (b.option(bool, "graphics-debug", "Require the installed D3D12 debug layer") orelse false)
         &(native_flags.* ++ .{"-DVEX_GRAPHICS_DEBUG=1"})

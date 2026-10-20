@@ -243,7 +243,7 @@ extern "C" void vex_window_defer_synchronized() {
         else frameSchedule = FrameSchedule::synchronized;
     } else if (now >= frameDeadline) renderScheduledFrame();
 }
-extern "C" void vex_window_close() { if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 0, 0); }
+extern "C" void vex_window_close() { if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 1, 0); }
 extern "C" uint64_t vex_window_paint_count() { return paintCount; }
 extern "C" bool vex_window_cursor_wake_armed() { return cursorWakeArmed; }
 static bool motionPreferenceKnown = false, motionEnabled = false;
@@ -1023,7 +1023,11 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         callbacks.scroll(callbacks.context, -GET_WHEEL_DELTA_WPARAM(wparam), point.x / scale, point.y / scale, currentModifiers());
         return 0;
     }
-    case WM_CLOSE: cancelPointerGesture(); DestroyWindow(hwnd); return 0;
+    case WM_CLOSE:
+        cancelPointerGesture();
+        if (wparam != 1 && callbacks.close_requested && !callbacks.close_requested(callbacks.context)) return 0;
+        DestroyWindow(hwnd);
+        return 0;
     case WM_SETTINGCHANGE:
         motionPreferenceKnown = false;
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -1196,7 +1200,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
 
 extern "C" void vex_window_error(const char* message) {
     MessageBoxA(IsWindow(window) ? window : nullptr, message, "Vex native rewrite", MB_OK | MB_ICONERROR);
-    if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 0, 0);
+    if (IsWindow(window)) PostMessageW(window, WM_CLOSE, 1, 0);
 }
 
 extern "C" int vex_open_url(const uint8_t* bytes, size_t length) {

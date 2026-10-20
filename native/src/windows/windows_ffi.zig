@@ -144,7 +144,11 @@ pub const PtyOwner = struct {
     pub fn init(allocator: std.mem.Allocator, id: panes.PaneId, path: directory.DirectoryPath, launch: *const shell.ShellLaunch) !PtyOwner {
         const program = try std.unicode.utf8ToUtf16LeAllocZ(allocator, launch.program);
         defer allocator.free(program);
-        const command_bytes = try launch.commandForDirectoryAlloc(allocator, path);
+        const wsl_process = @import("../shell/wsl_process.zig");
+        var random: [16]u8 = undefined;
+        std.crypto.random.bytes(&random);
+        const token = std.fmt.bytesToHex(random, .lower);
+        const command_bytes = try launch.commandForSessionAlloc(allocator, path, &token);
         defer allocator.free(command_bytes);
         const command = try std.unicode.utf8ToUtf16LeAllocZ(allocator, command_bytes);
         defer allocator.free(command);
@@ -152,8 +156,12 @@ pub const PtyOwner = struct {
         const windows_directory = if (launch.backend == .wsl) std.fs.path.dirname(launch.program) orelse return error.InvalidShellProgram else path.bytes;
         const working_directory = try std.unicode.utf8ToUtf16LeAllocZ(allocator, windows_directory);
         defer allocator.free(working_directory);
+        const probe_bytes = if (launch.backend == .wsl) try wsl_process.probeCommandAlloc(allocator, launch.program, launch.backend.wsl.distribution.bytes, &token) else null;
+        defer if (probe_bytes) |owned| allocator.free(owned);
+        const probe = if (probe_bytes) |text| try std.unicode.utf8ToUtf16LeAllocZ(allocator, text) else null;
+        defer if (probe) |owned| allocator.free(owned);
         var pointer: ?*c.VexPty = null;
-        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.kind != .custom };
+        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.kind != .custom, .wsl_probe_command = if (probe) |value| value.ptr else null, .wsl_probe_command_length = if (probe) |value| value.len else 0 };
         if (c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer) != 0) return error.PtyLaunchFailed;
         return .{ .handle = pointer orelse return error.PtyNullHandle };
     }
@@ -174,8 +182,18 @@ pub const PtyOwner = struct {
         return c.vex_pty_process_id(self.handle);
     }
     /// Queries the foreground application or fallback shell, preserving root identity for bootstrap handling.
-    pub fn foregroundProcess(self: *const PtyOwner, exe_buf: []u8, cmd_buf: []u8) struct { exe: []const u8, cmd: []const u8, is_root: bool = false, is_shell: bool = false } {
+    pub fn foregroundProcess(self: *const PtyOwner, exe_buf: []u8, cmd_buf: []u8) struct { exe: []const u8, cmd: []const u8, is_root: bool = false, is_shell: bool = false, is_linux: bool = false } {
         if (exe_buf.len == 0 or cmd_buf.len == 0) return .{ .exe = &.{}, .cmd = &.{} };
+        const wsl_process = @import("../shell/wsl_process.zig");
+        var snapshot: [wsl_process.max_snapshot_bytes]u8 = undefined;
+        var snapshot_len: usize = 0;
+        if (c.vex_pty_wsl_snapshot(self.handle, &snapshot, snapshot.len, &snapshot_len) and snapshot_len <= snapshot.len) {
+            if (wsl_process.parseSnapshot(snapshot[0..snapshot_len])) |process| {
+                const exe = @import("../terminal/terminal_title.zig").sanitizeDisplayText(process.name, exe_buf) orelse "";
+                const cmd = @import("../terminal/terminal_title.zig").sanitizeDisplayText(process.command, cmd_buf) orelse "";
+                return .{ .exe = exe, .cmd = cmd, .is_root = process.is_shell, .is_shell = process.is_shell, .is_linux = true };
+            }
+        }
         var exe_len: usize = 0;
         var cmd_len: usize = 0;
         var is_root = false;
@@ -330,6 +348,10 @@ pub fn runWindow(owner: anytype) !void {
         fn tick(context: ?*anyopaque) callconv(.c) void {
             if (recover(context)) |app| app.onTick();
         }
+        fn closeRequested(context: ?*anyopaque) callconv(.c) bool {
+            const app = recover(context) orelse return true;
+            return app.onCloseRequested();
+        }
         fn cursorWake(context: ?*anyopaque) callconv(.c) void {
             if (recover(context)) |app| app.onCursorWake();
         }
@@ -353,7 +375,7 @@ pub fn runWindow(owner: anytype) !void {
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .probe = Adapter.probe, .dialog = Adapter.dialog });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 

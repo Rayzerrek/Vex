@@ -36,14 +36,15 @@ typedef struct {
     const uint16_t* directory; size_t directory_length;
     const uint16_t* environment; size_t environment_length;
     bool declared_shell;
+    const uint16_t* wsl_probe_command; size_t wsl_probe_command_length;
 } VexPtyLaunch;
 /* Pointer event/cursor values are shared with the checked Zig adapter. */
 typedef enum { VEX_POINTER_HOVER = 0, VEX_POINTER_BEGIN = 1, VEX_POINTER_MOVE = 2, VEX_POINTER_END = 3, VEX_POINTER_CANCEL = 4 } VexPointerEvent;
 typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN = 2, VEX_POINTER_TAB_ARMED = 3, VEX_POINTER_TAB_DRAGGING = 4, VEX_POINTER_SELECTION = 5, VEX_POINTER_LINK = 6, VEX_POINTER_TEXT = 7 } VexPointerResponse;
 /* Owned dialog controls copy all request strings before returning to the caller. */
 typedef struct { const uint8_t* bytes; size_t length; } VexDialogText;
-typedef struct { uint32_t value; VexDialogText label, detail; uint32_t background, foreground, accent; uint32_t swatches[5]; } VexDialogItem;
-typedef struct { uint32_t theme, font_size, shell; bool cursor_blink, copy_on_select; uint8_t font_family[128]; } VexUserSettings;
+typedef struct { uint32_t value; VexDialogText label, detail; uint32_t background, foreground, accent; uint32_t swatches[5]; VexAppIcon icon; } VexDialogItem;
+typedef struct { uint32_t theme, font_size, shell; bool cursor_blink, copy_on_select, confirm_close; uint8_t font_family[128]; } VexUserSettings;
 /* Kind: appearance=1, commands=2, settings=4, shell=5, close=6, custom_shell=7, close_popover=8. */
 typedef struct {
     uint32_t kind, selected;
@@ -81,6 +82,7 @@ typedef struct {
     void (*tick)(void*);
     void (*cursor_wake)(void*);
     void (*cursor_activity)(void*, bool);
+    bool (*close_requested)(void*);
     uint64_t (*probe)(void*, uint32_t);
     /* Events 0..4: cancel/choose/preview/query/settings; 6/7: add/save custom shell. Text is borrowed. */
     void (*dialog)(void*, uint32_t, uint32_t, const uint8_t*, size_t, VexUserSettings);
@@ -123,6 +125,7 @@ bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);
 uint32_t vex_pty_process_id(VexPty* session);
 int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length, bool* is_root, bool* is_shell);
+bool vex_pty_wsl_snapshot(VexPty* session, uint8_t* bytes, size_t capacity, size_t* length);
 /* Private window/pipe bridge: borrowing succeeds once per posted block. */
 bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length);
 void vex_pty_ack_output(uint32_t token);

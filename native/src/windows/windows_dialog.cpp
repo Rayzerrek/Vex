@@ -26,6 +26,7 @@ bool copyItems(const VexDialogItem* input, size_t count, DialogItem* output, siz
     if (count > capacity || (count && !input)) return false;
     for (size_t i = 0; i < count; ++i) {
         output[i].value = input[i].value;
+        output[i].icon = input[i].icon;
         if (!decodeText(input[i].label, output[i].label, 256) || !decodeText(input[i].detail, output[i].detail, 256)) return false;
         output[i].background = color(input[i].background);
         output[i].foreground = color(input[i].foreground);
@@ -46,6 +47,7 @@ void releasePaint() {
     if (host.symbols) { DeleteObject(host.symbols); host.symbols = nullptr; }
     if (host.background) { DeleteObject(host.background); host.background = nullptr; }
     if (host.field) { DeleteObject(host.field); host.field = nullptr; }
+    free(host.exitItems); host.exitItems = nullptr;
 }
 void notify(uint32_t event, uint32_t value, const uint8_t* text, size_t length, VexUserSettings settings) {
     if (host.callbacks.dialog) host.callbacks.dialog(host.callbacks.context, event, value, text, length, settings);
@@ -220,7 +222,7 @@ void submitCustomShell() {
 void acceptDialog() {
     if (host.model.kind == 7) { submitCustomShell(); return; }
     if (host.model.kind == 4) applySettingsFontSize(false);
-    else if (host.model.kind == 6 || host.model.kind == 8) finish(1);
+    else if (destructiveDialog()) finish(1);
     else {
         uint32_t value;
         if (listSelection(value)) finish(1, value);
@@ -290,7 +292,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         if (rounded && !SetWindowRgn(window, rounded, FALSE)) DeleteObject(rounded);
         DWORD corner = 2; DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
         if (!host.font || !host.heading || !host.symbols || !host.background || !host.field || !createControls(host.baseWidth, host.baseHeight)) { closeDialog(false); return FALSE; }
-        HWND focus = GetDlgItem(window, host.model.kind == 7 ? shellNameId : host.model.kind == 4 ? shellId : (host.model.kind == 6 || host.model.kind == 8) ? IDCANCEL : host.model.kind == 2 ? queryId : listId);
+        HWND focus = GetDlgItem(window, host.model.kind == 7 ? shellNameId : host.model.kind == 4 ? shellId : destructiveDialog() ? IDCANCEL : host.model.kind == 2 ? queryId : listId);
         SetFocus(focus);
         return FALSE;
     }
@@ -310,12 +312,13 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
             if (page != host.page) { const auto previousPage = host.page; host.page = page; showPage(previousPage); }
             return TRUE;
         }
-        if (LOWORD(wparam) == blinkId || LOWORD(wparam) == copyOnSelectId) {
-            const bool blink = LOWORD(wparam) == blinkId;
-            if (blink) host.draft.cursor_blink = !host.draft.cursor_blink;
-            else host.draft.copy_on_select = !host.draft.copy_on_select;
+        if (LOWORD(wparam) == blinkId || LOWORD(wparam) == copyOnSelectId || LOWORD(wparam) == confirmCloseId) {
+            const int id = LOWORD(wparam);
+            if (id == blinkId) host.draft.cursor_blink = !host.draft.cursor_blink;
+            else if (id == copyOnSelectId) host.draft.copy_on_select = !host.draft.copy_on_select;
+            else host.draft.confirm_close = !host.draft.confirm_close;
             notify(4, 0, nullptr, 0, host.draft);
-            InvalidateRect(GetDlgItem(window, blink ? blinkId : copyOnSelectId), nullptr, FALSE);
+            InvalidateRect(GetDlgItem(window, id), nullptr, FALSE);
             return TRUE;
         }
         if (LOWORD(wparam) == sizeId && (HIWORD(wparam) == EN_CHANGE || HIWORD(wparam) == EN_KILLFOCUS)) {
@@ -357,7 +360,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         if (LOWORD(wparam) == shellBrowseId && host.model.kind == 7) { browseShellProgram(); return TRUE; }
         if (LOWORD(wparam) == IDOK) { acceptDialog(); return TRUE; }
         if (LOWORD(wparam) == queryId && HIWORD(wparam) == EN_CHANGE) { queryChanged(); return TRUE; }
-        if (LOWORD(wparam) == listId && HIWORD(wparam) == LBN_DBLCLK) { acceptDialog(); return TRUE; }
+        if (LOWORD(wparam) == listId && HIWORD(wparam) == LBN_DBLCLK && host.model.kind != 9) { acceptDialog(); return TRUE; }
         if (LOWORD(wparam) == listId && HIWORD(wparam) == LBN_SELCHANGE) { uint32_t value; if (listSelection(value)) notify(2, value); return TRUE; }
         break;
     case WM_APP + 2: case WM_APP + 3: {
@@ -426,10 +429,12 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
             const auto now = GetTickCount64();
             host.cursorBlinkMotion.update(host.draft.cursor_blink ? 1.0f : 0.0f, now, vex_window_animations_enabled());
             host.copyOnSelectMotion.update(host.draft.copy_on_select ? 1.0f : 0.0f, now, vex_window_animations_enabled());
-            if ((!host.cursorBlinkMotion.pending(now) && !host.copyOnSelectMotion.pending(now)) ||
+            host.confirmCloseMotion.update(host.draft.confirm_close ? 1.0f : 0.0f, now, vex_window_animations_enabled());
+            if ((!host.cursorBlinkMotion.pending(now) && !host.copyOnSelectMotion.pending(now) && !host.confirmCloseMotion.pending(now)) ||
                 (host.page != SettingsPage::terminal && host.page != SettingsPage::general)) KillTimer(window, 8);
             InvalidateRect(GetDlgItem(window, blinkId), nullptr, FALSE);
             InvalidateRect(GetDlgItem(window, copyOnSelectId), nullptr, FALSE);
+            InvalidateRect(GetDlgItem(window, confirmCloseId), nullptr, FALSE);
             return TRUE;
         }
         if (wparam == 7 && host.layered) {
@@ -463,7 +468,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         return TRUE;
     } break;
     case DM_GETDEFID:
-        SetWindowLongPtrW(window, DWLP_MSGRESULT, host.model.kind == 4 ? 0 : MAKELRESULT((host.model.kind == 6 || host.model.kind == 8) ? IDCANCEL : IDOK, DC_HASDEFID));
+        SetWindowLongPtrW(window, DWLP_MSGRESULT, host.model.kind == 4 ? 0 : MAKELRESULT(destructiveDialog() ? IDCANCEL : IDOK, DC_HASDEFID));
         return TRUE;
     case DM_SETDEFID: SetWindowLongPtrW(window, DWLP_MSGRESULT, TRUE); return TRUE;
     case WM_DRAWITEM:
@@ -480,9 +485,9 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
     case WM_CTLCOLORSTATIC: case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX: {
         HDC dc = reinterpret_cast<HDC>(wparam);
         const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
-        const bool muted = id == descriptionId || id == pageDetailId || id == 123 || id == 126 || id == 213;
+        const bool muted = id == descriptionId || id == pageDetailId || id == 123 || id == 126 || id == 213 || id == confirmCloseDetailId;
         SetTextColor(dc, id == shellErrorId ? (host.model.palette.is_dark ? RGB(229, 164, 124) : RGB(155, 75, 40)) : color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
-        const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == 121 || id == 122 || id == 123 || id == 126);
+        const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == 121 || id == 122 || id == 123 || id == 126 || id == confirmCloseDetailId);
         if (id == queryId || id == sizeId || id == shellNameId || id == shellProgramId || id == shellArgumentsId) {
             SetBkColor(dc, fieldColor());
             SetDCBrushColor(dc, fieldColor());
@@ -599,7 +604,13 @@ void repositionTerminalDialogs() {
             if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == blinkId || id == copyOnSelectId || id == addShellId) y -= 46;
             if (id == pageDetailId) h = 30;
             if (id == themeGridId) { y = 174; h = host.height - 198; }
+            if (id == 122) y = 178;
+            if (id == shellId) y = 176;
+            if (id == addShellId) y = 220;
+            if (id == copyOnSelectId) { y = 264; h = 36; }
+            if (id == confirmCloseId) { y = 306; h = 36; }
         }
+        if (id == confirmCloseDetailId || id == 123) setPageControlVisibility(id, host.page == SettingsPage::general && !compact);
         if (id == listId && host.model.kind != 1) {
             const int rowPixels = px(listRowHeight());
             const int rows = px(h) / rowPixels;
@@ -652,7 +663,7 @@ extern "C" uint32_t vex_dialog_first_visible() {
     return first >= 0 && (uint64_t)first <= UINT32_MAX ? (uint32_t)first : 0;
 }
 extern "C" int vex_dialog_open(VexDialogRequest request) {
-    if (!IsWindow(host.owner) || request.kind < 1 || request.kind == 3 || request.kind > 8 || request.count > itemLimit || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
+    if (!IsWindow(host.owner) || request.kind < 1 || request.kind == 3 || request.kind > 9 || request.count > (request.kind == 9 ? 65536 : itemLimit) || request.shell_count > shellLimit) return ERROR_INVALID_PARAMETER;
     if (!host.graphicsToken) {
         Gdiplus::GdiplusStartupInput startup;
         if (Gdiplus::GdiplusStartup(&host.graphicsToken, &startup, nullptr) != Gdiplus::Ok) {
@@ -663,12 +674,12 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     static DialogModel next;
     memset(&next, 0, sizeof(next));
     if (!decodeText(request.title, next.title, 128) || !decodeText(request.description, next.description, 512) || !decodeText(request.accept_label, next.accept, 64) ||
-        !copyItems(request.items, request.count, next.items, itemLimit) || !copyItems(request.shells, request.shell_count, next.shells, shellLimit)) return ERROR_INVALID_DATA;
+        (request.kind != 9 && !copyItems(request.items, request.count, next.items, itemLimit)) || !copyItems(request.shells, request.shell_count, next.shells, shellLimit)) return ERROR_INVALID_DATA;
     if (!isfinite(request.anchor_x) || !isfinite(request.anchor_y)) return ERROR_INVALID_DATA;
     next.icon = request.icon; next.anchorX = request.anchor_x; next.anchorY = request.anchor_y;
     next.kind = request.kind; next.selected = request.selected; next.count = request.count; next.shellCount = request.shell_count; next.settings = request.settings; next.palette = request.palette;
     if (host.phase == DialogHost::Phase::active) {
-        if (host.model.kind != request.kind) closeDialog(true);
+        if (host.model.kind != request.kind || request.kind == 9) closeDialog(true);
     }
     if (host.phase == DialogHost::Phase::active) {
         host.synchronizing = true;
@@ -687,6 +698,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
         const bool emptyChanged = (host.model.count == 0) != (next.count == 0);
         const bool blinkChanged = host.model.settings.cursor_blink != next.settings.cursor_blink;
         const bool copyChanged = host.model.settings.copy_on_select != next.settings.copy_on_select;
+        const bool confirmChanged = host.model.settings.confirm_close != next.settings.confirm_close;
         if (itemsChanged || paletteChanged) clearThemeCardCache();
         host.model = next;
         if (host.model.kind == 4) {
@@ -702,6 +714,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
                 fillCombo(GetDlgItem(host.window, shellId), host.model.shells, host.model.shellCount, host.draft.shell);
             if (blinkChanged) InvalidateRect(GetDlgItem(host.window, blinkId), nullptr, FALSE);
             if (copyChanged) InvalidateRect(GetDlgItem(host.window, copyOnSelectId), nullptr, FALSE);
+            if (confirmChanged) InvalidateRect(GetDlgItem(host.window, confirmCloseId), nullptr, FALSE);
         }
         const int listControlId = host.model.kind == 4 ? themeGridId : listId;
         HWND list = GetDlgItem(host.window, listControlId);
@@ -730,11 +743,21 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
         return 0;
     }
     if (host.phase != DialogHost::Phase::closed) return ERROR_BUSY;
+    if (request.kind == 9 && request.count) {
+        host.exitItems = static_cast<DialogItem*>(calloc(request.count, sizeof(DialogItem)));
+        if (!host.exitItems) return ERROR_NOT_ENOUGH_MEMORY;
+        if (!copyItems(request.items, request.count, host.exitItems, request.count)) {
+            free(host.exitItems); host.exitItems = nullptr;
+            return ERROR_INVALID_DATA;
+        }
+    }
     host.model = next;
     host.draft = request.settings;
     host.cursorBlinkMotion = {};
     host.cursorBlinkMotion.update(host.draft.cursor_blink ? 1.0f : 0.0f, GetTickCount64(), false);
     host.copyOnSelectMotion.update(host.draft.copy_on_select ? 1.0f : 0.0f, GetTickCount64(), false);
+    host.confirmCloseMotion = {};
+    host.confirmCloseMotion.update(host.draft.confirm_close ? 1.0f : 0.0f, GetTickCount64(), false);
     host.page = SettingsPage::general;
     host.layoutReady = false;
     host.phase = DialogHost::Phase::creating;
@@ -768,7 +791,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     if (IsWindow(host.backdrop)) SetWindowPos(host.backdrop, result, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     ShowWindow(result, SW_SHOW);
     SetActiveWindow(result);
-    HWND focus = GetDlgItem(result, request.kind == 7 ? shellNameId : request.kind == 4 ? shellId : (request.kind == 6 || request.kind == 8) ? IDCANCEL : request.kind == 2 ? queryId : listId);
+    HWND focus = GetDlgItem(result, request.kind == 7 ? shellNameId : request.kind == 4 ? shellId : destructiveDialog() ? IDCANCEL : request.kind == 2 ? queryId : listId);
     SetFocus(focus);
     RedrawWindow(result, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     return 0;

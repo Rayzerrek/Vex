@@ -7,7 +7,7 @@
 // Private shared state for the dialog host, controls and painting implementation.
 namespace vex::dialog {
 constexpr int titleId = 100, descriptionId = 101, queryId = 102, listId = 103;
-constexpr int fontId = 116, fontLabelId = 117, addShellId = 118;
+constexpr int fontId = 116, fontLabelId = 117, addShellId = 118, confirmCloseId = 119, confirmCloseDetailId = 120;
 constexpr int shellNameId = 201, shellProgramId = 202, shellArgumentsId = 203, shellBrowseId = 204, shellErrorId = 205;
 constexpr int sizeId = 111, blinkId = 112, shellId = 113, copyOnSelectId = 114, themeGridId = 115;
 constexpr int pageTitleId = 104, pageDetailId = 105, closeId = 125, firstPageId = 130;
@@ -17,6 +17,7 @@ struct DialogItem {
     uint32_t value;
     wchar_t label[256], detail[256];
     COLORREF background, foreground, accent, swatches[5];
+    VexAppIcon icon;
 };
 struct DialogModel {
     uint32_t kind, selected;
@@ -39,13 +40,14 @@ struct DialogHost {
     ULONG_PTR graphicsToken = 0;
     VexWindowCallbacks callbacks;
     DialogModel model;
+    DialogItem* exitItems = nullptr;
     HFONT font, heading, symbols;
     HBRUSH background, field;
     uint64_t themeCardPaintCount = 0, dialogPaintCount = 0, surfacePaintCount = 0;
     enum class Phase { closed, creating, active, closing } phase = Phase::closed;
     bool synchronizing = false;
     DialogMotion motion;
-    ChromeMotion cursorBlinkMotion, copyOnSelectMotion;
+    ChromeMotion cursorBlinkMotion, copyOnSelectMotion, confirmCloseMotion;
     uint32_t pendingEvent = 0, pendingValue = 0;
     bool layered = false, layoutReady = false;
     SettingsPage page = SettingsPage::general;
@@ -56,6 +58,8 @@ struct DialogHost {
     ThemeCardCache themeCards[itemLimit];
 };
 extern DialogHost host;
+inline const DialogItem& listItem(size_t index) { return host.model.kind == 9 ? host.exitItems[index] : host.model.items[index]; }
+inline bool destructiveDialog() { return host.model.kind == 6 || host.model.kind == 8 || host.model.kind == 9; }
 COLORREF color(uint32_t rgb);
 int px(float dip);
 COLORREF blend(COLORREF a, COLORREF b, float amount);

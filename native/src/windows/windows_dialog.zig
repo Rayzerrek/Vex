@@ -5,7 +5,7 @@ const themes = @import("../workspace/terminal_theme.zig");
 const c = platform.c;
 
 /// Owned dialogs include a nonmodal close popover; path completion remains in-terminal.
-pub const DialogKind = enum(u32) { appearance = 1, commands = 2, settings = 4, shell = 5, close = 6, custom_shell = 7, close_popover = 8 };
+pub const DialogKind = enum(u32) { appearance = 1, commands = 2, settings = 4, shell = 5, close = 6, custom_shell = 7, close_popover = 8, exit = 9 };
 /// Borrowed presentation strings are copied by the native dialog before showDialog returns.
 pub const DialogItem = struct {
     value: u32,
@@ -15,6 +15,7 @@ pub const DialogItem = struct {
     foreground: u32 = 0,
     accent: u32 = 0,
     swatches: [5]u32 = .{ 0, 0, 0, 0, 0 },
+    icon: @import("../terminal/app_icon.zig").AppIcon = .terminal_shell,
 };
 /// Native control notifications are decoded before application code receives them.
 pub const DialogEvent = union(enum) { cancel, choose: u32, preview: u32, query: []const u8, settings: preferences.UserSettings, add_shell, save_shell: struct { name: []const u8, program: []const u8, arguments: []const u8 } };
@@ -38,12 +39,13 @@ fn nativeText(text: []const u8) c.VexDialogText {
     return .{ .bytes = if (text.len == 0) null else text.ptr, .length = text.len };
 }
 fn nativeItem(item: DialogItem) c.VexDialogItem {
-    return .{ .value = item.value, .label = nativeText(item.label), .detail = nativeText(item.detail), .background = item.background, .foreground = item.foreground, .accent = item.accent, .swatches = item.swatches };
+    return .{ .value = item.value, .label = nativeText(item.label), .detail = nativeText(item.detail), .background = item.background, .foreground = item.foreground, .accent = item.accent, .swatches = item.swatches, .icon = platform.nativeAppIcon(item.icon) };
 }
 /// Opens/updates copied native controls; close popovers do not disable the terminal.
 pub fn showDialog(presentation: DialogPresentation) !void {
-    if (presentation.items.len > 64 or presentation.shells.len > 64) return error.DialogItemLimit;
-    var items: [64]c.VexDialogItem = undefined;
+    if (presentation.items.len > (if (presentation.kind == .exit) @as(usize, 65536) else 64) or presentation.shells.len > 64) return error.DialogItemLimit;
+    const items = try std.heap.page_allocator.alloc(c.VexDialogItem, presentation.items.len);
+    defer std.heap.page_allocator.free(items);
     var shells: [64]c.VexDialogItem = undefined;
     for (presentation.items, 0..) |item, i| items[i] = nativeItem(item);
     for (presentation.shells, 0..) |item, i| shells[i] = nativeItem(item);
@@ -53,11 +55,11 @@ pub fn showDialog(presentation: DialogPresentation) !void {
         .title = nativeText(presentation.title),
         .description = nativeText(presentation.description),
         .accept_label = nativeText(presentation.accept_label),
-        .items = if (presentation.items.len == 0) null else &items,
+        .items = if (presentation.items.len == 0) null else items.ptr,
         .count = presentation.items.len,
         .shells = if (presentation.shells.len == 0) null else &shells,
         .shell_count = presentation.shells.len,
-        .settings = .{ .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .copy_on_select = presentation.settings.copy_on_select, .font_family = presentation.settings.font_family },
+        .settings = .{ .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .copy_on_select = presentation.settings.copy_on_select, .confirm_close = presentation.settings.confirm_close, .font_family = presentation.settings.font_family },
         .palette = platform.nativeChromePalette(presentation.palette),
         .icon = platform.nativeAppIcon(presentation.icon),
         .anchor_x = presentation.anchor_x,
@@ -77,6 +79,9 @@ pub fn closeDialog() void {
     c.vex_dialog_close();
 }
 /// Reports expected preference IO failures without terminating the terminal window.
+pub fn showCloseFailure(message: []const u8) void {
+    c.vex_dialog_warning(nativeText(message));
+}
 pub fn showSettingsFailure(err: anyerror) void {
     var buffer: [256]u8 = undefined;
     const message = std.fmt.bufPrint(&buffer, "Vex settings: preferences were not saved ({s}). Existing sessions are unchanged.", .{@errorName(err)}) catch "Vex settings: preferences were not saved. Existing sessions are unchanged.";
@@ -112,6 +117,7 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
                 .font_size = @intCast(raw.font_size),
                 .cursor_blink = raw.cursor_blink,
                 .copy_on_select = raw.copy_on_select,
+                .confirm_close = raw.confirm_close,
                 .font_family = raw.font_family,
                 .default_shell = std.meta.intToEnum(preferences.DefaultShell, raw.shell) catch return error.InvalidDefaultShell,
             };
@@ -133,11 +139,12 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
 }
 
 test "native dialog events validate settings and query data before entering the terminal owner" {
-    const raw: c.VexUserSettings = .{ .theme = 2, .font_size = 19, .shell = 3, .cursor_blink = true, .copy_on_select = false, .font_family = preferences.default_font };
+    const raw: c.VexUserSettings = .{ .theme = 2, .font_size = 19, .shell = 3, .cursor_blink = true, .copy_on_select = false, .confirm_close = false, .font_family = preferences.default_font };
     const result = try decodeDialogEvent(4, 0, "", raw);
     try std.testing.expectEqual(@as(u8, 19), result.settings.font_size);
     try std.testing.expectEqual(preferences.DefaultShell.pwsh, result.settings.default_shell);
     try std.testing.expect(!result.settings.copy_on_select);
+    try std.testing.expect(!result.settings.confirm_close);
     var invalid = raw;
     invalid.font_size = 0;
     try std.testing.expectError(error.InvalidUserSettings, decodeDialogEvent(4, 0, "", invalid));
@@ -153,7 +160,7 @@ test "native dialog events validate settings and query data before entering the 
 }
 
 test "custom shell form separates arguments without interpreting quotes or command syntax" {
-    const raw: c.VexUserSettings = .{ .theme = 0, .font_size = 14, .shell = 1, .cursor_blink = true, .copy_on_select = true, .font_family = preferences.default_font };
+    const raw: c.VexUserSettings = .{ .theme = 0, .font_size = 14, .shell = 1, .cursor_blink = true, .copy_on_select = true, .confirm_close = true, .font_family = preferences.default_font };
     const form = (try decodeDialogEvent(7, 0, "Future 音\x00C:\\My Shell\\shell.exe\x00--interactive \"hello world\"", raw)).save_shell;
     try std.testing.expectEqualStrings("Future 音", form.name);
     try std.testing.expectEqualStrings("C:\\My Shell\\shell.exe", form.program);
@@ -162,11 +169,13 @@ test "custom shell form separates arguments without interpreting quotes or comma
     try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "missing separator", raw));
     try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "a\x00b\x00c\x00d", raw));
     try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "a\x00b\x00\xff", raw));
-    const custom = try decodeDialogEvent(4, 0, "", .{ .theme = 0, .font_size = 14, .shell = 256, .cursor_blink = true, .copy_on_select = true, .font_family = preferences.default_font });
+    const custom = try decodeDialogEvent(4, 0, "", .{ .theme = 0, .font_size = 14, .shell = 256, .cursor_blink = true, .copy_on_select = true, .confirm_close = true, .font_family = preferences.default_font });
     try std.testing.expectEqual(@as(u32, 256), @intFromEnum(custom.settings.default_shell));
 }
 
 test "dialog item budgets reject oversized presentations before native window access" {
     const items = [_]DialogItem{.{ .value = 0, .label = "future" }} ** 65;
     try std.testing.expectError(error.DialogItemLimit, showDialog(.{ .kind = .commands, .title = "Commands", .description = "", .items = &items, .palette = themes.themes[0].chromePalette() }));
+    // No owner window exists in this test, but exit rows must reach the native boundary rather than the picker cap.
+    try std.testing.expectError(error.NativeDialogFailure, showDialog(.{ .kind = .exit, .title = "Quit Vex?", .description = "", .items = &items, .palette = themes.themes[0].chromePalette() }));
 }

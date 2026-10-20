@@ -15,7 +15,7 @@ COLORREF blend(COLORREF a, COLORREF b, float amount) {
 COLORREF surfaceColor() { return blend(color(host.model.palette.pane_bg), color(host.model.palette.text_primary), host.model.palette.is_dark ? 0.045f : 0.015f); }
 COLORREF fieldColor() { return blend(surfaceColor(), color(host.model.palette.text_primary), 0.055f); }
 COLORREF selectionColor() { return blend(surfaceColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.44f : 0.20f); }
-int listRowHeight() { return host.model.kind == 2 ? 32 : 58; }
+int listRowHeight() { return host.model.kind == 9 ? 64 : host.model.kind == 2 ? 32 : 58; }
 int themeRowHeight() {
     const float available = (host.model.kind == 4 ? host.height - (host.height < 430 ? 198 : 246) : host.height - 170) - 16;
     return (int)fmaxf(104, floorf(available / 2));
@@ -124,10 +124,63 @@ HBITMAP themeCardImage(const DRAWITEMSTRUCT& draw, const DialogItem& item, bool 
     }
     return image;
 }
+void drawProgramIcon(HDC dc, VexAppIcon icon, RECT bounds) {
+    const COLORREF ink = icon.kind ? color(icon.color_rgb) : color(host.model.palette.text_muted);
+    const COLORREF tile = blend(surfaceColor(), ink, 0.08f);
+    roundedFill(dc, bounds, tile, tile, px(12));
+    const float x = (float)bounds.left + px(6), y = (float)bounds.top + px(6);
+    const float size = (float)(bounds.right - bounds.left) - px(12);
+    if (icon.kind == 1 && icon.glyph < sizeof(appIconGeometries) / sizeof(appIconGeometries[0]) && appIconGeometries[icon.glyph].figureCount) {
+        const auto& geometry = appIconGeometries[icon.glyph];
+        Gdiplus::Graphics graphics(dc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        Gdiplus::GraphicsPath path(geometry.fill == D2D1_FILL_MODE_WINDING ? Gdiplus::FillModeWinding : Gdiplus::FillModeAlternate);
+        for (uint32_t i = 0; i < geometry.figureCount; ++i) {
+            const auto& figure = geometry.figures[i];
+            path.StartFigure();
+            for (uint32_t j = 1; j < figure.count; ++j) {
+                const auto a = geometry.points[figure.offset + j - 1], b = geometry.points[figure.offset + j];
+                path.AddLine(x + a.x * size / 24.0f, y + a.y * size / 24.0f, x + b.x * size / 24.0f, y + b.y * size / 24.0f);
+            }
+            if (figure.closed) path.CloseFigure();
+        }
+        Gdiplus::SolidBrush brush(Gdiplus::Color(255, GetRValue(ink), GetGValue(ink), GetBValue(ink)));
+        graphics.FillPath(&brush, &path);
+    } else if (icon.kind) {
+        wchar_t badge[5] = {};
+        if (icon.kind == 2) for (int i = 0; i < icon.badge_len && i < 4; ++i) badge[i] = icon.badge[i];
+        else if (icon.glyph < sizeof(appIconGeometries) / sizeof(appIconGeometries[0])) {
+            const char* text = appIconGeometries[icon.glyph].badge;
+            for (int i = 0; i < 4 && text[i]; ++i) badge[i] = text[i];
+        }
+        SelectObject(dc, host.font); SetTextColor(dc, ink);
+        DrawTextW(dc, badge, -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    } else drawSymbol(dc, L"\xE756", bounds, ink);
+}
 void drawListItem(const DRAWITEMSTRUCT& draw) {
     if (draw.itemID == (UINT)-1 || draw.itemID >= host.model.count) return;
-    const DialogItem& item = host.model.items[draw.itemID];
+    const DialogItem& item = listItem(draw.itemID);
     const bool selected = (draw.itemState & ODS_SELECTED) != 0;
+    if (host.model.kind == 9) {
+        FillRect(draw.hDC, &draw.rcItem, host.background);
+        RECT row = draw.rcItem; InflateRect(&row, -px(4), 0);
+        if (selected && GetFocus() == draw.hwndItem) roundedFill(draw.hDC, row, fieldColor(), color(host.model.palette.accent), px(10));
+        RECT icon = { row.left + px(8), row.top + px(15), row.left + px(40), row.top + px(47) };
+        drawProgramIcon(draw.hDC, item.icon, icon);
+        RECT name = { row.left + px(54), row.top + px(10), row.right - px(12), row.top + px(31) };
+        SelectObject(draw.hDC, host.font); SetBkMode(draw.hDC, TRANSPARENT);
+        SetTextColor(draw.hDC, color(host.model.palette.text_primary));
+        DrawTextW(draw.hDC, item.label, -1, &name, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+        RECT detail = name; detail.top += px(23); detail.bottom += px(23);
+        SetTextColor(draw.hDC, color(host.model.palette.text_muted));
+        DrawTextW(draw.hDC, item.detail, -1, &detail, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+        if (draw.itemID + 1 < host.model.count) {
+            RECT line = { name.left, row.bottom - 1, row.right - px(12), row.bottom };
+            SetDCBrushColor(draw.hDC, color(host.model.palette.border));
+            FillRect(draw.hDC, &line, (HBRUSH)GetStockObject(DC_BRUSH));
+        }
+        return;
+    }
     const bool theme = host.model.kind == 1 || draw.CtlID == themeGridId;
     if (theme) {
         HBITMAP image = themeCardImage(draw, item, selected);
@@ -323,8 +376,8 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
 void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     const int id = (int)draw.CtlID;
     const bool navigation = id >= firstPageId && id < firstPageId + 4;
-    const bool toggle = id == blinkId || id == copyOnSelectId;
-    const bool checked = navigation ? (int)host.page == id - firstPageId : id == blinkId ? host.draft.cursor_blink : id == copyOnSelectId && host.draft.copy_on_select;
+    const bool toggle = id == blinkId || id == copyOnSelectId || id == confirmCloseId;
+    const bool checked = navigation ? (int)host.page == id - firstPageId : id == blinkId ? host.draft.cursor_blink : id == confirmCloseId ? host.draft.confirm_close : id == copyOnSelectId && host.draft.copy_on_select;
     const bool pressed = (draw.itemState & ODS_SELECTED) != 0;
     RECT bounds = draw.rcItem; InflateRect(&bounds, -1, -1);
     FillRect(draw.hDC, &draw.rcItem, toggle ? host.field : host.background);
@@ -333,7 +386,7 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     COLORREF border = navigation && checked ? color(host.model.palette.border) : surface;
     if (GetFocus() == draw.hwndItem) border = color(host.model.palette.accent);
     const bool primary = id == IDOK;
-    const bool closing = host.model.kind == 6 || host.model.kind == 8;
+    const bool closing = destructiveDialog();
     if (primary) {
         surface = closing ? (host.model.palette.is_dark ? RGB(158, 57, 65) : RGB(177, 47, 59)) : selectionColor();
         if (pressed) surface = blend(surface, color(host.model.palette.text_primary), 0.16f);
@@ -365,7 +418,7 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     }
     if (toggle) {
         const auto now = GetTickCount64();
-        auto& motion = id == blinkId ? host.cursorBlinkMotion : host.copyOnSelectMotion;
+        auto& motion = id == blinkId ? host.cursorBlinkMotion : id == confirmCloseId ? host.confirmCloseMotion : host.copyOnSelectMotion;
         float position = motion.update(checked ? 1.0f : 0.0f, now, vex_window_animations_enabled());
         if (motion.pending(now) && !SetTimer(host.window, 8, 16, nullptr))
             position = motion.update(checked ? 1.0f : 0.0f, now, false);
@@ -403,7 +456,8 @@ void paintDialogSurface(HDC dc) {
     roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(24));
     if (host.model.kind == 4 && (host.page == SettingsPage::general || host.page == SettingsPage::terminal)) {
         const bool compact = host.height < 430;
-        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px((host.page == SettingsPage::terminal ? 422 : 408) - (compact ? 46 : 0)) };
+        const int cardBottom = host.page == SettingsPage::terminal ? 422 - (compact ? 46 : 0) : compact ? 350 : 508;
+        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px(cardBottom) };
         roundedFill(dc, card, color(host.model.palette.pane_bg), color(host.model.palette.pane_bg), px(28));
         if (host.page == SettingsPage::terminal) {
             HWND edit = GetDlgItem(host.window, sizeId);
@@ -492,38 +546,13 @@ void paintDialogSurface(HDC dc) {
         DrawTextW(dc, L"Enter  Open     Esc  Close", -1, &footer, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
     if (host.model.kind == 6 || host.model.kind == 8) {
-        const auto& icon = host.model.icon;
-        RECT bounds = { px(24), px(22), px(56), px(54) };
-        const COLORREF ink = icon.kind ? color(icon.color_rgb) : color(host.model.palette.text_muted);
-        const COLORREF tile = blend(surfaceColor(), ink, 0.08f);
-        roundedFill(dc, bounds, tile, tile, px(12));
-        if (icon.kind == 1 && icon.glyph < sizeof(appIconGeometries) / sizeof(appIconGeometries[0]) && appIconGeometries[icon.glyph].figureCount) {
-            const auto& geometry = appIconGeometries[icon.glyph];
-            Gdiplus::Graphics graphics(dc);
-            graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-            Gdiplus::GraphicsPath path(geometry.fill == D2D1_FILL_MODE_WINDING ? Gdiplus::FillModeWinding : Gdiplus::FillModeAlternate);
-            for (uint32_t i = 0; i < geometry.figureCount; ++i) {
-                const auto& figure = geometry.figures[i];
-                path.StartFigure();
-                for (uint32_t j = 1; j < figure.count; ++j) {
-                    const auto a = geometry.points[figure.offset + j - 1], b = geometry.points[figure.offset + j];
-                    path.AddLine(px(30) + a.x * px(20) / 24.0f, px(28) + a.y * px(20) / 24.0f,
-                        px(30) + b.x * px(20) / 24.0f, px(28) + b.y * px(20) / 24.0f);
-                }
-                if (figure.closed) path.CloseFigure();
-            }
-            Gdiplus::SolidBrush brush(Gdiplus::Color(255, GetRValue(ink), GetGValue(ink), GetBValue(ink)));
-            graphics.FillPath(&brush, &path);
-        } else if (icon.kind) {
-            wchar_t badge[5] = {};
-            if (icon.kind == 2) for (int i = 0; i < icon.badge_len && i < 4; ++i) badge[i] = icon.badge[i];
-            else if (icon.glyph < sizeof(appIconGeometries) / sizeof(appIconGeometries[0])) {
-                const char* text = appIconGeometries[icon.glyph].badge;
-                for (int i = 0; i < 4 && text[i]; ++i) badge[i] = text[i];
-            }
-            SelectObject(dc, host.font); SetTextColor(dc, ink);
-            DrawTextW(dc, badge, -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        } else drawSymbol(dc, L"\xE756", bounds, ink);
+        RECT icon = { px(24), px(22), px(56), px(54) };
+        drawProgramIcon(dc, host.model.icon, icon);
+    }
+    if (host.model.kind == 9) {
+        RECT line = { px(24), px(host.height - 72), px(host.width - 24), px(host.height - 72) + 1 };
+        SetDCBrushColor(dc, color(host.model.palette.border));
+        FillRect(dc, &line, (HBRUSH)GetStockObject(DC_BRUSH));
     }
 }
 }

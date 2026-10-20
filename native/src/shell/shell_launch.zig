@@ -225,6 +225,12 @@ pub const ShellLaunch = struct {
         }
         return self.backend.wsl.commandForDirectoryAlloc(allocator, self.command_line, path);
     }
+    pub fn commandForSessionAlloc(self: *const ShellLaunch, allocator: std.mem.Allocator, path: directory.DirectoryPath, token: []const u8) ![]u8 {
+        return switch (self.backend) {
+            .windows => self.commandForDirectoryAlloc(allocator, path),
+            .wsl => |*profile| profile.commandForSessionAlloc(allocator, self.command_line, path, token),
+        };
+    }
     /// Resolved display names are not raw terminal titles or untrusted profile text.
     pub fn shellName(self: *const ShellLaunch) []const u8 {
         return self.display_name orelse self.kind.displayName();

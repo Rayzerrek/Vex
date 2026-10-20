@@ -40,6 +40,7 @@ pub const UserSettings = struct {
     font_family: [128]u8 = default_font,
     cursor_blink: bool = true,
     copy_on_select: bool = true,
+    confirm_close: bool = true,
     default_shell: DefaultShell = .startup,
 
     pub fn fontFamily(self: *const UserSettings) []const u8 {
@@ -80,9 +81,10 @@ pub const UserSettings = struct {
             \\vex.config.font_size = {d}
             \\vex.config.cursor_blink = {s}
             \\vex.config.copy_on_select = {s}
+            \\vex.config.confirm_close = {s}
             \\vex.config.default_shell = "{s}"
             \\
-        , .{ theme, family, self.font_size, if (self.cursor_blink) "true" else "false", if (self.copy_on_select) "true" else "false", shell_name });
+        , .{ theme, family, self.font_size, if (self.cursor_blink) "true" else "false", if (self.copy_on_select) "true" else "false", if (self.confirm_close) "true" else "false", shell_name });
     }
 };
 
@@ -124,6 +126,7 @@ fn decodeLuaSettings(allocator: std.mem.Allocator, bytes: []const u8, path: []co
     raw.font_size = defaults.font_size;
     raw.cursor_blink = defaults.cursor_blink;
     raw.copy_on_select = defaults.copy_on_select;
+    raw.confirm_close = defaults.confirm_close;
     diagnostic.* = .{};
     const source = if (std.mem.startsWith(u8, bytes, "\xef\xbb\xbf")) bytes[3..] else bytes;
     switch (lua.vex_lua_settings_decode(source.ptr, source.len, source_path.ptr, &raw, &diagnostic.bytes, diagnostic.bytes.len)) {
@@ -141,6 +144,7 @@ fn decodeLuaSettings(allocator: std.mem.Allocator, bytes: []const u8, path: []co
         .font_family = raw.font_family,
         .cursor_blink = raw.cursor_blink,
         .copy_on_select = raw.copy_on_select,
+        .confirm_close = raw.confirm_close,
         .default_shell = try DefaultShell.parse(std.mem.sliceTo(&raw.default_shell, 0)),
     };
     try result.validate();
@@ -226,6 +230,9 @@ test "Lua configuration evaluates expressions and validates settings" {
     try std.testing.expect(!settings.cursor_blink);
     try std.testing.expect(!settings.copy_on_select);
     try std.testing.expect((try UserSettings.decode(std.testing.allocator, "")).copy_on_select);
+    try std.testing.expect((try UserSettings.decode(std.testing.allocator, "")).confirm_close);
+    try std.testing.expect(!(try UserSettings.decode(std.testing.allocator, "vex.config.confirm_close = false")).confirm_close);
+    try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.confirm_close = 0"));
     try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.copy_on_select = 0"));
     try std.testing.expectEqual(DefaultShell.pwsh, settings.default_shell);
     try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.font_size = 0"));
@@ -246,7 +253,7 @@ test "Lua execution is bounded and excludes process and native IO APIs" {
 
 test "Lua settings round trip quoted font names and all themes" {
     for (themes.themes, 0..) |_, i| {
-        var input: UserSettings = .{ .theme_index = @intCast(i), .font_size = 19, .cursor_blink = false, .copy_on_select = i % 2 == 0, .default_shell = .pwsh };
+        var input: UserSettings = .{ .theme_index = @intCast(i), .font_size = 19, .cursor_blink = false, .copy_on_select = i % 2 == 0, .confirm_close = i % 2 != 0, .default_shell = .pwsh };
         const family = "A \\\"quoted\\\" font";
         input.font_family = [_]u8{0} ** 128;
         @memcpy(input.font_family[0..family.len], family);
