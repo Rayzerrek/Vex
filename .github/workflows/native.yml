@@ -4,9 +4,7 @@ on:
   push:
     branches: [main, "feat/**"]
     paths:
-      - "native/**"
-      - "Vendor/libghostty/**"
-      - "Vendor/conpty/**"
+      - "app/**"
       - "flake.nix"
       - "flake.lock"
       - "LICENSE"
@@ -15,9 +13,7 @@ on:
       - ".github/workflows/release.yml"
   pull_request:
     paths:
-      - "native/**"
-      - "Vendor/libghostty/**"
-      - "Vendor/conpty/**"
+      - "app/**"
       - "flake.nix"
       - "flake.lock"
       - "LICENSE"
@@ -51,7 +47,7 @@ jobs:
       - name: Read pinned Zig version
         id: toolchain
         shell: bash
-        run: echo "version=$(tr -d '\r\n' < native/.zig-version)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(tr -d '\r\n' < app/.zig-version)" >> "$GITHUB_OUTPUT"
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ steps.toolchain.outputs.version }}
@@ -59,12 +55,12 @@ jobs:
         with:
           python-version: "3.13"
       - name: Check Zig formatting
-        working-directory: native
+        working-directory: app
         run: zig fmt --check build.zig src
       - name: Test portable packaging
-        run: python -m unittest discover -s native/tests -p 'test_*.py' -v
+        run: python -m unittest discover -s app/tests -p 'test_*.py' -v
       - name: Cross-compile application and tests
-        working-directory: native
+        working-directory: app
         env:
           CONFIGURATION: ${{ matrix.configuration }}
         run: |
@@ -72,12 +68,12 @@ jobs:
           zig build test-build -Doptimize="$CONFIGURATION"
       - name: Verify portable payload
         run: |
-          python native/tools/package.py
-          python native/tools/package.py --verify
+          python app/tools/package.py
+          python app/tools/package.py --verify
       - uses: actions/upload-artifact@v7
         with:
           name: native-win-x64-${{ matrix.configuration }}
-          path: native/zig-out/bin/
+          path: app/zig-out/bin/
           if-no-files-found: error
           retention-days: 7
 

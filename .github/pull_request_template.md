@@ -17,8 +17,9 @@ reviewer can see how the change was actually verified rather than assuming.
 
 ## Checklist
 
-- [ ] `dotnet build windows/Vex.slnx` succeeds
-- [ ] `dotnet test windows/Vex.slnx` passes
+- [ ] `zig fmt --check build.zig src`, `zig build` and `zig build test-build` succeed in `app/`
+- [ ] Packaging tests pass: `python3 -m unittest discover -s app/tests -p 'test_*.py' -v`
+- [ ] Compiled Zig tests pass on Windows (or Windows execution is explicitly pending)
 - [ ] `pnpm run check` and `pnpm run build` pass in `web/` (if it changed)
 - [ ] Commit messages use a conventional-commit prefix
 - [ ] Documentation updated if user-visible behaviour changed

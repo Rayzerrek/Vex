@@ -227,25 +227,22 @@ const pages: PageContent[] = [
         body: (
           <>
             <p>
-              With the .NET 10 SDK installed on Windows, run these commands from
-              the <a href="https://github.com/Rayzerrek/Vex">repository</a>{" "}
-              root:
+              With Zig 0.15.2 installed on Windows, run these commands from the{" "}
+              <a href="https://github.com/Rayzerrek/Vex">repository</a> root:
             </p>
             <CodeBlock language="powershell">
-              {
-                "dotnet build windows/Vex.slnx\ndotnet run --project windows/Vex.App"
-              }
+              {"cd app\nzig build\nzig build test\nzig build run"}
             </CodeBlock>
             <p>
-              The Windows packaging script produces both the self-contained ZIP
-              and MSI in <code>windows/publish/</code>:
+              From the repository root, the Windows packaging script produces a
+              ZIP and MSI in <code>app/publish/</code> (Python and .NET/WiX
+              required for packaging):
             </p>
             <CodeBlock language="powershell">
-              {"pwsh windows/build-installer.ps1"}
+              {"pwsh app/tools/build-installer.ps1"}
             </CodeBlock>
             <p>
-              Artifact names use the version in{" "}
-              <code>windows/Vex.App/Vex.App.csproj</code>.
+              Artifact names use the version in <code>app/VERSION</code>.
             </p>
           </>
         )

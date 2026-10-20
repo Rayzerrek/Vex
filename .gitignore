@@ -22,7 +22,5 @@ skills-lock.json
 .amp/portals/
 **/.amp/portals/
 
-windows/publish/
-
 # Test output
 /artifacts/

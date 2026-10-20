@@ -10,7 +10,7 @@
       toolchain = system:
         let
           pkgs = import nixpkgs { inherit system; };
-          version = pkgs.lib.removeSuffix "\n" (builtins.readFile ./native/.zig-version);
+          version = pkgs.lib.removeSuffix "\n" (builtins.readFile ./app/.zig-version);
           platforms = {
             x86_64-linux = {
               arch = "x86_64";

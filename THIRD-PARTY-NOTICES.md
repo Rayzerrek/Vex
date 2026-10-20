@@ -8,7 +8,7 @@ their own licenses. Full license texts are reproduced below where required.
 
 ### libghostty (ghostty-vt)
 
-- **Files:** `Vendor/libghostty/ghostty-vt.dll`
+- **Files:** `app/vendor/libghostty/ghostty-vt.dll`
 - **Source:** https://github.com/ghostty-org/ghostty
 - **License:** MIT
 - **Copyright:** Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
@@ -18,7 +18,7 @@ this repository and redistributed unmodified.
 
 ### Microsoft Windows Console ConPTY
 
-- **Files:** `Vendor/conpty/conpty.dll`, `Vendor/conpty/OpenConsole.exe`
+- **Files:** `app/vendor/conpty/conpty.dll`, `app/vendor/conpty/OpenConsole.exe`
 - **Package:** `Microsoft.Windows.Console.ConPTY` 1.24.261001001 (Windows x64)
 - **Source:** https://github.com/microsoft/terminal
 - **License:** MIT
@@ -27,20 +27,20 @@ this repository and redistributed unmodified.
 Redistributed unmodified from Microsoft's signed NuGet package. The native app
 uses this matched DLL/host pair instead of the Windows inbox implementation so
 terminal control sequences, including erase-scrollback (ED3), reach its emulator
-on supported Windows versions. See `Vendor/conpty/README.md` for provenance and
-checksums, and `Vendor/conpty/LICENSE` for the upstream license.
+on supported Windows versions. See `app/vendor/conpty/README.md` for provenance and
+checksums, and `app/vendor/conpty/LICENSE` for the upstream license.
 
 ## Statically linked native dependencies
 
 ### Lua 5.4.8
 
-- **Files:** `native/vendor/lua/src/`, statically linked into Vex Native
+- **Files:** `app/vendor/lua/src/`, statically linked into Vex Native
 - **Source:** https://www.lua.org/ftp/lua-5.4.8.tar.gz
 - **License:** MIT
 - **Copyright:** Copyright (c) 1994-2025 Lua.org, PUC-Rio.
 
 The unmodified Lua sources power native configuration. The full MIT license is
-reproduced in `native/vendor/lua/LICENSE`; the MIT text below also applies.
+reproduced in `app/vendor/lua/LICENSE`; the MIT text below also applies.
 No separately installed Lua runtime is required.
 
 ## NuGet dependencies

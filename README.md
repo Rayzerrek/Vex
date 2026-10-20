@@ -30,8 +30,8 @@ Download a Windows x64 package from [Releases](https://github.com/Rayzerrek/Vex/
 - **Installer** (`Vex-Native-<version>-win-x64.msi`) — installs Vex with Start Menu
   and desktop shortcuts.
 - **Portable ZIP** (`Vex-Native-<version>-win-x64.zip`) — extract the whole archive
-  into a folder and run `Vex.exe`. Keep the included DLLs, `OpenConsole.exe` and
-  `ShellIntegration` folder beside the executable.
+  into a folder and run `Vex.exe`. Keep the included DLLs and `OpenConsole.exe`
+  beside the executable; shell integration is embedded.
 
 Requires **Windows 10 version 1809 or later, or Windows 11**, on x64.
 Shells and WSL distributions need to be installed separately.
@@ -58,13 +58,15 @@ find an action without memorizing every shortcut.
 
 ## Development
 
-The current application lives in [`native/`](native/). See the
-[native development guide](native/README.md) for building, running tests,
+The application lives in [`app/`](app/). See the
+[application development guide](app/README.md) for building, running tests,
 command-line shell options and packaging releases. The pinned toolchain supports
 cross-compiling from Linux or WSL; running the application requires Windows.
 
-The repository also contains the previous WPF implementation in `windows/` and
-the website in `web/`.
+The website lives in `web/`, architecture and testing guides in `docs/`, and
+CI workflows in `.github/workflows/`. Application dependencies are kept together
+in `app/vendor/`. The previous WPF implementation has been removed; it remains
+available in Git history.
 
 ## License
 

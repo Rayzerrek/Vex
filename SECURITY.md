@@ -34,7 +34,7 @@ fix to be released before disclosing the issue publicly.
 Vex starts processes and renders untrusted output, so the areas most worth
 testing are:
 
-- **Escape sequence handling.** `Vendor/libghostty/ghostty-vt.dll` parses
+- **Escape sequence handling.** `app/vendor/libghostty/ghostty-vt.dll` parses
   arbitrary bytes from any program running in a pane. A memory-safety bug there
   is in scope; report it upstream to
   [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) as well.

@@ -5,7 +5,7 @@ const repository = "https://github.com/Rayzerrek/Vex";
 const releases = `${repository}/releases`;
 
 function Icon({
-  name
+  name,
 }: {
   name: "sun" | "moon" | "download" | "search" | "close" | "menu" | "external";
 }) {
@@ -16,7 +16,7 @@ function Icon({
     search: "M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM16 16l5 5",
     close: "m6 6 12 12M6 18 18 6",
     menu: "M4 6h16M4 12h16M4 18h16",
-    external: "M8 5h11v11M19 5 5 19"
+    external: "M8 5h11v11M19 5 5 19",
   };
   return (
     <svg
@@ -56,7 +56,7 @@ function useTheme() {
   const [dark, setDark] = useState(false);
   useEffect(
     () => setDark(document.documentElement.classList.contains("dark")),
-    []
+    [],
   );
   function toggle() {
     const next = !dark;
@@ -77,7 +77,7 @@ function useTheme() {
 function SiteHeader({
   dark,
   toggle,
-  isDocs
+  isDocs,
 }: {
   dark: boolean;
   toggle: () => void;
@@ -129,7 +129,7 @@ const workspaceFeatures = [
       "Split a tab into panes, rearrange them, and save the layout. Open it in another project with the directories and startup commands you chose.",
     link: "/docs/workspace#saved-layouts",
     linkText: "Explore workspaces",
-    type: "panes"
+    type: "panes",
   },
   {
     title: "Bring the right path to the prompt.",
@@ -137,7 +137,7 @@ const workspaceFeatures = [
       "Press Ctrl+Shift+F to find a file or folder at your cursor. Navigate directories and insert a path without leaving your shell or terminal application.",
     link: "/docs/shortcuts#path-picker",
     linkText: "Learn the path picker",
-    type: "paths"
+    type: "paths",
   },
   {
     title: "Know what needs your attention.",
@@ -145,13 +145,13 @@ const workspaceFeatures = [
       "See when a program is working, finished, failed, or waiting for input. Status stays visible across panes, tabs, and projects when programs report it.",
     link: "/docs/program-status",
     linkText: "Read about program status",
-    type: "status"
-  }
+    type: "status",
+  },
 ];
 
 function WorkspaceDemo({
   selected,
-  appearance
+  appearance,
 }: {
   selected: number;
   appearance: "light" | "dark";
@@ -342,7 +342,7 @@ function Home() {
               >
                 {title}
               </button>
-            )
+            ),
           )}
         </div>
         <div
@@ -448,18 +448,18 @@ function Home() {
             {
               slug: "getting-started",
               title: "Installation",
-              detail: "From download to your first prompt"
+              detail: "From download to your first prompt",
             },
             {
               slug: "workspace",
               title: "Your workspace",
-              detail: "Projects, panes, and saved layouts"
+              detail: "Projects, panes, and saved layouts",
             },
             {
               slug: "appearance",
               title: "Make it feel like you",
-              detail: "Themes, fonts, and the little details"
-            }
+              detail: "Themes, fonts, and the little details",
+            },
           ].map((guide, index) => (
             <a key={guide.slug} href={`/docs/${guide.slug}`}>
               <span className="guide-number">0{index + 1}</span>
@@ -548,7 +548,7 @@ function Docs({ slug }: { slug: string }) {
   const filtered = docsPages.filter((item) =>
     `${item.title} ${item.description}`
       .toLowerCase()
-      .includes(query.toLowerCase().trim())
+      .includes(query.toLowerCase().trim()),
   );
   return (
     <main className="docs-layout page-width" id="main-content">
@@ -603,7 +603,7 @@ function Docs({ slug }: { slug: string }) {
                   ))}
                 </div>
               ) : null;
-            }
+            },
           )}
           {filtered.length === 0 && (
             <p className="search-empty" role="status">
@@ -690,7 +690,7 @@ function NotFound() {
 export function App({ initialPath }: { initialPath?: string }) {
   const [path, setPath] = useState(
     initialPath ??
-      (typeof window === "undefined" ? "/" : window.location.pathname)
+      (typeof window === "undefined" ? "/" : window.location.pathname),
   );
   const { dark, toggle } = useTheme();
   const normalized = path.replace(/\/+$/, "") || "/";
@@ -726,7 +726,7 @@ export function App({ initialPath }: { initialPath?: string }) {
         requestAnimationFrame(() =>
           document
             .getElementById(decodeURIComponent(url.hash.slice(1)))
-            ?.scrollIntoView()
+            ?.scrollIntoView(),
         );
       else window.scrollTo(0, 0);
       requestAnimationFrame(() => {
@@ -754,7 +754,7 @@ export function App({ initialPath }: { initialPath?: string }) {
         "content",
         isDocs && current
           ? current.description
-          : "A native terminal workspace for Windows. Keep your projects, shells, and split panes together."
+          : "A native terminal workspace for Windows. Keep your projects, shells, and split panes together.",
       );
   }, [normalized, isDocs, slug]);
   return (

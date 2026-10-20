@@ -57,9 +57,9 @@ jobs:
             echo 'Unknown package mode'; exit 1
           fi
           git checkout --detach "$commit"
-          version="$(python3 -c 'import sys; sys.path.insert(0, "native/tools"); import package; print(package.release_version())')"
+          version="$(python3 -c 'import sys; sys.path.insert(0, "app/tools"); import package; print(package.release_version())')"
           if [[ "$MODE" == release && "$tag" != "v$version" ]]; then
-            echo "Tag $tag does not match native/VERSION ($version)"; exit 1
+            echo "Tag $tag does not match app/VERSION ($version)"; exit 1
           fi
           printf 'commit=%s\nversion=%s\nlabel=%s\ntag=%s\nmode=%s\n' "$commit" "$version" "$label" "$tag" "$MODE" >> "$GITHUB_OUTPUT"
 
@@ -85,7 +85,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: native-win-x64-ReleaseSafe
-          path: native/zig-out/bin
+          path: app/zig-out/bin
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
@@ -99,7 +99,7 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
           LABEL: ${{ needs.resolve.outputs.label }}
         run: |
-          ./native/build-installer.ps1 -Version $env:VERSION -Label $env:LABEL -SkipBuild -SkipTests
+          ./app/tools/build-installer.ps1 -Version $env:VERSION -Label $env:LABEL -SkipBuild -SkipTests
       - name: Record source provenance
         shell: pwsh
         env:
@@ -113,7 +113,7 @@ jobs:
             version = $env:VERSION
             mode = $env:PACKAGE_MODE
             run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          } | ConvertTo-Json | Set-Content native/publish/build-info.json -Encoding utf8
+          } | ConvertTo-Json | Set-Content app/publish/build-info.json -Encoding utf8
           "### Native $env:PACKAGE_MODE package — $env:SOURCE_COMMIT" >> $env:GITHUB_STEP_SUMMARY
           "ZIP, MSI and both SHA-256 files are available in the workflow artifacts." >> $env:GITHUB_STEP_SUMMARY
           if ($env:PACKAGE_MODE -eq 'preview') {
@@ -123,17 +123,17 @@ jobs:
         with:
           name: vex-native-${{ needs.resolve.outputs.label || needs.resolve.outputs.version }}
           path: |
-            native/publish/*.zip
-            native/publish/*.msi
-            native/publish/*.sha256
-            native/publish/build-info.json
+            app/publish/*.zip
+            app/publish/*.msi
+            app/publish/*.sha256
+            app/publish/build-info.json
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: native-packaging-diagnostics
-          path: native/publish/*.log
+          path: app/publish/*.log
           if-no-files-found: ignore
           retention-days: 7
 
