@@ -53,6 +53,27 @@ Terminal modules own emulator state and interpret status, titles and output.
 ConPTY, dialogs and rendering. The C Lua bridge evaluates configuration against
 the statically linked vendored runtime.
 
+## Failure boundaries and teardown
+
+Expected input, clipboard, shell-launch and dialog failures use nonmodal toasts;
+corrupt invariants, allocation failures and unknown renderer/parser failures are
+not silently ignored. Transport failure quarantines only its pane, preserving
+its screen for copying. A full input queue rejects an enqueue atomically;
+protocol replies have reserved space in the same FIFO.
+
+PTY close removes the native token on the window thread before releasing Zig
+owners. Detached pipe/probe workers carry only native storage. Up to four native
+reapers perform ConPTY teardown outside the UI thread, with a one-second watchdog
+that can terminate the client job if graceful disconnect stalls. New launches
+apply backpressure while the teardown backlog is large. Application shutdown
+joins reapers before allocator diagnostics. A cancellation loop handles the race
+between cancelling synchronous IO and a pipe worker entering its next IO call.
+
+WSL process metadata is advisory: queries run only on demand after a startup
+delay, with one query at a time across panes and exponential failure backoff.
+Closing a pane cancels its probe immediately. Main clients and probes enter jobs
+atomically at process creation, without a suspended-launcher interval.
+
 ## Output and rendering
 
 ```text

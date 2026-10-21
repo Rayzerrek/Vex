@@ -17,9 +17,7 @@ const copy_effect = @import("copy_feedback.zig");
 const SessionState = union(enum) { running, exited: u32 };
 
 pub const CopyFeedback = struct {
-    // Two opposite row spans describe one box, without a viewport-height limit.
-    spans: [2]platform.c.VexCopySpan = undefined,
-    count: u8 = 0,
+    spans: std.ArrayList(platform.c.VexCopySpan) = .empty,
     scroll_offset: u64 = 0,
     started_ms: ?u64 = null,
 
@@ -27,12 +25,12 @@ pub const CopyFeedback = struct {
 
     pub fn clear(self: *CopyFeedback) void {
         self.started_ms = null;
-        self.count = 0;
+        self.spans.clearRetainingCapacity();
     }
 
     pub fn progress(self: *CopyFeedback, now_ms: u64, scroll_offset: u64, animations_enabled: bool) ?f32 {
         const started = self.started_ms orelse return null;
-        if (!animations_enabled or self.count == 0 or scroll_offset != self.scroll_offset) {
+        if (!animations_enabled or self.spans.items.len == 0 or scroll_offset != self.scroll_offset) {
             self.clear();
             return null;
         }
@@ -107,7 +105,11 @@ pub const TerminalSession = struct {
     }
     /// Publishes decoded write-only OSC 52 / OSC 1337 clipboard payloads to the Windows clipboard.
     pub fn onClipboardWrite(self: *TerminalSession, text: []const u8) !void {
-        try platform.writeClipboardText(text);
+        platform.writeClipboardText(text) catch |err| {
+            // Clipboard contention is an operation failure, not a poisoned VT parser.
+            platform.reportOperationFailure(err);
+            return err;
+        };
         self.queueCopyFeedback(text);
     }
 
@@ -156,7 +158,7 @@ pub const TerminalSession = struct {
         const frame = self.terminal.readFrame() catch return false;
         const box = copy_effect.unchanged(self.terminal.allocator, &self.copy_source, frame, text) orelse return false;
         self.copy_source.captured_ms = null;
-        self.setCopyFeedback(box, sb.offset, now_ms);
+        self.setCopyFeedback(frame, box, sb.offset, now_ms);
         return true;
     }
 
@@ -170,18 +172,21 @@ pub const TerminalSession = struct {
         self.copy_source.captureVersioned(self.terminal.allocator, frame, std.time.milliTimestamp()) catch {};
     }
 
-    fn setCopyFeedback(self: *TerminalSession, box: copy_effect.Box, offset: u64, now_ms: u64) void {
-        self.copy_feedback.spans[0] = .{ .row = box.first_row, .start_col = box.start_col, .end_col = box.end_col };
-        self.copy_feedback.spans[1] = .{ .row = box.last_row, .start_col = box.start_col, .end_col = box.end_col };
-        self.copy_feedback.count = 2;
+    fn setCopyFeedback(self: *TerminalSession, frame: anytype, box: ?copy_effect.Box, offset: u64, now_ms: u64) void {
+        copy_effect.collectContentSpans(self.terminal.allocator, &self.copy_feedback.spans, frame, box) catch {
+            self.copy_feedback.clear();
+            return;
+        };
+        if (self.copy_feedback.spans.items.len == 0) return;
         self.copy_feedback.scroll_offset = offset;
         self.copy_feedback.started_ms = now_ms;
     }
-    /// Joins native workers before releasing the emulator, directory and stable session address.
+    /// Detaches the native token before releasing Zig owners; workers carry only native storage.
     pub fn destroy(self: *TerminalSession, allocator: std.mem.Allocator) void {
         self.pty.deinit();
         self.discardPendingCopy();
         self.copy_source.deinit(self.terminal.allocator);
+        self.copy_feedback.spans.deinit(self.terminal.allocator);
         self.terminal.deinit();
         self.directory.deinit();
         allocator.destroy(self);
@@ -193,7 +198,29 @@ pub const TerminalSession = struct {
         const previous = status_presentation.statusPresentationKey(self.terminal.program_status.programStatus());
         self.terminal.program_status.acknowledgeProgramStatus();
         if (previous != status_presentation.statusPresentationKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
-        try self.pty.write(bytes);
+        try self.writePty(bytes);
+    }
+    /// A dead transport is quarantined; its screen remains available for copying.
+    pub fn stopAfterTransportFailure(self: *TerminalSession, code: u32) void {
+        if (self.pty.handle == null) return;
+        // Late output can fail after the exit watcher ran; keep the real process exit code.
+        if (self.state == .running) self.state = .{ .exited = code };
+        self.terminal.response_sink = null;
+        // Only transport callback failures reach this recovery path.
+        if (self.terminal.callback_error) |err| {
+            if (err == error.PtyReplyWriteFailed) self.terminal.callback_error = null;
+        }
+        self.terminal.program_status.onProgramExited();
+        self.cancelApplicationCopy();
+        self.pty.deinit();
+    }
+    pub fn writePty(self: *TerminalSession, bytes: []const u8) !void {
+        if (self.state != .running) return error.SessionTransportFailed;
+        self.pty.write(bytes) catch |err| {
+            if (err != error.PtyWriteFailed) return err;
+            self.stopAfterTransportFailure(29); // ERROR_WRITE_FAULT
+            return error.SessionTransportFailed;
+        };
     }
     /// Normalizes clipboard newlines and applies bracketed paste when the active shell/TUI requested DEC 2004.
     pub fn paste(self: *TerminalSession, allocator: std.mem.Allocator, text: []const u8) !void {
@@ -219,20 +246,7 @@ pub const TerminalSession = struct {
         if (std.mem.trim(u8, selected, " \t\r\n").len == 0) return;
         const frame = self.terminal.readFrame() catch return;
         const sb = self.terminal.scrollbar() catch return;
-        var box: ?copy_effect.Box = null;
-        for (frame.cells.items, 0..) |cell, index| {
-            if (!cell.selected) continue;
-            const row: u16 = @intCast(index / frame.columns);
-            const col: u16 = @intCast(index % frame.columns);
-            if (box) |*b| {
-                b.last_row = row;
-                b.start_col = @min(b.start_col, col);
-                b.end_col = @max(b.end_col, col + 1);
-            } else {
-                box = .{ .first_row = row, .last_row = row, .start_col = col, .end_col = col + 1 };
-            }
-        }
-        if (box) |b| self.setCopyFeedback(b, sb.offset, now_ms);
+        self.setCopyFeedback(frame, null, sb.offset, now_ms);
     }
     /// Deletes a cursor-anchored keyboard selection by sending one DEL (0x7f) per selected character.
     pub fn deleteKeyboardSelection(self: *TerminalSession) !bool {
@@ -260,7 +274,7 @@ pub const TerminalSession = struct {
             const height_px: u64 = @as(u64, size.rows) * @as(u64, size.cell_height_px);
             const width_px: u64 = @as(u64, size.columns) * @as(u64, size.cell_width_px);
             const report = try std.fmt.bufPrint(&buffer, "\x1b[48;{d};{d};{d};{d}t", .{ size.rows, size.columns, height_px, width_px });
-            try self.pty.write(report);
+            try self.writePty(report);
         }
     }
     /// Returns the active title for tab and pane headers, falling back to the detected foreground process name or the session's shell name when the shell has not set an app title.
@@ -400,20 +414,19 @@ fn resolveForegroundProcessTitle(proc_name: ?[]const u8, proc_cmd: ?[]const u8) 
 
 test "copy feedback progress advances and clears on duration or scroll change" {
     var fb: CopyFeedback = .{};
+    defer fb.spans.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(?f32, null), fb.progress(1000, 0, true));
 
-    fb.spans[0] = .{ .row = 2, .start_col = 4, .end_col = 18 };
-    fb.count = 1;
+    try fb.spans.append(std.testing.allocator, .{ .row = 2, .start_col = 4, .end_col = 18 });
     fb.scroll_offset = 5;
     fb.started_ms = 1000;
 
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), fb.progress(1000, 5, true).?, 0.001);
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), fb.progress(1220, 5, true).?, 0.001);
     try std.testing.expectEqual(@as(?f32, null), fb.progress(1440, 5, true));
-    try std.testing.expectEqual(@as(u8, 0), fb.count);
+    try std.testing.expectEqual(@as(usize, 0), fb.spans.items.len);
 
-    fb.spans[0] = .{ .row = 0, .start_col = 0, .end_col = 10 };
-    fb.count = 1;
+    try fb.spans.append(std.testing.allocator, .{ .row = 0, .start_col = 0, .end_col = 10 });
     fb.scroll_offset = 5;
     fb.started_ms = 2000;
     try std.testing.expectEqual(@as(?f32, null), fb.progress(2050, 6, true));

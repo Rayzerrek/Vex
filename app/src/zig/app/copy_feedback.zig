@@ -7,6 +7,31 @@ pub const Box = struct {
     end_col: u16,
 };
 
+/// Snapshot only the occupied extent of each copied row. Blank rows and trailing
+/// selection padding are not content; interior spaces remain part of the line.
+/// Called once per copy, never on animation frames. Storage is reused by the owner.
+pub fn collectContentSpans(allocator: std.mem.Allocator, spans: anytype, frame: anytype, box: ?Box) !void {
+    spans.clearRetainingCapacity();
+    if (frame.columns == 0 or frame.rows == 0) return;
+    const first_row = if (box) |b| b.first_row else 0;
+    const last_row = if (box) |b| @min(b.last_row, frame.rows - 1) else frame.rows - 1;
+    const first_col = if (box) |b| b.start_col else 0;
+    const last_col = if (box) |b| @min(b.end_col, frame.columns) else frame.columns;
+    if (first_row > last_row or first_col >= last_col) return;
+    for (first_row..@as(usize, last_row) + 1) |row| {
+        var start: ?u16 = null;
+        var end: u16 = 0;
+        for (first_col..last_col) |col| {
+            const cell = frame.cells.items[row * frame.columns + col];
+            if (box == null and !cell.selected) continue;
+            if (cell.width == .tail or whitespace(frame.cellText(cell))) continue;
+            if (start == null) start = @intCast(col);
+            end = @intCast(@min(last_col, col + @as(usize, if (cell.width == .wide) 2 else 1)));
+        }
+        if (start) |column| try spans.append(allocator, .{ .row = @intCast(row), .start_col = column, .end_col = end });
+    }
+}
+
 /// Retain text, not render styles: TUIs often remove their own selection highlight
 /// after copying. Reusing these buffers avoids allocating on every input event.
 pub const Snapshot = struct {
@@ -427,7 +452,7 @@ pub fn locate(frame: anytype, payload: []const u8) ?Box {
 }
 
 const TestFrame = struct {
-    const Cell = struct { width: enum { narrow, wide, tail } = .narrow, text_start: usize, text_length: usize = 1 };
+    const Cell = struct { width: enum { narrow, wide, tail } = .narrow, text_start: usize, text_length: usize = 1, selected: bool = true };
     columns: u16,
     rows: u16,
     cells: struct { items: []const Cell },
@@ -440,6 +465,45 @@ const TestFrame = struct {
 fn asciiFrame(text: []const u8, cells: []TestFrame.Cell, columns: u16) TestFrame {
     for (cells, 0..) |*cell, i| cell.* = .{ .text_start = i };
     return .{ .columns = columns, .rows = @intCast(cells.len / columns), .cells = .{ .items = cells }, .utf8 = .{ .items = text } };
+}
+
+test "copy shimmer excludes selected blank rows and per-line trailing padding" {
+    var cells: [60]TestFrame.Cell = undefined;
+    const frame = asciiFrame("            " ++ "  alpha     " ++ "            " ++ " beta gamma " ++ "            ", &cells, 12);
+    const Span = struct { row: u16, start_col: u16, end_col: u16 };
+    var spans: std.ArrayList(Span) = .empty;
+    defer spans.deinit(std.testing.allocator);
+    try collectContentSpans(std.testing.allocator, &spans, frame, null);
+    try std.testing.expectEqualSlices(Span, &.{
+        .{ .row = 1, .start_col = 2, .end_col = 7 },
+        .{ .row = 3, .start_col = 1, .end_col = 11 },
+    }, spans.items);
+    // Application-managed copies use the same content mask as native selections.
+    try collectContentSpans(std.testing.failing_allocator, &spans, frame, .{ .first_row = 0, .last_row = 4, .start_col = 0, .end_col = 12 });
+    try std.testing.expectEqual(@as(usize, 2), spans.items.len);
+    for (&cells) |*cell| cell.selected = false;
+    try collectContentSpans(std.testing.allocator, &spans, frame, null);
+    try std.testing.expectEqual(@as(usize, 0), spans.items.len);
+}
+
+test "copy shimmer keeps wide glyphs and combining marks without a 64-row cap" {
+    const cells = [_]TestFrame.Cell{
+        .{ .width = .wide, .text_start = 0, .text_length = 3 },
+        .{ .width = .tail, .text_start = 3, .text_length = 0 },
+        .{ .text_start = 3, .text_length = 3 },
+        .{ .text_start = 6, .text_length = 1 },
+    };
+    const frame: TestFrame = .{ .columns = 4, .rows = 1, .cells = .{ .items = &cells }, .utf8 = .{ .items = "界e\xcc\x81 " } };
+    const Span = struct { row: u16, start_col: u16, end_col: u16 };
+    var spans: std.ArrayList(Span) = .empty;
+    defer spans.deinit(std.testing.allocator);
+    try collectContentSpans(std.testing.allocator, &spans, frame, null);
+    try std.testing.expectEqual(@as(u16, 3), spans.items[0].end_col);
+    var tall_cells: [130]TestFrame.Cell = undefined;
+    const tall = asciiFrame(&([_]u8{ 'x', ' ' } ** 65), &tall_cells, 2);
+    try collectContentSpans(std.testing.allocator, &spans, tall, null);
+    try std.testing.expectEqual(@as(usize, 65), spans.items.len);
+    try std.testing.expectEqual(@as(u16, 64), spans.items[64].row);
 }
 
 test "unattributed clipboard relays require fresh input and reject incidental Unicode matches" {

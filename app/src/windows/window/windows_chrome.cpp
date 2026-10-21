@@ -471,7 +471,7 @@ extern "C" void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, flo
 
     float minX = 1e9f, maxX = -1e9f;
     float minY = 1e9f, maxY = -1e9f;
-    const size_t count = span_count > 64 ? 64 : span_count;
+    const size_t count = span_count;
     for (size_t i = 0; i < count; ++i) {
         if (spans[i].end_col <= spans[i].start_col) continue;
         const float x1 = gridLeft + (float)spans[i].start_col * cell_width;
@@ -492,12 +492,19 @@ extern "C" void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, flo
         const uint32_t shimmerGlow = blendRgb(chromePalette.accent, 0xffffff, chromePalette.is_dark ? 0.38f : 0.25f);
         const uint32_t shimmerCore = blendRgb(chromePalette.accent, 0xffffff, chromePalette.is_dark ? 0.78f : 0.58f);
 
-        // One silhouette and one sweep, independent of the number of copied rows.
-        {
-            const float sx1 = minX - 1.5f;
-            const float sx2 = maxX + 1.5f;
-            const float sy1 = minY - 0.5f;
-            const float sy2 = maxY + 0.5f;
+        // Share one sweep, but never fill blank rows or the padding after short lines.
+        // Equal adjacent extents coalesce without allocating geometry every frame.
+        for (size_t i = 0; i < count; ++i) {
+            const auto& span = spans[i];
+            if (span.end_col <= span.start_col) continue;
+            size_t last = i;
+            while (last + 1 < count && spans[last + 1].row == spans[last].row + 1 &&
+                spans[last + 1].start_col == span.start_col && spans[last + 1].end_col == span.end_col) ++last;
+            const float sx1 = gridLeft + (float)span.start_col * cell_width - 1.5f;
+            const float sx2 = gridLeft + (float)span.end_col * cell_width + 1.5f;
+            const float sy1 = gridTop + (float)span.row * cell_height - 0.5f;
+            const float sy2 = gridTop + (float)(spans[last].row + 1) * cell_height + 0.5f;
+            i = last;
 
             const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(sx1, sy1, sx2, sy2), 3.5f, 3.5f);
             brush->SetColor(rgb(chromePalette.accent, (chromePalette.is_dark ? 0.18f : 0.13f) * env));

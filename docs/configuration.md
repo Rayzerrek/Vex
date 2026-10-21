@@ -22,7 +22,13 @@ and its current appearance.
 
 Use **Configuration: Reload init.lua** in the command palette to reload without
 restarting. Failed reloads retain the previous valid settings and report an
-error. Saving preferences through the UI replaces the configuration file.
+error in a nonmodal toast. Saving preferences through the UI replaces the
+configuration file with the current values, first atomically saving its previous
+contents to `init.backup.lua` (or `<custom-name>.backup.lua` for `VEX_CONFIG`).
+Identical saves leave the backup untouched. This is a single previous-version
+backup, not a history: copy hand-written Lua elsewhere if you want to retain it
+across multiple changed saves. Modules are not modified. If backup/save fails,
+the GUI returns to the last committed preferences and running sessions remain open.
 
 Custom shell profiles are managed separately in the adjacent shells Lua file;
 adding a shell does not rewrite hand-written `init.lua` configuration.

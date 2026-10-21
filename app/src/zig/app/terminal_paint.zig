@@ -60,7 +60,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         const scrollbar = try session.terminal.scrollbar();
         if (self.metrics) |metrics| {
             if (session.copy_feedback.progress(self.cursorNowMs(), scrollbar.offset, platform.animationsEnabled())) |copy_progress| {
-                platform.drawCopyFeedback(placement.bounds, metrics.cell_width, metrics.cell_height, session.copy_feedback.spans[0..session.copy_feedback.count], copy_progress);
+                platform.drawCopyFeedback(placement.bounds, metrics.cell_width, metrics.cell_height, session.copy_feedback.spans.items, copy_progress);
             }
         }
         var geometry = platform.ScrollbarGeometry.compute(placement.bounds, scrollbar);

@@ -36,7 +36,25 @@ GPU rendering, mixed DPI, Unicode/wide glyphs, clipboard interactions, tabs,
 split panes, shell selection and overlays need a real Windows desktop. Check
 both themes, process exit, cancellation and disabled system animations.
 For tab overview, confirm that opening/closing previews does not resize PTYs.
-Desktop harnesses and benchmarks are local tools, not repository CI coverage.
+Most desktop harnesses and end-to-end benchmarks are local tools, not CI coverage.
+The repository's recovery smoke test runs on an interactive Windows desktop:
+
+```powershell
+./app/tools/test-recovery.ps1
+./app/tools/test-recovery.ps1 -Shell wsl -Distribution NixOS -Cycles 30 -BatchSize 5
+# Optional: -Warp to force software rendering
+```
+
+It uses isolated Lua settings, preserves the clipboard and existing app instances,
+and checks repeated tab creation/teardown, pane-local transport failure, error
+toasts, duplicate/stale events and renderer recovery. It warms the same tab
+concurrency before checking handle growth, verifies that native cleanup drains,
+and injects a delayed close to test the watchdog without blocking the UI. The WSL
+scenario also checks for visible `wsl.exe` error dialogs (not ordinary hidden
+console windows) without dismissing them; it does not terminate the distribution. It is a local desktop test, not hosted CI or a guarantee for every
+WSL/driver version. Headless Windows tests independently cover oversized and
+maximum-size bracketed paste, clipboard contention, failed protocol replies,
+loader errors, settings rollback and exact Lua backups.
 See [app/README.md](../app/README.md) for feature-specific smoke tests.
 
 ### Application copy feedback
@@ -55,6 +73,11 @@ Windows clipboard provider, using keyboard mappings and TUI mouse clicks:
 - Repeat identical copies; check another pane, focus loss, paste, resize,
   whitespace-only/ambiguous text and disabled animations. Copying in another
   desktop application must not animate Vex's content.
+
+Also select text together with blank lines before/after/between copied lines:
+feedback must skip those blank rows and each line's trailing padding, including
+wide/combining glyphs and copies taller than 64 rows. Content spans are captured
+once per copy and retained; animation frames do not allocate or rescan text.
 
 These are manual checks, not claims of automated application coverage. Clipboard
 operation type is not exposed by OSC or Win32, so detection remains best-effort.

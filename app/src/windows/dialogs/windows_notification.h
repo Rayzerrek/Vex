@@ -7,3 +7,4 @@ void drawTerminalNotification(UiRenderer& target, UiBrush& brush, IDWriteTextFor
                               IDWriteTextFormat* font, VexChromePalette palette);
 bool dismissTerminalNotificationAt(float x, float y);
 void clearTerminalNotification();
+bool terminalNotificationVisible();

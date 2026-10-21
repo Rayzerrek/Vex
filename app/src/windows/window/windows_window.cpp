@@ -531,7 +531,7 @@ static void pasteClipboard() {
     if (error) {
         char message[160];
         snprintf(message, sizeof(message), "Vex native paste failed (Win32 %lu). Clipboard text must be valid Unicode and at most 1 MiB.", (unsigned long)error);
-        MessageBoxA(window, message, "Vex native paste", MB_OK | MB_ICONWARNING);
+        vex_dialog_warning(VexDialogText{reinterpret_cast<const uint8_t*>(message), strlen(message)});
     }
 }
 extern "C" void vex_window_paste_clipboard() { pasteClipboard(); }
@@ -929,7 +929,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_APP + 2: return selftestEnabled() && wparam <= UINT32_MAX ? (LRESULT)callbacks.probe(callbacks.context, (uint32_t)wparam) : 0;
     case WM_APP + 3:
-        if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) { platformError = lparam ? (int)lparam : ERROR_WRITE_FAULT; DestroyWindow(hwnd); }
+        if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam))
+            callbacks.session_error(callbacks.context, (uint32_t)wparam, lparam ? (uint32_t)lparam : ERROR_WRITE_FAULT);
         return 0;
     case WM_APP + 4:
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) callbacks.exited(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
@@ -1035,6 +1036,11 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 62: return clipboardOwnerPid;
             case 63: return clipboardToken;
             case 64: return clipboardReadError;
+            case 65: return terminalNotificationVisible() ? 1 : 0;
+            case 66: {
+                const uint64_t token = callbacks.probe(callbacks.context, 12);
+                return token <= UINT32_MAX && vex_pty_test_delay_close((uint32_t)token) ? 1 : 0;
+            }
             case 40: uiVerificationMode = 1; vex_window_invalidate(); return 1;
             case 41: uiVerificationMode = 0; vex_window_invalidate(); return 1;
             case 42: uiVerificationMode = 2; vex_window_invalidate(); return 1;

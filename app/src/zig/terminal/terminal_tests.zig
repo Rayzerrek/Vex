@@ -538,6 +538,53 @@ const ClipboardLog = struct {
     }
 };
 
+test "real terminal selections across blank lines produce text-only copy feedback spans" {
+    const feedback = @import("../app/copy_feedback.zig");
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(12, 5, 8, 16);
+    try terminal.feedOutput("alpha\r\n\r\n beta");
+    try terminal.setKeyboardSelection(0, 0, 12, 4);
+    const Span = struct { row: u16, start_col: u16, end_col: u16 };
+    var spans: std.ArrayList(Span) = .empty;
+    defer spans.deinit(std.testing.allocator);
+    try feedback.collectContentSpans(std.testing.allocator, &spans, try terminal.readFrame(), null);
+    try std.testing.expectEqualSlices(Span, &.{
+        .{ .row = 0, .start_col = 0, .end_col = 5 },
+        .{ .row = 2, .start_col = 1, .end_col = 5 },
+    }, spans.items);
+}
+
+test "busy clipboard does not poison the parser and subsequent OSC copies can succeed" {
+    const Provider = struct {
+        busy: bool = true,
+        writes: usize = 0,
+        pub fn onClipboardWrite(self: *@This(), _: []const u8) !void {
+            self.writes += 1;
+            if (self.busy) return error.ClipboardWriteFailed;
+        }
+    };
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var provider: Provider = .{};
+    try terminal.attachClipboardSink(&provider);
+    try terminal.feedOutput("before\x1b]52;c;b2s=\x07after");
+    try std.testing.expectEqual(@as(usize, 1), provider.writes);
+    try std.testing.expect(terminal.callback_error == null);
+    try std.testing.expect(try terminal.containsViewportText("beforeafter"));
+    provider.busy = false;
+    try terminal.feedOutput("\x1b]52;c;b2s=\x07 recovered");
+    try std.testing.expectEqual(@as(usize, 2), provider.writes);
+    try std.testing.expect(try terminal.containsViewportText("recovered"));
+    // Empty clipboard writes exercise a separate callback branch.
+    provider.busy = true;
+    try terminal.feedOutput("\x1b]52;c;\x07 still alive");
+    try std.testing.expect(terminal.callback_error == null);
+    try std.testing.expect(try terminal.containsViewportText("still alive"));
+}
+
 test "copy feedback validates parsed source after split OSC and TUI redraws, not inside the clipboard callback" {
     const feedback = @import("../app/copy_feedback.zig");
     const api = try binding.Api.load();

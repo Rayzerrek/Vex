@@ -5,5 +5,6 @@
 
 struct WslProcessProbe;
 WslProcessProbe* createWslProcessProbe(const wchar_t* command);
+void stopWslProcessProbe(WslProcessProbe* probe);
 void destroyWslProcessProbe(WslProcessProbe* probe);
 bool readWslProcessSnapshot(WslProcessProbe* probe, uint8_t* bytes, size_t capacity, size_t* length);

@@ -61,20 +61,25 @@ pub fn onProbe(self: *Application, query: u32) u64 {
             };
             return @intFromFloat(@round(value * 1000));
         },
+        134 => return platform.lastPtyLaunchError(),
+        135 => return self.last_process_exit_code,
+        136 => return platform.c.vex_pty_pending_closures(),
+        137 => return platform.c.vex_pty_forced_closures(),
         124 => return self.exit_review.rows.items.len,
         125 => return @intFromBool(self.settings.confirm_close),
-        126 => return if (self.activeSession()) |session| session.copy_feedback.count else 0,
+        126 => return if (self.activeSession()) |session| session.copy_feedback.spans.items.len else 0,
         127 => return if (self.activeSession()) |session| if (session.pending_copy_text) |text| text.len else 0 else 0,
         128 => return if (self.activeSession()) |session| @intFromBool(session.copy_source.recent(std.time.milliTimestamp())) else 0,
         129 => return if (self.activeSession()) |session| session.copy_feedback.started_ms orelse 0 else 0,
         130...133 => {
             const session = self.activeSession() orelse return 0;
-            if (session.copy_feedback.count == 0) return 0;
+            const spans = session.copy_feedback.spans.items;
+            if (spans.len == 0) return 0;
             return switch (query) {
-                130 => session.copy_feedback.spans[0].row,
-                131 => session.copy_feedback.spans[session.copy_feedback.count - 1].row,
-                132 => session.copy_feedback.spans[0].start_col,
-                else => session.copy_feedback.spans[0].end_col,
+                130 => spans[0].row,
+                131 => spans[spans.len - 1].row,
+                132 => spans[0].start_col,
+                else => spans[0].end_col,
             };
         },
         107 => return if (self.activeSession()) |session| @intFromEnum(session.terminal.program_status.shellActivityState()) else 0,

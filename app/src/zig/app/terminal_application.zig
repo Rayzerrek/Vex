@@ -85,6 +85,7 @@ pub const TerminalApplication = struct {
     reported_mouse_pane: ?panes.PaneId = null,
     reported_mouse_buttons: u8 = 0,
     next_token: u32 = 1,
+    last_process_exit_code: u32 = 0,
     health: union(enum) { running, failed: anyerror } = .running,
 
     fn init(allocator: std.mem.Allocator) !TerminalApplication {
@@ -170,8 +171,9 @@ pub const TerminalApplication = struct {
         };
     }
     fn deinit(self: *TerminalApplication) void {
-        // Window callbacks have stopped before this runs. Native worker teardown precedes VT free.
+        // Callbacks have stopped; detached native workers never borrow terminal or allocator storage.
         for (self.sessions.items) |session| session.destroy(self.allocator);
+        platform.drainPtyClosures();
         self.sessions.deinit(self.allocator);
         self.exit_review.deinit(self.allocator);
         if (self.model) |*model| model.deinit();
@@ -192,6 +194,14 @@ pub const TerminalApplication = struct {
     }
     pub fn fail(self: *TerminalApplication, err: anyerror) void {
         if (self.health == .failed) return;
+        if (@import("error_policy.zig").recoverable(err)) {
+            if (err == error.NativeDialogFailure) {
+                dialogs.closeDialog();
+                self.overlay = .none;
+            }
+            platform.reportOperationFailure(err);
+            return;
+        }
         self.health = .{ .failed = err };
         platform.closeWindow();
     }
@@ -286,7 +296,9 @@ pub const TerminalApplication = struct {
         platform.setChromePalette(t.chromePalette());
         for (self.sessions.items) |session| {
             try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
-            try session.terminal.setColorScheme(t.is_dark);
+            session.terminal.setColorScheme(t.is_dark) catch |err| {
+                if (err == error.PtyReplyWriteFailed) self.onSessionError(session.id, 29) else return err;
+            };
         }
         platform.invalidateWindow();
     }
@@ -342,11 +354,19 @@ pub const TerminalApplication = struct {
             if (!available) return error.UnavailableShellSelection;
             if (@intFromEnum(kind) >= 256) _ = try terminal_shells.resolveShellLaunch(self, kind);
         }
-        if (source == .gui and !std.meta.eql(self.settings, settings)) preferences.saveUserSettings(self.allocator, self.settings_path, settings) catch |err| {
+        const previous = self.settings;
+        const previous_kind = self.default_shell_kind;
+        self.applyPreferences(settings, kind) catch |err| {
+            self.applyPreferences(previous, previous_kind) catch |rollback| self.fail(rollback);
+            return err;
+        };
+        if (source == .gui and !std.meta.eql(previous, settings)) preferences.saveUserSettings(self.allocator, self.settings_path, settings) catch |err| {
+            self.applyPreferences(previous, previous_kind) catch |rollback| self.fail(rollback);
             dialogs.showSettingsFailure(err);
-            platform.invalidateWindow();
             return;
         };
+    }
+    fn applyPreferences(self: *TerminalApplication, settings: preferences.UserSettings, kind: shell.ShellKind) !void {
         try platform.setFontPreferences(&settings.font_family, @floatFromInt(settings.font_size));
         self.settings = settings;
         if (self.theme_index != settings.theme_index) try self.applyTheme(settings.theme_index);
@@ -424,7 +444,8 @@ pub const TerminalApplication = struct {
         return self.addSessionWithKind(path, self.default_shell_kind);
     }
     fn addHomeSessionWithKind(self: *TerminalApplication, kind: shell.ShellKind) !*TerminalSession {
-        const launch_ptr = try terminal_shells.resolveShellLaunch(self, kind);
+        platform.resetPtyLaunchError();
+        const launch_ptr = terminal_shells.resolveShellLaunch(self, kind) catch |err| return if (err == error.OutOfMemory) err else error.ShellStartFailed;
         const home = try std.process.getEnvVarOwned(self.allocator, "USERPROFILE");
         defer self.allocator.free(home);
         var path = try directory.DirectoryPath.parse(home);
@@ -432,12 +453,13 @@ pub const TerminalApplication = struct {
         return self.addSessionWithKind(path, kind);
     }
     fn addSessionWithKind(self: *TerminalApplication, path: directory.DirectoryPath, kind: shell.ShellKind) !*TerminalSession {
-        const launch_ptr = try terminal_shells.resolveShellLaunch(self, kind);
+        platform.resetPtyLaunchError();
+        const launch_ptr = terminal_shells.resolveShellLaunch(self, kind) catch |err| return if (err == error.OutOfMemory) err else error.ShellStartFailed;
         // Reserving first prevents an allocation failure from stranding a live process.
         try self.sessions.ensureUnusedCapacity(self.allocator, 1);
         const token = self.next_token;
         self.next_token = try std.math.add(u32, token, 1);
-        const session = try TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, launch_ptr);
+        const session = TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, launch_ptr) catch |err| return if (err == error.OutOfMemory) err else error.ShellStartFailed;
         errdefer session.destroy(self.allocator);
         const t = self.currentTheme();
         try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
@@ -489,7 +511,15 @@ pub const TerminalApplication = struct {
         const now = std.time.milliTimestamp();
         for (self.placements.items) |placement| {
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
-            try session.resize(try metrics.terminalSize(placement.bounds));
+            const size = try metrics.terminalSize(placement.bounds);
+            session.resize(size) catch |err| {
+                if (err == error.PtyResizeFailed) {
+                    self.onSessionError(session.id, 29); // ERROR_WRITE_FAULT
+                    try session.resize(size);
+                } else if (err == error.PtyInputFull or err == error.SessionTransportFailed) {
+                    self.fail(err);
+                } else return err;
+            };
             _ = session.refreshAppIcon(true);
             session.last_icon_probe_ms = now;
         }
@@ -512,10 +542,16 @@ pub const TerminalApplication = struct {
         if (self.health == .failed) return false;
         // A queued event from a removed pane cannot target another pane, even after many opens/closes.
         const session = self.findSession(id) orelse return false;
+        // Natural process exit can precede its last queued output block.
+        if (session.pty.handle == null) return false;
         const previous = status_presentation.statusPresentationKey(session.terminal.program_status.programStatus());
         const previous_title = session.terminal.title.generation;
         const previous_attention = session.needs_attention;
         session.terminal.feedOutput(bytes) catch |err| {
+            if (err == error.PtyReplyWriteFailed) {
+                self.onSessionError(id, 29);
+                return true;
+            }
             self.fail(err);
             return false;
         };
@@ -1170,8 +1206,22 @@ pub const TerminalApplication = struct {
         for (closing.items) |placement| self.removeSession(placement.id);
         _ = model.closeTab(index);
     }
+    pub fn onSessionError(self: *TerminalApplication, id: panes.PaneId, code: u32) void {
+        if (self.health == .failed) return;
+        const session = self.findSession(id) orelse return;
+        if (session.pty.handle == null) return;
+        // Do not remove a failed pane or its history, even when other tabs exist.
+        session.stopAfterTransportFailure(code);
+        platform.reportOperationFailure(if (code == 0xc0000142) error.ProcessInitializationFailed else error.SessionTransportFailed);
+        platform.invalidateWindow();
+    }
     pub fn onExited(self: *TerminalApplication, id: panes.PaneId, code: u32) void {
         if (self.health == .failed) return;
+        self.last_process_exit_code = code;
+        if (code == 0xc0000142) {
+            self.onSessionError(id, code);
+            return;
+        }
         self.handleProcessExit(id, code) catch |err| self.fail(err);
     }
     fn handleProcessExit(self: *TerminalApplication, id: panes.PaneId, code: u32) !void {
@@ -1242,4 +1292,235 @@ pub fn runApplication(allocator: std.mem.Allocator) !void {
         return err;
     };
     if (app.health == .failed) return app.health.failed;
+}
+
+/// Real DLL/ConPTY owners, but no desktop window or user configuration access.
+fn recoveryTestApplication(config_path: []const u8) !TerminalApplication {
+    const allocator = std.testing.allocator;
+    const api = try binding.Api.load();
+    const cwd = try std.process.getCwdAlloc(allocator);
+    errdefer allocator.free(cwd);
+    const settings_path = try allocator.dupe(u8, config_path);
+    errdefer allocator.free(settings_path);
+    const machine = try allocator.dupe(u8, "VEX-RECOVERY-TEST");
+    errdefer allocator.free(machine);
+    const system = try platform.systemDirectoryAlloc(allocator);
+    defer allocator.free(system);
+    var environment = try platform.shellEnvironment(allocator);
+    defer environment.deinit();
+    var launch = try shell.ShellLaunch.resolve(allocator, .{ .builtin = .cmd }, system, &environment);
+    errdefer launch.deinit();
+    try platform.setFontPreferences(&preferences.default_font, 14);
+    return .{
+        .allocator = allocator,
+        .api = api,
+        .startup_directory = try directory.DirectoryPath.parse(cwd),
+        .machine_name = machine,
+        .launch = launch,
+        .default_shell_kind = .cmd,
+        .settings = .{},
+        .settings_path = settings_path,
+        .settings_diagnostic = .{},
+        .startup_preferences = .applied,
+        .custom_shells = custom_profiles.Catalog.init(allocator),
+        .path_completion = path_completion.PathCompletion.init(allocator),
+        .cursor_clock = try std.time.Timer.start(),
+    };
+}
+
+test "oversized paste rejects atomically without closing the workspace or poisoning subsequent input" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const session = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+    try session.terminal.feedOutput("\x1b[?2004h");
+    const oversized = try app.allocator.alloc(u8, 1024 * 1024 + 1);
+    defer app.allocator.free(oversized);
+    @memset(oversized, 'x');
+    try std.testing.expectError(error.PtyInputFull, session.paste(app.allocator, oversized));
+    // Exercise the actual event catch path as well as the native atomic enqueue.
+    app.onPaste(oversized);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expect(session.state == .running);
+    try std.testing.expect(session.pty.handle != null);
+    try session.writePty("\r");
+    try std.testing.expectEqual(@as(usize, 1), app.sessions.items.len);
+}
+
+test "maximum clipboard paste fits with DEC 2004 framing" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const session = try app.addSession(app.startup_directory);
+    try session.terminal.feedOutput("\x1b[?2004h");
+    const payload = try app.allocator.alloc(u8, 1024 * 1024);
+    defer app.allocator.free(payload);
+    @memset(payload, 'x');
+    const encoded = try session.terminal.encodePasteAlloc(app.allocator, payload);
+    defer app.allocator.free(encoded);
+    try std.testing.expectEqual(@as(usize, 1024 * 1024 + 12), encoded.len);
+    try session.writePty(encoded);
+    const sink = session.pty.responseSink();
+    const reply = try app.allocator.alloc(u8, 64 * 1024);
+    defer app.allocator.free(reply);
+    @memset(reply, 'r');
+    // Protocol traffic retains capacity even if the writer has not drained any paste bytes.
+    try sink.write(sink.context, reply);
+}
+
+test "transport failure preserves the pane screen and unrelated sessions; late events are harmless" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    const second = try app.addSession(app.startup_directory);
+    try first.terminal.feedOutput("retain this history");
+    app.onSessionError(first.id, 5);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expectEqual(@as(usize, 2), app.sessions.items.len);
+    try std.testing.expect(first.state == .exited);
+    try std.testing.expectEqual(@as(u32, 5), first.state.exited);
+    try std.testing.expect(first.pty.handle == null);
+    try std.testing.expect(!platform.c.vex_pty_exists(@intFromEnum(first.id)));
+    platform.drainPtyClosures();
+    try std.testing.expectEqual(@as(usize, 0), platform.c.vex_pty_pending_closures());
+    try std.testing.expect(try first.terminal.containsViewportText("retain this history"));
+    try std.testing.expect(!app.onOutput(first.id, "must not reach the stopped terminal"));
+    app.onSessionError(first.id, 6);
+    app.onSessionError(@enumFromInt(9999), 6);
+    app.onExited(first.id, 0);
+    try std.testing.expectEqual(@as(u32, 5), first.state.exited);
+    _ = app.onOutput(second.id, "still running");
+    try std.testing.expect(second.state == .running);
+    try std.testing.expect(try second.terminal.containsViewportText("still running"));
+    try second.writePty("\r");
+    try first.resize(.{ .columns = 100, .rows = 30, .cell_width_px = 8, .cell_height_px = 16 });
+}
+
+test "late output after natural exit is retained while loader failures stay isolated" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    app.onExited(first.id, 0);
+    _ = app.onOutput(first.id, "last output before EOF");
+    try std.testing.expect(app.health == .running);
+    try std.testing.expect(try first.terminal.containsViewportText("last output before EOF"));
+    const second = try app.addSession(app.startup_directory);
+    try app.model.?.newTab(second.id);
+    app.onExited(second.id, 0xc0000142);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expectEqual(@as(usize, 2), app.model.?.tabs.items.len);
+    try std.testing.expectEqual(@as(u32, 0xc0000142), second.state.exited);
+    try std.testing.expect(second.pty.handle == null);
+}
+
+test "failed reply in late output after process exit does not poison retained history" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const session = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+    app.onExited(session.id, 0);
+    const Denied = struct {
+        fn write(_: *anyopaque, _: []const u8) !void {
+            return error.PtyReplyWriteFailed;
+        }
+    };
+    var context: u8 = 0;
+    try session.terminal.attachResponseSink(.{ .context = &context, .write = Denied.write });
+    _ = app.onOutput(session.id, "final output\x1b[6n");
+    try std.testing.expect(app.health == .running);
+    try std.testing.expect(session.pty.handle == null);
+    try std.testing.expect(session.terminal.callback_error == null);
+    try std.testing.expectEqual(@as(u32, 0), session.state.exited);
+    try std.testing.expect(try session.terminal.containsViewportText("final output"));
+}
+
+test "recoverable event and dialog errors preserve health but invariant violations remain fatal" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    app.fail(error.InvalidPasteUtf8);
+    try std.testing.expect(app.health == .running);
+    app.overlay = .settings;
+    app.fail(error.NativeDialogFailure);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expect(app.overlay == .none);
+    app.fail(error.MissingPaneSession);
+    try std.testing.expect(app.health == .failed);
+    try std.testing.expectEqual(error.MissingPaneSession, app.health.failed);
+}
+
+test "unavailable shell launch is a rejected action, not a lost workspace" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    app.default_shell_kind = @enumFromInt(9876);
+    app.onAction(.new_tab, 0);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expectEqual(@as(usize, 1), app.sessions.items.len);
+    try std.testing.expectEqual(@as(usize, 1), app.model.?.tabs.items.len);
+    try std.testing.expect(first.state == .running);
+}
+
+test "failed protocol reply quarantines its pane instead of terminating other sessions" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    const second = try app.addSession(app.startup_directory);
+    const Denied = struct {
+        fn write(_: *anyopaque, _: []const u8) !void {
+            return error.PtyReplyWriteFailed;
+        }
+    };
+    var context: u8 = 0;
+    try first.terminal.attachResponseSink(.{ .context = &context, .write = Denied.write });
+    try std.testing.expect(app.onOutput(first.id, "visible before failure\x1b[6n"));
+    try std.testing.expect(app.health == .running);
+    try std.testing.expect(first.state == .exited);
+    try std.testing.expect(first.terminal.callback_error == null);
+    try std.testing.expect(try first.terminal.containsViewportText("visible before failure"));
+    try std.testing.expect(second.state == .running);
+    try second.writePty("\r");
+    // Unsolicited theme reports use the same transport, outside feedOutput.
+    try second.terminal.feedOutput("\x1b[?2031h");
+    try second.terminal.attachResponseSink(.{ .context = &context, .write = Denied.write });
+    try app.applyTheme(terminal_theme.default_light_index);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expect(second.state == .exited);
+    try std.testing.expect(second.pty.handle == null);
+}
+
+test "GUI and Lua stay synchronized, malformed reloads and failed saves retain committed preferences" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const root = try temp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ root, "init.lua" });
+    defer std.testing.allocator.free(path);
+    var app = try recoveryTestApplication(path);
+    defer app.deinit();
+    defer platform.setFontPreferences(&preferences.default_font, 14) catch {};
+    var gui = app.settings;
+    gui.font_size = 21;
+    gui.cursor_blink = false;
+    try app.commitPreferences(gui);
+    try std.testing.expectEqualDeep(gui, try preferences.loadUserSettings(app.allocator, path));
+    try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = "-- edited by hand\nvex.config.font_size = 19" });
+    app.reloadUserConfiguration();
+    try std.testing.expectEqual(@as(u8, 19), app.settings.font_size);
+    try std.testing.expectEqual(@as(f32, 19), platform.fontSize());
+    const committed = app.settings;
+    try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = "vex.config.font_size = " });
+    app.reloadUserConfiguration();
+    try std.testing.expectEqualDeep(committed, app.settings);
+    try std.testing.expect(app.health == .running);
+    // Backup replacement failure must prevent both disk replacement and live GUI changes.
+    try temp.dir.makeDir("init.backup.lua");
+    gui.font_size = 23;
+    try app.commitPreferences(gui);
+    try std.testing.expectEqualDeep(committed, app.settings);
+    try std.testing.expectEqual(@as(f32, 19), platform.fontSize());
+    const source = try temp.dir.readFileAlloc(app.allocator, "init.lua", 65536);
+    defer app.allocator.free(source);
+    try std.testing.expectEqualStrings("vex.config.font_size = ", source);
+    try std.testing.expect(app.health == .running);
 }

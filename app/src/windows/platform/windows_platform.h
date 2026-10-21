@@ -6,7 +6,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* An opaque, uniquely owned session; close consumes it after joining its workers. */
+/* An opaque, uniquely owned session; close detaches it and queues native teardown. */
 typedef struct VexPty VexPty;
 typedef struct { float x, y, width, height; } VexPaneRect;
 /* State: none/idle/working/done/blocked/error. Kind: none/permission/question/auth. */
@@ -81,6 +81,8 @@ typedef struct {
     uint32_t (*pointer)(void*, uint32_t, float, float, uint32_t);
     void (*action)(void*, uint32_t, uint32_t);
     void (*exited)(void*, uint32_t, uint32_t);
+    /* Transport failure affects only the owning pane, not the window. */
+    void (*session_error)(void*, uint32_t, uint32_t);
     void (*tick)(void*);
     void (*cursor_wake)(void*);
     void (*cursor_activity)(void*, bool);
@@ -124,7 +126,17 @@ int vex_shell_path(uint8_t* bytes, size_t capacity, size_t* length);
 int vex_clipboard_write(const uint8_t* bytes, size_t length);
 int vex_open_url(const uint8_t* bytes, size_t length);
 void vex_pty_close(VexPty* session);
-bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
+/* Window thread: joins detached owners without affecting active sessions. Use before shutdown. */
+void vex_pty_drain_closed(void);
+size_t vex_pty_pending_closures(void);
+uint32_t vex_pty_forced_closures(void);
+/* Only called behind the window adapter's VEX_NATIVE_SELFTEST gate. */
+bool vex_pty_test_delay_close(uint32_t token);
+enum { VEX_PTY_INPUT_FULL = 1816 }; /* ERROR_NOT_ENOUGH_QUOTA */
+/* Atomic enqueue: ERROR_NOT_ENOUGH_QUOTA leaves the queue unchanged. */
+int vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
+/* Same FIFO, but can consume reserved protocol capacity after a maximum clipboard paste. */
+int vex_pty_write_response(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);
 uint32_t vex_pty_process_id(VexPty* session);
 uint32_t vex_pty_clipboard_token(uint32_t process_id);

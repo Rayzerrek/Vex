@@ -19,10 +19,13 @@ struct VexPty {
     VexConptyApi conpty;
     WslProcessProbe* wslProbe;
     CRITICAL_SECTION inputLock;
-    uint8_t inputQueue[1024 * 1024];
+    // A full clipboard paste must not starve protocol replies and kill an otherwise healthy pane.
+    static constexpr size_t replyReserve = 64 * 1024;
+    uint8_t inputQueue[1024 * 1024 + 12 + replyReserve];
     size_t inputHead, inputLength;
     uint8_t outputBuffer[65536];
     DWORD outputLength;
+    DWORD testCloseDelayMs;
     volatile LONG stopping, outputPending;
     DWORD fgPid;
     wchar_t rootStem[64];
@@ -38,6 +41,15 @@ struct VexPty {
 
 // Only the window thread edits this registry; workers carry their own stable owner.
 static VexPty* sessions;
+// A bounded native reaper pool owns detached sessions; UI callbacks never wait for ConPTY.
+static SRWLOCK closingLock = SRWLOCK_INIT;
+static CONDITION_VARIABLE closingChanged = CONDITION_VARIABLE_INIT;
+static VexPty* closingHead;
+static VexPty* closingTail;
+struct PtyReaper { HANDLE thread; bool running; };
+static PtyReaper reapers[4];
+static size_t closingRunning, closingCount;
+static volatile LONG forcedClosures;
 
 static VexPty* findSession(uint32_t token) {
     for (auto session = sessions; session; session = session->next) if (session->token == token) return session;
@@ -140,14 +152,16 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!SetInformationJobObject(session->job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) return GetLastError();
     SIZE_T attributeSize = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeSize);
+    InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeSize);
     auto attributes = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(HeapAlloc(GetProcessHeap(), 0, attributeSize));
     if (!attributes) return ERROR_OUTOFMEMORY;
-    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attributeSize)) {
+    if (!InitializeProcThreadAttributeList(attributes, 2, 0, &attributeSize)) {
         DWORD error = GetLastError(); HeapFree(GetProcessHeap(), 0, attributes); return error;
     }
     DWORD error = ERROR_SUCCESS;
-    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, session->console, sizeof(session->console), nullptr, nullptr)) error = GetLastError();
+    // Atomic job assignment avoids leaving a launcher suspended during DLL initialization.
+    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, session->console, sizeof(session->console), nullptr, nullptr) ||
+        !UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &session->job, sizeof(session->job), nullptr, nullptr)) error = GetLastError();
     else {
         STARTUPINFOEXW startup = {};
         startup.StartupInfo.cb = sizeof(startup);
@@ -155,7 +169,7 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
         startup.lpAttributeList = attributes;
         PROCESS_INFORMATION process = {};
         if (!CreateProcessW(reinterpret_cast<const wchar_t*>(launch.program), reinterpret_cast<wchar_t*>(launch.command), nullptr, nullptr, FALSE,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
             const_cast<uint16_t*>(launch.environment), reinterpret_cast<const wchar_t*>(launch.directory), &startup.StartupInfo, &process)) error = GetLastError();
         else {
             session->process = process.hProcess;
@@ -171,8 +185,6 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
                     CloseHandle(image);
                 }
             }
-            if (!AssignProcessToJobObject(session->job, process.hProcess)) error = GetLastError();
-            else if (ResumeThread(process.hThread) == (DWORD)-1) error = GetLastError();
             CloseHandle(process.hThread);
         }
     }
@@ -196,6 +208,11 @@ extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, Vex
         !validLaunchString(launch.directory, launch.directory_length) || !launch.environment || launch.environment_length < 2 ||
         launch.environment_length > 1024 * 1024 || launch.environment[launch.environment_length - 1] != 0 || launch.environment[launch.environment_length - 2] != 0) return ERROR_INVALID_PARAMETER;
     *output = nullptr;
+    AcquireSRWLockShared(&closingLock);
+    const bool busy = closingCount >= 16;
+    ReleaseSRWLockShared(&closingLock);
+    // Bound processes, pipe workers and retained queues during rapid tab churn.
+    if (busy) return ERROR_BUSY;
     auto session = static_cast<VexPty*>(calloc(1, sizeof(VexPty)));
     if (!session) return ERROR_OUTOFMEMORY;
     session->token = token;
@@ -208,7 +225,7 @@ extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, Vex
         if (!validLaunchString(launch.wsl_probe_command, launch.wsl_probe_command_length)) error = ERROR_INVALID_PARAMETER;
         else {
             session->wslProbe = createWslProcessProbe(reinterpret_cast<const wchar_t*>(launch.wsl_probe_command));
-            if (!session->wslProbe) error = ERROR_NOT_ENOUGH_MEMORY;
+            // Process metadata is optional; an unavailable probe must not kill a live shell.
         }
     }
     if (error) { vex_pty_close(session); return (int)error; }
@@ -216,24 +233,50 @@ extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, Vex
     return 0;
 }
 
-extern "C" void vex_pty_close(VexPty* session) {
-    if (!session) return;
-    auto link = &sessions;
-    while (*link && *link != session) link = &(*link)->next;
-    if (*link == session) *link = session->next;
-    // Old queued messages now resolve to nothing; IDs can never identify a new owner.
-    InterlockedExchange(&session->stopping, 1);
-    if (session->outputConsumed) SetEvent(session->outputConsumed);
-    if (session->inputReady) SetEvent(session->inputReady);
+static void CALLBACK forceClosePty(PTP_CALLBACK_INSTANCE, void* context, PTP_TIMER) {
+    auto session = static_cast<VexPty*>(context);
+    InterlockedIncrement(&forcedClosures);
+    if (session->job) TerminateJobObject(session->job, ERROR_OPERATION_ABORTED);
+    if (session->process) TerminateProcess(session->process, ERROR_OPERATION_ABORTED);
+}
+
+static void joinPipeWorker(HANDLE thread) {
+    if (!thread) return;
+    DWORD status;
+    do {
+        // Cancellation can precede the worker entering its next synchronous Read/WriteFile.
+        CancelSynchronousIo(thread);
+        status = WaitForSingleObject(thread, 10);
+        if (status == WAIT_FAILED) RaiseFailFastException(nullptr, nullptr, 0);
+    } while (status == WAIT_TIMEOUT);
+}
+
+static void destroyDetachedPty(VexPty* session) {
     destroyWslProcessProbe(session->wslProbe);
-    if (session->process) TerminateProcess(session->process, 0);
-    if (session->job) { CloseHandle(session->job); session->job = nullptr; }
+    joinPipeWorker(session->writer);
+    if (session->input) { CloseHandle(session->input); session->input = nullptr; }
+    // Prefer ConPTY's own disconnect. A watchdog bounds a wedged client/launcher.
+    // Cancellation waits for the timer callback before any job/process handle is freed.
+    PTP_TIMER timeout = CreateThreadpoolTimer(forceClosePty, session, nullptr);
+    if (timeout) {
+        LARGE_INTEGER due; due.QuadPart = -1000LL * 10000;
+        FILETIME when = { due.LowPart, (DWORD)due.HighPart };
+        SetThreadpoolTimer(timeout, &when, 0, 0);
+    } else forceClosePty(nullptr, session, nullptr);
     // No reader means thread creation failed; close its pipe before closing ConPTY.
     if (!session->reader && session->output) { CloseHandle(session->output); session->output = nullptr; }
+    // Only the selftest message adapter can arm this deterministic watchdog/ownership regression.
+    if (session->testCloseDelayMs) Sleep(session->testCloseDelayMs);
     // Keep the output reader alive to drain ClosePseudoConsole, including partial startup.
     if (session->console) session->conpty.close(session->console);
-    if (session->writer) { CancelSynchronousIo(session->writer); WaitForSingleObject(session->writer, INFINITE); }
-    if (session->reader) { CancelSynchronousIo(session->reader); WaitForSingleObject(session->reader, INFINITE); }
+    if (timeout) {
+        SetThreadpoolTimer(timeout, nullptr, 0, 0);
+        WaitForThreadpoolTimerCallbacks(timeout, TRUE);
+        CloseThreadpoolTimer(timeout);
+    }
+    if (session->process && WaitForSingleObject(session->process, 0) != WAIT_OBJECT_0) TerminateProcess(session->process, 0);
+    if (session->job) { CloseHandle(session->job); session->job = nullptr; }
+    joinPipeWorker(session->reader);
     if (session->exitWatcher) WaitForSingleObject(session->exitWatcher, INFINITE);
     const HANDLE handles[] = { session->input, session->output, session->process, session->reader, session->writer, session->exitWatcher, session->outputConsumed, session->inputReady };
     for (HANDLE handle : handles) if (handle) CloseHandle(handle);
@@ -242,11 +285,97 @@ extern "C" void vex_pty_close(VexPty* session) {
     free(session);
 }
 
-extern "C" bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length) {
-    if (!session || (!bytes && length) || InterlockedCompareExchange(&session->stopping, 0, 0)) return false;
-    if (!length) return true;
+static DWORD WINAPI reapPtys(void* context) {
+    auto reaper = static_cast<PtyReaper*>(context);
+    for (;;) {
+        AcquireSRWLockExclusive(&closingLock);
+        auto session = closingHead;
+        if (!session) {
+            reaper->running = false;
+            --closingRunning;
+            WakeAllConditionVariable(&closingChanged);
+            ReleaseSRWLockExclusive(&closingLock);
+            return 0;
+        }
+        closingHead = session->next;
+        if (!closingHead) closingTail = nullptr;
+        ReleaseSRWLockExclusive(&closingLock);
+        destroyDetachedPty(session);
+        AcquireSRWLockExclusive(&closingLock);
+        --closingCount;
+        ReleaseSRWLockExclusive(&closingLock);
+    }
+}
+
+extern "C" void vex_pty_close(VexPty* session) {
+    if (!session) return;
+    auto link = &sessions;
+    while (*link && *link != session) link = &(*link)->next;
+    if (*link != session) return;
+    *link = session->next;
+    // Remove tokens before scheduling teardown: neither late messages nor workers borrow Zig owners.
+    InterlockedExchange(&session->stopping, 1);
+    if (session->outputConsumed) SetEvent(session->outputConsumed);
+    if (session->inputReady) SetEvent(session->inputReady);
+    stopWslProcessProbe(session->wslProbe);
+    session->next = nullptr;
+    AcquireSRWLockExclusive(&closingLock);
+    if (closingTail) closingTail->next = session;
+    else closingHead = session;
+    closingTail = session;
+    ++closingCount;
+    if (closingRunning < ARRAYSIZE(reapers)) {
+        for (auto& reaper : reapers) {
+            if (reaper.running) continue;
+            // A retired reaper has released all resources; only its function return can remain.
+            if (reaper.thread) { WaitForSingleObject(reaper.thread, INFINITE); CloseHandle(reaper.thread); }
+            reaper.thread = CreateThread(nullptr, 0, reapPtys, &reaper, 0, nullptr);
+            reaper.running = reaper.thread != nullptr;
+            if (reaper.running) ++closingRunning;
+            break;
+        }
+    }
+    if (!closingRunning) {
+        closingHead = closingTail = nullptr;
+        --closingCount;
+        ReleaseSRWLockExclusive(&closingLock);
+        // Thread creation failure must still release the detached owner.
+        destroyDetachedPty(session);
+        return;
+    }
+    ReleaseSRWLockExclusive(&closingLock);
+}
+
+extern "C" void vex_pty_drain_closed() {
+    AcquireSRWLockExclusive(&closingLock);
+    while (closingRunning) SleepConditionVariableSRW(&closingChanged, &closingLock, INFINITE, 0);
+    ReleaseSRWLockExclusive(&closingLock);
+    for (auto& reaper : reapers) {
+        if (reaper.thread) { WaitForSingleObject(reaper.thread, INFINITE); CloseHandle(reaper.thread); reaper.thread = nullptr; }
+    }
+}
+
+extern "C" size_t vex_pty_pending_closures() {
+    AcquireSRWLockShared(&closingLock);
+    const size_t count = closingCount;
+    ReleaseSRWLockShared(&closingLock);
+    return count;
+}
+extern "C" uint32_t vex_pty_forced_closures() { return (uint32_t)InterlockedCompareExchange(&forcedClosures, 0, 0); }
+extern "C" bool vex_pty_test_delay_close(uint32_t token) {
+    auto session = findSession(token);
+    if (!session) return false;
+    session->testCloseDelayMs = 1300;
+    return true;
+}
+
+static int queuePtyInput(VexPty* session, const uint8_t* bytes, size_t length, bool response) {
+    if (!session || (!bytes && length)) return ERROR_INVALID_PARAMETER;
+    if (InterlockedCompareExchange(&session->stopping, 0, 0)) return ERROR_BROKEN_PIPE;
+    if (!length) return ERROR_SUCCESS;
     EnterCriticalSection(&session->inputLock);
-    bool fits = length <= sizeof(session->inputQueue) - session->inputLength;
+    const size_t limit = sizeof(session->inputQueue) - (response ? 0 : VexPty::replyReserve);
+    bool fits = session->inputLength <= limit && length <= limit - session->inputLength;
     if (fits) {
         size_t tail = (session->inputHead + session->inputLength) % sizeof(session->inputQueue);
         size_t first = length < sizeof(session->inputQueue) - tail ? length : sizeof(session->inputQueue) - tail;
@@ -256,7 +385,14 @@ extern "C" bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t leng
     }
     LeaveCriticalSection(&session->inputLock);
     if (fits) SetEvent(session->inputReady);
-    return fits;
+    return fits ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_QUOTA;
+}
+
+extern "C" int vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length) {
+    return queuePtyInput(session, bytes, length, false);
+}
+extern "C" int vex_pty_write_response(VexPty* session, const uint8_t* bytes, size_t length) {
+    return queuePtyInput(session, bytes, length, true);
 }
 
 extern "C" bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows) {

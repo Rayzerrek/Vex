@@ -228,7 +228,11 @@ the final RGB result. Already-readable pairs, identical foreground/background
 colors and block/Powerline graphics are exempt from this additional contrast step.
 
 Settings written by the UI are saved atomically to `init.lua`
-(or the file selected by `VEX_CONFIG`), replacing its contents.
+(or the file selected by `VEX_CONFIG`), replacing its contents after preserving
+the previous source in `init.backup.lua` (or `<custom-name>.backup.lua`). This
+single backup rotates on changed saves; identical saves preserve it. Lua modules
+are untouched. If saving or backing up fails, live preferences roll back and a
+toast reports the error without closing sessions.
 
 Select **Configuration: Reload init.lua** in the command palette
 (`Ctrl+Shift+P`) to reload without restarting. A configuration error keeps the
@@ -347,7 +351,11 @@ The packager validates x64 PE headers, ZIP contents, both checksums and every fi
 extracted from the real MSI cabinet. Administrative extraction does not register
 or install the application. Artifacts land in `app/publish/`.
 
-Desktop smoke tests and performance tools are maintained locally outside the
-repository; hosted CI does not claim GPU rendering or interactive desktop coverage.
+Desktop smoke tests and end-to-end performance
+tools require a local Windows desktop; hosted CI does not claim GPU rendering
+or interactive desktop coverage. `tools/test-recovery.ps1` replays tab churn,
+transport failure/toast handling, stale events and GPU recovery using isolated
+settings. Add `-Shell wsl -Distribution NixOS` (using your installed distribution)
+for the WSL stress scenario, and `-Warp` for software rendering.
 Generated icon geometry and shader bytecode are checked in. Licensing and icon
 source attribution are retained in `assets/icons/README.md` and the root notices.

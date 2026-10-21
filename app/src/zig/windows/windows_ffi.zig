@@ -137,9 +137,17 @@ pub const ScrollbarGeometry = struct {
     }
 };
 
-/// Uniquely owns a native PTY session; deinit joins both workers before freeing their buffers.
+var last_pty_launch_error: u32 = 0;
+pub fn lastPtyLaunchError() u32 {
+    return last_pty_launch_error;
+}
+pub fn resetPtyLaunchError() void {
+    last_pty_launch_error = 0;
+}
+
+/// Uniquely owns a native PTY token; deinit detaches it before asynchronous native teardown.
 pub const PtyOwner = struct {
-    handle: std.meta.Child(?*c.VexPty),
+    handle: ?*c.VexPty,
     /// Tokens must be fresh, nonzero pane IDs; failed startup releases all partial resources.
     pub fn init(allocator: std.mem.Allocator, id: panes.PaneId, path: directory.DirectoryPath, launch: *const shell.ShellLaunch) !PtyOwner {
         const program = try std.unicode.utf8ToUtf16LeAllocZ(allocator, launch.program);
@@ -162,16 +170,22 @@ pub const PtyOwner = struct {
         defer if (probe) |owned| allocator.free(owned);
         var pointer: ?*c.VexPty = null;
         const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.kind != .custom, .wsl_probe_command = if (probe) |value| value.ptr else null, .wsl_probe_command_length = if (probe) |value| value.len else 0 };
-        if (c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer) != 0) return error.PtyLaunchFailed;
+        const result = c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer);
+        last_pty_launch_error = @bitCast(result);
+        if (result != 0) return error.PtyLaunchFailed;
         return .{ .handle = pointer orelse return error.PtyNullHandle };
     }
-    /// Consumes this owner. No registered callback or queued event retains its pointer.
+    /// Consumes this owner. Native workers retain only native storage, never a Zig owner.
     pub fn deinit(self: *PtyOwner) void {
         c.vex_pty_close(self.handle);
+        self.handle = null;
     }
     /// Queue input without blocking the window thread; overflow is never discarded silently.
     pub fn write(self: *const PtyOwner, bytes: []const u8) !void {
-        if (bytes.len > 0 and !c.vex_pty_write(self.handle, bytes.ptr, bytes.len)) return error.PtyWriteFailed;
+        if (bytes.len == 0) return;
+        const result = c.vex_pty_write(self.handle, bytes.ptr, bytes.len);
+        if (result == c.VEX_PTY_INPUT_FULL) return error.PtyInputFull;
+        if (result != 0) return error.PtyWriteFailed;
     }
     /// Resize the process before publishing new emulator geometry.
     pub fn resize(self: *const PtyOwner, size: TerminalSize) !void {
@@ -207,13 +221,18 @@ pub const PtyOwner = struct {
     }
     /// The reply context is the native handle, not a pointer into a movable Zig array.
     pub fn responseSink(self: *const PtyOwner) terminal.ResponseSink {
-        return .{ .context = self.handle, .write = writeReply };
+        return .{ .context = self.handle orelse unreachable, .write = writeReply };
     }
     fn writeReply(context: *anyopaque, bytes: []const u8) !void {
         const handle: *c.VexPty = @ptrCast(@alignCast(context));
-        if (bytes.len > 0 and !c.vex_pty_write(handle, bytes.ptr, bytes.len)) return error.PtyReplyWriteFailed;
+        if (bytes.len > 0 and c.vex_pty_write_response(handle, bytes.ptr, bytes.len) != 0) return error.PtyReplyWriteFailed;
     }
 };
+
+/// Join detached native owners before application shutdown/allocator diagnostics.
+pub fn drainPtyClosures() void {
+    c.vex_pty_drain_closed();
+}
 
 /// Exact implemented workspace chords; plain Ctrl keys remain terminal input except Ctrl+Tab and font zoom.
 pub fn workspaceShortcut(key: u32, modifiers: u32) ?WorkspaceAction {
@@ -352,6 +371,9 @@ pub fn runWindow(owner: anytype) !void {
         fn exited(context: ?*anyopaque, token: u32, code: u32) callconv(.c) void {
             if (token != 0) if (recover(context)) |app| app.onExited(@enumFromInt(token), code);
         }
+        fn sessionError(context: ?*anyopaque, token: u32, code: u32) callconv(.c) void {
+            if (token != 0) if (recover(context)) |app| app.onSessionError(@enumFromInt(token), code);
+        }
         fn tick(context: ?*anyopaque) callconv(.c) void {
             if (recover(context)) |app| app.onTick();
         }
@@ -382,7 +404,7 @@ pub fn runWindow(owner: anytype) !void {
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .clipboard = Adapter.clipboard, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .clipboard = Adapter.clipboard, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .session_error = Adapter.sessionError, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
@@ -501,6 +523,32 @@ pub fn cursorWakeArmed() bool {
 pub fn closeWindow() void {
     c.vex_window_close();
 }
+var operation_notices: @import("../app/error_policy.zig").NoticeLimiter = .{};
+
+/// Error-only, allocation-free path; no modal message loop or successful-input overhead.
+pub fn reportOperationFailure(err: anyerror) void {
+    if (!operation_notices.allow(err, std.time.milliTimestamp())) return;
+    const message = switch (err) {
+        error.PtyInputFull => "Input queue is full. This input was not sent. Wait for the program to consume pending input, then retry or paste a smaller block.",
+        error.SessionTransportFailed => "The connection to this pane failed. Its process was stopped; the screen remains available for copying. Other panes are still running.",
+        error.ClipboardWriteFailed => "Could not copy to the clipboard. It may be busy in another application. Please retry; your selection and sessions are preserved.",
+        error.NativeDialogFailure => "The dialog could not be opened. Try again; your sessions remain open.",
+        error.ProcessInitializationFailed => "Windows could not initialize the process (0xc0000142). The failed pane was retained; other sessions keep running. Try again or check Windows/WSL diagnostics.",
+        error.ShellStartFailed => if (last_pty_launch_error == 170)
+            "Previous terminals are still closing. Wait a moment and try again; existing sessions are unchanged."
+        else
+            "The shell could not be started. Check its executable and working directory. Existing sessions are unchanged.",
+        else => "The operation could not be completed. Existing sessions are still running.",
+    };
+    var buffer: [512]u8 = undefined;
+    const text = if (err == error.ShellStartFailed and last_pty_launch_error != 0)
+        std.fmt.bufPrint(&buffer, "{s} ({s}; Win32 {d})", .{ message, @errorName(err), last_pty_launch_error }) catch message
+    else
+        std.fmt.bufPrint(&buffer, "{s} ({s})", .{ message, @errorName(err) }) catch message;
+    dialogs.showCloseFailure(text);
+    invalidateWindow();
+}
+
 /// Fatal failures close the native window after showing one diagnostic message.
 pub fn showFailure(err: anyerror) void {
     var buffer: [256]u8 = undefined;

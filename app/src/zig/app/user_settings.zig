@@ -185,7 +185,8 @@ pub fn loadUserSettingsDiagnostic(allocator: std.mem.Allocator, path: []const u8
     return loadLuaFile(allocator, path, .{}, diagnostic);
 }
 
-/// Atomically replaces the configuration file.
+/// Atomically replaces preferences, preserving the previous Lua source for recovery.
+/// The backup must succeed first: GUI saves must never silently destroy hand-written Lua.
 pub fn saveUserSettings(allocator: std.mem.Allocator, path: []const u8, settings: UserSettings) !void {
     const parent = std.fs.path.dirname(path) orelse return error.InvalidSettingsPath;
     try std.fs.cwd().makePath(parent);
@@ -193,7 +194,22 @@ pub fn saveUserSettings(allocator: std.mem.Allocator, path: []const u8, settings
     defer dir.close();
     const bytes = try settings.encodeAlloc(allocator);
     defer allocator.free(bytes);
-    var file = try dir.atomicFile(std.fs.path.basename(path), .{ .write_buffer = &.{} });
+    const previous = dir.readFileAlloc(allocator, std.fs.path.basename(path), max_config_bytes) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
+    defer if (previous) |source| allocator.free(source);
+    if (previous) |source| {
+        if (std.mem.eql(u8, source, bytes)) return;
+        const backup = try companionPathAlloc(allocator, path, "backup");
+        defer allocator.free(backup);
+        try atomicWrite(&dir, std.fs.path.basename(backup), source);
+    }
+    try atomicWrite(&dir, std.fs.path.basename(path), bytes);
+}
+
+fn atomicWrite(dir: *std.fs.Dir, name: []const u8, bytes: []const u8) !void {
+    var file = try dir.atomicFile(name, .{ .write_buffer = &.{} });
     defer file.deinit();
     try file.file_writer.file.writeAll(bytes);
     try file.finish();
@@ -319,6 +335,37 @@ test "first launch uses defaults and GUI saves write init.lua" {
     const malformed = try files.readFileAlloc(std.testing.allocator, "init.lua", max_config_bytes);
     defer std.testing.allocator.free(malformed);
     try std.testing.expectEqualDeep(next, try UserSettings.decode(std.testing.allocator, malformed));
+}
+
+test "GUI saves preserve exact previous Lua including comments, modules and malformed source" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const allocator = std.testing.allocator;
+    const root = try temp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const path = try std.fs.path.join(allocator, &.{ root, "init.lua" });
+    defer allocator.free(path);
+    const source = "-- my expressions\r\nlocal font = require('font')\r\nvex.config.font_size = font.size\r\n";
+    try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = source });
+    try temp.dir.writeFile(.{ .sub_path = "font.lua", .data = "return {size = 18}" });
+    const saved: UserSettings = .{ .font_size = 23, .copy_on_select = false };
+    try saveUserSettings(allocator, path, saved);
+    try std.testing.expectEqualDeep(saved, try loadUserSettings(allocator, path));
+    const backup = try temp.dir.readFileAlloc(allocator, "init.backup.lua", max_config_bytes);
+    defer allocator.free(backup);
+    try std.testing.expectEqualStrings(source, backup);
+    // An identical save must not replace the useful manual source with generated Lua.
+    try saveUserSettings(allocator, path, saved);
+    const identical_backup = try temp.dir.readFileAlloc(allocator, "init.backup.lua", max_config_bytes);
+    defer allocator.free(identical_backup);
+    try std.testing.expectEqualStrings(source, identical_backup);
+    const malformed = "vex.config.font_size = ";
+    try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = malformed });
+    try saveUserSettings(allocator, path, saved);
+    const malformed_backup = try temp.dir.readFileAlloc(allocator, "init.backup.lua", max_config_bytes);
+    defer allocator.free(malformed_backup);
+    try std.testing.expectEqualStrings(malformed, malformed_backup);
+    try std.testing.expectEqualDeep(saved, try loadUserSettings(allocator, path));
 }
 
 test "obsolete JSON settings are ignored and never modified by Lua preferences" {

@@ -1110,7 +1110,7 @@ fn clipboardWrite(_: c.GhosttyTerminal, userdata: ?*anyopaque, write_ptr: ?*cons
     }
     if (write.contents_len == 0) {
         sink.on_write(sink.context, &.{}) catch |err| {
-            self.callback_error = err;
+            if (err != error.ClipboardWriteFailed) self.callback_error = err;
             return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
         };
         return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
@@ -1127,7 +1127,7 @@ fn clipboardWrite(_: c.GhosttyTerminal, userdata: ?*anyopaque, write_ptr: ?*cons
             return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
         }
         sink.on_write(sink.context, bytes) catch |err| {
-            self.callback_error = err;
+            if (err != error.ClipboardWriteFailed) self.callback_error = err;
             return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
         };
         return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
