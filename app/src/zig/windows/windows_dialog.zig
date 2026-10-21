@@ -44,8 +44,9 @@ fn nativeItem(item: DialogItem) c.VexDialogItem {
 /// Opens/updates copied native controls; close popovers do not disable the terminal.
 pub fn showDialog(presentation: DialogPresentation) !void {
     if (presentation.items.len > (if (presentation.kind == .exit) @as(usize, 65536) else 64) or presentation.shells.len > 64) return error.DialogItemLimit;
-    const items = try std.heap.page_allocator.alloc(c.VexDialogItem, presentation.items.len);
-    defer std.heap.page_allocator.free(items);
+    var small_items: [64]c.VexDialogItem = undefined;
+    const items = if (presentation.items.len <= small_items.len) small_items[0..presentation.items.len] else try std.heap.page_allocator.alloc(c.VexDialogItem, presentation.items.len);
+    defer if (presentation.items.len > small_items.len) std.heap.page_allocator.free(items);
     var shells: [64]c.VexDialogItem = undefined;
     for (presentation.items, 0..) |item, i| items[i] = nativeItem(item);
     for (presentation.shells, 0..) |item, i| shells[i] = nativeItem(item);

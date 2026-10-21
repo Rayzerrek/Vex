@@ -32,9 +32,24 @@ pub const TerminalFeedFilter = struct {
             return;
         }
         var writer = OutputBatch(@TypeOf(owner)){ .owner = owner };
-        for (bytes) |byte| {
+        var index: usize = 0;
+        while (index < bytes.len) {
+            const byte = bytes[index];
+            index += 1;
             switch (self.state) {
-                .normal => try self.stepNormal(&writer, byte),
+                .normal => switch (byte) {
+                    0x1b, '+', '$' => try self.stepNormal(&writer, byte),
+                    else => {
+                        // ANSI output usually contains long text runs between short control sequences.
+                        if (index == bytes.len or bytes[index] == 0x1b) {
+                            try writer.append(byte);
+                        } else {
+                            const end = std.mem.indexOfAnyPos(u8, bytes, index, "\x1b+$") orelse bytes.len;
+                            if (end == index) try writer.append(byte) else try writer.appendSlice(bytes[index - 1 .. end]);
+                            index = end;
+                        }
+                    },
+                },
                 .plus_seen => if (byte == 'q') {
                     self.plus_len = 0;
                     self.state = .plus_query;
@@ -97,11 +112,20 @@ pub const TerminalFeedFilter = struct {
                     }
                 },
                 .csi => {
-                    if (byte == 0x1b) {
-                        self.state = .escape;
-                    } else {
-                        try writer.append(byte);
-                        if ((byte >= 0x40 and byte <= 0x7e) or byte == 0x18 or byte == 0x1a) self.state = .normal;
+                    var parameter = byte;
+                    while (true) {
+                        if (parameter == 0x1b) {
+                            self.state = .escape;
+                            break;
+                        }
+                        try writer.append(parameter);
+                        if ((parameter >= 0x40 and parameter <= 0x7e) or parameter == 0x18 or parameter == 0x1a) {
+                            self.state = .normal;
+                            break;
+                        }
+                        if (index == bytes.len) break;
+                        parameter = bytes[index];
+                        index += 1;
                     }
                 },
                 .string => {
@@ -258,7 +282,14 @@ fn OutputBatch(comptime Owner: type) type {
             self.len += 1;
         }
         fn appendSlice(self: *@This(), bytes: []const u8) !void {
-            for (bytes) |byte| try self.append(byte);
+            var remaining = bytes;
+            while (remaining.len > 0) {
+                if (self.len == self.bytes.len) try self.flush();
+                const count = @min(remaining.len, self.bytes.len - self.len);
+                @memcpy(self.bytes[self.len..][0..count], remaining[0..count]);
+                self.len += count;
+                remaining = remaining[count..];
+            }
         }
         fn flush(self: *@This()) !void {
             if (self.len == 0) return;
@@ -282,6 +313,26 @@ test "oversized unrelated OSC is forwarded verbatim, including repeated escapes 
             try std.testing.expectEqualStrings(bytes, owner.output.items);
             try std.testing.expectEqual(@as(usize, 0), owner.reports);
         }
+    }
+}
+
+test "long ANSI text runs survive output batches and pipe boundaries without losing reports" {
+    const text = "abcdefghij 音 cost $5 C++ file/path\r\n" ** 2000;
+    const bytes = "\x1b[32m" ++ text ++ "\x1b[0m\x1b]7501;state=working\x07" ++ text ++ "\x1bc";
+    const expected = "\x1b[32m" ++ text ++ "\x1b[0m" ++ text ++ "\x1bc";
+    for ([_]usize{ 1, 17, 8191, 8192, 8193, 65536 }) |chunk_size| {
+        var owner: TestFeedOwner = .{};
+        defer owner.output.deinit(std.testing.allocator);
+        var filter: TerminalFeedFilter = .{};
+        var offset: usize = 0;
+        while (offset < bytes.len) {
+            const end = @min(offset + chunk_size, bytes.len);
+            try filter.feedTerminalOutput(&owner, bytes[offset..end]);
+            offset = end;
+        }
+        try std.testing.expectEqualStrings(expected, owner.output.items);
+        try std.testing.expectEqual(@as(usize, 1), owner.reports);
+        try std.testing.expectEqual(@as(usize, 1), owner.resets);
     }
 }
 
@@ -324,7 +375,7 @@ const TestFeedOwner = struct {
     }
 };
 test "unrelated OSC/CSI and opaque strings pass unchanged at every chunk boundary" {
-    const bytes = "before\x1b]7;file:///C:/test\x07\x1b]0;title\x1b\\\x1b[?1049h\x1b[31\x1b[0m\x1bPignored\x1b]7501;state=blocked\x1b\\after";
+    const bytes = "before\x1b]7;file:///C:/test\x07\x1b]0;title\x1b\\\x1b[?1049h\x1b[123\x18\x1b[456\x1a\x1b[31\x1b[0m\x1bPignored\x1b]7501;state=blocked\x1b\\after";
     for (0..bytes.len + 1) |split| {
         var owner: TestFeedOwner = .{};
         defer owner.output.deinit(std.testing.allocator);

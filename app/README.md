@@ -146,6 +146,11 @@ preference is available as `vex.config.confirm_close = false`.
 
 ## Rendering and motion
 
+Startup creates terminal fonts directly from the loaded preferences, without first
+building a default font set. ANSI output batches ordinary text runs and consumes
+CSI parameters without redispatching the filter state for each byte; OSC handling
+and report ordering are unchanged.
+
 Dirty terminal snapshots still read every row to handle Ghostty's scroll dirty-state
 under-reporting. Repeated non-grapheme cells share decoded text/style within each
 row; the cache never crosses rows or snapshots. Grapheme clusters always use the
@@ -157,6 +162,12 @@ short, interruptible ease-out transitions, paced to the monitor through the exis
 high-resolution output scheduler. They do not resize the terminal or keep a render
 loop running after settling. Windows' client-area animation preference is respected;
 unfocused windows and tab-strip resizes snap immediately.
+
+Settings enumerate font families only on the first visit to the Terminal page,
+not when opening General or Appearance. Theme color previews preserve the list's
+pixel-scroll position instead of rebuilding its contents. Command search uses
+bounded stack storage for its native presentation; Home/End edit the search text,
+while arrows and Page Up/Down navigate results.
 
 ## Lua configuration
 

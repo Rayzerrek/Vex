@@ -459,7 +459,8 @@ LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARA
         }
         return 0;
     }
-    if (message == WM_KEYDOWN && GetDlgCtrlID(control) == queryId && navigateCommandList(wparam)) return 0;
+    // Home/End (including Shift selection) belong to the search caret, not the results.
+    if (message == WM_KEYDOWN && id == queryId && wparam != VK_HOME && wparam != VK_END && navigateCommandList(wparam)) return 0;
     if (message == WM_KEYDOWN && wparam == 'A' && GetKeyState(VK_CONTROL) < 0) {
         SendMessageW(control, EM_SETSEL, 0, -1);
         return 0;
@@ -535,6 +536,7 @@ int CALLBACK enumerateFont(const LOGFONTW* font, const TEXTMETRICW* metrics, DWO
     return 1;
 }
 void fillFonts(HWND combo) {
+    SendMessageW(combo, WM_SETREDRAW, FALSE, 0);
     LOGFONTW query = {}; query.lfCharSet = DEFAULT_CHARSET;
     HDC dc = GetDC(host.window);
     if (dc) { EnumFontFamiliesExW(dc, &query, enumerateFont, reinterpret_cast<LPARAM>(combo), 0); ReleaseDC(host.window, dc); }
@@ -543,6 +545,8 @@ void fillFonts(HWND combo) {
     LRESULT row = SendMessageW(combo, CB_FINDSTRINGEXACT, -1, reinterpret_cast<LPARAM>(selected));
     if (row == CB_ERR) row = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(selected));
     SendMessageW(combo, CB_SETCURSEL, row, 0);
+    SendMessageW(combo, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(combo, nullptr, FALSE);
 }
 void fillList(int id) {
     HWND list = GetDlgItem(host.window, id);
@@ -611,6 +615,10 @@ void setPageControlVisibility(int id, bool visible) {
 }
 void showPage(SettingsPage previousPage) {
     const bool general = host.page == SettingsPage::general, appearance = host.page == SettingsPage::appearance, terminal = host.page == SettingsPage::terminal;
+    if (terminal && SendDlgItemMessageW(host.window, fontId, CB_GETCOUNT, 0, 0) == 0) {
+        // General/Appearance need no system font enumeration on the dialog's opening path.
+        fillFonts(GetDlgItem(host.window, fontId));
+    }
     const struct PageControl { int id; bool visible; } controls[] = {
         { shellId, general }, { 122, general }, { 123, general && host.height >= 430 }, { copyOnSelectId, general }, { confirmCloseId, general }, { confirmCloseDetailId, general && host.height >= 430 }, { addShellId, general }, { themeGridId, appearance },
         { sizeId, terminal }, { blinkId, terminal }, { 121, terminal }, { 126, terminal }, { fontId, terminal }, { fontLabelId, terminal },
@@ -665,7 +673,6 @@ bool createControls(float width, float height) {
         ok = control(L"STATIC", L"Font family", 0, fontLabelId, 46, 312, 180, 24) && ok;
         HWND fonts = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_SORT | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, fontId, width - 340, 308, 288, 240);
         ok = fonts && ok;
-        if (fonts) fillFonts(fonts);
         ok = control(L"BUTTON", L"Blink terminal cursor", BS_OWNERDRAW | WS_TABSTOP, blinkId, 34, 368, width - 68, 40) && ok;
         ok = control(L"STATIC", L"Default shell", 0, 122, 46, 242, 160, 24) && ok;
         ok = control(L"STATIC", L"Used for new tabs and splits.", 0, 123, 46, 268, 300, 24) && ok;

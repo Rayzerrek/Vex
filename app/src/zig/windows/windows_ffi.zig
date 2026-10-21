@@ -571,6 +571,20 @@ pub fn setFontPreferences(family: *const [128]u8, size: f32) !void {
     if (c.vex_window_set_font_preferences(family, size) != 0) return error.InvalidFontPreferences;
 }
 
+test "startup font preferences are accepted before window resources exist and reject invalid updates" {
+    const defaults = @import("../app/user_settings.zig").default_font;
+    var family = [_]u8{0} ** 128;
+    @memcpy(family[0..8], "Consolas");
+    try setFontPreferences(&family, 19);
+    defer setFontPreferences(&defaults, 14) catch unreachable;
+    try std.testing.expectEqual(@as(f32, 19), fontSize());
+    try std.testing.expectError(error.InvalidFontPreferences, setFontPreferences(&family, std.math.nan(f32)));
+    try std.testing.expectEqual(@as(f32, 19), fontSize());
+    family[0] = 0xff;
+    try std.testing.expectError(error.InvalidFontPreferences, setFontPreferences(&family, 12));
+    try std.testing.expectEqual(@as(f32, 19), fontSize());
+}
+
 /// Returns the active terminal font size in DIPs.
 pub fn fontSize() f32 {
     return c.vex_window_font_size();

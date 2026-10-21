@@ -50,7 +50,7 @@ pub const TerminalApplication = struct {
     settings: preferences.UserSettings,
     settings_path: []u8,
     settings_diagnostic: preferences.SettingsDiagnostic,
-    startup_preferences: union(enum) { font_pending: ?anyerror, warning_pending: anyerror, applied },
+    startup_preferences: union(enum) { warning_pending: anyerror, applied },
     shell_launches: std.ArrayList(*shell.ShellLaunch) = .empty,
     custom_shells: custom_profiles.Catalog,
     custom_shell_load_error: ?anyerror = null,
@@ -147,6 +147,7 @@ pub const TerminalApplication = struct {
         const default_kind = launch.kind;
         try platform.setShellName(launch.shellName());
         platform.setChromePalette(terminal_theme.themes[settings.theme_index].chromePalette());
+        try platform.setFontPreferences(&settings.font_family, @floatFromInt(settings.font_size));
         return .{
             .allocator = allocator,
             .api = api,
@@ -159,7 +160,7 @@ pub const TerminalApplication = struct {
             .custom_shells = custom_shells,
             .custom_shell_load_error = custom_shell_load_error,
             .settings_diagnostic = settings_diagnostic,
-            .startup_preferences = .{ .font_pending = settings_load_error },
+            .startup_preferences = if (settings_load_error) |err| .{ .warning_pending = err } else .applied,
             .theme_index = settings.theme_index,
             .last_dark_theme = if (terminal_theme.themes[settings.theme_index].is_dark) settings.theme_index else terminal_theme.default_dark_index,
             .last_light_theme = if (!terminal_theme.themes[settings.theme_index].is_dark) settings.theme_index else terminal_theme.default_light_index,
@@ -492,13 +493,6 @@ pub const TerminalApplication = struct {
     }
     pub fn onResize(self: *TerminalApplication, metrics: platform.WindowMetrics) void {
         if (self.health == .failed) return;
-        if (self.startup_preferences == .font_pending) {
-            self.startup_preferences = if (self.startup_preferences.font_pending) |err| .{ .warning_pending = err } else .applied;
-            if (self.settings.font_size != 14 or !std.mem.eql(u8, self.settings.fontFamily(), "Cascadia Mono")) {
-                platform.setFontPreferences(&self.settings.font_family, @floatFromInt(self.settings.font_size)) catch |err| self.fail(err);
-                return;
-            }
-        }
         _ = pointer.cancelPointerDrag(self) catch |err| {
             self.fail(err);
             return;

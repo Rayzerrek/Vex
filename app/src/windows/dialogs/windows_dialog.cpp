@@ -725,7 +725,8 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
             else { if (background) DeleteObject(background); if (field) DeleteObject(field); }
             if (appearanceChanged && list) SetWindowTheme(list, host.model.palette.is_dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
         }
-        if (itemsChanged || paletteChanged) fillList(listControlId);
+        // Preview colors do not change list membership; resetting would discard pixel scrolling.
+        if (itemsChanged) fillList(listControlId);
         else if (list) {
             uint32_t selected;
             if (!listSelection(selected, listControlId) || selected != host.model.selected) {

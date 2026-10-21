@@ -1095,6 +1095,11 @@ extern "C" int vex_window_set_font_preferences(const uint8_t* family, float font
     if (wcscmp(terminalFontFamily, wide) == 0 && terminalFontSize == fminf(32.0f, fmaxf(9.0f, roundf(font_size)))) return 0;
     wchar_t previous[128]; memcpy(previous, terminalFontFamily, sizeof(previous));
     memcpy(terminalFontFamily, wide, sizeof(wide));
+    if (!textFactory) {
+        // Startup already knows the preferences; create only the chosen fonts and grid metrics.
+        terminalFontSize = fminf(32.0f, fmaxf(9.0f, roundf(font_size)));
+        return 0;
+    }
     int result = vex_window_set_font_size(font_size);
     if (result) memcpy(terminalFontFamily, previous, sizeof(previous));
     return result;
@@ -1141,7 +1146,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (SUCCEEDED(result)) result = configureChromeFormat(chromeBoldFont);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f, L"en-us", &badgeFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(badgeFont);
-    if (SUCCEEDED(result)) result = rebuildTerminalFonts(14.0f);
+    if (SUCCEEDED(result)) result = rebuildTerminalFonts(terminalFontSize);
     HICON iconBig = nullptr, iconSmall = nullptr;
     loadAppIcons(iconBig, iconSmall);
     if (SUCCEEDED(result)) {
