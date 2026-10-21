@@ -1,4 +1,5 @@
 #include "terminal_drawing.h"
+#include "terminal_cell_glyph.h"
 #include "drawing_color.h"
 #include "windows_renderer.h"
 #include <math.h>
@@ -161,10 +162,12 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
     }
 
     if (cp >= 0x2500 && cp <= 0x257F) {
-        const float cx = snapDip(left + cw * 0.5f);
-        const float cy = snapDip(top + ch * 0.5f);
+        // Snap stroke edges, not the center first: double rounding biases odd
+        // cells and can push a double-line arm onto the neighboring cell edge.
+        const float cx = left + cw * 0.5f;
+        const float cy = top + ch * 0.5f;
         if ((cp >= 0x2504 && cp <= 0x250B) || (cp >= 0x254C && cp <= 0x254F)) {
-            const bool vertical = (cp >= 0x2506 && cp <= 0x250B) || cp == 0x254E || cp == 0x254F;
+            const bool vertical = terminalDashVertical(cp);
             const bool heavy = (cp & 1) != 0;
             const int count = (cp >= 0x254C) ? 2 : ((cp == 0x2504 || cp == 0x2505 || cp == 0x2506 || cp == 0x2507) ? 3 : 4);
             const float t = heavy ? heavyT : lightT;
@@ -186,10 +189,17 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
             return true;
         }
         if (cp >= 0x256D && cp <= 0x2570) {
+            // Strokes are centered, while the straight box arms are filled
+            // rectangles. Match their pixel coverage, including odd widths.
+            const float cx = snapDip(left + cw * 0.5f - lightT * 0.5f) + lightT * 0.5f;
+            const float cy = snapDip(top + ch * 0.5f - lightT * 0.5f) + lightT * 0.5f;
             RendererComPtr<ID2D1PathGeometry> path;
             RendererComPtr<ID2D1GeometrySink> sink;
             if (drawingFactory && SUCCEEDED(drawingFactory->CreatePathGeometry(&path)) && path && SUCCEEDED(path->Open(&sink)) && sink) {
-                const float r = fminf(cw, ch) * 0.45f;
+                // Leave a straight, fully covered pixel at each cell edge;
+                // otherwise the antialiased arc can reach the neighboring arm.
+                const float room = fminf(fminf(cx - left, right - cx), fminf(cy - top, bottom - cy));
+                const float r = fmaxf(0.0f, fminf(fminf(cw, ch) * 0.45f, room - lightT));
                 if (cp == 0x256D) {
                     sink->BeginFigure(D2D1::Point2F(right, cy), D2D1_FIGURE_BEGIN_HOLLOW);
                     sink->AddLine(D2D1::Point2F(cx + r, cy));
@@ -337,7 +347,7 @@ extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const
         for (size_t i = 0; i < trimmed && SUCCEEDED(result); i++) {
             if (utf8[i] != ' ') result = renderer->terminal.drawGlyph(x + (float)i * cellWidth, y, cellWidth, cellHeight, utf8 + i, 1, flags, foreground, paintAtlasGlyph);
         }
-    } else if (trimmed) result = renderer->terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph);
+    } else if (trimmed) result = renderer->terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph, 255, terminalCellGlyph(utf8, trimmed));
     if (SUCCEEDED(result) && (flags & 4)) result = renderer->terminal.drawSolid(x, y + cellHeight - 2, x + width, y + cellHeight - 1, foreground);
     if (SUCCEEDED(result) && (flags & 8)) result = renderer->terminal.drawSolid(x, y + cellHeight * 0.55f, x + width, y + cellHeight * 0.55f + 1, foreground);
     return (int)renderer->terminalResult(result);

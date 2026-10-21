@@ -70,6 +70,7 @@ pub fn build(b: *std.Build) void {
     addWindowsIncludePaths(b, fixture_module);
     fixture_module.addCSourceFile(.{ .file = b.path("tests/conpty_fixture.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/chrome_motion.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/terminal_cell_glyph.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_conpty.cpp"), .flags = native_flags });
     fixture_module.linkSystemLibrary("kernel32", .{});
     const fixture = b.addExecutable(.{ .name = "vex-conpty-fixture", .root_module = fixture_module });

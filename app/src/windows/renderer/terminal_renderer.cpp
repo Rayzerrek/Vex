@@ -365,14 +365,20 @@ HRESULT TerminalRenderer::uploadGlyph(Glyph& glyph) {
     return S_OK;
 }
 
-HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha) {
+HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha, bool cellAligned) {
     if (!passOpen || !text || !length || length > 65536 || !painter || !isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) || width <= 0 || height <= 0) return E_INVALIDARG;
-    const float left = floorf(x * scale), top = floorf(y * scale);
-    const UINT phaseX = (UINT)fminf(3, floorf((x * scale - left) * 4));
-    const UINT phaseY = (UINT)fminf(3, floorf((y * scale - top) * 4));
-    const UINT w = (UINT)ceilf(width * scale) + 1, h = (UINT)ceilf(height * scale) + 1;
+    // Cell graphics must share the background's rounded screen edges. Quantizing
+    // their atlas-local phase independently can move an edge into the next cell.
+    const float left = cellAligned ? roundf(x * scale) : floorf(x * scale);
+    const float top = cellAligned ? roundf(y * scale) : floorf(y * scale);
+    const UINT phaseX = cellAligned ? 0 : (UINT)fminf(3, floorf((x * scale - left) * 4));
+    const UINT phaseY = cellAligned ? 0 : (UINT)fminf(3, floorf((y * scale - top) * 4));
+    const float rasterWidth = cellAligned ? roundf((x + width) * scale) - left : width * scale;
+    const float rasterHeight = cellAligned ? roundf((y + height) * scale) - top : height * scale;
+    if (rasterWidth <= 0 || rasterHeight <= 0) return S_OK;
+    const UINT w = (UINT)ceilf(rasterWidth) + 1, h = (UINT)ceilf(rasterHeight) + 1;
     if (w > 512 || h > 512) return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
-    const UINT phase = phaseX | (phaseY << 2), style = flags & 3;
+    const UINT phase = phaseX | (phaseY << 2) | (cellAligned ? 16u : 0u), style = flags & 3;
     UINT64 hash = 14695981039346656037ull;
     for (size_t i = 0; i < length; i++) hash = (hash ^ text[i]) * 1099511628211ull;
     hash ^= ((UINT64)w << 32) | ((UINT64)h << 16) | (phase << 2) | style;
@@ -399,7 +405,8 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
         rasterTarget->PushAxisAlignedClip(D2D1::RectF(0, 0, w / scale, h / scale), D2D1_ANTIALIAS_MODE_ALIASED);
         rasterTarget->Clear(D2D1::ColorF(0, 0.0f));
         HRESULT result = painter(rasterTarget.Get(), rasterBrush.Get(), text, length, flags,
-            phaseX * 0.25f / scale, phaseY * 0.25f / scale, width, height);
+            phaseX * 0.25f / scale, phaseY * 0.25f / scale,
+            cellAligned ? rasterWidth / scale : width, cellAligned ? rasterHeight / scale : height);
         rasterTarget->PopAxisAlignedClip();
         const HRESULT ended = rasterTarget->EndDraw();
         if (SUCCEEDED(result)) result = ended;
