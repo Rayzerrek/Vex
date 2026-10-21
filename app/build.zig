@@ -17,6 +17,13 @@ pub fn build(b: *std.Build) void {
         std.debug.print("error: Vex native requires Debug or ReleaseSafe; runtime safety may not be disabled\n", .{});
         std.process.exit(1);
     }
+    const performance_module = b.createModule(.{ .root_source_file = b.path("src/zig/performance.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    const performance = b.addExecutable(.{ .name = "vex-performance", .root_module = performance_module });
+    const performance_run = b.addRunArtifact(performance);
+    b.step("bench", "Run portable allocation, input snapshot and feed microbenchmarks").dependOn(&performance_run.step);
+    const portable_tests = b.addTest(.{ .root_module = performance_module });
+    const portable_test_run = b.addRunArtifact(portable_tests);
+    b.step("test-portable", "Run portable performance regression tests on the host").dependOn(&portable_test_run.step);
     const module = b.createModule(.{ .root_source_file = b.path("src/zig/main.zig"), .target = target, .optimize = optimize });
     addWindowsIncludePaths(b, module);
     module.addIncludePath(b.path("vendor/include"));

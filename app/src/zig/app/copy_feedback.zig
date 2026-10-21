@@ -20,14 +20,26 @@ pub const Snapshot = struct {
     cells: std.ArrayList(Cell) = .empty,
     utf8: std.ArrayList(u8) = .empty,
     captured_ms: ?i64 = null,
+    source_generation: ?u64 = null,
 
     pub fn deinit(self: *Snapshot, allocator: std.mem.Allocator) void {
         self.cells.deinit(allocator);
         self.utf8.deinit(allocator);
     }
 
+    /// Generations belong to one terminal; cancellation expires attribution, not the retained pixels.
+    pub fn captureVersioned(self: *Snapshot, allocator: std.mem.Allocator, frame: anytype, now_ms: i64) !void {
+        if (self.source_generation == frame.generation and self.columns == frame.columns and self.rows == frame.rows) {
+            self.captured_ms = now_ms;
+            return;
+        }
+        try self.capture(allocator, frame, now_ms);
+        self.source_generation = frame.generation;
+    }
+
     pub fn capture(self: *Snapshot, allocator: std.mem.Allocator, frame: anytype, now_ms: i64) !void {
         self.captured_ms = null;
+        self.source_generation = null;
         try self.cells.ensureTotalCapacity(allocator, frame.cells.items.len);
         try self.utf8.ensureTotalCapacity(allocator, frame.utf8.items.len);
         self.cells.clearRetainingCapacity();
@@ -461,6 +473,45 @@ test "single lines, soft wraps and whitespace reflow" {
     try std.testing.expectEqual(@as(u16, 2), locate(frame, "unique").?.first_row);
     try std.testing.expect(locate(frame, "helloworldx") == null);
     try std.testing.expect(locate(frame, " \r\n") == null);
+}
+
+test "versioned input snapshots reuse storage after cancellation and refresh changed frames" {
+    var cells: [10]TestFrame.Cell = undefined;
+    const frame = asciiFrame("hello     ", &cells, 10);
+    const VersionedFrame = struct {
+        columns: u16,
+        rows: u16,
+        cells: @TypeOf(frame.cells),
+        utf8: @TypeOf(frame.utf8),
+        generation: u64 = 1,
+    };
+    var versioned: VersionedFrame = .{ .columns = frame.columns, .rows = frame.rows, .cells = frame.cells, .utf8 = frame.utf8 };
+    var snapshot: Snapshot = .{};
+    defer snapshot.deinit(std.testing.allocator);
+    try snapshot.captureVersioned(std.testing.allocator, versioned, 1000);
+    const original_cells = snapshot.cells.items.ptr;
+    snapshot.captured_ms = null;
+    // Reuse must not touch the allocator, even if allocation would fail.
+    try snapshot.captureVersioned(std.testing.failing_allocator, versioned, 2000);
+    try std.testing.expectEqual(original_cells, snapshot.cells.items.ptr);
+    try std.testing.expect(snapshot.recent(2001));
+    try std.testing.expectEqualStrings("hello     ", snapshot.utf8.items);
+    versioned.generation += 1;
+    versioned.utf8.items = "world     ";
+    try snapshot.captureVersioned(std.testing.allocator, versioned, 3000);
+    try std.testing.expectEqualStrings("world     ", snapshot.utf8.items);
+    // Dimensions are part of the key even if a caller reuses a generation.
+    versioned.columns = 5;
+    versioned.rows = 2;
+    try snapshot.captureVersioned(std.testing.allocator, versioned, 3500);
+    try std.testing.expectEqual(@as(u16, 5), snapshot.columns);
+    try std.testing.expectEqual(@as(u16, 2), snapshot.rows);
+    // An unversioned capture invalidates the key even when dimensions match.
+    versioned.columns = frame.columns;
+    versioned.rows = frame.rows;
+    try snapshot.capture(std.testing.allocator, frame, 4000);
+    try snapshot.captureVersioned(std.testing.allocator, versioned, 5000);
+    try std.testing.expectEqualStrings("world     ", snapshot.utf8.items);
 }
 
 test "deletes, changes, moved text, duplicates and missing suffixes never authorize feedback" {

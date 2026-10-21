@@ -236,15 +236,29 @@ const stripped_xtgettcap_caps = [_][]const u8{
     "544E",
     "436F",
 };
-fn needsSlowPath(bytes: []const u8) bool {
+// Keep the vector preflight out of the control-state dispatch's hot instruction footprint.
+noinline fn needsSlowPath(bytes: []const u8) bool {
     if (bytes.len == 0) return false;
     if (bytes[bytes.len - 1] == '+' or bytes[bytes.len - 1] == '$') return true;
-    for (bytes, 0..) |byte, index| {
+    const Vector = @Vector(16, u8);
+    var index: usize = 0;
+    // Look for query pairs, not every '+'/'$': ordinary shell text often contains both.
+    // The overlapping load includes the next byte without crossing the borrowed slice.
+    while (bytes.len - index > 16) : (index += 16) {
+        const block: Vector = bytes[index..][0..16].*;
+        const following: Vector = bytes[index + 1 ..][0..16].*;
+        const query_start = (block == @as(Vector, @splat('+'))) | (block == @as(Vector, @splat('$')));
+        const matches = (block == @as(Vector, @splat(0x1b))) | (query_start & (following == @as(Vector, @splat('q'))));
+        if (@reduce(.Or, matches)) return true;
+    }
+    while (index < bytes.len) : (index += 1) {
+        const byte = bytes[index];
         if (byte == 0x1b) return true;
         if ((byte == '+' or byte == '$') and index + 1 < bytes.len and bytes[index + 1] == 'q') return true;
     }
     return false;
 }
+
 fn isQueryByte(byte: u8) bool {
     return std.ascii.isHex(byte) or byte == ';';
 }
@@ -299,6 +313,38 @@ fn OutputBatch(comptime Owner: type) type {
     };
 }
 
+test "vector interception scan matches scalar detection at every short slice and alignment" {
+    const Scalar = struct {
+        fn needs(bytes: []const u8) bool {
+            if (bytes.len == 0) return false;
+            if (bytes[bytes.len - 1] == '+' or bytes[bytes.len - 1] == '$') return true;
+            for (bytes, 0..) |byte, index| {
+                if (byte == 0x1b) return true;
+                if ((byte == '+' or byte == '$') and index + 1 < bytes.len and bytes[index + 1] == 'q') return true;
+            }
+            return false;
+        }
+    };
+    var bytes: [97]u8 = @splat('x');
+    for ([_]u8{ 'x', 'q' }) |following| {
+        for ([_]u8{ 0x1b, '+', '$' }) |control| {
+            for (0..bytes.len) |position| {
+                bytes[position] = control;
+                if (position + 1 < bytes.len) bytes[position + 1] = following;
+                for (0..bytes.len + 1) |length| {
+                    for (0..length + 1) |start| {
+                        const slice = bytes[start..length];
+                        try std.testing.expectEqual(Scalar.needs(slice), needsSlowPath(slice));
+                    }
+                }
+                bytes[position] = 'x';
+                if (position + 1 < bytes.len) bytes[position + 1] = 'x';
+            }
+        }
+    }
+    try std.testing.expect(!needsSlowPath(&bytes));
+}
+
 test "oversized unrelated OSC is forwarded verbatim, including repeated escapes at capacity" {
     for ([_][]const u8{ "\x07", "\x1b\\", "\x1b\x07", "\x1b\x1b\\" }) |terminator| {
         const payload = [_]u8{'a'} ** 6000;
@@ -333,6 +379,8 @@ test "long ANSI text runs survive output batches and pipe boundaries without los
         try std.testing.expectEqualStrings(expected, owner.output.items);
         try std.testing.expectEqual(@as(usize, 1), owner.reports);
         try std.testing.expectEqual(@as(usize, 1), owner.resets);
+        try std.testing.expectEqual("\x1b[32m".len + text.len + "\x1b[0m".len, owner.report_output_len);
+        try std.testing.expectEqual(expected.len, owner.reset_output_len);
     }
 }
 
@@ -358,11 +406,14 @@ const TestFeedOwner = struct {
     resets: usize = 0,
     shell_markers: usize = 0,
     progress_reports: usize = 0,
+    report_output_len: usize = 0,
+    reset_output_len: usize = 0,
     pub fn writeTerminalOutput(self: *@This(), bytes: []const u8) !void {
         try self.output.appendSlice(std.testing.allocator, bytes);
     }
     pub fn onProgramStatusOsc(self: *@This(), _: []const u8) !void {
         self.reports += 1;
+        self.report_output_len = self.output.items.len;
     }
     pub fn onShellMarkerOsc(self: *@This(), _: []const u8) !void {
         self.shell_markers += 1;
@@ -372,6 +423,7 @@ const TestFeedOwner = struct {
     }
     pub fn onTerminalReset(self: *@This()) void {
         self.resets += 1;
+        self.reset_output_len = self.output.items.len;
     }
 };
 test "unrelated OSC/CSI and opaque strings pass unchanged at every chunk boundary" {

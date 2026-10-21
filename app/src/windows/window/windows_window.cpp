@@ -154,6 +154,7 @@ static HRESULT createRenderTarget() {
         wchar_t warp[2];
         const bool forceWarp = selftestEnabled() && GetEnvironmentVariableW(L"VEX_NATIVE_WARP", warp, 2) == 1 && warp[0] == L'1';
         HRESULT result = renderer.initialize(window, drawingFactory, forceWarp);
+        if (SUCCEEDED(result) && !firstFrame) startupMilestone("renderer ready");
         if (FAILED(result)) return result;
         rendererGeneration++;
     }
@@ -1205,6 +1206,7 @@ static void loadAppIcons(HICON& outBig, HICON& outSmall) {
 extern "C" void vex_startup_begin() { QueryPerformanceCounter(&startupCounter); QueryPerformanceFrequency(&counterFrequency); }
 extern "C" int vex_window_run(VexWindowCallbacks value) {
     callbacks = value;
+    startupMilestone("application ready");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     HRESULT result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &drawingFactory);
     if (FAILED(result)) return (int)result;
@@ -1230,6 +1232,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f, L"en-us", &badgeFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(badgeFont);
     if (SUCCEEDED(result)) result = rebuildTerminalFonts(terminalFontSize);
+    if (SUCCEEDED(result)) startupMilestone("fonts ready");
     HICON iconBig = nullptr, iconSmall = nullptr;
     loadAppIcons(iconBig, iconSmall);
     if (SUCCEEDED(result)) {

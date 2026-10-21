@@ -5,6 +5,14 @@ const platform = @import("windows/windows_ffi.zig");
 /// Main owns the allocator until application/session teardown has joined every native worker.
 pub fn main() void {
     platform.beginStartup();
+    // Keep leak diagnostics in development without paying their per-allocation cost in production.
+    if (@import("builtin").mode != .Debug) {
+        application.runApplication(std.heap.smp_allocator) catch |err| {
+            platform.showFailure(err);
+            std.process.exit(1);
+        };
+        return;
+    }
     var allocator = std.heap.DebugAllocator(.{}){};
     defer {
         if (allocator.deinit() == .leak) platform.showFailure(error.NativeAllocationLeak);

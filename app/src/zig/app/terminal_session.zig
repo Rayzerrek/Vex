@@ -167,7 +167,7 @@ pub const TerminalSession = struct {
         const sb = self.terminal.scrollbar() catch return;
         if (sb.offset != sb.scrollable()) return;
         const frame = self.terminal.readFrame() catch return;
-        self.copy_source.capture(self.terminal.allocator, frame, std.time.milliTimestamp()) catch {};
+        self.copy_source.captureVersioned(self.terminal.allocator, frame, std.time.milliTimestamp()) catch {};
     }
 
     fn setCopyFeedback(self: *TerminalSession, box: copy_effect.Box, offset: u64, now_ms: u64) void {
