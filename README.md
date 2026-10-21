@@ -2,12 +2,8 @@
 
 A native Windows terminal with tabs, split panes and Windows/WSL shells.
 Written in Zig and C/C++, using Win32, ConPTY, libghostty-vt and D3D12.
-No Electron or .NET runtime is required.
 
 ## Install
-
-Requires **Windows 10 1809+ or Windows 11, x64**. Install shells and WSL
-separately.
 
 Download from [Releases](https://github.com/Rayzerrek/Vex/releases):
 
