@@ -1,0 +1,890 @@
+const std = @import("std");
+const wsl_paths = @import("../shell/wsl_paths.zig");
+const directory = @import("../shell/directory.zig");
+
+pub const ShellQuoteKind = enum {
+    literal,
+    pwsh,
+    cmd,
+    nu,
+    gitbash,
+    wsl,
+
+    pub fn fromProgram(program: []const u8) ShellQuoteKind {
+        const base = std.fs.path.basename(program);
+        const stem = if (std.ascii.endsWithIgnoreCase(base, ".exe")) base[0 .. base.len - 4] else base;
+        if (std.ascii.eqlIgnoreCase(stem, "pwsh") or std.ascii.eqlIgnoreCase(stem, "powershell")) return .pwsh;
+        if (std.ascii.eqlIgnoreCase(stem, "nu")) return .nu;
+        if (std.ascii.eqlIgnoreCase(stem, "bash") or std.ascii.eqlIgnoreCase(stem, "git-bash")) return .gitbash;
+        if (std.ascii.eqlIgnoreCase(stem, "wsl")) return .wsl;
+        if (std.ascii.eqlIgnoreCase(stem, "cmd")) return .cmd;
+        return .literal;
+    }
+};
+
+pub const Entry = struct {
+    name: []u8,
+    is_directory: bool,
+};
+
+pub const Match = struct {
+    entry_index: usize,
+    score: i32,
+};
+
+pub const max_entries: usize = 16_384;
+pub const max_matches: usize = 50;
+pub const max_index_bytes: usize = 8 * 1024 * 1024;
+
+pub const PathCompletion = struct {
+    allocator: std.mem.Allocator,
+    directory: []u8 = &.{},
+    query_buf: [128]u8 = undefined,
+    query_len: usize = 0,
+    entries: std.ArrayList(Entry) = .empty,
+    matches: std.ArrayList(Match) = .empty,
+    selected_index: usize = 0,
+    hovered_index: ?usize = null,
+    first_visible: usize = 0,
+    scan_error: bool = false,
+    is_truncated: bool = false,
+    index: union(enum) { synchronous, deferred: struct { revision: u64 = 0, loading: bool = false } } = .synchronous,
+    recursive: bool = false,
+    indexed_name_bytes: usize = 0,
+    scan_revision: ?struct { latest: *const std.atomic.Value(u64), expected: u64 } = null,
+
+    pub fn init(allocator: std.mem.Allocator) PathCompletion {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *PathCompletion) void {
+        self.clearEntries();
+        self.entries.deinit(self.allocator);
+        self.matches.deinit(self.allocator);
+        if (self.directory.len > 0) self.allocator.free(self.directory);
+        self.* = .{ .allocator = self.allocator };
+    }
+
+    fn clearEntries(self: *PathCompletion) void {
+        for (self.entries.items) |entry| {
+            self.allocator.free(entry.name);
+        }
+        self.entries.clearRetainingCapacity();
+        self.indexed_name_bytes = 0;
+    }
+
+    pub fn query(self: *const PathCompletion) []const u8 {
+        return self.query_buf[0..self.query_len];
+    }
+
+    /// Replaces the path picker atomically; inputs may borrow the current directory or query.
+    /// Empty paths clear indexing; unavailable directories produce an explicit scan-error view.
+    pub fn openDirectory(self: *PathCompletion, dir_path: []const u8, initial_query: []const u8) !void {
+        const prefix = try boundedQueryPrefix(initial_query, self.query_buf.len);
+        if (dir_path.len > 0) _ = try directory.DirectoryPath.parse(dir_path);
+        const trimmed = std.mem.trimRight(u8, dir_path, "\\/");
+        const effective = if (trimmed.len == 0 and dir_path.len > 0) dir_path else if (trimmed.len == 2 and trimmed[1] == ':') dir_path[0..3] else trimmed;
+        var next = PathCompletion.init(self.allocator);
+        errdefer next.deinit();
+        next.directory = try self.allocator.dupe(u8, effective);
+        next.recursive = self.recursive;
+        next.scan_revision = self.scan_revision;
+        next.index = switch (self.index) {
+            .synchronous => .synchronous,
+            .deferred => |state| .{ .deferred = .{ .revision = try std.math.add(u64, state.revision, 1), .loading = true } },
+        };
+        @memcpy(next.query_buf[0..prefix.len], prefix);
+        next.query_len = prefix.len;
+        if (next.index == .synchronous) try next.scanCurrentDirectory();
+        try next.refreshMatches();
+
+        self.deinit();
+        self.* = next;
+    }
+
+    pub fn navigateParent(self: *PathCompletion) !bool {
+        if (self.directory.len == 0) return false;
+        const parent = std.fs.path.dirname(self.directory) orelse return false;
+        if (std.mem.eql(u8, parent, self.directory)) return false;
+        try self.openDirectory(parent, self.query());
+        return true;
+    }
+
+    pub fn enterSelectedDirectory(self: *PathCompletion) !bool {
+        const entry = self.selectedEntry() orelse return false;
+        if (!entry.is_directory) return false;
+        const child = try std.fs.path.join(self.allocator, &.{ self.directory, entry.name });
+        defer self.allocator.free(child);
+        try self.openDirectory(child, "");
+        return true;
+    }
+
+    pub fn selectedEntry(self: *const PathCompletion) ?Entry {
+        if (self.selected_index >= self.matches.items.len) return null;
+        const idx = self.matches.items[self.selected_index].entry_index;
+        if (idx >= self.entries.items.len) return null;
+        return self.entries.items[idx];
+    }
+
+    pub fn selectedFullPathAlloc(self: *const PathCompletion, allocator: std.mem.Allocator) !?[]u8 {
+        const entry = self.selectedEntry() orelse return null;
+        return try std.fs.path.join(allocator, &.{ self.directory, entry.name });
+    }
+
+    /// Appends complete UTF-8 codepoints within the byte limit; malformed input leaves the query unchanged.
+    pub fn appendQuery(self: *PathCompletion, text: []const u8) !void {
+        const prefix = try boundedQueryPrefix(text, self.query_buf.len - self.query_len);
+        for (text) |c| {
+            if (c < 0x20 or c == 0x7f) return;
+        }
+        if (prefix.len == 0) return;
+        @memcpy(self.query_buf[self.query_len .. self.query_len + prefix.len], prefix);
+        self.query_len += prefix.len;
+
+        const current_q = self.query();
+        if (std.mem.lastIndexOfAny(u8, current_q, "/\\")) |sep| {
+            const directory_prefix = current_q[0 .. sep + 1];
+            const remainder = current_q[sep + 1 ..];
+            if (self.resolveSubdirectoryAlloc(directory_prefix)) |resolved| {
+                defer self.allocator.free(resolved);
+                var rem_buf: [128]u8 = undefined;
+                const rem_len = remainder.len;
+                @memcpy(rem_buf[0..rem_len], remainder);
+                try self.openDirectory(resolved, rem_buf[0..rem_len]);
+                return;
+            } else |_| {}
+        }
+
+        self.selected_index = 0;
+        self.first_visible = 0;
+        try self.refreshMatches();
+    }
+
+    pub fn backspaceQuery(self: *PathCompletion) !bool {
+        if (self.query_len == 0) {
+            return try self.navigateParent();
+        }
+        var i = self.query_len - 1;
+        while (i > 0 and (self.query_buf[i] & 0xC0) == 0x80) : (i -= 1) {}
+        self.query_len = i;
+        self.selected_index = 0;
+        self.first_visible = 0;
+        try self.refreshMatches();
+        return true;
+    }
+
+    pub fn clearQuery(self: *PathCompletion) !void {
+        if (self.query_len == 0) return;
+        self.query_len = 0;
+        self.selected_index = 0;
+        self.first_visible = 0;
+        try self.refreshMatches();
+    }
+
+    pub fn moveSelection(self: *PathCompletion, delta: isize, visible_rows: usize) void {
+        if (self.matches.items.len == 0) {
+            self.selected_index = 0;
+            self.first_visible = 0;
+            return;
+        }
+        const max_idx: isize = @intCast(self.matches.items.len - 1);
+        const cur: isize = @intCast(self.selected_index);
+        const next: usize = @intCast(std.math.clamp(cur + delta, 0, max_idx));
+        self.selected_index = next;
+        self.ensureVisible(visible_rows);
+    }
+
+    pub fn ensureVisible(self: *PathCompletion, visible_rows: usize) void {
+        const rows = @max(@as(usize, 1), visible_rows);
+        if (self.selected_index < self.first_visible) {
+            self.first_visible = self.selected_index;
+        } else if (self.selected_index >= self.first_visible + rows) {
+            self.first_visible = self.selected_index - rows + 1;
+        }
+        if (self.matches.items.len > rows) {
+            self.first_visible = @min(self.first_visible, self.matches.items.len - rows);
+        } else {
+            self.first_visible = 0;
+        }
+    }
+
+    fn resolveSubdirectoryAlloc(self: *const PathCompletion, prefix: []const u8) ![]u8 {
+        var normalized_buf: [512]u8 = undefined;
+        if (prefix.len > normalized_buf.len) return error.NameTooLong;
+        for (prefix, 0..) |c, idx| {
+            normalized_buf[idx] = if (c == '/') '\\' else c;
+        }
+        const norm = normalized_buf[0..prefix.len];
+        const candidate = try std.fs.path.resolve(self.allocator, &.{ self.directory, norm });
+        errdefer self.allocator.free(candidate);
+        if (self.index == .synchronous) {
+            var dir = try std.fs.openDirAbsolute(candidate, .{});
+            dir.close();
+        }
+        return candidate;
+    }
+
+    fn scanCurrentDirectory(self: *PathCompletion) !void {
+        self.clearEntries();
+        self.scan_error = false;
+        self.is_truncated = false;
+        if (self.directory.len == 0) return;
+        try self.checkScanRevision();
+
+        var dir = std.fs.openDirAbsolute(self.directory, .{ .iterate = true }) catch {
+            self.scan_error = true;
+            return;
+        };
+        defer dir.close();
+
+        if (self.recursive) {
+            var walker = try dir.walk(self.allocator);
+            defer walker.deinit();
+            while (true) {
+                try self.checkScanRevision();
+                const entry = walker.next() catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    self.scan_error = true;
+                    self.clearEntries();
+                    break;
+                } orelse break;
+                if (!try self.appendIndexedEntry(entry.path, entry.kind == .directory)) break;
+                if (self.entries.items.len >= max_entries) {
+                    self.is_truncated = true;
+                    break;
+                }
+            }
+            return;
+        }
+        var it = dir.iterate();
+        while (true) {
+            try self.checkScanRevision();
+            const next_entry = it.next() catch {
+                self.scan_error = true;
+                self.clearEntries();
+                break;
+            };
+            const item = next_entry orelse break;
+            if (item.name.len == 0) continue;
+            if (!try self.appendIndexedEntry(item.name, item.kind == .directory)) break;
+            if (self.entries.items.len >= max_entries) {
+                self.is_truncated = true;
+                break;
+            }
+        }
+    }
+
+    fn checkScanRevision(self: *const PathCompletion) !void {
+        if (self.scan_revision) |revision| {
+            if (revision.latest.load(.acquire) != revision.expected) return error.StalePathIndex;
+        }
+    }
+    fn appendIndexedEntry(self: *PathCompletion, name: []const u8, is_directory: bool) !bool {
+        if (!std.unicode.utf8ValidateSlice(name)) {
+            self.scan_error = true;
+            self.clearEntries();
+            return false;
+        }
+        if (name.len > max_index_bytes - self.indexed_name_bytes) {
+            self.is_truncated = true;
+            return false;
+        }
+        const owned = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned);
+        try self.entries.append(self.allocator, .{ .name = owned, .is_directory = is_directory });
+        self.indexed_name_bytes += name.len;
+        return true;
+    }
+
+    /// Adopts a completed index transactionally while retaining text typed during background scanning.
+    pub fn applyDeferredIndex(self: *PathCompletion, result: *PathCompletion) !void {
+        const state = switch (self.index) {
+            .synchronous => return error.NotDeferredPathIndex,
+            .deferred => |value| value,
+        };
+        @memcpy(result.query_buf[0..self.query_len], self.query());
+        result.query_len = self.query_len;
+        try result.refreshMatches();
+        result.index = .{ .deferred = .{ .revision = state.revision, .loading = false } };
+        self.deinit();
+        self.* = result.*;
+        result.* = PathCompletion.init(self.allocator);
+    }
+
+    /// Retains the best fifty path matches using bounded scratch space; warm queries reuse output storage.
+    pub fn refreshMatches(self: *PathCompletion) !void {
+        const ranking = MatchRanking{ .entries = self.entries.items };
+        var scratch: [@sizeOf(Match) * max_matches]u8 align(@alignOf(Match)) = undefined;
+        var scratch_allocator = std.heap.FixedBufferAllocator.init(&scratch);
+        var best = std.PriorityQueue(Match, MatchRanking, MatchRanking.worstFirst).init(scratch_allocator.allocator(), ranking);
+        defer best.deinit();
+        try best.ensureTotalCapacityPrecise(max_matches);
+
+        const q = self.query();
+        for (self.entries.items, 0..) |entry, idx| {
+            const score = scorePath(entry.name, entry.is_directory, q) orelse continue;
+            const candidate = Match{ .entry_index = idx, .score = score };
+            if (best.count() < max_matches) {
+                try best.add(candidate);
+            } else if (best.peek()) |worst| {
+                if (ranking.bestFirst(candidate, worst)) {
+                    _ = best.remove();
+                    try best.add(candidate);
+                }
+            }
+        }
+
+        // Reserve before replacing visible results so allocation failure preserves the prior list.
+        try self.matches.ensureTotalCapacity(self.allocator, best.count());
+        self.matches.clearRetainingCapacity();
+        self.matches.appendSliceAssumeCapacity(best.items);
+        std.mem.sort(Match, self.matches.items, ranking, MatchRanking.bestFirst);
+        if (self.selected_index >= self.matches.items.len) {
+            self.selected_index = 0;
+        }
+    }
+};
+
+fn boundedQueryPrefix(text: []const u8, capacity: usize) ![]const u8 {
+    if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
+    var len = @min(text.len, capacity);
+    if (len < text.len) {
+        while (len > 0 and text[len] & 0xc0 == 0x80) : (len -= 1) {}
+    }
+    return text[0..len];
+}
+
+const MatchRanking = struct {
+    entries: []const Entry,
+
+    fn worstFirst(self: MatchRanking, a: Match, b: Match) std.math.Order {
+        if (a.score != b.score) return std.math.order(a.score, b.score);
+        const na = self.entries[a.entry_index].name;
+        const nb = self.entries[b.entry_index].name;
+        const folded = std.ascii.orderIgnoreCase(nb, na);
+        if (folded != .eq) return folded;
+        const exact = std.mem.order(u8, nb, na);
+        if (exact != .eq) return exact;
+        return std.math.order(b.entry_index, a.entry_index);
+    }
+
+    fn bestFirst(self: MatchRanking, a: Match, b: Match) bool {
+        return self.worstFirst(a, b) == .gt;
+    }
+};
+
+fn normalizeQueryChar(c: u8) u8 {
+    if (c == '/') return '\\';
+    return std.ascii.toLower(c);
+}
+
+pub fn scorePath(relative_path: []const u8, is_directory: bool, query: []const u8) ?i32 {
+    var filename_offset: usize = 0;
+    if (std.mem.lastIndexOfAny(u8, relative_path, "\\/")) |sep| {
+        filename_offset = sep + 1;
+    }
+    if (query.len == 0) {
+        if (filename_offset != 0) return null;
+        return if (is_directory) 100 else 0;
+    }
+
+    const name_score = scoreSubsequence(relative_path, query, filename_offset);
+    var best: i32 = if (name_score) |ns|
+        ns + 80
+    else if (filename_offset > 0)
+        (scoreSubsequence(relative_path, query, 0) orelse return null)
+    else
+        return null;
+
+    const filename = relative_path[filename_offset..];
+    if (startsWithNormalized(filename, query)) {
+        best += 160;
+        if (filename.len == query.len) {
+            best += 320;
+        }
+    }
+    if (is_directory) best += 10;
+    return best;
+}
+
+fn startsWithNormalized(haystack: []const u8, query: []const u8) bool {
+    if (haystack.len < query.len) return false;
+    for (query, 0..) |qc, i| {
+        if (normalizeQueryChar(haystack[i]) != normalizeQueryChar(qc)) return false;
+    }
+    return true;
+}
+
+fn scoreSubsequence(path: []const u8, query: []const u8, start: usize) ?i32 {
+    var previous: i32 = -2;
+    var score: i32 = 0;
+    var offset: usize = start;
+
+    for (query, 0..) |raw_qc, q_idx| {
+        const qc = normalizeQueryChar(raw_qc);
+        var found_index: ?usize = null;
+        var idx = offset;
+        while (idx < path.len) : (idx += 1) {
+            if (normalizeQueryChar(path[idx]) == qc) {
+                found_index = idx;
+                break;
+            }
+        }
+        var i = found_index orelse return null;
+        const is_contiguous = previous >= 0 and @as(i32, @intCast(i)) == previous + 1;
+        if (!is_contiguous and !isWordStart(path, i, start)) {
+            var scan = i + 1;
+            while (scan < path.len) : (scan += 1) {
+                if (normalizeQueryChar(path[scan]) == qc and
+                    isWordStart(path, scan, start) and
+                    hasSubsequence(path, query[q_idx + 1 ..], scan + 1))
+                {
+                    i = scan;
+                    break;
+                }
+            }
+        }
+        const i_i32: i32 = @intCast(i);
+        score += 20;
+        if (i_i32 == previous + 1) score += 24;
+        if (i == start or isBoundaryChar(path[i - 1])) score += 32;
+        if (i > 0 and std.ascii.isLower(path[i - 1]) and std.ascii.isUpper(path[i])) score += 28;
+        if (previous >= 0) {
+            score -= @min(@as(i32, 12), i_i32 - previous - 1);
+        }
+        previous = i_i32;
+        offset = i + 1;
+    }
+    const tail_penalty: i32 = @intCast((path.len - start) / 4);
+    return @max(@as(i32, 0), score - tail_penalty);
+}
+
+fn hasSubsequence(path: []const u8, query: []const u8, start: usize) bool {
+    var offset = start;
+    for (query) |raw_qc| {
+        const qc = normalizeQueryChar(raw_qc);
+        var found: ?usize = null;
+        var idx = offset;
+        while (idx < path.len) : (idx += 1) {
+            if (normalizeQueryChar(path[idx]) == qc) {
+                found = idx;
+                break;
+            }
+        }
+        offset = (found orelse return false) + 1;
+    }
+    return true;
+}
+
+fn isWordStart(path: []const u8, i: usize, start: usize) bool {
+    if (i <= start) return true;
+    if (isBoundaryChar(path[i - 1])) return true;
+    return std.ascii.isLower(path[i - 1]) and std.ascii.isUpper(path[i]);
+}
+
+fn isBoundaryChar(c: u8) bool {
+    return switch (c) {
+        '\\', '/', '-', '_', '.', ' ' => true,
+        else => false,
+    };
+}
+
+pub fn formatPathAlloc(
+    allocator: std.mem.Allocator,
+    full_path: []const u8,
+    shell_kind: ShellQuoteKind,
+    raw: bool,
+) ![]u8 {
+    for (full_path) |c| {
+        if (c < 0x20 or c == 0x7f) return error.ControlCharacterInPath;
+    }
+
+    var converted = try allocator.dupe(u8, full_path);
+    defer allocator.free(converted);
+
+    if (shell_kind == .wsl) {
+        if (wsl_paths.networkDistribution(full_path) catch null) |distro| {
+            const linux_path = try wsl_paths.linuxDirectoryFromNetworkAlloc(allocator, full_path, distro);
+            allocator.free(converted);
+            converted = linux_path;
+        } else if (full_path.len >= 3 and std.ascii.isAlphabetic(full_path[0]) and full_path[1] == ':' and (full_path[2] == '\\' or full_path[2] == '/')) {
+            var list: std.ArrayList(u8) = .empty;
+            errdefer list.deinit(allocator);
+            try list.appendSlice(allocator, "/mnt/");
+            try list.append(allocator, std.ascii.toLower(full_path[0]));
+            for (full_path[2..]) |ch| {
+                try list.append(allocator, if (ch == '\\') '/' else ch);
+            }
+            const replacement = try list.toOwnedSlice(allocator);
+            allocator.free(converted);
+            converted = replacement;
+        }
+    } else if (shell_kind == .gitbash) {
+        var list: std.ArrayList(u8) = .empty;
+        errdefer list.deinit(allocator);
+        if (full_path.len >= 3 and std.ascii.isAlphabetic(full_path[0]) and full_path[1] == ':' and (full_path[2] == '\\' or full_path[2] == '/')) {
+            try list.append(allocator, '/');
+            try list.append(allocator, std.ascii.toLower(full_path[0]));
+            for (full_path[2..]) |ch| {
+                try list.append(allocator, if (ch == '\\') '/' else ch);
+            }
+        } else {
+            for (full_path) |ch| {
+                try list.append(allocator, if (ch == '\\') '/' else ch);
+            }
+        }
+        const replacement = try list.toOwnedSlice(allocator);
+        allocator.free(converted);
+        converted = replacement;
+    }
+
+    if (raw or isSafeUnquotedPath(converted)) {
+        return try allocator.dupe(u8, converted);
+    }
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    switch (shell_kind) {
+        .literal => try out.appendSlice(allocator, converted),
+        .pwsh => {
+            try out.append(allocator, '\'');
+            for (converted) |ch| {
+                if (ch == '\'') {
+                    try out.appendSlice(allocator, "''");
+                } else {
+                    try out.append(allocator, ch);
+                }
+            }
+            try out.append(allocator, '\'');
+        },
+        .nu => {
+            try out.append(allocator, '"');
+            for (converted) |ch| {
+                if (ch == '\\' or ch == '"') {
+                    try out.append(allocator, '\\');
+                }
+                try out.append(allocator, ch);
+            }
+            try out.append(allocator, '"');
+        },
+        .gitbash, .wsl => {
+            try out.append(allocator, '\'');
+            for (converted) |ch| {
+                if (ch == '\'') {
+                    try out.appendSlice(allocator, "'\"'\"'");
+                } else {
+                    try out.append(allocator, ch);
+                }
+            }
+            try out.append(allocator, '\'');
+        },
+        .cmd => {
+            try out.append(allocator, '"');
+            try out.appendSlice(allocator, converted);
+            try out.append(allocator, '"');
+        },
+    }
+    return try out.toOwnedSlice(allocator);
+}
+
+test "path formatting allocation failures release converted buffers and unknown shells remain literal" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkPathFormattingAllocations, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkWslNetworkPathFormattingAllocations, .{});
+    const kind = ShellQuoteKind.fromProgram("C:\\tools\\future-shell.exe");
+    try std.testing.expectEqual(ShellQuoteKind.literal, kind);
+    const literal = try formatPathAlloc(std.testing.allocator, "C:\\A Folder\\future.txt", kind, false);
+    defer std.testing.allocator.free(literal);
+    try std.testing.expectEqualStrings("C:\\A Folder\\future.txt", literal);
+}
+fn checkWslNetworkPathFormattingAllocations(allocator: std.mem.Allocator) !void {
+    const formatted = try formatPathAlloc(allocator, "\\\\wsl.localhost\\Ubuntu\\home\\future user", .wsl, false);
+    allocator.free(formatted);
+}
+fn checkPathFormattingAllocations(allocator: std.mem.Allocator) !void {
+    for ([_]ShellQuoteKind{ .gitbash, .wsl, .pwsh, .literal }) |kind| {
+        const formatted = try formatPathAlloc(allocator, "C:\\A Folder\\future.txt", kind, false);
+        allocator.free(formatted);
+    }
+}
+test "index budget and stale revisions stop scanning without replacing current state" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.indexed_name_bytes = max_index_bytes - 2;
+    try std.testing.expect(!try model.appendIndexedEntry("long-name", false));
+    try std.testing.expect(model.is_truncated);
+    try std.testing.expectEqual(@as(usize, 0), model.entries.items.len);
+    model.clearEntries();
+    var latest = std.atomic.Value(u64).init(2);
+    model.scan_revision = .{ .latest = &latest, .expected = 1 };
+    try std.testing.expectError(error.StalePathIndex, model.openDirectory("C:\\unopened-future-directory", "query"));
+    try std.testing.expectEqualStrings("", model.query());
+}
+
+fn isSafeUnquotedPath(path: []const u8) bool {
+    if (path.len == 0) return false;
+    for (path) |c| {
+        if (std.ascii.isAlphanumeric(c)) continue;
+        switch (c) {
+            '/', '\\', ':', '.', '_', '-' => continue,
+            else => return false,
+        }
+    }
+    return true;
+}
+
+test "path directory replacement rolls back every allocation failure" {
+    var fixture = std.testing.tmpDir(.{});
+    defer fixture.cleanup();
+    try fixture.dir.makeDir("child");
+    for ([_][]const u8{ "old-a.txt", "old-b.txt", "child/new.txt" }) |name| {
+        const file = try fixture.dir.createFile(name, .{});
+        file.close();
+    }
+    const root = try fixture.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    const child = try fixture.dir.realpathAlloc(std.testing.allocator, "child");
+    defer std.testing.allocator.free(child);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkPathDirectoryReplacement, .{ root, child });
+}
+
+fn checkPathDirectoryReplacement(allocator: std.mem.Allocator, root: []const u8, child: []const u8) !void {
+    var completion = PathCompletion.init(allocator);
+    defer completion.deinit();
+    try completion.openDirectory(root, "old");
+    try std.testing.expectEqual(@as(usize, 2), completion.matches.items.len);
+    completion.selected_index = 1;
+    completion.hovered_index = 1;
+    completion.first_visible = 1;
+    const previous = completion;
+    const previous_matches = completion.matches.items[0..2].*;
+    completion.openDirectory(child, "new") catch |err| {
+        try std.testing.expectEqual(previous.directory.ptr, completion.directory.ptr);
+        try std.testing.expectEqualStrings(root, completion.directory);
+        try std.testing.expectEqualStrings("old", completion.query());
+        try std.testing.expectEqual(previous.entries.items.ptr, completion.entries.items.ptr);
+        try std.testing.expectEqual(previous.entries.items.len, completion.entries.items.len);
+        try std.testing.expectEqual(previous.matches.items.ptr, completion.matches.items.ptr);
+        try std.testing.expectEqualSlices(Match, &previous_matches, completion.matches.items);
+        try std.testing.expectEqual(@as(usize, 1), completion.selected_index);
+        try std.testing.expectEqual(@as(?usize, 1), completion.hovered_index);
+        try std.testing.expectEqual(@as(usize, 1), completion.first_visible);
+        return err;
+    };
+    try std.testing.expectEqualStrings(child, completion.directory);
+    try std.testing.expectEqualStrings("new", completion.query());
+    try std.testing.expectEqual(@as(usize, 1), completion.matches.items.len);
+    try std.testing.expectEqual(@as(usize, 0), completion.selected_index);
+    try std.testing.expectEqual(@as(?usize, null), completion.hovered_index);
+    try std.testing.expectEqual(@as(usize, 0), completion.first_visible);
+}
+
+test "path directory inputs reject relative, drive-relative and malformed paths before mutation" {
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    try completion.openDirectory("", "keep");
+    for ([_][]const u8{ "C:", "relative", "C:relative", "\\\\server", "C:\\bad\x00path", "C:\\bad\xffpath" }) |invalid| {
+        try std.testing.expectError(error.InvalidDirectoryPath, completion.openDirectory(invalid, "replace"));
+        try std.testing.expectEqualStrings("", completion.directory);
+        try std.testing.expectEqualStrings("keep", completion.query());
+    }
+}
+
+test "path directory navigation accepts borrowed paths and queries and marks inaccessible scans explicitly" {
+    var fixture = std.testing.tmpDir(.{});
+    defer fixture.cleanup();
+    try fixture.dir.makeDir("child");
+    const root = try fixture.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    const child = try fixture.dir.realpathAlloc(std.testing.allocator, "child");
+    defer std.testing.allocator.free(child);
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    try completion.openDirectory(child, "keep");
+    try completion.openDirectory(completion.directory, completion.query());
+    try std.testing.expectEqualStrings(child, completion.directory);
+    try std.testing.expectEqualStrings("keep", completion.query());
+    try std.testing.expect(try completion.navigateParent());
+    try std.testing.expectEqualStrings(root, completion.directory);
+    try std.testing.expectEqualStrings("keep", completion.query());
+    try completion.clearQuery();
+    try std.testing.expect(try completion.enterSelectedDirectory());
+    try std.testing.expectEqualStrings(child, completion.directory);
+    try std.testing.expectEqualStrings("", completion.query());
+    try std.testing.expect(!completion.scan_error);
+
+    const missing = try std.fs.path.join(std.testing.allocator, &.{ root, "missing" });
+    defer std.testing.allocator.free(missing);
+    try completion.openDirectory(missing, "");
+    try std.testing.expect(completion.scan_error);
+    try std.testing.expectEqual(@as(usize, 0), completion.entries.items.len);
+    try std.testing.expectEqual(@as(usize, 0), completion.matches.items.len);
+}
+
+test "path query limits never split a UTF-8 codepoint and backspace removes one codepoint" {
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    for ([_][]const u8{ "ż", "中", "😀" }) |character| {
+        for (1..character.len) |missing| {
+            var text: [132]u8 = @splat('a');
+            const prefix_len = completion.query_buf.len - missing;
+            @memcpy(text[prefix_len .. prefix_len + character.len], character);
+            const input = text[0 .. prefix_len + character.len];
+            try completion.openDirectory("", input);
+            try std.testing.expectEqualStrings(input[0..prefix_len], completion.query());
+            try std.testing.expect(std.unicode.utf8ValidateSlice(completion.query()));
+
+            try completion.openDirectory("", input[0..prefix_len]);
+            try completion.appendQuery(character);
+            try std.testing.expectEqualStrings(input[0..prefix_len], completion.query());
+        }
+        try completion.openDirectory("", "");
+        try completion.appendQuery(character);
+        try std.testing.expectEqualStrings(character, completion.query());
+        try std.testing.expect(try completion.backspaceQuery());
+        try std.testing.expectEqualStrings("", completion.query());
+    }
+    var exact: [128]u8 = @splat('a');
+    @memcpy(exact[124..], "😀");
+    try completion.openDirectory("", &exact);
+    try std.testing.expectEqualStrings(&exact, completion.query());
+    try std.testing.expect(try completion.backspaceQuery());
+    try std.testing.expectEqualStrings(exact[0..124], completion.query());
+}
+
+test "path queries reject malformed UTF-8 without changing existing query or results" {
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    try completion.openDirectory("", "keep");
+    for ([_][]const u8{ "\xff", "\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82" }) |invalid| {
+        try std.testing.expectError(error.InvalidUtf8, completion.appendQuery(invalid));
+        try std.testing.expectEqualStrings("keep", completion.query());
+        try std.testing.expectError(error.InvalidUtf8, completion.openDirectory("", invalid));
+        try std.testing.expectEqualStrings("keep", completion.query());
+    }
+}
+
+test "path completion keeps the best fifty matches regardless of directory enumeration order" {
+    const allocator = std.testing.allocator;
+    var completion = PathCompletion.init(allocator);
+    defer completion.deinit();
+    for (0..max_entries) |i| {
+        const name = try std.fmt.allocPrint(allocator, "file-{d:0>5}", .{max_entries - i});
+        errdefer allocator.free(name);
+        try completion.entries.append(allocator, .{ .name = name, .is_directory = i % 7 == 0 });
+    }
+
+    const Oracle = struct {
+        fn lessThan(entries: []const Entry, a: Match, b: Match) bool {
+            if (a.score != b.score) return a.score > b.score;
+            return std.ascii.lessThanIgnoreCase(entries[a.entry_index].name, entries[b.entry_index].name);
+        }
+    };
+    var expected: std.ArrayList(Match) = .empty;
+    defer expected.deinit(allocator);
+    for ([_][]const u8{ "", "file", "f1", "000", "zz", "-", "file-00001" }) |q| {
+        @memcpy(completion.query_buf[0..q.len], q);
+        completion.query_len = q.len;
+        expected.clearRetainingCapacity();
+        for (completion.entries.items, 0..) |entry, index| {
+            const score = scorePath(entry.name, entry.is_directory, q) orelse continue;
+            try expected.append(allocator, .{ .entry_index = index, .score = score });
+        }
+        std.mem.sort(Match, expected.items, completion.entries.items, Oracle.lessThan);
+        try completion.refreshMatches();
+        try std.testing.expectEqualSlices(Match, expected.items[0..@min(max_matches, expected.items.len)], completion.matches.items);
+    }
+}
+
+test "path completion preserves results on allocation failure and warm queries allocate nothing" {
+    const allocator = std.testing.allocator;
+    var completion = PathCompletion.init(allocator);
+    defer completion.deinit();
+    for (0..100) |i| {
+        const name = try std.fmt.allocPrint(allocator, "file-{d:0>5}", .{i});
+        errdefer allocator.free(name);
+        try completion.entries.append(allocator, .{ .name = name, .is_directory = false });
+    }
+    const prior = Match{ .entry_index = 0, .score = 17 };
+    try completion.matches.append(allocator, prior);
+    completion.selected_index = 0;
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    completion.allocator = failing.allocator();
+    defer completion.allocator = allocator;
+    try std.testing.expectError(error.OutOfMemory, completion.refreshMatches());
+    try std.testing.expectEqualSlices(Match, &.{prior}, completion.matches.items);
+
+    completion.allocator = allocator;
+    try completion.refreshMatches();
+    completion.allocator = failing.allocator();
+    try completion.appendQuery("file-0");
+    _ = try completion.backspaceQuery();
+    try completion.clearQuery();
+    try std.testing.expectEqual(max_matches, completion.matches.items.len);
+}
+
+test "path completion uses deterministic case ties at the result limit" {
+    const allocator = std.testing.allocator;
+    var completion = PathCompletion.init(allocator);
+    defer completion.deinit();
+    for (0..max_matches + 2) |i| {
+        const name = try allocator.dupe(u8, if (i < max_matches) "file" else "FILE");
+        errdefer allocator.free(name);
+        try completion.entries.append(allocator, .{ .name = name, .is_directory = false });
+    }
+    try completion.refreshMatches();
+    try std.testing.expectEqual(max_matches, completion.matches.items.len);
+    try std.testing.expectEqual(max_matches, completion.matches.items[0].entry_index);
+    try std.testing.expectEqual(max_matches + 1, completion.matches.items[1].entry_index);
+    try std.testing.expectEqual(@as(usize, 0), completion.matches.items[2].entry_index);
+}
+
+test "scorePath ranks exact, prefix, contiguous, camelCase, and directories above weak matches" {
+    const empty_dir = scorePath("src", true, "").?;
+    const empty_file = scorePath("build.zig", false, "").?;
+    try std.testing.expect(empty_dir > empty_file);
+    try std.testing.expectEqual(@as(?i32, null), scorePath("src\\main.zig", false, ""));
+
+    const exact = scorePath("main.zig", false, "main.zig").?;
+    const prefix = scorePath("main_test.zig", false, "main").?;
+    const subseq = scorePath("my_app_init.zig", false, "mai").?;
+    try std.testing.expect(exact > prefix);
+    try std.testing.expect(prefix > subseq);
+
+    const camel = scorePath("WorkspaceApplication.zig", false, "wa").?;
+    const non_boundary = scorePath("swamp.zig", false, "wa").?;
+    try std.testing.expect(camel > non_boundary);
+}
+
+test "formatPathAlloc quotes per shell dialect and rejects control characters" {
+    const allocator = std.testing.allocator;
+
+    const safe = try formatPathAlloc(allocator, "C:\\code\\vex\\build.zig", .pwsh, false);
+    defer allocator.free(safe);
+    try std.testing.expectEqualStrings("C:\\code\\vex\\build.zig", safe);
+
+    const pwsh_quoted = try formatPathAlloc(allocator, "C:\\Program Files\\My 'App'\\run.exe", .pwsh, false);
+    defer allocator.free(pwsh_quoted);
+    try std.testing.expectEqualStrings("'C:\\Program Files\\My ''App''\\run.exe'", pwsh_quoted);
+
+    const nu_quoted = try formatPathAlloc(allocator, "C:\\Program Files\\App", .nu, false);
+    defer allocator.free(nu_quoted);
+    try std.testing.expectEqualStrings("\"C:\\\\Program Files\\\\App\"", nu_quoted);
+
+    const bash_quoted = try formatPathAlloc(allocator, "C:\\Program Files\\App", .gitbash, false);
+    defer allocator.free(bash_quoted);
+    try std.testing.expectEqualStrings("'/c/Program Files/App'", bash_quoted);
+
+    const wsl_converted = try formatPathAlloc(allocator, "C:\\Users\\Ziut\\My Project", .wsl, false);
+    defer allocator.free(wsl_converted);
+    try std.testing.expectEqualStrings("'/mnt/c/Users/Ziut/My Project'", wsl_converted);
+
+    const raw_unquoted = try formatPathAlloc(allocator, "C:\\Program Files\\App", .pwsh, true);
+    defer allocator.free(raw_unquoted);
+    try std.testing.expectEqualStrings("C:\\Program Files\\App", raw_unquoted);
+
+    try std.testing.expectError(
+        error.ControlCharacterInPath,
+        formatPathAlloc(allocator, "C:\\bad\npath", .cmd, false),
+    );
+}

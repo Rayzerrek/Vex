@@ -12,8 +12,8 @@ body:
     id: version
     attributes:
       label: Vex version
-      description: Shown in Settings → About.
-      placeholder: "1.3.0"
+      description: Release/package version; include the source commit for preview builds.
+      placeholder: "2.0.0"
     validations:
       required: true
 
@@ -72,8 +72,7 @@ body:
         - Terminal rendering
         - Terminal input
         - Panes and tabs
-        - File tree or search
-        - Editor
+        - Path picker
         - Themes and appearance
         - Settings
         - Installer
@@ -86,6 +85,6 @@ body:
     attributes:
       label: Anything else
       description: |
-        Font in use, GPU, or a `settings.json` excerpt if it seems relevant.
+        Font in use, GPU, or a relevant `init.lua` / `init.shells.lua` excerpt (remove private data). For legacy WPF, include `settings.json` instead.
     validations:
       required: false

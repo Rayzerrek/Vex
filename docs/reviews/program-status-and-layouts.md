@@ -52,8 +52,9 @@ is implemented. Saved layouts are a Vex adaptation, not a Rex wire protocol.
 
 ## Validation
 
-Final results and measured performance are recorded in
-[ProgramStatusComparison.md](../../windows/Vex.Performance/ProgramStatusComparison.md).
+Final results and measured performance were recorded in the legacy WPF
+`ProgramStatusComparison.md` report, available in Git history before the WPF
+implementation was removed.
 Verification includes Windows Debug/Release suites, real published WPF startup,
 native payload checks, and the web formatting/lint/type check.
 

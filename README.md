@@ -1,95 +1,33 @@
 # Vex
 
-Native Windows terminal workspace (WPF, .NET 10): ConPTY sessions, tabs, and split panes.
-
-![Vex on Windows in dark appearance, with the sidebar open and a terminal running](web/public/shots/vex-dark.png)
-
-## Features
-
-- Terminal: ConPTY + libghostty-vt emulation, WPF rendering. Kitty/xterm keyboard protocols, TUI mouse input, URL underline with Ctrl+Click, keyboard selection, Ctrl+Backspace word delete.
-- Path picker: `Ctrl+Shift+F` opens fuzzy file and directory completion at the cursor, including inside Claude and other terminal applications. Background indexing, highlighted matches, and directory navigation.
-- Shells: auto-detects PowerShell 7, Nushell, Windows PowerShell, cmd, Git Bash, WSL; plus custom shells (program + args) in Settings.
-- Tabs & panes: split right/down, focus mode, drag reorder, custom titles, tab peek preview, pane state indicators.
-- Workspace: multi-project workspace switching, git branch detection, session restore (projects, tabs, splits, focus).
-- Themes: Dark/Light appearance (follows OS), 11 built-in terminal themes + custom theme editor, live picker.
-
-## Shortcuts
-
-| Action | Keys |
-|---|---|
-| Command palette | `Ctrl+Shift+P` |
-| Theme picker | `Ctrl+Shift+M` |
-| Tab peek | `Ctrl+Shift+Space` |
-| New tab / close | `Ctrl+Shift+T` / `Ctrl+Shift+W` |
-| Next / prev tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
-| Split right / down | `Ctrl+Shift+R` / `Ctrl+Shift+D` |
-
-Plain `Ctrl+<key>` goes to the terminal (TUI apps keep their own bindings). The
-full list, including copy, paste, selection, and scroll keys, is in
-[docs/shortcuts.md](docs/shortcuts.md).
+A native Windows terminal with tabs, split panes and Windows/WSL shells.
+Written in Zig and C/C++, using Win32, ConPTY, libghostty-vt and D3D12.
+No Electron or .NET runtime is required.
 
 ## Install
 
+Requires **Windows 10 1809+ or Windows 11, x64**. Install shells and WSL
+separately.
+
 Download from [Releases](https://github.com/Rayzerrek/Vex/releases):
 
-- `Vex-<version>-win-x64.msi` — installer, adds Vex to the Start menu and
-  creates a desktop shortcut.
-- `Vex-<version>-win-x64.zip` — portable, self-contained. Unpack anywhere and
-  run `Vex.App.exe`; no .NET install required. Keep the files together, since
-  the executable loads `ghostty-vt.dll` and the native WPF libraries beside it.
+- `Vex-Native-<version>-win-x64.msi` — Windows installer.
+- `Vex-Native-<version>-win-x64.zip` — extract the entire archive and run
+  `Vex.exe`. Keep the included DLLs and `OpenConsole.exe` beside it.
 
-Both are built by `windows/build-installer.ps1`.
+Open the command palette with **Ctrl+Shift+P**, or preferences with **Ctrl+,**.
+Detailed user guides live on the [website](web/README.md).
 
-## Documentation
+Upgrading from WPF? Read the [native migration notes](docs/releases/2.0.0.md).
+Old `Vex.App.exe` packages and JSON settings are not the current application.
 
-- [docs/architecture.md](docs/architecture.md) — project layout, how output reaches the screen, threading.
-- [docs/configuration.md](docs/configuration.md) — `settings.json` and `session.json` reference.
-- [docs/shortcuts.md](docs/shortcuts.md) — every keyboard and mouse binding.
-- [docs/testing.md](docs/testing.md) — test layers and the renderer self-test harness.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — building, testing, and commit conventions.
+## Development
 
-## Structure
-
-```text
-windows/
-  Vex.slnx            solution
-  Vex.App/            WPF shell: window, tabs, splits, overlays
-  Vex.Terminal/       ConPTY process lifecycle
-  Vex.Libghostty/     libghostty-vt wrapper + WPF rendering
-  Vex.Setup/          WiX installer
-Vendor/libghostty/    ghostty-vt native lib
-web/                  landing page
-```
-
-Config: `%LocalAppData%\Vex\settings.json`, `%LocalAppData%\Vex\session.json`.
-
-## Requirements
-
-- Windows 10 1809+ / Windows 11
-- .NET 10 SDK
-
-## Build and Run
-
-```powershell
-dotnet build windows/Vex.slnx
-dotnet run --project windows/Vex.App
-```
-
-To build the release artifacts (self-contained zip plus MSI):
-
-```powershell
-pwsh windows/build-installer.ps1
-```
-
-Both land in `windows/publish/`, named after the `<Version>` in
-`windows/Vex.App/Vex.App.csproj`.
-
-## Third-party components
-
-Vex bundles and depends on third-party software, including Ghostty's
-`ghostty-vt`. See
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- [`app/`](app/README.md) — build, run and package the Windows application.
+- [`web/`](web/README.md) — website and detailed user documentation.
+- [`docs/`](docs/README.md) — architecture, configuration and verification.
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License
 
-[GPL-3.0](LICENSE)
+[GPL-3.0](LICENSE). See [third-party notices](THIRD-PARTY-NOTICES.md).

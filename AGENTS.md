@@ -1,33 +1,50 @@
 # AGENTS.md
 
-Vex is a WPF terminal workspace: ConPTY sessions, tabs, and split panes.
-The app lives in `windows/`.
+Vex is a native Zig/Win32 terminal workspace: ConPTY sessions, tabs and split panes.
+The application lives in `app/`; the website lives in `web/`. The legacy WPF app
+has been removed and is available only in Git history.
 
-## Build
+## Build and verify application code
 
-```sh
-dotnet build windows/Vex.slnx
-dotnet run --project windows/Vex.App
-```
-
-## Verify
-
-Build, run the app, exercise the change.
+Use `nix develop` on Linux/WSL for the pinned Zig/Python toolchain. From `app/`:
 
 ```sh
-dotnet test windows/Vex.Libghostty.Tests
+zig fmt --check build.zig src
+zig build
+zig build test-build
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+python3 tools/package.py
 ```
 
-## Linux orbs
+Run the compiled `vex-native-tests.exe` with its adjacent DLLs and
+`vex-conpty-fixture.exe` on Windows, or use `zig build test` on a Windows
+development machine. Linux compilation is not a Windows test pass. Interactive
+desktop tests and benchmark tools are local, not repository scripts or hosted CI
+coverage. MSI packaging runs on Windows CI via `app/tools/build-installer.ps1`;
+local WSL ZIP packaging does not need .NET. See `app/README.md`.
 
-- `.agents/setup` caches .NET 10, Node.js 24, the pnpm version from `web/package.json`, and NuGet/web dependencies. `.agents/resume` only checks cached tools and repairs the kernel's Oxlint memory setting; do not reinstall on every wake.
-- Login shells load the toolchains from `~/.bash_profile`. In an already-running agent with an older environment, use `bash -lc '<command>'`.
-- Cross-compile managed projects with `dotnet build windows/Vex.slnx --no-restore -c Release -p:EnableWindowsTargeting=true`.
-- WPF/ConPTY execution, MSI packaging, and native `ghostty-vt.dll` tests still require Windows. Do not report Linux compilation as passing those tests.
-- Web checks: `pnpm --dir web run check` and `pnpm --dir web run build`. Use `pnpm --dir web exec vp` for Vite+ commands; no global `vp` is needed.
+## Layout
+
+- `app/src/zig/`: application, shell, terminal, workspace and Windows Zig adapters.
+- `app/src/windows/`: C++ platform, window, dialogs, renderer and PTY backends.
+- `app/src/lua/`: C configuration bridge.
+- `app/assets/`, `app/tests/`, `app/tools/`: resources, tests and developer tools.
+- `app/packages/windows/`: WiX installer sources.
+- `app/vendor/`: bundled runtimes, Lua sources and Ghostty headers.
+- `docs/`: architecture, configuration, testing and historical reviews/releases.
+
+## Website
+
+- Use Node.js 24 and the pnpm version pinned in `web/package.json`.
+- Install dependencies with `pnpm --dir web install --frozen-lockfile`.
+- Checks: `pnpm --dir web run check` and `pnpm --dir web run build`.
+  Use the scripts in `web/package.json`; no globally installed build tools are needed.
 
 ## Conventions
 
 - Match the style of the file you're editing.
 - Comments explain _why_, not what.
-- Every commit message must start with a conventional-commit prefix: `feat:`, `fix:`, `refactor:`, `perf:`, `docs:`, `chore:`, `ui:`, `vendor:`, `style:`, `test:`, `build:`, `ci:`, or `revert:` (optionally scoped, e.g. `fix(terminal):`). Never commit with a plain message.
+- Every commit message must start with a conventional-commit prefix: `feat:`,
+  `fix:`, `refactor:`, `perf:`, `docs:`, `chore:`, `ui:`, `vendor:`, `style:`,
+  `test:`, `build:`, `ci:`, or `revert:` (optionally scoped, e.g. `fix(terminal):`).
+  Never commit with a plain message.

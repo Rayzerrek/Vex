@@ -1,13 +1,13 @@
 import { renderToString } from "react-dom/server";
 import { App } from "./app";
-import { docsPages } from "./docs";
+import { docsPages } from "./features/docs/content";
 
 export const staticPages = [
   {
     path: "/",
-    title: "Vex — Your terminals. One workspace.",
+    title: "Vex — Room for the real work.",
     description:
-      "A native terminal workspace for Windows. Keep your projects, shells, and split panes together."
+      "A native terminal workspace for Windows. Your shells, tabs, and split panes, without the extra layers."
   },
   {
     path: "/docs",

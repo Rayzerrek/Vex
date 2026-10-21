@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DocContent, docsPages } from "./docs";
+import { DocContent, docsPages } from "./features/docs/content";
 import { render, staticPages } from "./entry-server";
 
 describe("documentation", () => {
   it("has unique routes and matching section anchors", () => {
-    expect(new Set(docsPages.map((page) => page.slug)).size).toBe(6);
+    expect(new Set(docsPages.map((page) => page.slug)).size).toBe(
+      docsPages.length
+    );
     for (const page of docsPages) {
       const html = renderToStaticMarkup(<DocContent slug={page.slug} />);
       expect(new Set(page.sections.map((section) => section.id)).size).toBe(
@@ -18,10 +20,12 @@ describe("documentation", () => {
     }
   });
 
-  it("only links to existing documentation pages and sections", () => {
-    for (const page of docsPages) {
-      const html = renderToStaticMarkup(<DocContent slug={page.slug} />);
-      for (const match of html.matchAll(
+  it("only links to existing documentation pages and sections, including the homepage", () => {
+    for (const path of [
+      "/",
+      ...docsPages.map((page) => `/docs/${page.slug}`)
+    ]) {
+      for (const match of render(path).matchAll(
         /href="\/docs\/([^"#]+)(?:#([^"]+))?"/g
       )) {
         const target = docsPages.find(
@@ -37,27 +41,66 @@ describe("documentation", () => {
     }
   });
 
-  it("keeps installation and restoration limitations explicit", () => {
-    expect(render("/docs/getting-started")).toContain("win-x64.msi");
-    expect(render("/docs/getting-started")).toContain("ghostty-vt.dll");
+  it("documents appearance, configuration backups and clipboard trust", () => {
+    const configuration = render("/docs/configuration");
+    expect(configuration).toContain("vex.config.appearance");
+    expect(configuration).toContain("init.backup.lua");
+    expect(configuration).toContain("one rotating backup, not a history");
+    expect(configuration).toContain("&lt;name&gt;.backup.lua");
+    expect(render("/docs/appearance")).toContain('id="terminal-colors"');
+    expect(render("/docs/shortcuts")).toContain(
+      "Clipboard read/query access is not enabled."
+    );
+  });
+
+  it("documents the bounded recursive path index", () => {
+    const shortcuts = render("/docs/shortcuts");
+    expect(shortcuts).toContain("Bounded recursive search.");
+    expect(shortcuts).toContain("16,384");
+    expect(shortcuts).toContain("8 MiB");
+    expect(shortcuts).toContain("OSC 7");
+    expect(shortcuts).not.toContain("Local, not recursive.");
+    expect(shortcuts).not.toContain("100,000");
+  });
+
+  it("documents native packaging and the absence of legacy workspace persistence", () => {
+    const installation = render("/docs/getting-started");
+    for (const file of [
+      "Vex.exe",
+      "ghostty-vt.dll",
+      "conpty.dll",
+      "OpenConsole.exe"
+    ])
+      expect(installation).toContain(file);
     expect(render("/docs/workspace")).toContain(
-      "Running commands and program state are not resumed."
+      "does not provide project grouping, saved layout templates, or session restoration"
+    );
+    expect(render("/docs/configuration")).toContain(
+      "Saving through Settings replaces init.lua."
+    );
+    expect(render("/docs/configuration")).toContain(
+      "Legacy JSON settings are no longer read."
     );
   });
 });
 
 describe("static rendering", () => {
   it("renders every route without browser globals", () => {
-    expect(staticPages).toHaveLength(9);
+    expect(staticPages).toHaveLength(docsPages.length + 3);
     for (const page of staticPages) {
       const html = render(page.path);
       expect(html).toContain('id="main-content"');
       expect(html.match(/<h1[ >]/g)).toHaveLength(1);
     }
   });
-
-  it("renders unknown routes as helpful not-found pages", () => {
-    expect(render("/missing")).toContain("That page isn’t here.");
-    expect(render("/docs/missing")).toContain("That page isn’t here.");
+  it("does not render screenshots or application mockups", () => {
+    const html = render("/");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("/shots/");
+    expect(html).not.toContain('role="tablist"');
+  });
+  it("renders unknown and nested routes as not-found pages", () => {
+    for (const path of ["/missing", "/docs/missing", "/docs/workspace/missing"])
+      expect(render(path)).toContain("That page isn’t here.");
   });
 });

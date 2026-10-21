@@ -15,28 +15,27 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
 defaults:
   run:
     working-directory: web
 
 jobs:
   check:
-    name: format, lint, types, build
+    name: format, lint, types, test, build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
-      # Vite+ is a devDependency, so `pnpm run <script>` resolves the local
-      # binary. Nothing here depends on a globally installed `vp`.
-      #
-      # No `version` input: package.json declares packageManager: pnpm@11.5.2,
-      # and pnpm/action-setup reads it. Repeating it here would be a second
-      # source of truth that can drift.
-      #
-      # package_json_file is explicit because `defaults.run.working-directory`
-      # does not apply to `uses` steps, and there is no root package.json.
+      # Read the pinned pnpm version from web/package.json, not a second copy here.
       - name: Install pnpm
         uses: pnpm/action-setup@v6
         with:
@@ -54,6 +53,9 @@ jobs:
 
       - name: Check formatting, lint, and types
         run: pnpm run check
+
+      - name: Unit tests
+        run: pnpm run test
 
       - name: Build
         run: pnpm run build

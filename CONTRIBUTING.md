@@ -1,159 +1,33 @@
-# Contributing to Vex
+# Contributing
 
-Thanks for taking the time to contribute. This document covers how to build
-Vex, what is expected of a change, and how to get it merged.
+## Setup and checks
 
-## Prerequisites
+- Application: Zig/Python from `nix develop` on Linux/WSL, or the pinned Zig
+  on Windows. See [app/README.md](app/README.md).
+- Website: Node.js 24 and the pnpm version in `web/package.json`.
+  See [web/README.md](web/README.md).
+- Run the relevant checks in [docs/testing.md](docs/testing.md). State explicitly
+  whether Windows runtime and desktop checks were performed; cross-compilation
+  alone does not cover them.
 
-- **Windows 10 1809+ or Windows 11.** Vex is a WPF application. Running it,
-  native tests, and MSI packaging require Windows; Linux orbs can cross-compile
-  the managed projects as described below.
-- **.NET 10 SDK.** Check with `dotnet --list-sdks`; the project targets
-  `net10.0` and `net10.0-windows`.
-- **Node.js 24 and pnpm 11.5.2** — only needed for the landing page in `web/`.
-  Vite+ resolves pnpm through `packageManager` in `web/package.json`.
+## Changes
 
-## Building
+- Match the surrounding style; keep unrelated refactors separate.
+- Add regression tests for behavior changes. Discuss new runtime dependencies first.
+- Comments explain why, rather than restating code.
+- Keep repository docs short and task-oriented. Detailed user guides belong in
+  `web/src/features/docs/content.tsx`; historical evidence belongs in `docs/reviews/`.
+- Start commits with `feat:`, `fix:`, `refactor:`, `perf:`, `docs:`, `chore:`,
+  `ui:`, `vendor:`, `style:`, `test:`, `build:`, `ci:` or `revert:`;
+  an optional scope is welcome.
 
-```powershell
-dotnet build windows/Vex.slnx
-dotnet run --project windows/Vex.App
-```
+## Releases
 
-To produce the self-contained executable and the MSI installer:
+`app/VERSION` is the version source of truth. See
+[CI and releases](app/README.md#ci-and-releases) for preview artifacts and stable tags.
 
-```powershell
-pwsh windows/build-installer.ps1
-```
+## Reporting issues
 
-This publishes `Vex.App` for `win-x64`, builds the WiX package, and writes
-`windows/publish/installer/Vex.msi`.
-
-### Amp orbs (Linux)
-
-Amp runs the executable `.agents/setup` hook to prepare a project snapshot:
-Debian prerequisites, .NET 10, Node.js 24, pnpm from `web/package.json`, locked
-web dependencies, and NuGet packages including Windows reference packs.
-Matching snapshots skip setup; warm setup reuses installed tools and caches.
-Toolchains are stored under `~/.local/share/vex` and added to login-shell PATH
-through `~/.bash_profile`.
-
-The setup hook enables `vm.overcommit_memory=1` inside the orb because Oxlint's
-JS plugins reserve large virtual-memory arenas that fail under the no-swap
-orb's default policy. `.agents/resume` repairs this setting if needed and
-checks cached tools; it performs no downloads or dependency installation.
-Neither hook requires personal credentials or starts background services.
-
-From the repository root in a prepared orb:
-
-```sh
-dotnet build windows/Vex.slnx --no-restore -c Release -p:EnableWindowsTargeting=true
-pnpm --dir web run check
-pnpm --dir web run build
-```
-
-The .NET command compiles the managed projects, not the MSI. WPF, ConPTY, and
-the vendored Windows `ghostty-vt.dll` cannot execute on Linux, so use Windows
-for application testing. The web checks and build run normally in the orb.
-Use `pnpm --dir web exec vp` for local Vite+ commands without a global CLI.
-
-To validate hook changes, run `.agents/setup` twice and `.agents/resume`,
-then verify tools in a new login shell. An already-running agent may still
-have the old PATH; use `bash -lc '<command>'` rather than reinstalling tools.
-The hooks become available to future project orbs once committed to the
-default branch; a local commit alone does not activate them.
-
-## Testing
-
-```powershell
-dotnet test windows/Vex.slnx
-```
-
-Two projects hold tests:
-
-- `windows/Vex.App.Tests` — key encoding, fuzzy search scoring, theme
-  resolution, color parsing, and debounce behaviour.
-- `windows/Vex.Libghostty.Tests` — VT emulation, feed filtering, and mouse
-  encoding against the vendored `ghostty-vt.dll`.
-
-Debug `dotnet test` also launches the renderer self-test harness in a real
-window with an isolated temporary profile. Release tests omit these checks
-because CI has no desktop session. See [docs/testing.md](docs/testing.md).
-
-For the landing page:
-
-```powershell
-cd web
-pnpm install --frozen-lockfile
-pnpm run check
-pnpm run build
-```
-
-## What CI enforces
-
-Every pull request must pass both workflows in `.github/workflows/`:
-
-- **Windows** — restore, Release build, and `dotnet test` across the solution.
-- **Web** — formatting, lint, type checking, tests, and a production build.
-
-`pnpm run check` also enforces formatting. Run it before pushing; CI fails on
-unformatted files.
-
-## Releasing
-
-Pushing a version tag builds the installer and publishes the release:
-
-```sh
-git tag -a v1.3.0 -m "Vex 1.3.0"
-git push origin v1.3.0
-```
-
-`.github/workflows/release.yml` then checks that the tag matches `<Version>` in
-`windows/Vex.App/Vex.App.csproj` and `Version` in `Vex.Setup/Package.wxs`, runs
-the test suite, builds the zip and MSI, verifies the payload, and attaches all
-three assets to the release.
-
-If the job fails after the tag is pushed, re-run it against that tag from the
-Actions tab (`workflow_dispatch` accepts a tag). Uploading is idempotent, so a
-re-run repairs a partially published release instead of failing on it.
-
-The version check exists because releases used to be a manual step that nothing
-enforced: a version bump could sit unreleased indefinitely, and the tag and the
-project version could disagree without anything noticing.
-
-## Guidelines
-
-- Keep changes surgical. Every changed line should trace to the issue or
-  feature being addressed, and unrelated refactors belong in their own PR.
-- Match the style of the file you are editing.
-- Write comments that explain *why*, not *what*. Comments that restate the code
-  should be deleted.
-- Add tests for behaviour you change. Bug fixes should come with a test that
-  fails before the fix.
-- Do not add new runtime dependencies without discussing it in an issue first.
-
-## Commit messages
-
-Commits must start with a conventional-commit prefix:
-
-`feat:`, `fix:`, `refactor:`, `perf:`, `docs:`, `chore:`, `ui:`, `vendor:`,
-`style:`, `test:`, `build:`, `ci:`, or `revert:`
-
-A scope is optional but encouraged, for example `fix(terminal):`. A plain
-message with no prefix will be rejected.
-
-## Reporting bugs
-
-Open an issue using the bug report template and include:
-
-- Vex version (shown in Settings → About) and Windows build.
-- The exact steps that reproduce the problem.
-- What you expected and what happened instead.
-
-If the bug involves terminal rendering, mention the shell, the font, and any
-TUI application involved — those three account for most rendering reports.
-
-## Security
-
-Do not open a public issue for a security problem. See
-[SECURITY.md](SECURITY.md).
+Include the Vex version, Windows build, shell and reproduction steps.
+For rendering issues, include the font, GPU and TUI application.
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

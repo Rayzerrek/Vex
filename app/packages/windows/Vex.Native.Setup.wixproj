@@ -1,0 +1,11 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputName>VexSetup</OutputName>
+    <OutputType>Package</OutputType>
+    <Cultures>en-US</Cultures>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Version Condition="'$(Version)' == ''">$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../../VERSION').Trim()).0</Version>
+    <DefineConstants>Version=$(Version)</DefineConstants>
+    <SuppressIces>ICE61</SuppressIces>
+  </PropertyGroup>
+</Project>
