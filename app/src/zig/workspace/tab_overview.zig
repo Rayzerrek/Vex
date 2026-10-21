@@ -30,7 +30,7 @@ pub const Layout = struct {
         const grid_width = @min(available_width, @max(preferred_width, @as(f32, @floatFromInt(columns)) * 144 + @as(f32, @floatFromInt(columns - 1)) * 16));
         const grid_height = @min(available_height, @max(preferred_height, @as(f32, @floatFromInt(rows)) * 88 + @as(f32, @floatFromInt(rows - 1)) * 16));
         return .{
-            .bounds = .{ .x = 28 + (available_width - grid_width) * 0.5, .y = 98 + (available_height - grid_height) * 0.5, .width = grid_width, .height = grid_height },
+            .bounds = .{ .x = 28 + (available_width - grid_width) * 0.5, .y = 76 + (available_height - grid_height) * 0.5, .width = grid_width, .height = grid_height },
             .columns = columns,
             .count = total,
         };
@@ -101,7 +101,7 @@ test "overview shows every tab with usable targets, no overlaps and centered row
             try std.testing.expect(layout.bounds.width <= size[0] - 56);
             try std.testing.expect(layout.bounds.height <= size[1] - 154);
             try std.testing.expectApproxEqAbs(size[0] * 0.5, layout.bounds.x + layout.bounds.width * 0.5, 0.001);
-            try std.testing.expectApproxEqAbs(98 + (size[1] - 154) * 0.5, layout.bounds.y + layout.bounds.height * 0.5, 0.001);
+            try std.testing.expectApproxEqAbs(76 + (size[1] - 154) * 0.5, layout.bounds.y + layout.bounds.height * 0.5, 0.001);
             for (0..total) |i| {
                 const card = layout.card(i);
                 try std.testing.expect(card.width >= 100 and card.height >= 64);

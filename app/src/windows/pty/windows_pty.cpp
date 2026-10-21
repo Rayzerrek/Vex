@@ -278,6 +278,20 @@ extern "C" void vex_pty_ack_output(uint32_t token) {
 }
 extern "C" bool vex_pty_exists(uint32_t token) { return findSession(token) != nullptr; }
 extern "C" uint32_t vex_pty_process_id(VexPty* session) { return session && session->process ? GetProcessId(session->process) : 0; }
+extern "C" uint32_t vex_pty_clipboard_token(uint32_t process_id) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    if (!process) return 0;
+    uint32_t token = 0;
+    for (auto session = sessions; session; session = session->next) {
+        BOOL member = FALSE;
+        if (session->job && IsProcessInJob(process, session->job, &member) && member) {
+            token = session->token;
+            break;
+        }
+    }
+    CloseHandle(process);
+    return token;
+}
 extern "C" bool vex_pty_wsl_snapshot(VexPty* session, uint8_t* bytes, size_t capacity, size_t* length) {
     return session && readWslProcessSnapshot(session->wslProbe, bytes, capacity, length);
 }

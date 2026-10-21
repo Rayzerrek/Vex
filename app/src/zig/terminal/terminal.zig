@@ -131,6 +131,7 @@ pub const Terminal = struct {
     title: title_mod.TerminalTitle = .{},
     status_clock: std.time.Timer,
     response_sink: ?ResponseSink = null,
+    color_scheme_dark: bool = true,
     callback_error: ?anyerror = null,
     directory_sink: ?struct { context: *anyopaque, on_report: *const fn (*anyopaque, []const u8) anyerror!void } = null,
     clipboard_sink: ?struct { context: *anyopaque, on_write: *const fn (*anyopaque, []const u8) anyerror!void } = null,
@@ -236,6 +237,23 @@ pub const Terminal = struct {
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         const callback: c.GhosttyTerminalWritePtyFn = terminalResponse;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_WRITE_PTY, @ptrCast(callback)));
+        const scheme_callback: c.GhosttyTerminalColorSchemeFn = terminalColorScheme;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, @ptrCast(scheme_callback)));
+    }
+    /// Only subscribers receive unsolicited input; other programs may treat it as keystrokes.
+    pub fn setColorScheme(self: *Terminal, dark: bool) !void {
+        if (self.color_scheme_dark == dark) return;
+        self.color_scheme_dark = dark;
+        if (!try self.decMode(2031)) return;
+        const sink = self.response_sink orelse return;
+        var bytes: [32]u8 = undefined;
+        var length: usize = 0;
+        try check(self.api.color_scheme_report_encode(self.colorScheme(), &bytes, bytes.len, &length));
+        if (length > bytes.len) return error.InvalidTerminalResponse;
+        try sink.write(sink.context, bytes[0..length]);
+    }
+    fn colorScheme(self: *const Terminal) c.GhosttyColorScheme {
+        return if (self.color_scheme_dark) c.GHOSTTY_COLOR_SCHEME_DARK else c.GHOSTTY_COLOR_SCHEME_LIGHT;
     }
     /// Registers a stable typed directory owner; each report is parsed before a later report can overwrite it.
     pub fn attachDirectorySink(self: *Terminal, owner: anytype) !void {
@@ -969,6 +987,13 @@ pub const Terminal = struct {
             palette[index] = .{ .r = level, .g = level, .b = level };
         }
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette));
+        // ConPTY and TUIs can install OSC overrides. An explicit theme selection
+        // must replace those too, otherwise the startup colors mask the new defaults.
+        const reset_colors = "\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\";
+        self.api.terminal_vt_write(self.handle, reset_colors.ptr, reset_colors.len);
+        // Palette changes must refresh resolved colors even when the PTY is idle.
+        const dirty: c.GhosttyRenderStateDirty = c.GHOSTTY_RENDER_STATE_DIRTY_FULL;
+        try check(self.api.render_state_set(self.render_state, c.GHOSTTY_RENDER_STATE_OPTION_DIRTY, &dirty));
         self.frame_valid = false;
     }
     fn applyDefaultPalette(self: *Terminal) !void {
@@ -1027,6 +1052,14 @@ fn titleChanged(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) void {
         return;
     };
     self.title.applyReport(raw) catch {};
+}
+
+fn terminalColorScheme(_: c.GhosttyTerminal, userdata: ?*anyopaque, out_scheme: [*c]c.GhosttyColorScheme) callconv(.c) bool {
+    const context = userdata orelse return false;
+    const self: *const Terminal = @ptrCast(@alignCast(context));
+    if (out_scheme == null) return false;
+    out_scheme.* = self.colorScheme();
+    return true;
 }
 
 fn terminalResponse(_: c.GhosttyTerminal, userdata: ?*anyopaque, bytes: [*c]const u8, length: usize) callconv(.c) void {

@@ -539,6 +539,9 @@ fn reportMouseEvent(
         &buffer,
     );
     if (bytes.len > 0) {
+        // Some TUIs copy on press, others on release. Do not discard a press's
+        // pending clipboard write merely because the same click was released.
+        if (action != .motion and !(action == .release and session.pending_copy_text != null)) session.recordApplicationInput();
         try session.pty.write(bytes);
     }
 }

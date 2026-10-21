@@ -71,6 +71,8 @@ typedef struct {
     bool (*key)(void*, uint32_t, uint32_t);
     void (*text)(void*, const uint8_t*, size_t);
     void (*paste)(void*, const uint8_t*, size_t);
+    /* External text writes only. Token 0 means the owner could not be attributed to a PTY job. */
+    void (*clipboard)(void*, uint32_t, const uint8_t*, size_t);
     /* Signed raw wheel units (120 per notch); the pane accumulates high-resolution deltas. */
     void (*scroll)(void*, int32_t, float, float, uint32_t);
     void (*click)(void*, float, float);
@@ -94,6 +96,7 @@ void vex_window_invalidate(void);
 void vex_window_defer_synchronized(void);
 void vex_window_close(void);
 void vex_window_paste_clipboard(void);
+void vex_window_schedule_copy_check(uint32_t delay_ms);
 void vex_window_set_chrome_palette(VexChromePalette palette);
 int vex_window_set_font_size(float font_size);
 int vex_window_set_font_preferences(const uint8_t* family, float font_size);
@@ -124,6 +127,7 @@ void vex_pty_close(VexPty* session);
 bool vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);
 uint32_t vex_pty_process_id(VexPty* session);
+uint32_t vex_pty_clipboard_token(uint32_t process_id);
 int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, size_t exe_capacity, size_t* exe_length, uint8_t* cmd_bytes, size_t cmd_capacity, size_t* cmd_length, bool* is_root, bool* is_shell);
 bool vex_pty_wsl_snapshot(VexPty* session, uint8_t* bytes, size_t capacity, size_t* length);
 /* Private window/pipe bridge: borrowing succeeds once per posted block. */

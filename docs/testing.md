@@ -39,6 +39,26 @@ For tab overview, confirm that opening/closing previews does not resize PTYs.
 Desktop harnesses and benchmarks are local tools, not repository CI coverage.
 See [app/README.md](../app/README.md) for feature-specific smoke tests.
 
+### Application copy feedback
+
+`zig test src/zig/app/copy_feedback.zig` runs portable matching/snapshot tests.
+The Windows terminal suite also replays split OSC writes followed by selection
+redraws and deletion; it must be executed with the actual DLL.
+
+On a Windows desktop, check application-managed copies with both OSC and a native
+Windows clipboard provider, using keyboard mappings and TUI mouse clicks:
+
+- Neovim: visual/line/motion yanks, custom mappings, gutters, wraps and Unicode;
+  deletes/changes/cuts must still update the clipboard without flashing.
+- Codex or another rich-text TUI: copy a long response with only a substantial
+  excerpt visible, including formatting, blank lines and wrapped paragraphs.
+- Repeat identical copies; check another pane, focus loss, paste, resize,
+  whitespace-only/ambiguous text and disabled animations. Copying in another
+  desktop application must not animate Vex's content.
+
+These are manual checks, not claims of automated application coverage. Clipboard
+operation type is not exposed by OSC or Win32, so detection remains best-effort.
+
 ## Packaging
 
 Portable ZIP staging and verification require only Python. MSI packaging runs

@@ -12,10 +12,13 @@ const command_line = @import("../terminal/command_line.zig");
 const terminal_title = @import("../terminal/terminal_title.zig");
 const status_presentation = @import("../terminal/status_presentation.zig");
 
+const copy_effect = @import("copy_feedback.zig");
+
 const SessionState = union(enum) { running, exited: u32 };
 
 pub const CopyFeedback = struct {
-    spans: [64]platform.c.VexCopySpan = undefined,
+    // Two opposite row spans describe one box, without a viewport-height limit.
+    spans: [2]platform.c.VexCopySpan = undefined,
     count: u8 = 0,
     scroll_offset: u64 = 0,
     started_ms: ?u64 = null,
@@ -54,6 +57,9 @@ pub const TerminalSession = struct {
     needs_attention: bool = false,
     scrollbar_visibility: @import("../workspace/scrollbar_visibility.zig").ScrollbarVisibility = .{},
     copy_feedback: CopyFeedback = .{},
+    copy_source: copy_effect.Snapshot = .{},
+    pending_copy_text: ?[]u8 = null,
+    pending_copy_ms: i64 = 0,
     wheel_scroll: @import("../workspace/wheel_scroll.zig").WheelScroll = .{},
     sync_defer_since_ms: ?i64 = null,
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
@@ -100,12 +106,82 @@ pub const TerminalSession = struct {
         try self.directory.applyReport(bytes, self.machine_name);
     }
     /// Publishes decoded write-only OSC 52 / OSC 1337 clipboard payloads to the Windows clipboard.
-    pub fn onClipboardWrite(_: *TerminalSession, text: []const u8) !void {
+    pub fn onClipboardWrite(self: *TerminalSession, text: []const u8) !void {
         try platform.writeClipboardText(text);
+        self.queueCopyFeedback(text);
+    }
+
+    fn discardPendingCopy(self: *TerminalSession) void {
+        if (self.pending_copy_text) |text| self.terminal.allocator.free(text);
+        self.pending_copy_text = null;
+    }
+
+    /// OSC callbacks and attributed Windows clipboard notifications use the same
+    /// validation path. Reading the emulator inside its parser callback is unsafe.
+    pub fn queueCopyFeedback(self: *TerminalSession, text: []const u8) void {
+        const now = std.time.milliTimestamp();
+        if (!self.copy_source.recent(now) or !platform.animationsEnabled()) return;
+        self.copy_feedback.clear();
+        self.discardPendingCopy();
+        if (std.mem.trim(u8, text, " \t\r\n").len == 0) return;
+        self.pending_copy_text = self.terminal.allocator.dupe(u8, text) catch return;
+        self.pending_copy_ms = now;
+        platform.scheduleCopyCheck(copy_effect.settle_ms);
+    }
+
+    pub fn deferCopyFeedback(self: *TerminalSession) void {
+        if (self.pending_copy_text == null) return;
+        self.pending_copy_ms = std.time.milliTimestamp();
+        platform.scheduleCopyCheck(copy_effect.settle_ms);
+    }
+
+    pub fn cancelApplicationCopy(self: *TerminalSession) void {
+        self.discardPendingCopy();
+        self.copy_feedback.clear();
+        self.copy_source.captured_ms = null;
+    }
+
+    pub fn finishCopyFeedback(self: *TerminalSession, now_ms: u64, visible: bool) bool {
+        const text = self.pending_copy_text orelse return false;
+        const now = std.time.milliTimestamp();
+        const elapsed = now - self.pending_copy_ms;
+        if (elapsed >= 0 and elapsed < copy_effect.settle_ms) {
+            platform.scheduleCopyCheck(@intCast(copy_effect.settle_ms - elapsed));
+            return false;
+        }
+        defer self.discardPendingCopy();
+        if (!visible or !platform.animationsEnabled() or !self.copy_source.recent(now)) return false;
+        const sb = self.terminal.scrollbar() catch return false;
+        if (sb.offset != sb.scrollable()) return false;
+        const frame = self.terminal.readFrame() catch return false;
+        const box = copy_effect.unchanged(self.terminal.allocator, &self.copy_source, frame, text) orelse return false;
+        self.copy_source.captured_ms = null;
+        self.setCopyFeedback(box, sb.offset, now_ms);
+        return true;
+    }
+
+    /// Snapshot before any keyboard or mouse operation, independent of bindings.
+    pub fn recordApplicationInput(self: *TerminalSession) void {
+        self.cancelApplicationCopy();
+        if (!platform.animationsEnabled()) return;
+        const sb = self.terminal.scrollbar() catch return;
+        if (sb.offset != sb.scrollable()) return;
+        const frame = self.terminal.readFrame() catch return;
+        self.copy_source.capture(self.terminal.allocator, frame, std.time.milliTimestamp()) catch {};
+    }
+
+    fn setCopyFeedback(self: *TerminalSession, box: copy_effect.Box, offset: u64, now_ms: u64) void {
+        self.copy_feedback.spans[0] = .{ .row = box.first_row, .start_col = box.start_col, .end_col = box.end_col };
+        self.copy_feedback.spans[1] = .{ .row = box.last_row, .start_col = box.start_col, .end_col = box.end_col };
+        self.copy_feedback.count = 2;
+        self.copy_feedback.scroll_offset = offset;
+        self.copy_feedback.started_ms = now_ms;
     }
     /// Joins native workers before releasing the emulator, directory and stable session address.
     pub fn destroy(self: *TerminalSession, allocator: std.mem.Allocator) void {
         self.pty.deinit();
+        self.discardPendingCopy();
+        self.copy_source.deinit(self.terminal.allocator);
         self.terminal.deinit();
         self.directory.deinit();
         allocator.destroy(self);
@@ -113,6 +189,7 @@ pub const TerminalSession = struct {
     /// User input acknowledges completed results; emulator replies deliberately bypass this path.
     pub fn writeUserInput(self: *TerminalSession, bytes: []const u8) !void {
         self.last_icon_probe_ms = 0;
+        self.recordApplicationInput();
         const previous = status_presentation.statusPresentationKey(self.terminal.program_status.programStatus());
         self.terminal.program_status.acknowledgeProgramStatus();
         if (previous != status_presentation.statusPresentationKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
@@ -124,6 +201,7 @@ pub const TerminalSession = struct {
         const encoded = try self.terminal.encodePasteAlloc(allocator, text);
         defer allocator.free(encoded);
         try self.writeUserInput(encoded);
+        self.copy_source.captured_ms = null;
     }
     /// Copies the active terminal selection to the system clipboard when a selection range is present.
     pub fn copySelectionToClipboard(self: *TerminalSession, allocator: std.mem.Allocator) !bool {
@@ -134,41 +212,27 @@ pub const TerminalSession = struct {
     }
     /// Snapshots visible selected cell runs so the copy shimmer can animate even after selection clears.
     pub fn recordCopyFeedback(self: *TerminalSession, now_ms: u64) void {
+        self.copy_feedback.clear();
         if (!platform.animationsEnabled()) return;
+        const selected = (self.terminal.selectedTextAlloc(self.terminal.allocator, true) catch return) orelse return;
+        defer self.terminal.allocator.free(selected);
+        if (std.mem.trim(u8, selected, " \t\r\n").len == 0) return;
         const frame = self.terminal.readFrame() catch return;
         const sb = self.terminal.scrollbar() catch return;
-        var count: u8 = 0;
-        for (0..frame.rows) |r| {
-            const row_cells = frame.cells.items[r * frame.columns ..][0..frame.columns];
-            var in_span = false;
-            var start_col: u16 = 0;
-            var end_col: u16 = 0;
-            for (row_cells, 0..) |cell, c_idx| {
-                const col: u16 = @intCast(c_idx);
-                if (cell.selected) {
-                    if (!in_span) {
-                        in_span = true;
-                        start_col = col;
-                    }
-                    end_col = col + 1;
-                } else if (in_span) {
-                    if (count < self.copy_feedback.spans.len) {
-                        self.copy_feedback.spans[count] = .{ .row = @intCast(r), .start_col = start_col, .end_col = end_col };
-                        count += 1;
-                    }
-                    in_span = false;
-                }
-            }
-            if (in_span and count < self.copy_feedback.spans.len) {
-                self.copy_feedback.spans[count] = .{ .row = @intCast(r), .start_col = start_col, .end_col = end_col };
-                count += 1;
+        var box: ?copy_effect.Box = null;
+        for (frame.cells.items, 0..) |cell, index| {
+            if (!cell.selected) continue;
+            const row: u16 = @intCast(index / frame.columns);
+            const col: u16 = @intCast(index % frame.columns);
+            if (box) |*b| {
+                b.last_row = row;
+                b.start_col = @min(b.start_col, col);
+                b.end_col = @max(b.end_col, col + 1);
+            } else {
+                box = .{ .first_row = row, .last_row = row, .start_col = col, .end_col = col + 1 };
             }
         }
-        if (count > 0) {
-            self.copy_feedback.count = count;
-            self.copy_feedback.scroll_offset = sb.offset;
-            self.copy_feedback.started_ms = now_ms;
-        }
+        if (box) |b| self.setCopyFeedback(b, sb.offset, now_ms);
     }
     /// Deletes a cursor-anchored keyboard selection by sending one DEL (0x7f) per selected character.
     pub fn deleteKeyboardSelection(self: *TerminalSession) !bool {
@@ -187,6 +251,7 @@ pub const TerminalSession = struct {
     /// Avoids redundant ConPTY/emulator resizes; exited sessions retain a resizable terminal viewport.
     pub fn resize(self: *TerminalSession, size: platform.TerminalSize) !void {
         if (self.size) |previous| if (std.meta.eql(previous, size)) return;
+        self.cancelApplicationCopy();
         if (self.state == .running) try self.pty.resize(size);
         try self.terminal.resize(size.columns, size.rows, size.cell_width_px, size.cell_height_px);
         self.size = size;

@@ -470,6 +470,7 @@ extern "C" void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, flo
     target->PushAxisAlignedClip(D2D1::RectF(bounds.x + 3.0f, bounds.y + 28.0f, clipRight, clipBottom), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
     float minX = 1e9f, maxX = -1e9f;
+    float minY = 1e9f, maxY = -1e9f;
     const size_t count = span_count > 64 ? 64 : span_count;
     for (size_t i = 0; i < count; ++i) {
         if (spans[i].end_col <= spans[i].start_col) continue;
@@ -477,8 +478,11 @@ extern "C" void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, flo
         const float x2 = gridLeft + (float)spans[i].end_col * cell_width;
         if (x1 < minX) minX = x1;
         if (x2 > maxX) maxX = x2;
+        const float y1 = gridTop + (float)spans[i].row * cell_height;
+        if (y1 < minY) minY = y1;
+        if (y1 + cell_height > maxY) maxY = y1 + cell_height;
     }
-    if (maxX > minX) {
+    if (maxX > minX && maxY > minY) {
         const float spanW = fmaxf(cell_width * 2.0f, maxX - minX);
         const float bandHalfW = fmaxf(28.0f, fminf(120.0f, spanW * 0.34f));
         const float sweepT = 1.0f - powf(1.0f - progress, 2.25f);
@@ -488,13 +492,12 @@ extern "C" void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, flo
         const uint32_t shimmerGlow = blendRgb(chromePalette.accent, 0xffffff, chromePalette.is_dark ? 0.38f : 0.25f);
         const uint32_t shimmerCore = blendRgb(chromePalette.accent, 0xffffff, chromePalette.is_dark ? 0.78f : 0.58f);
 
-        for (size_t i = 0; i < count; ++i) {
-            if (spans[i].end_col <= spans[i].start_col) continue;
-            const float sx1 = gridLeft + (float)spans[i].start_col * cell_width - 1.5f;
-            const float sx2 = gridLeft + (float)spans[i].end_col * cell_width + 1.5f;
-            const float sy1 = gridTop + (float)spans[i].row * cell_height - 0.5f;
-            const float sy2 = sy1 + cell_height + 1.0f;
-            if (sy2 < gridTop || sy1 > clipBottom) continue;
+        // One silhouette and one sweep, independent of the number of copied rows.
+        {
+            const float sx1 = minX - 1.5f;
+            const float sx2 = maxX + 1.5f;
+            const float sy1 = minY - 0.5f;
+            const float sy2 = maxY + 0.5f;
 
             const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(D2D1::RectF(sx1, sy1, sx2, sy2), 3.5f, 3.5f);
             brush->SetColor(rgb(chromePalette.accent, (chromePalette.is_dark ? 0.18f : 0.13f) * env));
@@ -547,9 +550,8 @@ extern "C" void vex_draw_tab_overview(bool animating) {
     chromeMotionPending = chromeMotionPending || animating;
     const auto size = target->GetSize();
     rectangle(0, 44, size.width, fmaxf(0, size.height - 44), chromePalette.titlebar_bg);
-    labelWithFont(chromeBoldFont, L"Tabs", 28, 58, size.width - 56, chromePalette.text_primary);
-    label(L"Del: close tab    Ctrl+Shift+W: close active pane", 28, 80, size.width - 56, chromePalette.text_muted);
-    label(L"Arrows / Tab to choose    Home / End    Enter to switch    Esc to return", 28, size.height - 32, size.width - 56, chromePalette.text_muted);
+    label(L"Arrows / Tab to choose    Home / End    Enter to switch    Esc to return", 28, size.height - 54, size.width - 56, chromePalette.text_muted);
+    label(L"Del: close tab    Ctrl+Shift+W: close active pane", 28, size.height - 32, size.width - 56, chromePalette.text_muted);
 }
 extern "C" void vex_draw_preview_close(VexPaneRect bounds, bool hovered) {
     if (hovered) {

@@ -98,6 +98,77 @@ test "PTY reply callback targets its own terminal and propagates sink errors" {
     try std.testing.expectError(error.TestPtyWriteFailure, terminal.resize(90, 30, 8, 16));
 }
 
+test "color scheme queries and subscribed changes follow the host mode per pane" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var other = try Terminal.init(std.testing.allocator, &api);
+    defer other.deinit();
+    var replies: StatusReplyLog = .{};
+    defer replies.bytes.deinit(std.testing.allocator);
+    var other_replies: StatusReplyLog = .{};
+    defer other_replies.bytes.deinit(std.testing.allocator);
+    try terminal.attachResponseSink(.{ .context = &replies, .write = StatusReplyLog.write });
+    try other.attachResponseSink(.{ .context = &other_replies, .write = StatusReplyLog.write });
+    try terminal.setColorScheme(false);
+    try std.testing.expectEqualStrings("", replies.bytes.items);
+    const query = "\x1b[?2031$p\x1b[?996n";
+    for (query) |byte| try terminal.feedOutput(&.{byte});
+    try std.testing.expectEqualStrings("\x1b[?2031;2$y\x1b[?997;2n", replies.bytes.items);
+    replies.bytes.clearRetainingCapacity();
+    for ("\x1b[?2031h") |byte| try terminal.feedOutput(&.{byte});
+    // A colorscheme change is meaningful even when a TUI is on the alternate screen.
+    try terminal.feedOutput("\x1b[?1049h");
+    try terminal.setColorScheme(true);
+    try terminal.setColorScheme(true);
+    try terminal.setColorScheme(false);
+    try std.testing.expectEqualStrings("\x1b[?997;1n\x1b[?997;2n", replies.bytes.items);
+    try std.testing.expectEqualStrings("", other_replies.bytes.items);
+    try other.feedOutput("\x1b[?996n");
+    try std.testing.expectEqualStrings("\x1b[?997;1n", other_replies.bytes.items);
+    replies.bytes.clearRetainingCapacity();
+    try terminal.feedOutput("\x1b[?2031l");
+    try terminal.setColorScheme(true);
+    try std.testing.expectEqualStrings("", replies.bytes.items);
+    try terminal.feedOutput("\x1b[?2031h\x1bc");
+    try terminal.setColorScheme(false);
+    try std.testing.expectEqualStrings("", replies.bytes.items);
+    try terminal.feedOutput("\x1b[?996n");
+    try std.testing.expectEqualStrings("\x1b[?997;2n", replies.bytes.items);
+}
+
+test "subscribed applications can re-query the updated background after a scheme notification" {
+    const themes = @import("../workspace/terminal_theme.zig");
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var replies: StatusReplyLog = .{};
+    defer replies.bytes.deinit(std.testing.allocator);
+    try terminal.attachResponseSink(.{ .context = &replies, .write = StatusReplyLog.write });
+    try terminal.feedOutput("\x1b[?2031h");
+    for ([_]bool{ false, true, false }) |dark| {
+        const theme = themes.themes[if (dark) themes.default_dark_index else themes.default_light_index];
+        const background: u32 = if (dark) 0x111111 else 0xffffff;
+        try terminal.applyPalette(theme.foreground, background, theme.cursor, &theme.ansi);
+        try terminal.setColorScheme(dark);
+        try std.testing.expectEqualStrings(if (dark) "\x1b[?997;1n" else "\x1b[?997;2n", replies.bytes.items);
+        replies.bytes.clearRetainingCapacity();
+        try terminal.feedOutput("\x1b]11;?\x1b\\");
+        try std.testing.expectEqualStrings(if (dark) "\x1b]11;rgb:1111/1111/1111\x1b\\" else "\x1b]11;rgb:ffff/ffff/ffff\x1b\\", replies.bytes.items);
+        replies.bytes.clearRetainingCapacity();
+    }
+}
+
+test "color scheme notification failures reach the caller" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var reply: TestReply = .{};
+    try terminal.attachResponseSink(.{ .context = &reply, .write = TestReply.reject });
+    try terminal.feedOutput("\x1b[?2031h");
+    try std.testing.expectError(error.TestPtyWriteFailure, terminal.setColorScheme(false));
+}
+
 fn checkFrameAllocationFailures(allocator: std.mem.Allocator, api: *const binding.Api) !void {
     var terminal = try Terminal.init(allocator, api);
     defer terminal.deinit();
@@ -290,6 +361,27 @@ test "native directory callback OOM reaches feedOutput and releases both owners"
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkDirectoryCallbackAllocations, .{&api});
 }
 
+test "theme changes replace startup OSC overrides and repaint idle text in both directions" {
+    const themes = @import("../workspace/terminal_theme.zig");
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.feedOutput("\x1b]10;#eeeeee\x07\x1b]11;#111111\x07\x1b]4;1;#222222\x07A\x1b[31mB\x1b[38;2;18;52;86mC");
+    _ = try terminal.readFrame();
+    for ([_]usize{ themes.default_light_index, themes.default_dark_index, themes.default_light_index }) |index| {
+        const theme = themes.themes[index];
+        const generation = (try terminal.readFrame()).generation;
+        try terminal.applyPalette(theme.foreground, theme.background, theme.cursor, &theme.ansi);
+        const frame = try terminal.readFrame();
+        try std.testing.expect(frame.generation > generation);
+        try std.testing.expectEqual(theme.foreground, frame.cells.items[0].style.foreground);
+        try std.testing.expectEqual(theme.background, frame.cells.items[0].style.background);
+        try std.testing.expectEqual(theme.ansi[1], frame.cells.items[1].style.foreground);
+        try std.testing.expectEqual(@as(u32, 0x123456), frame.cells.items[2].style.foreground);
+        try std.testing.expectEqual(theme.background, frame.cells.items[3].style.background);
+    }
+}
+
 test "OSC palette updates invalidate cached resolved colors" {
     const api = try binding.Api.load();
     var terminal = try Terminal.init(std.testing.allocator, &api);
@@ -445,6 +537,32 @@ const ClipboardLog = struct {
         try self.writes.append(self.allocator, copy);
     }
 };
+
+test "copy feedback validates parsed source after split OSC and TUI redraws, not inside the clipboard callback" {
+    const feedback = @import("../app/copy_feedback.zig");
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var log: ClipboardLog = .{ .allocator = std.testing.allocator };
+    defer log.deinit();
+    try terminal.attachClipboardSink(&log);
+    try terminal.resize(24, 6, 8, 16);
+    try terminal.feedOutput("\x1b[?1049h\x1b[1;1H 1  \x1b[7malpha\x1b[0m\r\n 2    \x1b[7mbeta\x1b[0m");
+    var before: feedback.Snapshot = .{};
+    defer before.deinit(std.testing.allocator);
+    try before.capture(std.testing.allocator, try terminal.readFrame(), 1000);
+    // The provider writes the clipboard before repainting its own selection.
+    try terminal.feedOutput("\x1b]52;c;YWxwaGEK");
+    try terminal.feedOutput("YmV0YQ==\x07\x1b[1;5Halpha\x1b[2;7Hbeta");
+    try std.testing.expectEqual(@as(usize, 1), log.writes.items.len);
+    const copied = log.writes.items[0];
+    const box = feedback.unchanged(std.testing.allocator, &before, try terminal.readFrame(), copied).?;
+    try std.testing.expectEqual(@as(u16, 0), box.first_row);
+    try std.testing.expectEqual(@as(u16, 1), box.last_row);
+    // A later output block completing a delete must revoke the same candidate.
+    try terminal.feedOutput("\x1b[1;1H\x1b[2K");
+    try std.testing.expect(feedback.unchanged(std.testing.allocator, &before, try terminal.readFrame(), copied) == null);
+}
 
 fn checkClipboardAllocationFailures(allocator: std.mem.Allocator, api: *const binding.Api) !void {
     var terminal = try Terminal.init(allocator, api);
@@ -705,6 +823,22 @@ test "RIS clears mouse motion deduplication before a new application tracks the 
     try terminal.feedOutput("\x1bc" ++ enable);
     try std.testing.expectEqualStrings("\x1b[<35;2;2M", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
     try std.testing.expectEqualStrings("", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
+}
+
+test "bundled ConPTY forwards color scheme negotiation to the host terminal" {
+    const allocator = std.testing.allocator;
+    const directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(directory);
+    const fixture = try std.fs.path.join(allocator, &.{ directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "color-scheme" }, .max_output_bytes = 64 * 1024 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+    try std.testing.expect(std.mem.indexOf(u8, output.stdout, "\x1b[?2031$p") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.stdout, "\x1b[?2031h") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.stdout, "\x1b[?996n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.stdout, "COLOR_SCHEME_REPLY_OK") != null);
 }
 
 test "bundled ConPTY preserves erase semantics from child output through the terminal" {

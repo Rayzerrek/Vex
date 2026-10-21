@@ -164,6 +164,7 @@ static int configExecute(lua_State* state) {
     lua_pushcfunction(state, configAddShell); lua_setfield(state, -2, "add_shell");
     lua_newtable(state);
     setString(state, "theme", settings->theme);
+    setString(state, "appearance", "theme");
     setString(state, "font_family", settings->font_family);
     setString(state, "default_shell", settings->default_shell);
     lua_pushinteger(state, settings->font_size); lua_setfield(state, -2, "font_size");
@@ -186,11 +187,12 @@ static int configExecute(lua_State* state) {
     while (lua_next(state, -2)) {
         size_t key_length = 0;
         const char* key = lua_type(state, -2) == LUA_TSTRING ? lua_tolstring(state, -2, &key_length) : NULL;
-        if (!key || strlen(key) != key_length || (strcmp(key, "theme") && strcmp(key, "font_family") && strcmp(key, "default_shell") && strcmp(key, "font_size") && strcmp(key, "cursor_blink") && strcmp(key, "copy_on_select") && strcmp(key, "confirm_close")))
+        if (!key || strlen(key) != key_length || (strcmp(key, "theme") && strcmp(key, "appearance") && strcmp(key, "font_family") && strcmp(key, "default_shell") && strcmp(key, "font_size") && strcmp(key, "cursor_blink") && strcmp(key, "copy_on_select") && strcmp(key, "confirm_close")))
             return luaL_error(state, "Vex configuration: unknown setting '%s'", key ? key : "non-string key");
         lua_pop(state, 1);
     }
     readString(state, "theme", settings->theme, sizeof(settings->theme));
+    readString(state, "appearance", settings->appearance, sizeof(settings->appearance));
     readString(state, "font_family", settings->font_family, sizeof(settings->font_family));
     readString(state, "default_shell", settings->default_shell, sizeof(settings->default_shell));
     lua_pushliteral(state, "font_size"); lua_rawget(state, -2);

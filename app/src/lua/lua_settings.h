@@ -4,6 +4,7 @@
 
 typedef struct VexLuaSettings {
     char theme[128];
+    char appearance[16];
     char font_family[128];
     char default_shell[32];
     int font_size;

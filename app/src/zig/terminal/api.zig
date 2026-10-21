@@ -15,6 +15,7 @@ pub const Api = struct {
     terminal_set: Function("terminal_set"),
     terminal_get: Function("terminal_get"),
     terminal_vt_write: Function("terminal_vt_write"),
+    color_scheme_report_encode: Function("color_scheme_report_encode"),
     terminal_resize: Function("terminal_resize"),
     terminal_scroll_viewport: Function("terminal_scroll_viewport"),
     terminal_grid_ref: Function("terminal_grid_ref"),

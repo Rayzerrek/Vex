@@ -94,9 +94,8 @@ fn handleSessionKey(self: *Application, session: *TerminalSession, key: u32, mod
     }
     if (modifiers == 3 and key == 'X') {
         if (try session.terminal.hasSelection()) {
-            if (try session.copySelectionToClipboard(self.allocator)) {
-                session.recordCopyFeedback(self.cursorNowMs());
-            }
+            _ = try session.copySelectionToClipboard(self.allocator);
+            session.copy_feedback.clear();
             if (!try session.deleteKeyboardSelection()) try session.terminal.clearSelection(true);
             platform.invalidateWindow();
         }

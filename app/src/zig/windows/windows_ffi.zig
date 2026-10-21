@@ -299,6 +299,13 @@ pub fn runWindow(owner: anytype) !void {
             }
             app.onPaste(input);
         }
+        fn clipboard(context: ?*anyopaque, token: u32, bytes: [*c]const u8, length: usize) callconv(.c) void {
+            const app = recover(context) orelse return;
+            if (length == 0 or length > 1024 * 1024 or bytes == null) return;
+            const input = bytes[0..length];
+            if (!std.unicode.utf8ValidateSlice(input)) return;
+            app.onClipboard(token, input);
+        }
         fn scroll(context: ?*anyopaque, delta: i32, x: f32, y: f32, modifiers: u32) callconv(.c) void {
             if (std.math.isFinite(x) and std.math.isFinite(y)) if (recover(context)) |app| app.onScroll(delta, x, y, modifiers);
         }
@@ -375,7 +382,7 @@ pub fn runWindow(owner: anytype) !void {
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .clipboard = Adapter.clipboard, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
@@ -451,6 +458,10 @@ pub fn writeClipboardText(text: []const u8) !void {
     if (c.vex_clipboard_write(text.ptr, text.len) != 0) return error.ClipboardWriteFailed;
 }
 /// Reads CF_UNICODETEXT from the system clipboard and routes it through the active session paste handler.
+pub fn scheduleCopyCheck(delay_ms: u32) void {
+    c.vex_window_schedule_copy_check(delay_ms);
+}
+
 pub fn pasteClipboard() void {
     c.vex_window_paste_clipboard();
 }
@@ -721,7 +732,79 @@ fn blockCursorRun(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLi
     return .{ .cells = if (cell.width == .wide) 2 else 1, .text = frame.cellText(cell), .style = style };
 }
 
+/// A dominant neutral surface identifies a program's palette, not its name or process.
+/// Keep already-matching palettes and isolated bright/dark accents untouched.
+const AppearanceCorrection = struct {
+    const Entry = struct { source: u32 = 0xffffffff, corrected: u32 = 0 };
+
+    source: u32,
+    target: terminal_theme.TerminalTheme,
+    source_lab: Oklab,
+    background_lab: Oklab,
+    foreground_lab: Oklab,
+    cache: [512]Entry = @splat(.{}),
+
+    fn init(frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme) ?AppearanceCorrection {
+        if (frame.cells.items.len == 0) return null;
+        var candidate: u32 = 0;
+        var votes: usize = 0;
+        for (frame.cells.items) |cell| {
+            if (votes == 0) candidate = cell.style.background;
+            if (cell.style.background == candidate) votes += 1 else votes -= 1;
+        }
+        var count: usize = 0;
+        for (frame.cells.items) |cell| {
+            if (cell.style.background == candidate) count += 1;
+        }
+        if (count <= frame.cells.items.len / 2) return null;
+        const source_lab = srgbToOklab(candidate);
+        const opposite = if (theme.is_dark) source_lab.l > 0.72 else source_lab.l < 0.48;
+        if (!opposite or source_lab.a * source_lab.a + source_lab.b * source_lab.b > 0.0144) return null;
+        return .{
+            .source = candidate,
+            .target = theme,
+            .source_lab = source_lab,
+            .background_lab = srgbToOklab(theme.background),
+            .foreground_lab = srgbToOklab(theme.foreground),
+        };
+    }
+
+    fn map(self: *AppearanceCorrection, color: u32) u32 {
+        if (color == self.source) return self.target.background;
+        const index = std.hash.Wyhash.hash(0, std.mem.asBytes(&color)) & (self.cache.len - 1);
+        const entry = &self.cache[index];
+        if (entry.source == color) return entry.corrected;
+        const lab = srgbToOklab(color);
+        const towards_text = if (self.target.is_dark)
+            (self.source_lab.l - lab.l) / @max(0.001, self.source_lab.l)
+        else
+            (lab.l - self.source_lab.l) / @max(0.001, 1 - self.source_lab.l);
+        const amount = std.math.clamp(towards_text, 0, 1);
+        const lightness = if (towards_text >= 0)
+            self.background_lab.l + (self.foreground_lab.l - self.background_lab.l) * amount
+        else if (self.target.is_dark)
+            self.background_lab.l - (lab.l - self.source_lab.l)
+        else
+            self.background_lab.l + (self.source_lab.l - lab.l);
+        // Tint neutral surfaces towards the host theme, preserving saturated syntax hues.
+        const neutral = std.math.clamp(1 - @sqrt(lab.a * lab.a + lab.b * lab.b) / 0.12, 0, 1);
+        const tint_a = self.background_lab.a + (self.foreground_lab.a - self.background_lab.a) * amount;
+        const tint_b = self.background_lab.b + (self.foreground_lab.b - self.background_lab.b) * amount;
+        const corrected = oklabToSrgb(std.math.clamp(lightness, 0, 1), lab.a * (1 - neutral) + tint_a * neutral, lab.b * (1 - neutral) + tint_b * neutral);
+        entry.* = .{ .source = color, .corrected = corrected };
+        return corrected;
+    }
+
+    fn apply(self: *AppearanceCorrection, style: terminal.TextStyle) terminal.TextStyle {
+        var result = style;
+        result.foreground = self.map(style.foreground);
+        result.background = self.map(style.background);
+        return result;
+    }
+};
+
 fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
+    var appearance = AppearanceCorrection.init(frame, theme);
     var cached_fg: u32 = theme.foreground;
     var cached_bg: u32 = theme.background;
     var cached_corrected_fg: u32 = theme.foreground;
@@ -738,6 +821,7 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
             const text = frame.cellText(cell);
             const in_link = if (row_link) |hl| (column >= hl.start_col and column <= hl.end_col) else false;
             var cell_style = cell.style;
+            if (appearance) |*correction| cell_style = correction.apply(cell_style);
             if (in_link) {
                 cell_style.underline = true;
             }
@@ -860,25 +944,25 @@ pub fn isBlockGraphic(text: []const u8) bool {
 
 pub fn ensureMinimumContrast(fg_rgb: u32, bg_rgb: u32) u32 {
     if (fg_rgb == bg_rgb) return fg_rgb;
-    const min_delta_l: f32 = 0.40;
-    const bg_l = srgbToOklabL(bg_rgb);
-    const fg_lab = srgbToOklab(fg_rgb);
-    const delta = @abs(fg_lab.l - bg_l);
-    if (delta >= min_delta_l) return fg_rgb;
-
-    var target_l: f32 = undefined;
-    if (bg_l < 0.5) {
-        target_l = @min(@as(f32, 0.96), bg_l + min_delta_l);
-        if (target_l - bg_l < min_delta_l * 0.6 and bg_l > min_delta_l) {
-            target_l = @max(@as(f32, 0.04), bg_l - min_delta_l);
-        }
-    } else {
-        target_l = @max(@as(f32, 0.04), bg_l - min_delta_l);
-        if (bg_l - target_l < min_delta_l * 0.6 and (1.0 - bg_l) > min_delta_l) {
-            target_l = @min(@as(f32, 0.96), bg_l + min_delta_l);
-        }
+    const minimum_ratio: f32 = 4.5;
+    if (contrastRatio(fg_rgb, bg_rgb) >= minimum_ratio) return fg_rgb;
+    const lab = srgbToOklab(fg_rgb);
+    const towards_white = contrastRatio(0xffffff, bg_rgb) > contrastRatio(0, bg_rgb);
+    const endpoint: f32 = if (towards_white) 1 else 0;
+    var low: f32 = 0;
+    var high: f32 = 1;
+    var corrected: u32 = if (towards_white) 0xffffff else 0;
+    // Check the gamut-clipped, quantized RGB result, not just perceptual lightness.
+    // Reducing chroma towards the endpoint preserves hue without clipping saturated text.
+    for (0..16) |_| {
+        const amount = (low + high) * 0.5;
+        const candidate = oklabToSrgb(lab.l + (endpoint - lab.l) * amount, lab.a * (1 - amount), lab.b * (1 - amount));
+        if (contrastRatio(candidate, bg_rgb) >= minimum_ratio) {
+            corrected = candidate;
+            high = amount;
+        } else low = amount;
     }
-    return oklabToSrgb(target_l, fg_lab.a, fg_lab.b);
+    return corrected;
 }
 
 const Oklab = struct { l: f32, a: f32, b: f32 };
@@ -894,17 +978,14 @@ fn linearChannelToSrgb(v: f32) u32 {
     return @intFromFloat(@round(std.math.clamp(s * 255.0, 0.0, 255.0)));
 }
 
-fn srgbToOklabL(rgb_val: u32) f32 {
-    const r = srgbChannelToLinear(rgb_val >> 16);
-    const g = srgbChannelToLinear(rgb_val >> 8);
-    const b = srgbChannelToLinear(rgb_val);
-    const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
-    const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
-    const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
-    const l_ = std.math.cbrt(l);
-    const m_ = std.math.cbrt(m);
-    const s_ = std.math.cbrt(s);
-    return 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_;
+fn relativeLuminance(rgb_val: u32) f32 {
+    return 0.2126 * srgbChannelToLinear(rgb_val >> 16) + 0.7152 * srgbChannelToLinear(rgb_val >> 8) + 0.0722 * srgbChannelToLinear(rgb_val);
+}
+
+fn contrastRatio(foreground: u32, background: u32) f32 {
+    const fg = relativeLuminance(foreground);
+    const bg = relativeLuminance(background);
+    return (@max(fg, bg) + 0.05) / (@min(fg, bg) + 0.05);
 }
 
 fn srgbToOklab(rgb_val: u32) Oklab {
@@ -1038,6 +1119,80 @@ test "ScrollbarGeometry computes thumb travel, right-edge hit zone, and drag tar
     try std.testing.expectEqual(@as(u64, 75), mid.targetOffsetForY(230.0, 10.0));
 }
 
+test "appearance correction adapts explicit program palettes in both directions without changing the source frame" {
+    var cells: [8]terminal.TerminalCell = @splat(.{ .width = .narrow, .style = .{ .foreground = 0x202020, .background = 0xfafafa }, .text_start = 0, .text_length = 0 });
+    var frame: terminal.TerminalFrame = .{ .columns = 8, .rows = 1, .cells = .{ .items = &cells, .capacity = cells.len } };
+    const original = cells;
+    for ([_]usize{ terminal_theme.default_dark_index, terminal_theme.default_light_index, terminal_theme.default_dark_index }) |index| {
+        const theme = terminal_theme.themes[index];
+        if (!theme.is_dark) {
+            try std.testing.expect(AppearanceCorrection.init(&frame, theme) == null);
+            continue;
+        }
+        var correction = AppearanceCorrection.init(&frame, theme) orelse return error.MissingAppearanceCorrection;
+        const mapped = correction.apply(cells[0].style);
+        try std.testing.expectEqual(theme.background, mapped.background);
+        try std.testing.expect(contrastRatio(ensureMinimumContrast(mapped.foreground, mapped.background), mapped.background) >= 4.5);
+        try std.testing.expectEqual(mapped.foreground, correction.map(cells[0].style.foreground));
+        const hidden = correction.apply(.{ .foreground = 0xfafafa, .background = 0xfafafa, .invisible = true });
+        try std.testing.expectEqual(hidden.foreground, hidden.background);
+        try std.testing.expect(hidden.invisible);
+        const raised = correction.map(0xeeeeee);
+        try std.testing.expect(srgbToOklab(raised).l > srgbToOklab(theme.background).l);
+    }
+    try std.testing.expectEqualDeep(original, cells);
+    for (&cells) |*cell| cell.style = .{ .foreground = 0xeeeeee, .background = 0x181818 };
+    const light = terminal_theme.themes[terminal_theme.default_light_index];
+    var correction = AppearanceCorrection.init(&frame, light) orelse return error.MissingAppearanceCorrection;
+    const mapped = correction.apply(cells[0].style);
+    try std.testing.expectEqual(light.background, mapped.background);
+    try std.testing.expect(srgbToOklab(mapped.foreground).l < srgbToOklab(mapped.background).l);
+    try std.testing.expect(AppearanceCorrection.init(&frame, terminal_theme.themes[terminal_theme.default_dark_index]) == null);
+}
+
+test "explicit RGB alternate-screen output follows host mode without program cooperation" {
+    const binding = @import("../terminal/api.zig");
+    const api = try binding.Api.load();
+    var emulator = try terminal.Terminal.init(std.testing.allocator, &api);
+    defer emulator.deinit();
+    try emulator.feedOutput("\x1b[?1049h\x1b[48;2;250;250;250m\x1b[2J\x1b[H\x1b[38;2;32;32;32mX");
+    const frame = try emulator.readFrame();
+    try std.testing.expect(!try emulator.decMode(2031));
+    const generation = frame.generation;
+    const dark = terminal_theme.themes[terminal_theme.default_dark_index];
+    var correction = AppearanceCorrection.init(frame, dark) orelse return error.MissingAppearanceCorrection;
+    const mapped = correction.apply(frame.cells.items[0].style);
+    try std.testing.expectEqual(dark.background, mapped.background);
+    try std.testing.expect(srgbToOklab(mapped.foreground).l > srgbToOklab(mapped.background).l);
+    try std.testing.expect(AppearanceCorrection.init(frame, terminal_theme.themes[terminal_theme.default_light_index]) == null);
+    try std.testing.expectEqual(@as(u32, 0xfafafa), frame.cells.items[0].style.background);
+    try std.testing.expectEqual(generation, (try emulator.readFrame()).generation);
+}
+
+test "appearance correction ignores isolated opposite accents, split palettes and saturated surfaces" {
+    const theme = terminal_theme.themes[terminal_theme.default_dark_index];
+    var cells: [8]terminal.TerminalCell = @splat(.{ .width = .narrow, .style = .{ .foreground = 0xffffff, .background = theme.background }, .text_start = 0, .text_length = 0 });
+    var frame: terminal.TerminalFrame = .{ .cells = .{ .items = &cells, .capacity = cells.len } };
+    cells[0].style.background = 0xffffff;
+    try std.testing.expect(AppearanceCorrection.init(&frame, theme) == null);
+    for (cells[0..4]) |*cell| cell.style.background = 0xffffff;
+    try std.testing.expect(AppearanceCorrection.init(&frame, theme) == null);
+    for (&cells) |*cell| cell.style.background = 0xffff00;
+    try std.testing.expect(AppearanceCorrection.init(&frame, theme) == null);
+}
+
+test "contrast correction meets WCAG AA after RGB conversion on dark, light and midtone backgrounds" {
+    for ([_]u32{ 0x000000, 0xffffff, 0xf5f0e8, 0x282c34, 0x777777, 0x808080, 0x00ff00, 0xff00ff }) |background| {
+        for ([_]u32{ 0x111111, 0xeeeeee, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0x808080, 0xf0e0d0 }) |foreground| {
+            if (foreground == background) continue;
+            const corrected = ensureMinimumContrast(foreground, background);
+            try std.testing.expect(contrastRatio(corrected, background) >= 4.5);
+            if (contrastRatio(foreground, background) >= 4.5) try std.testing.expectEqual(foreground, corrected);
+            try std.testing.expectEqual(corrected, ensureMinimumContrast(corrected, background));
+        }
+    }
+}
+
 test "ensureMinimumContrast preserves readable colors and boosts low-contrast foregrounds while exempting block graphics" {
     // High contrast default foreground on default background stays untouched.
     try std.testing.expectEqual(@as(u32, 0xe4e4e7), ensureMinimumContrast(0xe4e4e7, 0x282c34));
@@ -1046,7 +1201,7 @@ test "ensureMinimumContrast preserves readable colors and boosts low-contrast fo
     // Dark navy foreground on dark background gets lifted in lightness.
     const boosted = ensureMinimumContrast(0x1f2430, 0x282c34);
     try std.testing.expect(boosted != 0x1f2430);
-    try std.testing.expect(srgbToOklabL(boosted) - srgbToOklabL(0x282c34) >= 0.38);
+    try std.testing.expect(contrastRatio(boosted, 0x282c34) >= 4.5);
     // Block elements and Powerline glyphs are recognized so their exact shade/separator colors are preserved.
     try std.testing.expect(isBlockGraphic("█"));
     try std.testing.expect(isBlockGraphic("░"));

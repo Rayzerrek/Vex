@@ -50,6 +50,16 @@ static HANDLE outputFrameTimer;
 static HMONITOR outputMonitor;
 static LONGLONG outputFrameTicks, nextOutputFrame;
 static uint16_t pendingSurrogate;
+static DWORD clipboardSequence;
+static unsigned clipboardRetries;
+static bool clipboardListening;
+static uint64_t clipboardUpdates, clipboardTextUpdates;
+static DWORD clipboardOwnerPid, clipboardReadError;
+static uint32_t clipboardToken;
+static ULONGLONG copyCheckDeadline;
+// Timer 4 belongs to terminal notifications; copy validation must not replace it.
+static constexpr UINT_PTR copyCheckTimer = 6;
+static constexpr UINT_PTR clipboardRetryTimer = 5;
 static uint64_t paintCount;
 static LARGE_INTEGER frameRequestCounter;
 static UINT64 frameRequestDelayUs, sceneDurationUs;
@@ -467,7 +477,11 @@ static bool saveCaptureBmp() {
     return saveWindowCaptureBmp(window, drawWindow);
 }
 
-static void pasteClipboard() {
+// Return an owned UTF-8 buffer. No application callback runs while the clipboard
+// is locked: callbacks can write to it again or pump window messages.
+static DWORD readClipboardText(uint8_t** output, size_t* length) {
+    *output = nullptr;
+    *length = 0;
     DWORD error = ERROR_SUCCESS;
     if (!OpenClipboard(window)) error = GetLastError() ? GetLastError() : ERROR_BUSY;
     else {
@@ -488,9 +502,13 @@ static void pasteClipboard() {
                         auto bytes = static_cast<uint8_t*>(HeapAlloc(GetProcessHeap(), 0, size));
                         if (!bytes) error = ERROR_OUTOFMEMORY;
                         else {
-                            if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, (int)units, (char*)bytes, size, nullptr, nullptr)) callbacks.paste(callbacks.context, bytes, size);
-                            else error = GetLastError();
-                            HeapFree(GetProcessHeap(), 0, bytes);
+                            if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, (int)units, (char*)bytes, size, nullptr, nullptr)) {
+                                *output = bytes;
+                                *length = (size_t)size;
+                            } else {
+                                error = GetLastError();
+                                HeapFree(GetProcessHeap(), 0, bytes);
+                            }
                         }
                     }
                 }
@@ -499,7 +517,16 @@ static void pasteClipboard() {
         }
         CloseClipboard();
     }
-    // Report after releasing clipboard/borrowed memory; a warning may pump window messages.
+    return error;
+}
+static void pasteClipboard() {
+    uint8_t* bytes;
+    size_t length;
+    const DWORD error = readClipboardText(&bytes, &length);
+    if (bytes) {
+        callbacks.paste(callbacks.context, bytes, length);
+        HeapFree(GetProcessHeap(), 0, bytes);
+    }
     if (error) {
         char message[160];
         snprintf(message, sizeof(message), "Vex native paste failed (Win32 %lu). Clipboard text must be valid Unicode and at most 1 MiB.", (unsigned long)error);
@@ -507,6 +534,45 @@ static void pasteClipboard() {
     }
 }
 extern "C" void vex_window_paste_clipboard() { pasteClipboard(); }
+extern "C" void vex_window_schedule_copy_check(uint32_t delay_ms) {
+    const ULONGLONG deadline = GetTickCount64() + delay_ms;
+    if (copyCheckDeadline && copyCheckDeadline <= deadline) return;
+    if (SetTimer(window, copyCheckTimer, delay_ms ? delay_ms : 1, nullptr)) copyCheckDeadline = deadline;
+}
+static void clipboardUpdated() {
+    ++clipboardUpdates;
+    KillTimer(window, clipboardRetryTimer);
+    const DWORD sequence = GetClipboardSequenceNumber();
+    if (sequence == clipboardSequence || GetForegroundWindow() != window) return;
+    const HWND owner = GetClipboardOwner();
+    DWORD pid = 0;
+    if (owner) GetWindowThreadProcessId(owner, &pid);
+    clipboardOwnerPid = pid;
+    // Vex already handles its own selections and OSC writes synchronously.
+    if (pid == GetCurrentProcessId()) { clipboardSequence = sequence; return; }
+    const uint32_t token = pid ? vex_pty_clipboard_token(pid) : 0;
+    clipboardToken = token;
+    // WSL/remote clipboard relays can own the HWND outside the PTY's job.
+    // Token 0 is untrusted: Zig requires tighter input correlation and unchanged
+    // visible source text instead of identifying a relay by executable name.
+    uint8_t* bytes;
+    size_t length;
+    const DWORD error = readClipboardText(&bytes, &length);
+    clipboardReadError = error;
+    if (error == ERROR_BUSY || error == ERROR_ACCESS_DENIED) {
+        if (++clipboardRetries <= 5) SetTimer(window, clipboardRetryTimer, 20, nullptr);
+        return;
+    }
+    clipboardSequence = sequence;
+    clipboardRetries = 0;
+    // Unattributed providers are accepted only if Zig can associate the text
+    // with a recent operation in the active pane.
+    if (!error && bytes && GetClipboardSequenceNumber() == sequence && callbacks.clipboard) {
+        ++clipboardTextUpdates;
+        callbacks.clipboard(callbacks.context, token, bytes, length);
+    }
+    if (bytes) HeapFree(GetProcessHeap(), 0, bytes);
+}
 static uint32_t currentModifiers() {
     return (GetKeyState(VK_SHIFT) < 0 ? 1u : 0u) | (GetKeyState(VK_CONTROL) < 0 ? 2u : 0u) | (GetKeyState(VK_MENU) < 0 ? 4u : 0u);
 }
@@ -962,6 +1028,12 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 56: return windowChromeAnimationPending() ? 1 : 0;
             case 57: return (LRESULT)lroundf(windowChromeDiagnostics().tabSelectionX * 1000);
             case 58: return vex_window_animations_enabled() ? 1 : 0;
+            case 59: return clipboardListening ? 1 : 0;
+            case 60: return (LRESULT)clipboardUpdates;
+            case 61: return (LRESULT)clipboardTextUpdates;
+            case 62: return clipboardOwnerPid;
+            case 63: return clipboardToken;
+            case 64: return clipboardReadError;
             case 40: uiVerificationMode = 1; vex_window_invalidate(); return 1;
             case 41: uiVerificationMode = 0; vex_window_invalidate(); return 1;
             case 42: uiVerificationMode = 2; vex_window_invalidate(); return 1;
@@ -974,7 +1046,18 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             }
         }
         return 0;
+    case WM_CLIPBOARDUPDATE:
+        clipboardRetries = 0;
+        clipboardUpdated();
+        return 0;
     case WM_TIMER:
+        if (wparam == copyCheckTimer) {
+            KillTimer(hwnd, copyCheckTimer);
+            copyCheckDeadline = 0;
+            if (callbacks.tick) callbacks.tick(callbacks.context);
+            return 0;
+        }
+        if (wparam == clipboardRetryTimer) { clipboardUpdated(); return 0; }
         if (wparam == 4) { clearTerminalNotification(); return 0; }
         if (wparam == 3) {
             KillTimer(hwnd, 3); cursorWakeArmed = false;
@@ -1032,7 +1115,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         motionPreferenceKnown = false;
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
-    case WM_DESTROY: clearTerminalNotification(); destroyTerminalDialogs(); cancelPointerGesture(); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); cursorWakeArmed = false; PostQuitMessage(0); return 0;
+    case WM_DESTROY: clearTerminalNotification(); destroyTerminalDialogs(); cancelPointerGesture(); RemoveClipboardFormatListener(hwnd); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); KillTimer(hwnd, copyCheckTimer); KillTimer(hwnd, clipboardRetryTimer); copyCheckDeadline = 0; cursorWakeArmed = false; PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
@@ -1163,6 +1246,8 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 CW_USEDEFAULT, CW_USEDEFAULT, (int)(1120 * initialScale), (int)(700 * initialScale), nullptr, nullptr, klass.hInstance, nullptr);
             if (!window) platformError = (int)GetLastError();
             else {
+                clipboardSequence = GetClipboardSequenceNumber();
+                clipboardListening = AddClipboardFormatListener(window) != FALSE;
                 initializeTerminalDialogs(window, callbacks);
                 if (iconBig) SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconBig));
                 if (iconSmall) SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));

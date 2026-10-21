@@ -5,6 +5,8 @@ an absolute path to use a different file. A missing file is normal; Vex runs
 with defaults until settings are saved.
 
 ```lua
+vex.config.theme = "Vex Obsidian"
+vex.config.appearance = "dark" -- "light" or "theme" are also supported
 vex.config.font_family = "Cascadia Mono"
 vex.config.font_size = 14
 vex.config.cursor_blink = true
@@ -12,6 +14,11 @@ vex.config.copy_on_select = true
 vex.config.confirm_close = true
 vex.config.default_shell = "startup"
 ```
+
+`appearance` is optional and defaults to `"theme"`, inferring the mode from the
+named theme. Explicit `"dark"` / `"light"` overrides a theme from the opposite
+collection with the default theme for that mode. UI saves record both the theme
+and its current appearance.
 
 Use **Configuration: Reload init.lua** in the command palette to reload without
 restarting. Failed reloads retain the previous valid settings and report an

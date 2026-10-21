@@ -181,6 +181,7 @@ format; JSON configuration is no longer read.
 ```lua
 -- init.lua: vex.config starts with the defaults.
 vex.config.theme = "Vex Obsidian" -- use a name from Theme Studio
+vex.config.appearance = "dark" -- "dark", "light", or "theme" (infer from theme)
 vex.config.font_family = "Cascadia Mono"
 vex.config.font_size = 14
 vex.config.cursor_blink = true
@@ -197,6 +198,34 @@ Use the current theme names shown in Theme Studio (see
 boolean, `copy_on_select` and `confirm_close` booleans (also available in Settings → General), and shell one of `startup`, `cmd`, `powershell`, `pwsh`, `nu`, `gitbash`,
 `wsl`, or a saved custom profile reference such as `custom:256`. `startup` respects the CLI launch choice. Shell changes affect new tabs and
 splits, not existing processes. Unknown settings and invalid values are errors.
+
+`appearance` is optional: omitted or `"theme"` uses the selected theme's mode.
+An explicit `"dark"` or `"light"` takes precedence; if the named theme belongs to
+the other collection, Vex uses Vex Obsidian or Vex Alabaster respectively.
+UI saves include the current mode, including changes made with Toggle Dark/Light.
+Selecting a theme refreshes idle terminal cells and replaces OSC palette/default
+color overrides; the terminal retains the application's original RGB colors.
+Vex answers color-scheme queries (`CSI ? 996 n`) and notifies applications that
+subscribe to mode 2031 when the host switches between dark and light. Reports go
+to each session's own PTY, including inactive tabs and alternate-screen TUIs.
+Applications must support this protocol and allow automatic theme selection;
+Vex cannot change a program's explicitly configured internal theme. The rendering
+fallback below adapts its displayed palette instead, without changing the program's
+configuration or terminal state.
+
+Automatic appearance correction detects a dominant neutral background from the
+terminal frame. If that surface belongs to the opposite light/dark mode, the
+renderer maps the program's RGB palette into the host theme in OKLab, preserving
+syntax hues and relative surface elevations. This is independent of program names,
+processes, alternate-screen modes and support for theme notifications. Matching
+palettes, isolated opposite-color accents, saturated backgrounds and frames without
+a majority surface are not remapped. Original terminal colors remain unchanged,
+so switching back is reversible, including idle output and tab previews.
+
+After appearance mapping, contrast correction checks foreground/background pairs
+against WCAG AA's 4.5:1 ratio and adjusts insufficient contrast in OKLab, verifying
+the final RGB result. Already-readable pairs, identical foreground/background
+colors and block/Powerline graphics are exempt from this additional contrast step.
 
 Settings written by the UI are saved atomically to `init.lua`
 (or the file selected by `VEX_CONFIG`), replacing its contents.

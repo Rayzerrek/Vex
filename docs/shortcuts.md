@@ -104,6 +104,36 @@ same deletion rules; terminal output itself is not editable.
 Copy, paste, and cut also work while a full-screen application is running,
 since `Ctrl+Shift` chords pass through to Vex there.
 
+## Copy feedback
+
+Copying a Vex selection shows one box and one sweep over the entire visible
+selection, including selections taller than 64 rows. Cut and whitespace-only
+copies do not animate. Disabling animations also disables this feedback.
+
+Application-managed copies use the same feedback for OSC 52 / OSC 1337 and
+Windows clipboard text updates. Detection does not depend on application names,
+key bindings or mouse vs. keyboard input. Windows clipboard owners are checked
+against the pane's process job when attribution is available. Shared relays
+(including WSL) and ownerless providers additionally require input within 750 ms,
+at least four Unicode codepoints, and unchanged matching source in the focused
+pane. Vex's own writes are not animated a second time.
+
+Clipboard protocols do not distinguish copying from deleting or cutting. Vex
+snapshots the visible source before application input, waits for 80 ms of quiet
+output after a clipboard write, and requires the copied text to remain unchanged
+in the same place afterward. Style/selection changes are allowed. Matching
+handles CRLF, tabs, whitespace reflow, soft wraps and per-row gutters. Substantial
+formatted text also has a punctuation-insensitive fallback, but its original
+source cells must still be unchanged. If a copied response is larger than the
+viewport, a substantial contiguous visible excerpt (at least two rows and 48
+normalized bytes) can animate instead; a matching word alone is insufficient.
+
+Empty, ambiguous, deleted, changed, background and fully off-screen sources never
+get a cursor-sized substitute flash. Paste, resize and focus loss cancel detection;
+a source snapshot expires after two seconds. Feedback is still best-effort:
+applications that copy non-visible content, transform it substantially, or never
+publish plain text to a supported clipboard path may copy without an animation.
+
 ## Mouse
 
 | Action | Effect |

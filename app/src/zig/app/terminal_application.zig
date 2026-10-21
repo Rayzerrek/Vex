@@ -242,6 +242,7 @@ pub const TerminalApplication = struct {
     pub fn onCursorActivity(self: *TerminalApplication, active: bool) void {
         if (self.health == .failed or self.cursor_window_active == active) return;
         self.cursor_window_active = active;
+        if (!active) for (self.sessions.items) |session| session.cancelApplicationCopy();
         self.cursor_blink.synchronize(null, self.cursorNowMs());
         self.syncAnimationWake() catch |err| {
             self.fail(err);
@@ -285,6 +286,7 @@ pub const TerminalApplication = struct {
         platform.setChromePalette(t.chromePalette());
         for (self.sessions.items) |session| {
             try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
+            try session.terminal.setColorScheme(t.is_dark);
         }
         platform.invalidateWindow();
     }
@@ -359,6 +361,7 @@ pub const TerminalApplication = struct {
         const current = self.currentTheme();
         const target = if (current.is_dark) self.last_light_theme else self.last_dark_theme;
         try self.applyTheme(target);
+        if (self.overlay != .theme_picker) try self.commitPreferences(self.currentPreferences());
     }
     pub fn findSession(self: *TerminalApplication, id: panes.PaneId) ?*TerminalSession {
         for (self.sessions.items) |session| if (session.id == id) return session;
@@ -438,6 +441,7 @@ pub const TerminalApplication = struct {
         errdefer session.destroy(self.allocator);
         const t = self.currentTheme();
         try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
+        try session.terminal.setColorScheme(t.is_dark);
         self.sessions.appendAssumeCapacity(session);
         return session;
     }
@@ -517,6 +521,7 @@ pub const TerminalApplication = struct {
         };
         const model = if (self.model) |*model| model else return false;
         const visible = model.activeTab().tree.containsPane(id);
+        session.deferCopyFeedback();
         const attention = session.terminal.program_status.takeAttention();
         session.needs_attention = !visible and (session.needs_attention or attention);
         const title_changed = previous_title != session.terminal.title.generation;
@@ -553,6 +558,14 @@ pub const TerminalApplication = struct {
         if (self.overlay == .tab_peek) return chrome_changed or overlays.peekContainsPane(self, id);
         return true;
     }
+    pub fn onClipboard(self: *TerminalApplication, token: u32, text: []const u8) void {
+        if (self.health == .failed or !self.cursor_window_active or self.overlay != .none or self.editing_tab != null) return;
+        const session = self.activeSession() orelse return;
+        if (token != 0 and token != @intFromEnum(session.id)) return;
+        if (token == 0 and !session.copy_source.acceptsUnattributed(std.time.milliTimestamp(), text)) return;
+        session.queueCopyFeedback(text);
+    }
+
     pub fn onTick(self: *TerminalApplication) void {
         if (self.health == .failed) return;
         if (self.startup_preferences == .warning_pending) {
@@ -566,6 +579,11 @@ pub const TerminalApplication = struct {
         };
         const now = std.time.milliTimestamp();
         var any_changed = false;
+        const active = self.activeSession();
+        for (self.sessions.items) |session| {
+            const visible = active == session and self.cursor_window_active and self.overlay == .none and self.editing_tab == null;
+            if (session.finishCopyFeedback(self.cursorNowMs(), visible)) any_changed = true;
+        }
         for (self.placements.items) |placement| {
             if (self.findSession(placement.id)) |session| {
                 if (now - session.last_icon_probe_ms >= 200) {

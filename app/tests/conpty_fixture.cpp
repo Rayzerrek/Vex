@@ -21,6 +21,38 @@ int child(const char* scenario) {
     const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode;
     if (!GetConsoleMode(output, &mode) || !SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) return 1;
+    if (!strcmp(scenario, "appearance-light") || !strcmp(scenario, "appearance-dark")) {
+        const bool dark = !strcmp(scenario, "appearance-dark");
+        const char* screen = dark
+            ? "\x1b[?1049h\x1b[48;2;24;24;24m\x1b[38;2;230;230;230m\x1b[2J\x1b[HStatic RGB palette - no theme protocol\r\n\x1b[38;2;220;70;70mRED  \x1b[38;2;60;180;90mGREEN  \x1b[38;2;80;110;230mBLUE\r\n\x1b[38;2;230;230;230mThe application keeps its original colors."
+            : "\x1b[?1049h\x1b[48;2;250;250;250m\x1b[38;2;32;32;32m\x1b[2J\x1b[HStatic RGB palette - no theme protocol\r\n\x1b[38;2;180;40;40mRED  \x1b[38;2;30;130;50mGREEN  \x1b[38;2;50;70;180mBLUE\r\n\x1b[38;2;32;32;32mThe application keeps its original colors.";
+        DWORD written;
+        if (!WriteFile(output, screen, (DWORD)strlen(screen), &written, nullptr)) return 22;
+        Sleep(30000);
+        return 0;
+    }
+    if (!strcmp(scenario, "color-scheme")) {
+        const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD inputMode;
+        if (!GetConsoleMode(input, &inputMode) || !SetConsoleMode(input,
+            (inputMode | ENABLE_VIRTUAL_TERMINAL_INPUT) & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))) return 17;
+        const char* report = "\x1b[?2031$p\x1b[?2031h\x1b[?996nCOLOR_SCHEME_PROBE";
+        DWORD written;
+        if (!WriteFile(output, report, (DWORD)strlen(report), &written, nullptr)) return 2;
+        const char* expected = "\x1b[?997;1n";
+        char reply[32] = {};
+        DWORD total = 0;
+        while (total < strlen(expected)) {
+            DWORD length;
+            if (!ReadFile(input, reply + total, (DWORD)strlen(expected) - total, &length, nullptr) || !length) return 18;
+            total += length;
+        }
+        if (memcmp(reply, expected, strlen(expected))) return 19;
+        const char* success = "COLOR_SCHEME_REPLY_OK";
+        if (!WriteFile(output, success, (DWORD)strlen(success), &written, nullptr)) return 20;
+        Sleep(250);
+        return 0;
+    }
     const char* history = "OLD_PROMPT\r\nROW_1\r\nROW_2\r\nROW_3\r\nROW_4\r\nROW_5\r\n";
     DWORD written;
     if (!WriteFile(output, history, (DWORD)strlen(history), &written, nullptr)) return 2;
@@ -40,7 +72,7 @@ int child(const char* scenario) {
 int main(int argc, char** argv) {
     if (argc == 3 && !strcmp(argv[1], "--child")) return child(argv[2]);
     if (argc != 2) return 4;
-    if (strcmp(argv[1], "all") && strcmp(argv[1], "screen") && strcmp(argv[1], "history") && strcmp(argv[1], "alternate")) return 5;
+    if (strcmp(argv[1], "all") && strcmp(argv[1], "screen") && strcmp(argv[1], "history") && strcmp(argv[1], "alternate") && strcmp(argv[1], "color-scheme")) return 5;
     VexConptyApi api = {};
     if (api.load()) return 6;
     HANDLE inputRead = nullptr, inputWrite = nullptr, outputRead = nullptr, outputWrite = nullptr;
@@ -72,6 +104,13 @@ int main(int argc, char** argv) {
     free(attributes);
     DWORD exitCode = 14;
     if (created) {
+        if (!strcmp(argv[1], "color-scheme")) {
+            // Let the child enable raw VT input before sending a host notification.
+            Sleep(500);
+            const char* report = "\x1b[?997;1n";
+            DWORD written;
+            if (!WriteFile(inputWrite, report, (DWORD)strlen(report), &written, nullptr)) return 21;
+        }
         if (WaitForSingleObject(process.hProcess, 15000) != WAIT_OBJECT_0) {
             TerminateProcess(process.hProcess, 15);
             WaitForSingleObject(process.hProcess, INFINITE);
