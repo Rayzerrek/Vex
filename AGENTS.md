@@ -38,7 +38,7 @@ local WSL ZIP packaging does not need .NET. See `app/README.md`.
 - Use Node.js 24 and the pnpm version pinned in `web/package.json`.
 - Install dependencies with `pnpm --dir web install --frozen-lockfile`.
 - Checks: `pnpm --dir web run check` and `pnpm --dir web run build`.
-  Use `pnpm --dir web exec vp` for Vite+ commands; no global `vp` is needed.
+  Use the scripts in `web/package.json`; no globally installed build tools are needed.
 
 ## Conventions
 

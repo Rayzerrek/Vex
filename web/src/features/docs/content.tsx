@@ -86,6 +86,7 @@ function Shortcuts({
 
 const configExample = `-- %LOCALAPPDATA%\\Vex\\init.lua
 vex.config.theme = "Vex Obsidian"
+vex.config.appearance = "theme" -- or "dark" / "light"
 vex.config.font_family = "Cascadia Mono"
 vex.config.font_size = 14
 vex.config.cursor_blink = true
@@ -146,6 +147,13 @@ const pages: PageContent[] = [
                 ]
               ]}
             />
+            <p>
+              Vex 2.0 replaces the WPF application. Older packages named{" "}
+              <code>Vex-&lt;version&gt;</code> use <code>Vex.App.exe</code>.
+              Back up old settings before upgrading: JSON preferences and
+              sessions are not imported. See{" "}
+              <a href="/docs/workspace#persistence">what is saved</a>.
+            </p>
             <Note>
               <p>
                 <strong>Keep the extracted files together.</strong> The package
@@ -388,10 +396,12 @@ const pages: PageContent[] = [
             <Note>
               <p>
                 <strong>Saving through Settings replaces init.lua.</strong> The
-                UI writes preferences atomically, but does not preserve your
-                comments, functions, or module imports. Back up hand-written Lua
-                before saving through the UI. Adding a custom shell uses a
-                separate file and does not replace your preferences.
+                UI first saves the exact previous source to{" "}
+                <code>init.backup.lua</code>, then writes preferences
+                atomically. The new file does not preserve comments, functions
+                or module imports. This is one rotating backup, not a history;
+                keep a separate copy of hand-written Lua. Identical saves leave
+                the backup untouched. Adding a shell uses a separate file.
               </p>
             </Note>
           </>
@@ -417,9 +427,14 @@ const pages: PageContent[] = [
                   "An exact built-in theme name from Theme Studio."
                 ],
                 [
+                  <code key="appearance">appearance</code>,
+                  "theme",
+                  "theme (infer from the selected theme), dark, or light."
+                ],
+                [
                   <code key="family">font_family</code>,
                   "Cascadia Mono",
-                  "A nonempty installed font family name."
+                  "A nonempty font family name."
                 ],
                 [
                   <code key="size">font_size</code>,
@@ -452,8 +467,11 @@ const pages: PageContent[] = [
               ]}
             />
             <p>
-              Shell changes apply to new tabs and splits. Existing processes
-              keep their launch settings.
+              Explicit dark/light appearance takes precedence. If the selected
+              theme belongs to the opposite collection, Vex uses Vex Obsidian or
+              Vex Alabaster respectively. UI saves include the current mode.
+              Shell changes apply to new tabs and splits, not existing
+              processes.
             </p>
           </>
         )
@@ -472,7 +490,9 @@ const pages: PageContent[] = [
               A failed reload keeps the previous valid settings and reports the
               Lua source and line in a nonblocking notification. A startup error
               uses defaults instead. Vex never rewrites a file to repair an
-              error.
+              error. Failed saves or backups roll live preferences back without
+              closing sessions; the previous source remains available for
+              recovery.
             </p>
             <p>
               There is no background Lua execution or file polling.
@@ -512,9 +532,8 @@ const pages: PageContent[] = [
             />
             <Note>
               <p>
-                Configuration is local user code, not a security sandbox for
-                untrusted scripts. Rex keybindings, callbacks, and server APIs
-                are not implemented by Vex’s Lua configuration.
+                Configuration is trusted local code, not a security sandbox for
+                untrusted scripts. Modules are not rewritten by Settings.
               </p>
             </Note>
           </>
@@ -528,7 +547,10 @@ const pages: PageContent[] = [
             <p>
               Close Vex and rename <code>init.lua</code> to keep a backup. If
               you use <code>VEX_CONFIG</code>, rename that file instead. The
-              next launch uses defaults.
+              next launch uses defaults. To recover the previous source instead,
+              copy <code>init.backup.lua</code> over <code>init.lua</code> while
+              Vex is closed. With <code>VEX_CONFIG</code>, the backup is{" "}
+              <code>&lt;name&gt;.backup.lua</code> beside your chosen file.
             </p>
             <p>
               Custom profiles live in the adjacent <code>init.shells.lua</code>{" "}
@@ -578,6 +600,34 @@ const pages: PageContent[] = [
             <CodeBlock language="Lua">
               {'vex.config.theme = "Vex Tidal"'}
             </CodeBlock>
+          </>
+        )
+      },
+      {
+        id: "terminal-colors",
+        title: "Terminal application colors",
+        body: (
+          <>
+            <p>
+              Changing the host theme refreshes idle terminal colors and clears
+              application palette overrides. Vex answers color-scheme queries
+              and notifies applications subscribed to mode 2031. Applications
+              must support this protocol and allow automatic theme selection;
+              Vex does not edit their configuration files.
+            </p>
+            <p>
+              For applications that keep an opposite light/dark palette, Vex can
+              adapt displayed RGB colors when a dominant neutral background is
+              detected. It preserves syntax hues and relative surface levels.
+              Matching palettes, isolated accents, saturated backgrounds and
+              frames without a majority surface are left alone.
+            </p>
+            <p>
+              A further contrast pass improves low-contrast text toward a 4.5:1
+              ratio, excluding identical colors and block/Powerline graphics.
+              These are rendering adjustments: original terminal colors remain
+              intact, so switching back is reversible, including tab previews.
+            </p>
           </>
         )
       },
@@ -807,8 +857,9 @@ const pages: PageContent[] = [
           <>
             <p>
               Press <Key>Ctrl+Shift+F</Key> at the terminal cursor. Type to
-              fuzzy-search the files and folders directly in the current
-              directory. Inserting a path does not execute the command.
+              fuzzy-search files and folders below the current directory.
+              Indexing runs recursively on a background worker; queries match
+              the retained index. Inserting a path does not execute the command.
             </p>
             <Shortcuts
               caption="Path navigation"
@@ -835,16 +886,18 @@ const pages: PageContent[] = [
             <p>
               Paths use the shell’s quoting and drive syntax, with bracketed
               paste when supported. Full-screen applications receive raw paths.
-              The starting directory uses reported shell directory information
-              when available, otherwise the pane’s launch directory.
+              The starting directory comes from the last valid OSC 7 directory
+              report, otherwise the pane’s launch directory. Vex does not infer
+              directories from prompt text.
             </p>
             <Note>
               <p>
-                <strong>Local, not recursive.</strong> Search indexes immediate
-                entries in the Windows filesystem, not Linux or remote files.
-                WSL and Git Bash can receive translated paths to Windows files.
-                Navigate into folders explicitly; the picker does not walk their
-                descendants.
+                <strong>Bounded recursive search.</strong> Scans stop at 16,384
+                entries or 8 MiB of indexed names. Build output and dependency
+                folders are not excluded, so narrow the directory if results are
+                truncated. Indexing uses Windows filesystem access, including
+                paths exposed by the pane’s WSL distribution; it does not browse
+                an SSH host’s filesystem.
               </p>
             </Note>
           </>
@@ -885,6 +938,27 @@ const pages: PageContent[] = [
               live shell cursor within one logical line, including soft-wrapped
               rows. Selections in scrollback, across hard newlines, or beyond
               the cursor do not turn terminal output into editable text.
+            </p>
+          </>
+        )
+      },
+      {
+        id: "copy-feedback",
+        title: "Clipboard and copy feedback",
+        body: (
+          <>
+            <p>
+              Copies highlight the visible source with a brief sweep. Cuts,
+              whitespace-only copies and disabled system animations do not
+              animate. Application-managed copies can also animate when Vex can
+              match unchanged source text in the focused pane; detection is
+              best-effort, not proof that an application copied rather than cut.
+            </p>
+            <p>
+              OSC 52 and OSC 1337 clipboard writes are supported without a
+              separate confirmation. Output from remote commands can therefore
+              replace clipboard text. Clipboard read/query access is not
+              enabled.
             </p>
           </>
         )
@@ -1118,7 +1192,7 @@ const pages: PageContent[] = [
 ];
 
 // Navigation and article anchors share one source of truth.
-// oxlint-disable-next-line react/only-export-components -- Shared static document metadata.
+// eslint-disable-next-line react-refresh/only-export-components -- Shared static document metadata.
 export const docsPages: DocPage[] = pages.map(
   ({ slug, title, group, description, sections }) => ({
     slug,

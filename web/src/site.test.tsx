@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DocContent, docsPages } from "./features/docs/content";
 import { render, staticPages } from "./entry-server";
@@ -39,6 +39,28 @@ describe("documentation", () => {
           ).toBe(true);
       }
     }
+  });
+
+  it("documents appearance, configuration backups and clipboard trust", () => {
+    const configuration = render("/docs/configuration");
+    expect(configuration).toContain("vex.config.appearance");
+    expect(configuration).toContain("init.backup.lua");
+    expect(configuration).toContain("one rotating backup, not a history");
+    expect(configuration).toContain("&lt;name&gt;.backup.lua");
+    expect(render("/docs/appearance")).toContain('id="terminal-colors"');
+    expect(render("/docs/shortcuts")).toContain(
+      "Clipboard read/query access is not enabled."
+    );
+  });
+
+  it("documents the bounded recursive path index", () => {
+    const shortcuts = render("/docs/shortcuts");
+    expect(shortcuts).toContain("Bounded recursive search.");
+    expect(shortcuts).toContain("16,384");
+    expect(shortcuts).toContain("8 MiB");
+    expect(shortcuts).toContain("OSC 7");
+    expect(shortcuts).not.toContain("Local, not recursive.");
+    expect(shortcuts).not.toContain("100,000");
   });
 
   it("documents native packaging and the absence of legacy workspace persistence", () => {

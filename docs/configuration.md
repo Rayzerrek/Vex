@@ -1,43 +1,49 @@
 # Configuration
 
-The native application reads `%LOCALAPPDATA%\Vex\init.lua`. Set `VEX_CONFIG` to
-an absolute path to use a different file. A missing file is normal; Vex runs
-with defaults until settings are saved.
+Vex reads `%LOCALAPPDATA%\Vex\init.lua`, or the absolute file path in
+`VEX_CONFIG`. A missing file uses defaults without creating anything.
 
 ```lua
 vex.config.theme = "Vex Obsidian"
-vex.config.appearance = "dark" -- "light" or "theme" are also supported
+vex.config.appearance = "theme" -- infer from theme; or "dark" / "light"
 vex.config.font_family = "Cascadia Mono"
-vex.config.font_size = 14
+vex.config.font_size = 14 -- integer, 9–32
 vex.config.cursor_blink = true
 vex.config.copy_on_select = true
 vex.config.confirm_close = true
 vex.config.default_shell = "startup"
 ```
 
-`appearance` is optional and defaults to `"theme"`, inferring the mode from the
-named theme. Explicit `"dark"` / `"light"` overrides a theme from the opposite
-collection with the default theme for that mode. UI saves record both the theme
-and its current appearance.
+Use exact theme names from Theme Studio. Shell IDs are `startup`, `cmd`,
+`powershell`, `pwsh`, `nu`, `gitbash`, `wsl`, or a saved `custom:<id>`.
+`startup` respects the CLI launch choice; changes affect new tabs/splits only.
+Explicit appearance overrides an incompatible theme with that mode's default.
+Unknown keys and invalid values are errors.
 
-Use **Configuration: Reload init.lua** in the command palette to reload without
-restarting. Failed reloads retain the previous valid settings and report an
-error in a nonmodal toast. Saving preferences through the UI replaces the
-configuration file with the current values, first atomically saving its previous
-contents to `init.backup.lua` (or `<custom-name>.backup.lua` for `VEX_CONFIG`).
-Identical saves leave the backup untouched. This is a single previous-version
-backup, not a history: copy hand-written Lua elsewhere if you want to retain it
-across multiple changed saves. Modules are not modified. If backup/save fails,
-the GUI returns to the last committed preferences and running sessions remain open.
+## Save and reload
 
-Custom shell profiles are managed separately in the adjacent shells Lua file;
-adding a shell does not rewrite hand-written `init.lua` configuration.
+- **Configuration: Reload init.lua** in the command palette reloads preferences
+  and profiles. Failed reloads retain the last valid values; startup errors use
+  defaults and report diagnostics.
+- Settings replaces `init.lua` atomically after saving its exact previous source
+  to `init.backup.lua`. This single backup rotates on changed saves; identical
+  saves preserve it. Keep a separate copy of hand-written Lua for longer history.
+- Failed backup/save rolls live preferences back; running sessions remain open.
+- Modules are untouched. There is no file polling or background Lua execution.
 
-See the application guide for the full references:
+Custom profiles live in `init.shells.lua` beside preferences. Add them through
+**Settings → General → Add custom shell…**; adding a profile never rewrites
+`init.lua`. Settings regenerates the managed profile file, so its comments and
+expressions are not preserved. Custom configuration paths use
+`<name>.backup.lua` and `<name>.shells.lua` companions.
 
-- [Lua settings, limits and reload behavior](../app/README.md#lua-configuration)
-- [Custom shells and Windows/WSL launch behavior](../app/README.md#custom-shells)
-- [Shell selection and keyboard controls](../app/README.md#shells-and-controls)
+## Lua limits
 
-The previous WPF JSON configuration and session formats are not the current
-application's configuration API. Their documentation remains in Git history.
+Lua 5.4.8 supports expressions, functions and local `require` modules.
+Evaluation is limited to 64 KiB per source file, 8 MiB VM memory and roughly
+one million instructions. Process/IO/debug/coroutine, native-module,
+dynamic-loader and protected-call APIs are unavailable. This is local user
+configuration, not an untrusted-code sandbox.
+
+See the [website guides](../web/README.md) for detailed settings and recovery
+steps. Legacy JSON settings are not read; see [migration notes](releases/2.0.0.md).

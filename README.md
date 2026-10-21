@@ -1,74 +1,33 @@
 # Vex
 
-Vex is a native Windows terminal for working with several shells in one place.
-Keep projects in separate tabs, split a tab into panes, and move between your
-editor, development server and command line without juggling terminal windows.
+A native Windows terminal with tabs, split panes and Windows/WSL shells.
+Written in Zig and C/C++, using Win32, ConPTY, libghostty-vt and D3D12.
+No Electron or .NET runtime is required.
 
-Use PowerShell, Command Prompt, Nushell, Git Bash or WSL — whichever is installed
-on your machine. Each terminal session runs independently, so you can work in
-Windows and Linux shells side by side.
+## Install
 
-## A workspace for your command line
+Requires **Windows 10 1809+ or Windows 11, x64**. Install shells and WSL
+separately.
 
-- **Tabs and split panes.** Give each task its own tab, or keep related sessions
-  visible next to each other with horizontal and vertical splits.
-- **Your choice of shell.** Open a tab from the shell picker and choose a default
-  shell for new sessions in Settings.
-- **Commands within reach.** Open the command palette to find actions and their
-  keyboard shortcuts. Use the tab overview to switch between running tasks.
-- **Make it comfortable.** Choose a light or dark theme, set your terminal font
-  and text size, and turn cursor blinking on or off. Preferences save automatically.
+Download from [Releases](https://github.com/Rayzerrek/Vex/releases):
 
-Vex uses Windows' ConPTY for shell sessions, Ghostty's terminal emulation library
-and a GPU-accelerated D3D12 renderer. It is a native desktop application, without
-Electron or a required .NET runtime.
+- `Vex-Native-<version>-win-x64.msi` — Windows installer.
+- `Vex-Native-<version>-win-x64.zip` — extract the entire archive and run
+  `Vex.exe`. Keep the included DLLs and `OpenConsole.exe` beside it.
 
-## Get Vex
+Open the command palette with **Ctrl+Shift+P**, or preferences with **Ctrl+,**.
+Detailed user guides live on the [website](web/README.md).
 
-Download a Windows x64 package from [Releases](https://github.com/Rayzerrek/Vex/releases):
-
-- **Installer** (`Vex-Native-<version>-win-x64.msi`) — installs Vex with Start Menu
-  and desktop shortcuts.
-- **Portable ZIP** (`Vex-Native-<version>-win-x64.zip`) — extract the whole archive
-  into a folder and run `Vex.exe`. Keep the included DLLs and `OpenConsole.exe`
-  beside the executable; shell integration is embedded.
-
-Requires **Windows 10 version 1809 or later, or Windows 11**, on x64.
-Shells and WSL distributions need to be installed separately.
-
-Older packages named `Vex-<version>` and the `Vex.App.exe` executable are from
-Vex's previous WPF implementation, not the current native app.
-
-## Find your way around
-
-Start with a shell, open another tab when you need a separate task, or split the
-current tab to keep two sessions in view. The command palette is a good place to
-find an action without memorizing every shortcut.
-
-| Action | Shortcut |
-| --- | --- |
-| Open command palette | Ctrl+Shift+P |
-| New tab | Ctrl+Shift+T |
-| Close tab | Ctrl+Shift+W |
-| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
-| Split right / down | Ctrl+Shift+R / Ctrl+Shift+D |
-| Choose a theme | Ctrl+Shift+M |
-| Open tab overview | Ctrl+Shift+Space |
-| Complete a path | Ctrl+Shift+F |
+Upgrading from WPF? Read the [native migration notes](docs/releases/2.0.0.md).
+Old `Vex.App.exe` packages and JSON settings are not the current application.
 
 ## Development
 
-The application lives in [`app/`](app/). See the
-[application development guide](app/README.md) for building, running tests,
-command-line shell options and packaging releases. The pinned toolchain supports
-cross-compiling from Linux or WSL; running the application requires Windows.
-
-The website lives in `web/`, architecture and testing guides in `docs/`, and
-CI workflows in `.github/workflows/`. Application dependencies are kept together
-in `app/vendor/`. The previous WPF implementation has been removed; it remains
-available in Git history.
+- [`app/`](app/README.md) — build, run and package the Windows application.
+- [`web/`](web/README.md) — website and detailed user documentation.
+- [`docs/`](docs/README.md) — architecture, configuration and verification.
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License
 
-Vex is licensed under [GPL-3.0](LICENSE). See
-[third-party notices](THIRD-PARTY-NOTICES.md) for Ghostty and other included components.
+[GPL-3.0](LICENSE). See [third-party notices](THIRD-PARTY-NOTICES.md).

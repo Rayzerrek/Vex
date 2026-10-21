@@ -1,56 +1,37 @@
-# Security Policy
+# Security policy
 
-## Supported versions
+Only the latest stable release receives security fixes. Preview builds are for
+testing, not a separate supported release line.
 
-Only the latest release receives security fixes.
+## Report privately
 
-| Version | Supported |
-|---|---|
-| 1.3.x | Yes |
-| < 1.3 | No |
+Use [GitHub private vulnerability reporting](https://github.com/Rayzerrek/Vex/security/advisories/new).
+Do not open a public issue. If unavailable, use the maintainer's email on their
+GitHub profile.
 
-## Reporting a vulnerability
+Include the Vex version, Windows build, impact and reproduction steps or a proof
+of concept. Expect an acknowledgement within a few days; allow time for a fix
+before public disclosure.
 
-Please do **not** open a public issue for a security problem.
+## Trust boundaries
 
-Report it through GitHub's [private vulnerability reporting][advisory] on the
-`Rayzerrek/Vex` repository. If you cannot use that, email the maintainer at the
-address on the GitHub profile.
-
-Include:
-
-- The version shown in Settings → About, and your Windows build.
-- A description of the issue and its impact.
-- Steps to reproduce, or a proof of concept.
-- Any suggested mitigation.
-
-You can expect an acknowledgement within a few days. Please allow time for a
-fix to be released before disclosing the issue publicly.
-
-[advisory]: https://github.com/Rayzerrek/Vex/security/advisories/new
-
-## Scope
-
-Vex starts processes and renders untrusted output, so the areas most worth
-testing are:
-
-- **Escape sequence handling.** `app/vendor/libghostty/ghostty-vt.dll` parses
-  arbitrary bytes from any program running in a pane. A memory-safety bug there
-  is in scope; report it upstream to
+- **Terminal output is untrusted.** Memory-safety and parser failures in Vex or
+  its bundled libghostty-vt are in scope. Report upstream Ghostty bugs to
   [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) as well.
-- **Clipboard access.** A terminal escape sequence must not be able to read or
-  overwrite your clipboard without a visible action by you.
-- **URL handling.** Detected links open through the shell on `Ctrl+Click`;
-  a sequence must not be able to make Vex launch something you did not click.
-- **Process handling.** `Vex.Terminal` reads another process's command line
-  through `ReadProcessMemory` to identify node-shimmed tools. That path must
-  never expose memory from unrelated processes.
-- **Parsing of untrusted files.** `settings.json` and `session.json` are read
-  from disk on startup.
+- **Clipboard writes are supported.** OSC 52 and OSC 1337 can write plain text
+  without a separate confirmation. Clipboard read/query access is not enabled.
+  Treat output from remote commands as capable of replacing clipboard text.
+- **Links require a click.** Detected URLs open through the Windows shell on
+  Ctrl+Click; terminal output must not launch programs by itself.
+- **Process metadata is advisory.** Windows/WSL probes identify pane activity;
+  exposing unrelated process data or crossing session ownership is in scope.
+- **Lua configuration is trusted local code.** `init.lua`, its modules and the
+  companion shell catalog have evaluation limits, but are not an untrusted-code
+  sandbox. Do not load configuration from an untrusted source.
 
 ## Out of scope
 
-- Anything requiring an attacker to already have code execution as your user.
-- Issues that require the user to run a malicious binary deliberately.
-- Denial of service from a program you chose to run in a terminal pane.
-- Reports produced solely by a scanner, without a demonstrated impact.
+- Attacks requiring existing code execution as your user.
+- Deliberately running a malicious executable.
+- Denial of service from a program you chose to run in a pane.
+- Scanner output without a demonstrated impact.

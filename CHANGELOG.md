@@ -1,12 +1,25 @@
 # Changelog
 
-## Unreleased — native application
+## 2.0.0 — unreleased
 
-- Zig/Win32 terminal workspace with ConPTY, libghostty-vt and native D3D12 drawing.
-- Cached terminal geometry and contrast correction; display-paced continuous output.
-- Native ZIP/MSI packaging, independent of the legacy WPF application.
-- Linux/WSL cross-builds, Windows Zig tests and branch-only Actions preview packages.
-- Desktop test tools, benchmarks and implementation reports moved out of the repository.
+- Rewritten in Zig/Win32 with ConPTY, libghostty-vt and D3D12; no .NET runtime.
+- Lua preferences and custom Windows/WSL shells, with atomic saves and backups.
+- Live tab overview, adaptive appearance, copy feedback and pane-local recovery.
+- Linux/WSL cross-builds, Windows tests and verified ZIP/MSI releases.
+- **Breaking:** WPF JSON settings and sessions are not imported. Project grouping,
+  saved layout templates and session restoration are not available.
+  See [migration notes](docs/releases/2.0.0.md).
+
+## 1.7.0 — legacy WPF
+
+- Per-project WSL shell defaults and compact installed-shell pickers.
+- Rounded overlays/popups with refined UI surfaces.
+- Redesigned website and static documentation.
+
+## 1.6.2 — legacy WPF
+
+- Preserved block-graphic colors and removed seams at fractional DPI.
+- Moved program status badges to the right side of tab headers.
 
 ## 1.6.1 — legacy WPF
 

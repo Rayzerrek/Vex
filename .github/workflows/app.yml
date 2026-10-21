@@ -1,4 +1,4 @@
-name: Native Zig
+name: App
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - "flake.lock"
       - "LICENSE"
       - "THIRD-PARTY-NOTICES.md"
-      - ".github/workflows/native.yml"
+      - ".github/workflows/app.yml"
       - ".github/workflows/release.yml"
   pull_request:
     paths:
@@ -18,7 +18,7 @@ on:
       - "flake.lock"
       - "LICENSE"
       - "THIRD-PARTY-NOTICES.md"
-      - ".github/workflows/native.yml"
+      - ".github/workflows/app.yml"
       - ".github/workflows/release.yml"
   workflow_dispatch:
   workflow_call:
@@ -32,18 +32,17 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Cross-build / ${{ matrix.configuration }}
+  checks:
+    name: Portable checks
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration: [Debug, ReleaseSafe]
+    timeout-minutes: 15
+    outputs:
+      zig: ${{ steps.toolchain.outputs.version }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
       - name: Read pinned Zig version
         id: toolchain
         shell: bash
@@ -57,8 +56,32 @@ jobs:
       - name: Check Zig formatting
         working-directory: app
         run: zig fmt --check build.zig src
+      - name: Test portable Zig behavior
+        working-directory: app
+        run: zig build test-portable
       - name: Test portable packaging
         run: python -m unittest discover -s app/tests -p 'test_*.py' -v
+
+  build:
+    name: Cross-build / ${{ matrix.configuration }}
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, ReleaseSafe]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ needs.checks.outputs.zig }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - name: Cross-compile application and tests
         working-directory: app
         env:
@@ -96,7 +119,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force test-results | Out-Null
           & ./native-bin/vex-native-tests.exe 2>&1 | Tee-Object test-results/zig-tests.txt
-          if ($LASTEXITCODE -ne 0) { throw "Native Zig tests failed: $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "Windows tests failed: $LASTEXITCODE" }
       - uses: actions/upload-artifact@v7
         if: always()
         with:

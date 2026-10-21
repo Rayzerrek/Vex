@@ -1,13 +1,14 @@
 # Testing
 
-## Application checks
+## Application
 
-Use the pinned Zig/Python toolchain on Linux/WSL:
+From the repository root on Linux/WSL:
 
 ```sh
 nix develop
 cd app
 zig fmt --check build.zig src
+zig build test-portable
 zig build
 zig build test-build
 python3 -m unittest discover -s tests -p 'test_*.py' -v
@@ -15,106 +16,74 @@ python3 tools/package.py
 python3 tools/package.py --verify
 ```
 
-`zig build test-build` compiles the Zig tests and C++ ConPTY/motion fixtures.
-Most behavior tests are embedded beside the Zig implementation and collected
-through `src/zig/main.zig`; terminal regressions also live in
-`src/zig/terminal/terminal_tests.zig`. Python tests in `app/tests/` exercise
-portable payloads, checksums, versions, preview labels and tampering detection.
+Repeat application/test builds with `-Doptimize=Debug` when changing application
+code. Zig tests live beside implementations and are collected by
+`src/zig/main.zig`; Python tests cover packaging. `test-portable` runs host-side
+snapshot/feed regressions without Windows DLLs.
 
-### Run Windows tests
+On Windows, run `zig build test` from `app/`, in both Debug and ReleaseSafe.
+Alternatively, copy `app/zig-out/bin/` to a local Windows filesystem and run
+`vex-native-tests.exe` with adjacent `ghostty-vt.dll`, `conpty.dll`,
+`OpenConsole.exe` and `vex-conpty-fixture.exe`. UNC-backed temporary directories
+can fail Windows file-locking tests. A Linux cross-build is **not** a Windows test pass.
 
-On a Windows development machine, use `zig build test` from `app/`.
-Alternatively, copy the cross-built `app/zig-out/bin/` directory to Windows and
-run `vex-native-tests.exe`. Keep `ghostty-vt.dll`, `conpty.dll`,
-`OpenConsole.exe` and `vex-conpty-fixture.exe` adjacent to it.
+## Desktop validation
 
-Linux cross-compilation does **not** mean that Windows runtime tests passed.
+Use a real Windows desktop for rendering, mixed DPI, clipboard/TUI behavior,
+tabs/splits, shell selection, overlays and disabled animations. Check both themes.
+Opening tab overview must not resize PTYs. Copy checks should include Unicode,
+blank/wrapped lines, repeated copies, cuts/deletes and background applications.
 
-### Desktop checks
-
-GPU rendering, mixed DPI, Unicode/wide glyphs, clipboard interactions, tabs,
-split panes, shell selection and overlays need a real Windows desktop. Check
-both themes, process exit, cancellation and disabled system animations.
-For tab overview, confirm that opening/closing previews does not resize PTYs.
-Most desktop harnesses and end-to-end benchmarks are local tools, not CI coverage.
-The repository's recovery smoke test runs on an interactive Windows desktop:
+From the repository root on Windows:
 
 ```powershell
 ./app/tools/test-recovery.ps1
 ./app/tools/test-recovery.ps1 -Shell wsl -Distribution NixOS -Cycles 30 -BatchSize 5
-# Optional: -Warp to force software rendering
+# Use your installed distribution; optionally add -Warp for software rendering.
 ```
 
-It uses isolated Lua settings, preserves the clipboard and existing app instances,
-and checks repeated tab creation/teardown, pane-local transport failure, error
-toasts, duplicate/stale events and renderer recovery. It warms the same tab
-concurrency before checking handle growth, verifies that native cleanup drains,
-and injects a delayed close to test the watchdog without blocking the UI. The WSL
-scenario also checks for visible `wsl.exe` error dialogs (not ordinary hidden
-console windows) without dismissing them; it does not terminate the distribution. It is a local desktop test, not hosted CI or a guarantee for every
-WSL/driver version. Headless Windows tests independently cover oversized and
-maximum-size bracketed paste, clipboard contention, failed protocol replies,
-loader errors, settings rollback and exact Lua backups.
-See [app/README.md](../app/README.md) for feature-specific smoke tests.
+The recovery smoke uses isolated settings and checks tab churn, pane-local
+transport failures, stale events, toasts, renderer recovery and delayed teardown.
+It is local interactive coverage, not hosted CI or a guarantee for every driver/WSL version.
 
-### Application copy feedback
+## Performance
 
-`zig test src/zig/app/copy_feedback.zig` runs portable matching/snapshot tests.
-The Windows terminal suite also replays split OSC writes followed by selection
-redraws and deletion; it must be executed with the actual DLL.
+From `app/`, `zig build bench` runs ReleaseSafe CPU microbenchmarks for allocation,
+copy-feedback snapshots and feed filtering. These do not measure ConPTY, VT
+parsing, rendering or end-to-end input latency.
 
-On a Windows desktop, check application-managed copies with both OSC and a native
-Windows clipboard provider, using keyboard mappings and TUI mouse clicks:
-
-- Neovim: visual/line/motion yanks, custom mappings, gutters, wraps and Unicode;
-  deletes/changes/cuts must still update the clipboard without flashing.
-- Codex or another rich-text TUI: copy a long response with only a substantial
-  excerpt visible, including formatting, blank lines and wrapped paragraphs.
-- Repeat identical copies; check another pane, focus loss, paste, resize,
-  whitespace-only/ambiguous text and disabled animations. Copying in another
-  desktop application must not animate Vex's content.
-
-Also select text together with blank lines before/after/between copied lines:
-feedback must skip those blank rows and each line's trailing padding, including
-wide/combining glyphs and copies taller than 64 rows. Content spans are captured
-once per copy and retained; animation frames do not allocate or rescan text.
-
-These are manual checks, not claims of automated application coverage. Clipboard
-operation type is not exposed by OSC or Win32, so detection remains best-effort.
+Set `VEX_NATIVE_METRICS` to an absolute log path before launching on Windows for
+application/font/renderer readiness, first-frame and first-PTY-output timings.
+Times begin inside `main`, not at process creation. Compare alternating matching
+baseline/candidate runs after warmup; report medians and spread.
+See [local performance results](reviews/native-performance.md).
 
 ## Packaging
 
-Portable ZIP staging and verification require only Python. MSI packaging runs
-on Windows with .NET/WiX:
-
-```powershell
-./app/tools/build-installer.ps1
-# Reuse already tested cross-build output:
-./app/tools/build-installer.ps1 -SkipBuild -SkipTests
-```
-
-The script verifies checksums and compares real administratively extracted MSI
-files against staging. Artifacts land in `app/publish/`. Packaging does not
-replace Windows unit tests or desktop smoke tests.
+See [app/README.md](../app/README.md#package) for ZIP/MSI commands. MSI validation
+compares real cabinet extraction with staging; it does not replace installation,
+Windows runtime or desktop checks.
 
 ## Website
 
 ```sh
 pnpm --dir web install --frozen-lockfile
 pnpm --dir web run check
+pnpm --dir web run test
 pnpm --dir web run build
 ```
 
-Check screenshot paths/alt text, navigation and the advertised license by eye.
+Manually check navigation/search, code copying, mobile layout, both themes,
+keyboard access, reduced motion and pages without JavaScript.
 
-## CI
+## CI scope
 
-- `.github/workflows/native.yml`: formatting and packaging tests, Linux
-  Debug/ReleaseSafe cross-builds, then compiled Zig test execution on Windows.
-- `.github/workflows/web.yml`: website checks and production build.
-- `.github/workflows/release.yml`: reuses application CI and packages tested
-  ReleaseSafe output. Stable tags must match `app/VERSION`; preview runs create
-  branch artifacts without publishing a release.
+- [`app.yml`](../.github/workflows/app.yml): formatting, Python/portable Zig tests,
+  Debug/ReleaseSafe cross-builds and compiled Windows tests.
+- [`web.yml`](../.github/workflows/web.yml): formatting, lint, types, unit tests
+  and prerendered production build.
+- [`release.yml`](../.github/workflows/release.yml): application checks followed
+  by verified ZIP/MSI packaging. Preview runs create artifacts only; stable
+  tags must match `app/VERSION`.
 
-The legacy WPF test suite and workflow were removed with the old implementation.
-Historical test descriptions are available in Git history.
+Review reports record individual runs, not ongoing CI coverage.

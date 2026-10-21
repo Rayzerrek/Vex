@@ -2,7 +2,7 @@
 #
 # These settings describe the formatting the repository already uses, so they
 # should not reformat existing files. Code style for the landing page is owned
-# by Vite+ (oxfmt) through web/vite.config.ts, which is authoritative there.
+# by Prettier through web/.prettierrc.json, which is authoritative there.
 root = true
 
 [*]

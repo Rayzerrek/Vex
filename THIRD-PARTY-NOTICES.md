@@ -1,65 +1,41 @@
 # Third-party notices
 
-Vex is distributed under the GNU General Public License v3.0 (see [LICENSE](LICENSE)).
-It bundles or depends on the following third-party components, which remain under
-their own licenses. Full license texts are reproduced below where required.
+Vex is distributed under [GPL-3.0](LICENSE). Included components retain their
+own licenses.
 
-## Bundled binaries
+## Application
 
-### libghostty (ghostty-vt)
+| Component | Files | License / source |
+| --- | --- | --- |
+| libghostty-vt | `app/vendor/libghostty/ghostty-vt.dll`, `app/vendor/include/ghostty/` | MIT — [Ghostty](https://github.com/ghostty-org/ghostty) |
+| Microsoft Windows Console ConPTY 1.24.261001001 | `app/vendor/conpty/conpty.dll`, `OpenConsole.exe` | MIT — [Microsoft Terminal](https://github.com/microsoft/terminal) |
+| Lua 5.4.8 | `app/vendor/lua/src/`, statically linked | MIT — [Lua](https://www.lua.org/ftp/lua-5.4.8.tar.gz) |
 
-- **Files:** `app/vendor/libghostty/ghostty-vt.dll`
-- **Source:** https://github.com/ghostty-org/ghostty
-- **License:** MIT
-- **Copyright:** Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
+Copyright notices:
 
-Used as the VT stream emulator behind `Vex.Libghostty`. The DLL is checked into
-this repository and redistributed unmodified.
+- Ghostty: Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors.
+- ConPTY: Copyright (c) Microsoft Corporation. All rights reserved.
+- Lua: Copyright (c) 1994-2025 Lua.org, PUC-Rio.
 
-### Microsoft Windows Console ConPTY
+The Ghostty DLL and matched ConPTY DLL/host pair are redistributed unmodified.
+See [ConPTY provenance and checksums](app/vendor/conpty/README.md), its
+[license](app/vendor/conpty/LICENSE), and the [Lua license](app/vendor/lua/LICENSE).
+Application icon sources and attribution are listed in
+[app/assets/icons/README.md](app/assets/icons/README.md).
 
-- **Files:** `app/vendor/conpty/conpty.dll`, `app/vendor/conpty/OpenConsole.exe`
-- **Package:** `Microsoft.Windows.Console.ConPTY` 1.24.261001001 (Windows x64)
-- **Source:** https://github.com/microsoft/terminal
-- **License:** MIT
-- **Copyright:** Copyright (c) Microsoft Corporation. All rights reserved.
+## Website
 
-Redistributed unmodified from Microsoft's signed NuGet package. The native app
-uses this matched DLL/host pair instead of the Windows inbox implementation so
-terminal control sequences, including erase-scrollback (ED3), reach its emulator
-on supported Windows versions. See `app/vendor/conpty/README.md` for provenance and
-checksums, and `app/vendor/conpty/LICENSE` for the upstream license.
+| Component | License | Use |
+| --- | --- | --- |
+| react, react-dom | MIT | Website runtime |
+| tailwindcss, @tailwindcss/vite | MIT | Generated CSS and build tooling |
+| vite, vitest, eslint, prettier | MIT | Development/build tooling |
+| IBM Plex Sans, IBM Plex Mono (Fontsource) | SIL OFL-1.1 | Locally bundled web fonts |
 
-## Statically linked native dependencies
-
-### Lua 5.4.8
-
-- **Files:** `app/vendor/lua/src/`, statically linked into Vex Native
-- **Source:** https://www.lua.org/ftp/lua-5.4.8.tar.gz
-- **License:** MIT
-- **Copyright:** Copyright (c) 1994-2025 Lua.org, PUC-Rio.
-
-The unmodified Lua sources power native configuration. The full MIT license is
-reproduced in `app/vendor/lua/LICENSE`; the MIT text below also applies.
-No separately installed Lua runtime is required.
-
-## NuGet dependencies
-
-| Package | License | Used by |
-|---|---|---|
-| Microsoft.NET.Test.Sdk | MIT | `Vex.Libghostty.Tests` |
-| xunit, xunit.core, xunit.runner.visualstudio | Apache-2.0 | `Vex.Libghostty.Tests` |
-
-## npm dependencies
-
-The landing page in `web/` bundles the following runtime dependencies, all MIT:
-
-| Package | License |
-|---|---|
-| react, react-dom | MIT |
-| @tanstack/react-router | MIT |
-| tailwindcss, @tailwindcss/vite | MIT |
-| vite-plus | MIT |
+Font copyright notices and full license texts ship with the website:
+[IBM Plex Sans](web/public/licenses/ibm-plex-sans.txt) and
+[IBM Plex Mono](web/public/licenses/ibm-plex-mono.txt).
+WiX/.NET are installer build tools, not dependencies of the installed application.
 
 ## MIT License
 
@@ -83,23 +59,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-## Apache License 2.0
-
-Applies to xunit and its runner packages. Full text:
-https://www.apache.org/licenses/LICENSE-2.0
-
-```text
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use these files except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 ```
