@@ -1328,6 +1328,42 @@ fn recoveryTestApplication(config_path: []const u8) !TerminalApplication {
     };
 }
 
+test "copy clears selection and rendered highlights while pointer copies preserve multi-click history" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const session = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+    try session.terminal.resize(20, 4, 8, 16);
+    try session.terminal.feedOutput("word rest");
+
+    // Manual copy shortcuts all clear both the logical range and cached highlights.
+    for ([_]struct { key: u32, modifiers: u32 }{
+        .{ .key = 'C', .modifiers = 2 },
+        .{ .key = 'C', .modifiers = 3 },
+        .{ .key = 0x2D, .modifiers = 2 },
+    }) |shortcut| {
+        try session.terminal.setKeyboardSelection(0, 0, 4, 0);
+        try std.testing.expect((try session.terminal.readFrame()).cells.items[0].selected);
+        try std.testing.expect(app.onKey(shortcut.key, shortcut.modifiers));
+        try std.testing.expect(app.health == .running);
+        try std.testing.expect(!try session.terminal.hasSelection());
+        for ((try session.terminal.readFrame()).cells.items) |cell| try std.testing.expect(!cell.selected);
+    }
+
+    // Clearing after an automatic copy must not restart the click counter.
+    try session.terminal.clearSelection(true);
+    _ = try session.terminal.selectionPress(1, 0, 12, 8);
+    try session.terminal.selectionRelease(1, 0);
+    try session.terminal.clearSelection(false);
+    for (2..4) |click_count| {
+        try std.testing.expectEqual(@as(u8, @intCast(click_count)), try session.terminal.selectionPress(1, 0, 12, 8));
+        try session.terminal.selectionRelease(1, 0);
+        try std.testing.expect(try session.copyAndClearSelection(app.allocator, app.cursorNowMs(), false));
+        try std.testing.expect(!try session.terminal.hasSelection());
+        for ((try session.terminal.readFrame()).cells.items) |cell| try std.testing.expect(!cell.selected);
+    }
+}
+
 test "oversized paste rejects atomically without closing the workspace or poisoning subsequent input" {
     var app = try recoveryTestApplication("unused-recovery-test.lua");
     defer app.deinit();

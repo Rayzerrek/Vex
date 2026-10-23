@@ -237,6 +237,13 @@ pub const TerminalSession = struct {
         if (selected.len > 0) try platform.writeClipboardText(selected);
         return true;
     }
+    /// Capture feedback before clearing; pointer copies retain multi-click history.
+    pub fn copyAndClearSelection(self: *TerminalSession, allocator: std.mem.Allocator, now_ms: u64, reset_gesture: bool) !bool {
+        if (!try self.copySelectionToClipboard(allocator)) return false;
+        self.recordCopyFeedback(now_ms);
+        try self.terminal.clearSelection(reset_gesture);
+        return true;
+    }
     /// Snapshots visible selected cell runs so the copy shimmer can animate even after selection clears.
     pub fn recordCopyFeedback(self: *TerminalSession, now_ms: u64) void {
         self.copy_feedback.clear();
