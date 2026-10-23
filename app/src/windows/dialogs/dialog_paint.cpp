@@ -3,6 +3,8 @@
 #include <math.h>
 #include <d2d1.h>
 #include "app_icon_geometry.generated.h"
+#include "icon_contrast.h"
+#include "pi_icon.h"
 
 namespace vex::dialog {
 COLORREF color(uint32_t rgb) { return RGB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255); }
@@ -125,12 +127,22 @@ HBITMAP themeCardImage(const DRAWITEMSTRUCT& draw, const DialogItem& item, bool 
     return image;
 }
 void drawProgramIcon(HDC dc, VexAppIcon icon, RECT bounds) {
-    const COLORREF ink = icon.kind ? color(icon.color_rgb) : color(host.model.palette.text_muted);
-    const COLORREF tile = blend(surfaceColor(), ink, 0.08f);
+    const uint32_t rawInk = icon.kind ? icon.color_rgb : host.model.palette.text_muted;
+    const COLORREF tile = blend(surfaceColor(), color(rawInk), 0.08f);
+    const uint32_t tileRgb = (GetRValue(tile) << 16) | (GetGValue(tile) << 8) | GetBValue(tile);
+    const COLORREF ink = color(contrastingIconColor(rawInk, tileRgb));
     roundedFill(dc, bounds, tile, tile, px(12));
     const float x = (float)bounds.left + px(6), y = (float)bounds.top + px(6);
     const float size = (float)(bounds.right - bounds.left) - px(12);
-    if (icon.kind == 1 && icon.glyph < sizeof(appIconGeometries) / sizeof(appIconGeometries[0]) && appIconGeometries[icon.glyph].figureCount) {
+    if (icon.kind == 1 && icon.glyph == static_cast<uint8_t>(AppIconGlyph::pi)) {
+        Gdiplus::Graphics graphics(dc);
+        for (const auto& block : piIconBlocks) {
+            const COLORREF tint = color(contrastingIconColor(block.color, tileRgb));
+            Gdiplus::SolidBrush brush(Gdiplus::Color(255, GetRValue(tint), GetGValue(tint), GetBValue(tint)));
+            graphics.FillRectangle(&brush, x + block.left * size / 24.0f, y + block.top * size / 24.0f,
+                (block.right - block.left) * size / 24.0f, (block.bottom - block.top) * size / 24.0f);
+        }
+    } else if (icon.kind == 1 && icon.glyph < sizeof(appIconGeometries) / sizeof(appIconGeometries[0]) && appIconGeometries[icon.glyph].figureCount) {
         const auto& geometry = appIconGeometries[icon.glyph];
         Gdiplus::Graphics graphics(dc);
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);

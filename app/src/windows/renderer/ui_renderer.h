@@ -23,7 +23,7 @@ public:
     void FillEllipse(D2D1_ELLIPSE ellipse, const UiBrush* brush);
     void DrawEllipse(D2D1_ELLIPSE ellipse, const UiBrush* brush, float stroke);
     // Brand paths are cached as DPI-specific masks; unknown marks use explicit monograms.
-    void DrawAppIcon(uint8_t glyph, IDWriteTextFormat* badgeFont, D2D1_RECT_F rect, const UiBrush* brush);
+    void DrawAppIcon(uint8_t glyph, IDWriteTextFormat* badgeFont, D2D1_RECT_F rect, const UiBrush* brush, uint32_t background);
     void DrawText(const wchar_t* text, UINT32 length, IDWriteTextFormat* font, D2D1_RECT_F rect, const UiBrush* brush, D2D1_DRAW_TEXT_OPTIONS options);
     void PushAxisAlignedClip(D2D1_RECT_F rect, D2D1_ANTIALIAS_MODE mode);
     void PopAxisAlignedClip();

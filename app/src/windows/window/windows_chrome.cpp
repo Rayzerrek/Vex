@@ -1,5 +1,6 @@
 #include "windows_chrome.h"
 #include "drawing_color.h"
+#include "icon_contrast.h"
 #include "ui_renderer.h"
 #include "terminal_drawing.h"
 #include "chrome_motion.h"
@@ -114,24 +115,25 @@ static void drawAppIconContent(UiRenderer* rt, UiBrush* b, VexAppIcon icon, floa
     };
 
     if (icon.kind == 2 && icon.badge_len > 0 && badgeFont) {
-        b->SetColor(rgb(icon.color_rgb ? icon.color_rgb : 0x5c6bc0));
+        const uint32_t fill = contrastingIconColor(icon.color_rgb, chromePalette.pane_header_bg);
+        b->SetColor(rgb(fill));
         fillBox(1.5f, 1.5f, 22.5f, 22.5f, 5.0f);
         wchar_t wide[5] = {};
         uint8_t count = icon.badge_len > 2 ? 2 : icon.badge_len;
         for (uint8_t i = 0; i < count; i++) wide[i] = (wchar_t)icon.badge[i];
-        b->SetColor(rgb(0xffffff));
+        b->SetColor(rgb(iconContrastRatio(0xffffff, fill) >= iconContrastRatio(0, fill) ? 0xffffff : 0));
         const float textLeft = count == 1 ? ox + sizeDip * 0.27f : ox + sizeDip * 0.12f;
         rt->DrawText(wide, count, badgeFont, D2D1::RectF(textLeft, oy + sizeDip * 0.05f, ox + sizeDip, oy + sizeDip), b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         return;
     }
 
-    b->SetColor(rgb(icon.color_rgb ? icon.color_rgb : 0x8f9197));
+    b->SetColor(rgb(contrastingIconColor(icon.color_rgb, chromePalette.pane_header_bg)));
     if (icon.kind == 0 || icon.glyph == 0) {
         line(4.5f, 7.0f, 10.5f, 12.0f);
         line(10.5f, 12.0f, 4.5f, 17.0f);
         line(12.0f, 17.0f, 19.5f, 17.0f);
     } else {
-        rt->DrawAppIcon(icon.glyph, badgeFont, rc(0, 0, 24, 24), b);
+        rt->DrawAppIcon(icon.glyph, badgeFont, rc(0, 0, 24, 24), b, chromePalette.pane_header_bg);
     }
 }
 

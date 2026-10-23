@@ -16,7 +16,12 @@ source path or Zig icon IDs requires updating that generated snapshot.
 The generator matches paths by slug and orders them by the Zig `GlyphId` enum;
 there is no separately maintained numeric C++ drawing switch. Paths are flattened
 at generation time (0.01 source-unit tolerance), rasterized into the shared glyph
-atlas on cache misses, and reused at the current DPI. Nine entries without a
+atlas on cache misses, and reused at the current DPI. The same monochrome paths
+serve light and dark themes: `icon_contrast.h` adapts the drawing color to the
+actual background when needed to maintain at least 3:1 contrast, without swapping
+icon sets. Pi uses the three-color pixel mark defined in `pi_icon.h`, shared by
+chrome and dialogs; each color follows the same background-contrast rule.
+Nine entries without a
 bundled path have explicit monograms rather than unrelated brand logos.
 
 This remains the existing **73-entry subset**, not a universal Simple Icons

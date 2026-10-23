@@ -1,5 +1,8 @@
 #include "ui_renderer.h"
 #include "app_icon_geometry.generated.h"
+#include "drawing_color.h"
+#include "icon_contrast.h"
+#include "pi_icon.h"
 #include <string.h>
 
 namespace {
@@ -36,7 +39,17 @@ HRESULT paintAppIcon(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, con
 }
 }
 
-void UiRenderer::DrawAppIcon(uint8_t glyph, IDWriteTextFormat* badgeFont, D2D1_RECT_F rect, const UiBrush* brush) {
+void UiRenderer::DrawAppIcon(uint8_t glyph, IDWriteTextFormat* badgeFont, D2D1_RECT_F rect, const UiBrush* brush, uint32_t background) {
+    if (glyph == static_cast<uint8_t>(AppIconGlyph::pi)) {
+        const float sx = (rect.right - rect.left) / 24.0f, sy = (rect.bottom - rect.top) / 24.0f;
+        UiBrush ink;
+        for (const auto& block : piIconBlocks) {
+            ink.SetColor(rgb(contrastingIconColor(block.color, background), colorAlpha(brush->color)));
+            FillRectangle(D2D1::RectF(rect.left + block.left * sx, rect.top + block.top * sy,
+                rect.left + block.right * sx, rect.top + block.bottom * sy), &ink);
+        }
+        return;
+    }
     if (glyph >= sizeof(appIconGeometries) / sizeof(appIconGeometries[0])) { record(E_INVALIDARG); return; }
     const auto& icon = appIconGeometries[glyph];
     if (icon.figureCount == 0) {
