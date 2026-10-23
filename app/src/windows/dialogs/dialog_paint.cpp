@@ -19,10 +19,38 @@ COLORREF fieldColor() { return blend(surfaceColor(), color(host.model.palette.te
 COLORREF selectionColor() { return blend(surfaceColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.44f : 0.20f); }
 int listRowHeight() { return host.model.kind == 9 ? 64 : host.model.kind == 2 ? 32 : 58; }
 int themeRowHeight() {
-    const float available = (host.model.kind == 4 ? host.height - (host.height < 430 ? 198 : 246) : host.height - 170) - 16;
+    const float available = (host.model.kind == 4 ? settingsGeometry(SettingsPage::appearance).gridHeight : host.height - 170) - 16;
     return (int)fmaxf(104, floorf(available / 2));
 }
 int themeColumnWidth() { return (int)floorf((host.width - 32) / 3); }
+int headingSize() { return host.model.kind == 8 || host.model.kind == 4 ? 16 : 20; }
+SettingsGeometry settingsGeometry(SettingsPage page) {
+    SettingsGeometry g = {};
+    g.compact = host.height < 430;
+    g.left = 28; g.right = host.width - 28;
+    g.rowHeight = g.compact ? 46.0f : 60.0f;
+    const float top = g.compact ? 98.0f : 140.0f, headerGap = 28.0f, sectionGap = g.compact ? 14.0f : 24.0f;
+    int rows[2] = {};
+    switch (page) {
+    case SettingsPage::general: g.cardCount = 2; rows[0] = 2; rows[1] = 2; g.headers[0] = L"Sessions"; g.headers[1] = L"Behavior"; break;
+    case SettingsPage::terminal: g.cardCount = 2; rows[0] = 2; rows[1] = 1; g.headers[0] = L"Text"; g.headers[1] = L"Cursor"; break;
+    case SettingsPage::appearance: g.headers[0] = host.model.palette.is_dark ? L"Dark themes" : L"Light themes"; break;
+    case SettingsPage::about: g.cardCount = 1; rows[0] = 3; g.headers[0] = L"Vex"; break;
+    }
+    float y = top;
+    for (int i = 0; i < g.cardCount; ++i) {
+        g.headerY[i] = y;
+        g.cards[i] = { y + headerGap, rows[i] };
+        y += headerGap + rows[i] * g.rowHeight + sectionGap;
+    }
+    if (page == SettingsPage::appearance) {
+        g.headerY[0] = top;
+        g.gridTop = top + headerGap - 2;
+        // The footer hint only has room on full-height dialogs.
+        g.gridHeight = host.height - g.gridTop - (g.compact ? 16.0f : 44.0f);
+    }
+    return g;
+}
 void drawSymbol(HDC dc, const wchar_t* symbol, RECT bounds, COLORREF ink) {
     HGDIOBJ old = SelectObject(dc, host.symbols);
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, ink);
@@ -387,9 +415,12 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     const bool checked = navigation ? (int)host.page == id - firstPageId : id == blinkId ? host.draft.cursor_blink : id == confirmCloseId ? host.draft.confirm_close : id == copyOnSelectId && host.draft.copy_on_select;
     const bool pressed = (draw.itemState & ODS_SELECTED) != 0;
     RECT bounds = draw.rcItem; InflateRect(&bounds, -1, -1);
-    FillRect(draw.hDC, &draw.rcItem, toggle ? host.field : host.background);
+    // Rows and secondary actions sit on a card, so their corners must match the card rather than the window.
+    const bool secondary = id == addShellId;
+    FillRect(draw.hDC, &draw.rcItem, toggle || secondary ? host.field : host.background);
     COLORREF surface = checked || pressed ? fieldColor() : surfaceColor();
-    if (toggle) surface = color(host.model.palette.pane_bg);
+    if (toggle) surface = pressed ? blend(color(host.model.palette.pane_bg), color(host.model.palette.text_primary), 0.05f) : color(host.model.palette.pane_bg);
+    if (secondary) surface = pressed ? selectionColor() : fieldColor();
     COLORREF border = navigation && checked ? color(host.model.palette.border) : surface;
     if (GetFocus() == draw.hwndItem) border = color(host.model.palette.accent);
     const bool primary = id == IDOK;
@@ -400,7 +431,8 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
         border = GetFocus() == draw.hwndItem ? color(host.model.palette.text_primary) : surface;
     }
     if (closing && !primary) border = GetFocus() == draw.hwndItem ? color(host.model.palette.accent) : color(host.model.palette.border);
-    roundedFill(draw.hDC, bounds, surface, border, px(navigation ? 22 : closing ? 12 : 14));
+    // An idle row is the card itself; only press and keyboard focus draw a shape.
+    if (!toggle || pressed || GetFocus() == draw.hwndItem) roundedFill(draw.hDC, bounds, surface, border, px(navigation ? 22 : toggle ? 12 : closing ? 12 : 14));
     if (id == closeId) {
         Gdiplus::Graphics graphics(draw.hDC);
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
@@ -440,10 +472,21 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
         const COLORREF thumb = host.model.palette.is_dark ? RGB(238, 241, 244) : RGB(255, 255, 255);
         Gdiplus::SolidBrush ink(Gdiplus::Color(255, GetRValue(thumb), GetGValue(thumb), GetBValue(thumb)));
         graphics.FillEllipse(&ink, toggle.left + host.scale * (3.0f + 16.0f * position), toggle.top + host.scale * 3.0f, host.scale * 14.0f, host.scale * 14.0f);
-        bounds.right -= px(60);
+        bounds.right = toggle.left - px(16);
+        bounds.left += px(12);
+        const wchar_t* detail = id == blinkId ? L"Blink the cursor while a pane has focus."
+            : id == copyOnSelectId ? L"Copy selected text to the clipboard automatically."
+            : L"Ask before closing panes, tabs or Vex while programs are running.";
+        if (host.height >= 430) {
+            RECT title = { bounds.left, bounds.top + px(6), bounds.right, bounds.top + px(28) };
+            DrawTextW(draw.hDC, label, -1, &title, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+            RECT sub = { bounds.left, bounds.top + px(28), bounds.right, bounds.top + px(48) };
+            SetTextColor(draw.hDC, color(host.model.palette.text_muted));
+            DrawTextW(draw.hDC, detail, -1, &sub, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+            return;
+        }
     }
-    if (toggle) bounds.left += px(12);
-    DrawTextW(draw.hDC, label, -1, &bounds, DT_SINGLELINE | DT_VCENTER | (toggle ? DT_LEFT : DT_CENTER) | DT_NOPREFIX);
+    DrawTextW(draw.hDC, label, -1, &bounds, DT_SINGLELINE | DT_VCENTER | (toggle ? DT_LEFT | DT_END_ELLIPSIS : DT_CENTER) | DT_NOPREFIX);
 
 }
 void drawComboItem(const DRAWITEMSTRUCT& draw) {
@@ -461,17 +504,61 @@ void paintDialogSurface(HDC dc) {
     RECT bounds; GetClientRect(host.window, &bounds);
     FillRect(dc, &bounds, host.background);
     roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(24));
-    if (host.model.kind == 4 && (host.page == SettingsPage::general || host.page == SettingsPage::terminal)) {
-        const bool compact = host.height < 430;
-        const int cardBottom = host.page == SettingsPage::terminal ? 422 - (compact ? 46 : 0) : compact ? 350 : 508;
-        RECT card = { px(28), px(compact ? 176 : 222), bounds.right - px(28), px(cardBottom) };
-        roundedFill(dc, card, color(host.model.palette.pane_bg), color(host.model.palette.pane_bg), px(28));
+    if (host.model.kind == 4) {
+        const auto g = settingsGeometry(host.page);
+        const COLORREF cardFill = color(host.model.palette.pane_bg);
+        const COLORREF hairline = blend(cardFill, color(host.model.palette.border), 0.7f);
+        SetBkMode(dc, TRANSPARENT);
+        for (int i = 0; i < g.cardCount; ++i) {
+            RECT header = { px(g.left + 4), px(g.headerY[i]), px(g.right), px(g.headerY[i] + 22) };
+            HGDIOBJ previous = SelectObject(dc, host.heading);
+            SetTextColor(dc, color(host.model.palette.text_primary));
+            DrawTextW(dc, g.headers[i], -1, &header, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(dc, previous);
+            const auto& card = g.cards[i];
+            RECT body = { px(g.left), px(card.top), px(g.right), px(card.top + card.rows * g.rowHeight) };
+            roundedFill(dc, body, cardFill, hairline, px(16));
+            SetDCBrushColor(dc, hairline);
+            for (int row = 1; row < card.rows; ++row) {
+                const int y = px(card.top + row * g.rowHeight);
+                RECT rule = { px(g.left + 20), y, px(g.right - 20), y + 1 };
+                FillRect(dc, &rule, reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+            }
+        }
+        if (host.page == SettingsPage::appearance) {
+            RECT header = { px(g.left + 4), px(g.headerY[0]), px(g.right), px(g.headerY[0] + 22) };
+            HGDIOBJ previous = SelectObject(dc, host.heading);
+            SetTextColor(dc, color(host.model.palette.text_primary));
+            DrawTextW(dc, g.headers[0], -1, &header, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(dc, previous);
+            SelectObject(dc, host.font);
+            SetTextColor(dc, color(host.model.palette.text_muted));
+            DrawTextW(dc, L"Click a theme to apply it", -1, &header, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        } else if (host.page == SettingsPage::about) {
+            const wchar_t* labels[] = { L"Application", L"Platform", L"Engine" };
+            const wchar_t* values[] = { L"Vex native terminal", L"Windows + WSL", L"ConPTY · libghostty" };
+            SelectObject(dc, host.font);
+            for (int row = 0; row < 3; ++row) {
+                RECT line = { px(g.left + 20), px(g.cards[0].top + row * g.rowHeight), px(g.right - 20), px(g.cards[0].top + (row + 1) * g.rowHeight) };
+                SetTextColor(dc, color(host.model.palette.text_primary));
+                DrawTextW(dc, labels[row], -1, &line, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                SetTextColor(dc, color(host.model.palette.text_muted));
+                DrawTextW(dc, values[row], -1, &line, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+        }
         if (host.page == SettingsPage::terminal) {
             HWND edit = GetDlgItem(host.window, sizeId);
             RECT field; GetWindowRect(edit, &field);
             MapWindowPoints(nullptr, host.window, reinterpret_cast<POINT*>(&field), 2);
             InflateRect(&field, px(8), px(6));
-            roundedFill(dc, field, fieldColor(), color(GetFocus() == edit ? host.model.palette.accent : host.model.palette.border), px(12));
+            const COLORREF warning = host.model.palette.is_dark ? RGB(229, 164, 124) : RGB(155, 75, 40);
+            roundedFill(dc, field, fieldColor(), host.fontSizeInvalid ? warning : color(GetFocus() == edit ? host.model.palette.accent : host.model.palette.border), px(12));
+        }
+        if (!g.compact) {
+            RECT hint = { 0, px(host.height - 34), px(host.width), px(host.height - 12) };
+            SelectObject(dc, host.font);
+            SetTextColor(dc, color(host.model.palette.text_muted));
+            DrawTextW(dc, L"Changes are saved automatically", -1, &hint, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
     }
     if (host.model.kind == 7) {

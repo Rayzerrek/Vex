@@ -4,6 +4,7 @@
 #include "ui_renderer.h"
 #include "terminal_drawing.h"
 #include "chrome_motion.h"
+#include "tab_rename_layout.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -16,6 +17,7 @@ IDWriteTextFormat* chromeFont;
 IDWriteTextFormat* chromeBoldFont;
 IDWriteTextFormat* badgeFont;
 IDWriteTextFormat* paneTitleFont;
+TabRenameLayout tabRenameLayout;
 VexChromePalette chromePalette;
 float tabWidthDip;
 uint32_t tabStripCount;
@@ -23,7 +25,7 @@ int hoveredTabIndex;
 bool hoveredTabClose;
 double chromeTimeMs;
 bool chromeMotionEnabled, chromeMotionPending, chromeEffectsPending;
-ChromeMotion tabSelectionMotion, tabSelectionWidthMotion, tabHoverMotion[8], tabCloseHoverMotion[8];
+ChromeMotion tabSelectionMotion, tabSelectionWidthMotion, tabHoverMotion[8], tabCloseHoverMotion[8], tabEditMotion[8];
 ChromeMotion paneActionHoverMotion[4];
 ChromeMotion splitPreviewRectMotion[4], splitPreviewAlphaMotion;
 ChromeMotion pathOpenMotion, pathRowMotion;
@@ -62,6 +64,7 @@ void beginWindowChromeFrame(const WindowChromeFrame& frame) {
     splitPreviewSeenThisFrame = false;
     pathCompletionSeenLastFrame = pathCompletionSeenThisFrame;
     pathCompletionSeenThisFrame = false;
+    if (chromeFont != frame.normalFont || textFactory != frame.textFactory) tabRenameLayout.clear();
     target = frame.target;
     textFactory = frame.textFactory;
     chromeFont = frame.normalFont;
@@ -261,14 +264,19 @@ extern "C" void vex_draw_tab_strip_background(uint32_t active_index) {
     target->DrawRoundedRectangle(activeRect, brush, 1.0f);
 }
 
-extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool editing, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention) {
+extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTabEdit edit, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention) {
     if (count != tabStripCount || index >= count) return;
     float width = tabWidthDip, x = tabStripLeft + index * (width + 4);
     if (active) activeTabIconCount = icon_count;
     const bool isHovered = (int)index == hoveredTabIndex;
+    if (active && !edit.editing) tabRenameLayout.clear();
+    const float editT = index < 8
+        ? tabEditMotion[index].update(edit.editing ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled && edit.editing)
+        : (edit.editing ? 1.0f : 0.0f);
+    if (index < 8) chromeEffectsPending |= tabEditMotion[index].pending(chromeTimeMs);
     float inset = 8.0f;
     if (width >= 68.0f && icons && icon_count > 0) {
-        const size_t maxVisible = width >= 120.0f ? 3 : 1;
+        const size_t maxVisible = edit.editing ? 1 : (width >= 120.0f ? 3 : 1);
         const size_t visible = icon_count > maxVisible ? maxVisible : icon_count;
         const uint32_t tabBg = active ? chromePalette.active_tab_bg : (isHovered ? chromePalette.inactive_tab_hover_bg : chromePalette.titlebar_bg);
         for (size_t i = 0; i < visible; i++) {
@@ -282,7 +290,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool e
             if (active && i == 0) activeTabIconKey = iconKey;
         }
         inset = 7.0f + 18.0f + (float)(visible - 1) * 10.0f + 5.0f;
-        if (icon_count > visible && width >= 132.0f) {
+        if (!edit.editing && icon_count > visible && width >= 132.0f) {
             const float bx = x + inset - 2.0f;
             const float by = 14.0f;
             brush->SetColor(rgb(chromePalette.pane_header_bg));
@@ -293,35 +301,106 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool e
             inset += 20.0f;
         }
     }
-    const bool hasStatus = status.state >= 2 && status.state <= 5;
+    const bool hasStatus = !edit.editing && status.state >= 2 && status.state <= 5;
     float rightReserve = 24.0f;
     if (hasStatus && width >= 88.0f) {
         drawProgramStatus(status, x + width - 36.0f, 13.0f, 14.0f, true);
         rightReserve = 38.0f;
-    } else if (!active && attention) {
+    } else if (!edit.editing && !active && attention) {
         brush->SetColor(rgb(chromePalette.accent));
         target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + width - 28.0f, 22.0f), 2.5f, 2.5f), brush);
         rightReserve = 34.0f;
     }
-    if (width >= 95.0f) {
+    if (edit.editing && width >= 56.0f) {
         const float textW = fmaxf(0.0f, width - inset - rightReserve);
-        if (editing && textW > 8.0f) {
-            const D2D1_ROUNDED_RECT editBox = D2D1::RoundedRect(D2D1::RectF(x + inset - 3.0f, 10.5f, x + inset + textW + 2.0f, 33.5f), 3.5f, 3.5f);
-            brush->SetColor(rgb(chromePalette.window_bg));
+        if (textW > 8.0f) {
+            const float boxLeft = x + inset - 4.0f;
+            const float boxRight = x + inset + textW + 2.0f;
+            const float boxTop = 9.5f, boxBottom = 34.5f;
+            const D2D1_ROUNDED_RECT glowBox = D2D1::RoundedRect(D2D1::RectF(boxLeft - 1.0f, boxTop - 1.0f, boxRight + 1.0f, boxBottom + 1.0f), 7.0f, 7.0f);
+            brush->SetColor(rgb(chromePalette.accent, (chromePalette.is_dark ? 0.24f : 0.16f) * fmaxf(0.35f, editT)));
+            target->DrawRoundedRectangle(glowBox, brush, 2.0f);
+
+            const D2D1_ROUNDED_RECT editBox = D2D1::RoundedRect(D2D1::RectF(boxLeft, boxTop, boxRight, boxBottom), 6.0f, 6.0f);
+            const uint32_t fieldBg = blendRgb(chromePalette.window_bg, chromePalette.pane_bg, chromePalette.is_dark ? 0.35f : 0.55f);
+            brush->SetColor(rgb(fieldBg));
             target->FillRoundedRectangle(editBox, brush);
-            brush->SetColor(rgb(chromePalette.accent));
-            target->DrawRoundedRectangle(editBox, brush, 1.1f);
-            if (title && title_length > 0 && title_length <= 256) {
+            brush->SetColor(rgb(blendRgb(chromePalette.active_tab_border, chromePalette.accent, 0.85f), chromePalette.is_dark ? 0.92f : 0.85f));
+            target->DrawRoundedRectangle(editBox, brush, 1.15f);
+
+            const float innerLeft = boxLeft + 6.0f;
+            const float innerRight = boxRight - 6.0f;
+            const float innerW = fmaxf(0.0f, innerRight - innerLeft);
+            if (innerW > 2.0f) {
+                target->PushAxisAlignedClip(D2D1::RectF(boxLeft + 2.0f, boxTop + 1.0f, boxRight - 2.0f, boxBottom - 1.0f), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
                 wchar_t text[257];
-                int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(title), (int)title_length, text, 256);
+                const int count = (title && title_length > 0 && title_length <= 256)
+                    ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(title), (int)title_length, text, 256)
+                    : 0;
                 if (count > 0) {
                     text[count] = 0;
-                    label(text, x + inset, 13.0f, textW, chromePalette.text_primary);
+                    const size_t cursorBytes = edit.cursor <= title_length ? edit.cursor : title_length;
+                    const int cursorWide = cursorBytes > 0
+                        ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(title), (int)cursorBytes, nullptr, 0)
+                        : 0;
+                    float textAdv = innerW;
+                    float caretX = innerW;
+                    if (textFactory && chromeFont) {
+                        if (IDWriteTextLayout* layout = tabRenameLayout.get(textFactory, chromeFont, text, (UINT32)count)) {
+                            DWRITE_TEXT_METRICS metrics = {};
+                            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                                textAdv = metrics.widthIncludingTrailingWhitespace;
+                            }
+                            FLOAT hx = 0.0f, hy = 0.0f;
+                            DWRITE_HIT_TEST_METRICS htm = {};
+                            const UINT32 targetPos = (UINT32)(cursorWide >= 0 && cursorWide <= count ? cursorWide : count);
+                            if (SUCCEEDED(layout->HitTestTextPosition(targetPos, FALSE, &hx, &hy, &htm))) {
+                                caretX = hx;
+                            } else {
+                                caretX = textAdv;
+                            }
+                        }
+                    }
+                    if (edit.select_all) {
+                        const float selW = fminf(innerW, fmaxf(4.0f, textAdv));
+                        const D2D1_ROUNDED_RECT selPill = D2D1::RoundedRect(D2D1::RectF(innerLeft - 2.0f, 12.5f, innerLeft + selW + 2.0f, 31.5f), 3.5f, 3.5f);
+                        const uint32_t selFill = blendRgb(fieldBg, chromePalette.accent, chromePalette.is_dark ? 0.38f : 0.22f);
+                        brush->SetColor(rgb(selFill));
+                        target->FillRoundedRectangle(selPill, brush);
+                        brush->SetColor(rgb(chromePalette.accent, chromePalette.is_dark ? 0.52f : 0.34f));
+                        target->DrawRoundedRectangle(selPill, brush, 1.0f);
+                        label(text, innerLeft, 13.0f, innerW, chromePalette.text_primary);
+                    } else {
+                        const float scrollX = caretX > innerW - 2.0f ? (caretX - (innerW - 2.0f)) : 0.0f;
+                        const float drawW = fmaxf(innerW + scrollX + 8.0f, textAdv + 8.0f);
+                        label(text, innerLeft - scrollX, 13.0f, drawW, chromePalette.text_primary);
+                        const float cx = fminf(innerRight - 0.5f, fmaxf(innerLeft, innerLeft + caretX - scrollX));
+                        brush->SetColor(rgb(chromePalette.accent));
+                        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 0.75f, 14.0f, cx + 0.75f, 30.0f), 0.75f, 0.75f), brush);
+                    }
+                } else {
+                    brush->SetColor(rgb(chromePalette.accent));
+                    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(innerLeft - 0.75f, 14.0f, innerLeft + 0.75f, 30.0f), 0.75f, 0.75f), brush);
+                    const float placeholderW = fmaxf(0.0f, innerW - 4.0f);
+                    if (placeholderW > 4.0f) {
+                        wchar_t placeholder[257];
+                        const int pCount = (edit.placeholder && edit.placeholder_length > 0 && edit.placeholder_length <= 256)
+                            ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(edit.placeholder), (int)edit.placeholder_length, placeholder, 256)
+                            : 0;
+                        if (pCount > 0) {
+                            placeholder[pCount] = 0;
+                            labelWithFont(chromeFont, placeholder, innerLeft + 3.5f, 13.0f, placeholderW, chromePalette.text_muted, 0.58f);
+                        } else {
+                            labelWithFont(chromeFont, shellName, innerLeft + 3.5f, 13.0f, placeholderW, chromePalette.text_muted, 0.58f);
+                        }
+                    }
                 }
+                target->PopAxisAlignedClip();
             }
-        } else {
-            labelUtf8OrDefault(title, title_length, x + inset, 13.0f, textW, active ? chromePalette.text_primary : chromePalette.text_muted);
         }
+    } else if (width >= 95.0f) {
+        const float textW = fmaxf(0.0f, width - inset - rightReserve);
+        labelUtf8OrDefault(title, title_length, x + inset, 13.0f, textW, active ? chromePalette.text_primary : chromePalette.text_muted);
     } else if (width < 68.0f) {
         wchar_t number[12]; swprintf(number, 12, L"%u", index + 1);
         label(number, x + 8.0f, 13.0f, fmaxf(0.0f, width - 22.0f), active ? chromePalette.text_primary : chromePalette.text_muted);

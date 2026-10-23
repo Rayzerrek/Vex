@@ -297,10 +297,12 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                     self.commitTabRename();
                     return .normal;
                 }
-                if (self.editing_tab) |edit| {
-                    if (edit.tab_id != model.tabs.items[hit.index].id) {
-                        self.commitTabRename();
+                if (self.editing_tab) |*edit| {
+                    if (edit.tab_id == model.tabs.items[hit.index].id) {
+                        if (edit.moveEnd()) platform.invalidateWindow();
+                        return .normal;
                     }
+                    self.commitTabRename();
                 }
                 try self.applyAction(.select_tab, @intCast(hit.index));
                 var drag: TabDrag = .none;

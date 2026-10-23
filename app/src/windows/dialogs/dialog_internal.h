@@ -7,10 +7,12 @@
 // Private shared state for the dialog host, controls and painting implementation.
 namespace vex::dialog {
 constexpr int titleId = 100, descriptionId = 101, queryId = 102, listId = 103;
-constexpr int fontId = 116, fontLabelId = 117, addShellId = 118, confirmCloseId = 119, confirmCloseDetailId = 120;
+constexpr int fontId = 116, fontLabelId = 117, addShellId = 118, confirmCloseId = 119;
 constexpr int shellNameId = 201, shellProgramId = 202, shellArgumentsId = 203, shellBrowseId = 204, shellErrorId = 205;
 constexpr int sizeId = 111, blinkId = 112, shellId = 113, copyOnSelectId = 114, themeGridId = 115;
-constexpr int pageTitleId = 104, pageDetailId = 105, closeId = 125, firstPageId = 130;
+constexpr int closeId = 125, firstPageId = 130;
+constexpr int fontSizeLabelId = 121, shellLabelId = 122, shellDetailId = 123, fontSizeDetailId = 126;
+constexpr int customShellLabelId = 140, customShellDetailId = 141, fontDetailId = 142;
 enum class SettingsPage { general, appearance, terminal, about };
 constexpr size_t itemLimit = 64, shellLimit = 64;
 struct DialogItem {
@@ -45,7 +47,7 @@ struct DialogHost {
     HBRUSH background, field;
     uint64_t themeCardPaintCount = 0, dialogPaintCount = 0, surfacePaintCount = 0;
     enum class Phase { closed, creating, active, closing } phase = Phase::closed;
-    bool synchronizing = false;
+    bool synchronizing = false, fontSizeInvalid = false;
     DialogMotion motion;
     ChromeMotion cursorBlinkMotion, copyOnSelectMotion, confirmCloseMotion;
     uint32_t pendingEvent = 0, pendingValue = 0;
@@ -69,6 +71,19 @@ COLORREF selectionColor();
 int listRowHeight();
 int themeRowHeight();
 int themeColumnWidth();
+int headingSize();
+// Settings pages are built from titled cards of equal-height rows; one description drives painting and child placement.
+struct SettingsCard { float top; int rows; };
+struct SettingsGeometry {
+    bool compact;
+    float left, right, rowHeight, gridTop, gridHeight, headerY[2];
+    SettingsCard cards[2];
+    int cardCount;
+    const wchar_t* headers[2];
+};
+SettingsGeometry settingsGeometry(SettingsPage page);
+bool settingsRect(int id, float& x, float& y, float& width, float& height);
+HFONT controlFont(int id);
 void roundedFill(HDC dc, RECT bounds, COLORREF fill, COLORREF border, int diameter);
 void drawSymbol(HDC dc, const wchar_t* symbol, RECT bounds, COLORREF ink);
 void drawListItem(const DRAWITEMSTRUCT& draw);

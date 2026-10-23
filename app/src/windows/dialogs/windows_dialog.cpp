@@ -149,6 +149,16 @@ bool navigateCommandList(WPARAM key) {
     if (value >= 0 && (uint64_t)value <= UINT32_MAX) notify(2, (uint32_t)value);
     return true;
 }
+void setFontSizeInvalid(bool invalid) {
+    if (host.fontSizeInvalid == invalid) return;
+    host.fontSizeInvalid = invalid;
+    SetDlgItemTextW(host.window, fontSizeDetailId, invalid ? L"Enter a size between 9 and 32 pt" : L"Terminal text size · 9–32 pt");
+    // The field frame belongs to the dialog surface, so the surface must repaint to change its border.
+    RECT field; GetWindowRect(GetDlgItem(host.window, sizeId), &field);
+    MapWindowPoints(nullptr, host.window, reinterpret_cast<POINT*>(&field), 2);
+    InflateRect(&field, px(8), px(6));
+    InvalidateRect(host.window, &field, FALSE);
+}
 void applySettingsFontSize(bool restoreInvalid) {
     BOOL valid = FALSE;
     const UINT size = GetDlgItemInt(host.window, sizeId, &valid, FALSE);
@@ -159,10 +169,10 @@ void applySettingsFontSize(bool restoreInvalid) {
             SetDlgItemTextW(host.window, sizeId, text);
             host.synchronizing = false;
         }
-        if (host.page == SettingsPage::terminal) SetDlgItemTextW(host.window, pageDetailId, L"Enter a font size between 9 and 32.");
+        setFontSizeInvalid(!restoreInvalid);
         return;
     }
-    if (host.page == SettingsPage::terminal) SetDlgItemTextW(host.window, pageDetailId, L"Font size and cursor behavior.");
+    setFontSizeInvalid(false);
     if (size != host.draft.font_size) {
         host.draft.font_size = size;
         notify(4, 0, nullptr, 0, host.draft);
@@ -277,7 +287,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
         SetWindowTextW(window, host.model.title);
         host.scale = GetDpiForWindow(host.owner) / 96.0f;
         host.font = CreateFontW(-px(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        host.heading = CreateFontW(-px(host.model.kind == 8 ? 16 : 20), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        host.heading = CreateFontW(-px(headingSize()), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         host.symbols = CreateFontW(-px(22), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
         host.background = CreateSolidBrush(surfaceColor());
         host.field = CreateSolidBrush(color(host.model.palette.pane_bg));
@@ -485,9 +495,10 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
     case WM_CTLCOLORSTATIC: case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX: {
         HDC dc = reinterpret_cast<HDC>(wparam);
         const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
-        const bool muted = id == descriptionId || id == pageDetailId || id == 123 || id == 126 || id == 213 || id == confirmCloseDetailId;
-        SetTextColor(dc, id == shellErrorId ? (host.model.palette.is_dark ? RGB(229, 164, 124) : RGB(155, 75, 40)) : color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
-        const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == 121 || id == 122 || id == 123 || id == 126 || id == confirmCloseDetailId);
+        const bool muted = id == descriptionId || id == shellDetailId || id == customShellDetailId || id == fontDetailId || id == fontSizeDetailId || id == 213;
+        SetTextColor(dc, id == shellErrorId || (id == fontSizeDetailId && host.fontSizeInvalid) ? (host.model.palette.is_dark ? RGB(229, 164, 124) : RGB(155, 75, 40)) : color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
+        const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == fontDetailId || id == fontSizeLabelId || id == fontSizeDetailId ||
+        id == shellLabelId || id == shellDetailId || id == customShellLabelId || id == customShellDetailId);
         if (id == queryId || id == sizeId || id == shellNameId || id == shellProgramId || id == shellArgumentsId) {
             SetBkColor(dc, fieldColor());
             SetDCBrushColor(dc, fieldColor());
@@ -558,6 +569,7 @@ void repositionTerminalDialogs() {
     float scale = GetDpiForWindow(host.owner) / 96.0f;
     if (!isfinite(scale) || scale <= 0) return;
     const bool dpiChanged = host.scale != scale;
+    const bool wasCompact = host.height < 430;
     host.scale = scale;
     host.width = fminf(dialogWidth(), (owner.right - owner.left) / scale - 32);
     host.height = fminf(dialogHeight(), (owner.bottom - owner.top) / scale - 40);
@@ -579,7 +591,7 @@ void repositionTerminalDialogs() {
     HFONT oldFont = nullptr, oldHeading = nullptr, oldSymbols = nullptr;
     if (dpiChanged) {
         HFONT font = CreateFontW(-px(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        HFONT heading = CreateFontW(-px(host.model.kind == 8 ? 16 : 20), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        HFONT heading = CreateFontW(-px(headingSize()), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         HFONT symbols = CreateFontW(-px(22), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
         if (font && heading && symbols) { oldFont = host.font; oldHeading = host.heading; oldSymbols = host.symbols; host.font = font; host.heading = heading; host.symbols = symbols; }
         else { if (font) DeleteObject(font); if (heading) DeleteObject(heading); if (symbols) DeleteObject(symbols); }
@@ -588,29 +600,16 @@ void repositionTerminalDialogs() {
     HRGN rounded = CreateRoundRectRgn(0, 0, px(host.width) + 1, px(host.height) + 1, px(24), px(24));
     if (rounded && !SetWindowRgn(host.window, rounded, FALSE)) DeleteObject(rounded);
     const float dx = host.width - host.baseWidth, dy = host.height - host.baseHeight;
-    const bool compact = host.model.kind == 4 && host.height < 430;
     for (size_t i = 0; i < host.controlCount; ++i) {
         const auto& c = host.controls[i];
         const int id = GetDlgCtrlID(c.window);
         float x = c.x, y = c.y, w = c.width, h = c.height;
-        if (id >= firstPageId && id < firstPageId + 4) x += dx / 2;
-        else if (id == IDOK || id == IDCANCEL || id == closeId || id == sizeId || id == shellId || id == fontId || id == shellBrowseId) x += dx;
-        else if (w > host.baseWidth * 0.5f) w += dx;
-        if (id == IDOK || id == IDCANCEL) y += dy;
-        if (id == listId || id == themeGridId) h += dy;
-        if (id == 123 || id == 126) w = fminf(w, host.width - 350);
-        if (compact) {
-            if (id >= firstPageId && id < firstPageId + 4) { y = 44; h = 44; }
-            if (id == pageTitleId || id == pageDetailId || id == 121 || id == 122 || id == 123 || id == 126 || id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == blinkId || id == copyOnSelectId || id == addShellId) y -= 46;
-            if (id == pageDetailId) h = 30;
-            if (id == themeGridId) { y = 174; h = host.height - 198; }
-            if (id == 122) y = 178;
-            if (id == shellId) y = 176;
-            if (id == addShellId) y = 220;
-            if (id == copyOnSelectId) { y = 264; h = 36; }
-            if (id == confirmCloseId) { y = 306; h = 36; }
+        if (!settingsRect(id, x, y, w, h)) {
+            if (id == IDOK || id == IDCANCEL || id == closeId || id == shellBrowseId) x += dx;
+            else if (w > host.baseWidth * 0.5f) w += dx;
+            if (id == IDOK || id == IDCANCEL) y += dy;
+            if (id == listId) h += dy;
         }
-        if (id == confirmCloseDetailId || id == 123) setPageControlVisibility(id, host.page == SettingsPage::general && !compact);
         if (id == listId && host.model.kind != 1) {
             const int rowPixels = px(listRowHeight());
             const int rows = px(h) / rowPixels;
@@ -634,7 +633,7 @@ void repositionTerminalDialogs() {
             if (id == closeId) x = host.width - 42;
         }
         MoveWindow(c.window, px(x), px(y), px(fmaxf(w, 1)), px(fmaxf(h, 1)), FALSE);
-        if (oldFont) SendMessageW(c.window, WM_SETFONT, reinterpret_cast<WPARAM>(id == pageTitleId || (id == titleId && host.model.kind != 4) ? host.heading : host.font), FALSE);
+        if (oldFont) SendMessageW(c.window, WM_SETFONT, reinterpret_cast<WPARAM>(controlFont(id)), FALSE);
         if (id == listId || id == themeGridId) {
             SendMessageW(c.window, LB_SETITEMHEIGHT, 0, px(host.model.kind == 1 || id == themeGridId ? themeRowHeight() : listRowHeight()));
             if (host.model.kind == 1 || id == themeGridId) SendMessageW(c.window, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0);
@@ -647,6 +646,8 @@ void repositionTerminalDialogs() {
     if (oldFont) DeleteObject(oldFont);
     if (oldHeading) DeleteObject(oldHeading);
     if (oldSymbols) DeleteObject(oldSymbols);
+    // Crossing the compact threshold changes which row descriptions have room to show.
+    if (host.model.kind == 4 && wasCompact != (host.height < 430)) showPage(host.page);
     host.layoutReady = true;
     RedrawWindow(host.window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE);
 }
@@ -709,6 +710,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
                 wchar_t text[8]; swprintf(text, 8, L"%u", host.draft.font_size);
                 SetDlgItemTextW(host.window, sizeId, text);
             }
+            setFontSizeInvalid(false);
             uint32_t selectedShell;
             if (!comboSelection(shellId, selectedShell) || selectedShell != host.draft.shell)
                 fillCombo(GetDlgItem(host.window, shellId), host.model.shells, host.model.shellCount, host.draft.shell);
@@ -760,6 +762,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     host.confirmCloseMotion = {};
     host.confirmCloseMotion.update(host.draft.confirm_close ? 1.0f : 0.0f, GetTickCount64(), false);
     host.page = SettingsPage::general;
+    host.fontSizeInvalid = false;
     host.layoutReady = false;
     host.phase = DialogHost::Phase::creating;
     host.previousFocus = GetFocus();

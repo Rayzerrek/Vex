@@ -398,7 +398,11 @@ pub const TerminalApplication = struct {
         _ = model.selectTab(index);
         const tab = model.tabs.items[index];
         const active_session = self.findSession(tab.active_pane) orelse return;
-        const initial = tab.customTitle() orelse active_session.displayTitle();
+        const reported = if (self.tabProgramStatus(tab.tree.root)) |presentation|
+            status_presentation.statusTitle(presentation.summary, active_session.displayTitle())
+        else |_|
+            active_session.displayTitle();
+        const initial = tab.customTitle() orelse reported;
         self.editing_tab = keyboard.TabRename.init(tab.id, initial);
         platform.invalidateWindow();
     }
@@ -407,7 +411,12 @@ pub const TerminalApplication = struct {
         self.editing_tab = null;
         const model = if (self.model) |*model| model else return;
         if (model.tabIndex(edit.tab_id)) |idx| {
-            model.tabs.items[idx].setCustomTitle(edit.buf[0..edit.len]);
+            const raw = edit.buf[0..edit.len];
+            if (std.mem.trim(u8, raw, " \t\r\n").len == 0) {
+                model.tabs.items[idx].clearCustomTitle();
+            } else {
+                model.tabs.items[idx].setCustomTitle(raw);
+            }
         }
         platform.invalidateWindow();
     }
@@ -1559,4 +1568,33 @@ test "GUI and Lua stay synchronized, malformed reloads and failed saves retain c
     defer app.allocator.free(source);
     try std.testing.expectEqualStrings("vex.config.font_size = ", source);
     try std.testing.expect(app.health == .running);
+}
+
+test "tab rename edits displayed title with cursor navigation and clearing resets custom title" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const session = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+    try session.terminal.feedOutput("\x1b]7501;state=working:title=QnVpbGQgcGlwZWxpbmU=\x07");
+
+    app.onAction(.rename_tab, 0);
+    try std.testing.expect(app.editing_tab != null);
+    try std.testing.expect(app.editing_tab.?.select_all);
+    try std.testing.expectEqualStrings("Build pipeline", app.editing_tab.?.slice());
+
+    // Collapse selection to start with Left arrow, insert prefix, then commit with Enter.
+    try std.testing.expect(app.onKey(0x25, 0));
+    try std.testing.expect(!app.editing_tab.?.select_all);
+    app.onText("CI: ");
+    try std.testing.expect(app.onKey(0x0D, 0));
+    try std.testing.expect(app.editing_tab == null);
+    try std.testing.expectEqualStrings("CI: Build pipeline", app.model.?.activeTab().customTitle().?);
+
+    // Reopen rename, clear text with Backspace while all-selected, and commit to restore automatic title.
+    app.onAction(.rename_tab, 0);
+    try std.testing.expect(app.editing_tab.?.select_all);
+    try std.testing.expect(app.onKey(0x08, 0));
+    try std.testing.expectEqualStrings("", app.editing_tab.?.slice());
+    try std.testing.expect(app.onKey(0x0D, 0));
+    try std.testing.expectEqual(@as(?[]const u8, null), app.model.?.activeTab().customTitle());
 }

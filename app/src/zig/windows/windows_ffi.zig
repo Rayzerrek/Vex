@@ -474,7 +474,39 @@ pub fn shellEnvironment(allocator: std.mem.Allocator) !std.process.EnvMap {
     }
     return environment;
 }
-/// Publishes validated UTF-8 text to the system clipboard; transient lock contention is ignored by the bridge.
+test "clipboard lock contention is reported instead of acknowledging a lost copy or cut" {
+    const ClipboardLock = struct {
+        const native = @cImport({
+            @cInclude("windows.h");
+        });
+
+        ready: std.Thread.ResetEvent = .{},
+        release: std.Thread.ResetEvent = .{},
+        acquired: bool = false,
+
+        fn hold(self: *@This()) void {
+            const window = native.CreateWindowExW(0, std.unicode.utf8ToUtf16LeStringLiteral("STATIC"), null, 0, 0, 0, 1, 1, null, null, null, null);
+            defer if (window != null) {
+                _ = native.DestroyWindow(window);
+            };
+            self.acquired = window != null and native.OpenClipboard(window) != 0;
+            self.ready.set();
+            self.release.wait();
+            if (self.acquired) _ = native.CloseClipboard();
+        }
+    };
+    var lock: ClipboardLock = .{};
+    const thread = try std.Thread.spawn(.{}, ClipboardLock.hold, .{&lock});
+    defer {
+        lock.release.set();
+        thread.join();
+    }
+    lock.ready.wait();
+    if (!lock.acquired) return error.SkipZigTest;
+    try std.testing.expectError(error.ClipboardWriteFailed, writeClipboardText("keep this tab name"));
+}
+
+/// Publishes validated UTF-8 text; callers retain their source text when the clipboard is busy or fails.
 pub fn writeClipboardText(text: []const u8) !void {
     if (text.len == 0 or std.mem.indexOfScalar(u8, text, 0) != null or !std.unicode.utf8ValidateSlice(text)) return error.InvalidClipboardText;
     if (c.vex_clipboard_write(text.ptr, text.len) != 0) return error.ClipboardWriteFailed;
@@ -555,15 +587,49 @@ pub fn showFailure(err: anyerror) void {
     const message = std.fmt.bufPrintZ(&buffer, "Vex native rewrite failed: {s}", .{@errorName(err)}) catch "Vex native rewrite failed";
     c.vex_window_error(message);
 }
+/// Borrowed UTF-8 tab rename state; the cursor is a byte offset at a codepoint boundary.
+pub const TabEdit = struct {
+    text: []const u8,
+    placeholder: []const u8,
+    cursor: u8,
+    select_all: bool,
+};
+
+test "tab rename reuses DirectWrite layout across repaints and invalidates changed text and fonts" {
+    const allocator = std.testing.allocator;
+    const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(executable_directory);
+    const fixture = try std.fs.path.join(allocator, &.{ executable_directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "tab-rename-layout" }, .max_output_bytes = 4096 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
 /// Tab index/count come from the bounded workspace model; empty title falls back to the shell display name.
-pub fn drawTab(index: usize, count: usize, active: bool, editing: bool, title: []const u8, icons: []const app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32, attention: bool) void {
+pub fn drawTab(index: usize, count: usize, active: bool, edit: ?TabEdit, title: []const u8, icons: []const app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32, attention: bool) void {
     var native_icons: [8]c.VexAppIcon = undefined;
     const icon_count: usize = @min(icons.len, native_icons.len);
     for (icons[0..icon_count], 0..) |icon, idx| {
         native_icons[idx] = nativeAppIcon(icon);
     }
     const icons_ptr: [*c]const c.VexAppIcon = if (icon_count == 0) null else &native_icons;
-    c.vex_draw_tab(@intCast(index), @intCast(count), active, editing, if (title.len == 0) null else title.ptr, title.len, icons_ptr, icon_count, nativeProgramStatus(summary, phase), attention);
+    const display = if (edit) |e| e.text else title;
+    const native_edit: c.VexTabEdit = if (edit) |e| .{
+        .editing = true,
+        .select_all = e.select_all,
+        .cursor = e.cursor,
+        .placeholder = if (e.placeholder.len == 0) null else e.placeholder.ptr,
+        .placeholder_length = e.placeholder.len,
+    } else .{
+        .editing = false,
+        .select_all = false,
+        .cursor = 0,
+        .placeholder = null,
+        .placeholder_length = 0,
+    };
+    c.vex_draw_tab(@intCast(index), @intCast(count), active, native_edit, if (display.len == 0) null else display.ptr, display.len, icons_ptr, icon_count, nativeProgramStatus(summary, phase), attention);
 }
 pub fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
     var badge = [4]u8{ 0, 0, 0, 0 };

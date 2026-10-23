@@ -77,10 +77,12 @@ pub fn build(b: *std.Build) void {
     addWindowsIncludePaths(b, fixture_module);
     fixture_module.addCSourceFile(.{ .file = b.path("tests/conpty_fixture.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/chrome_motion.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/tab_rename_layout.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/terminal_cell_glyph.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/wsl_probe_schedule.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_conpty.cpp"), .flags = native_flags });
     fixture_module.linkSystemLibrary("kernel32", .{});
+    fixture_module.linkSystemLibrary("dwrite", .{});
     const fixture = b.addExecutable(.{ .name = "vex-conpty-fixture", .root_module = fixture_module });
     const install_fixture = b.addInstallArtifact(fixture, .{});
     const test_build = b.step("test-build", "Compile native tests without running Windows tools");

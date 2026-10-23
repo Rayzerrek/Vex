@@ -72,8 +72,11 @@ int child(const char* scenario) {
 }
 }
 
+int testTabRenameLayout();
+
 // Headless transport fixture: the Zig tests feed stdout through the real terminal parser.
 int main(int argc, char** argv) {
+    if (argc == 2 && !strcmp(argv[1], "tab-rename-layout")) return testTabRenameLayout();
     if (argc == 3 && !strcmp(argv[1], "--child")) return child(argv[2]);
     if (argc != 2) return 4;
     if (strcmp(argv[1], "all") && strcmp(argv[1], "screen") && strcmp(argv[1], "history") && strcmp(argv[1], "alternate") && strcmp(argv[1], "color-scheme")) return 5;

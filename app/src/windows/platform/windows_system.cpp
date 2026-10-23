@@ -62,10 +62,19 @@ extern "C" int vex_clipboard_write(const uint8_t* bytes, size_t length) {
     GlobalUnlock(memory);
     if (written != units) { GlobalFree(memory); return ERROR_NO_UNICODE_TRANSLATION; }
     const HWND window = vex_native_window();
-    if (!OpenClipboard(IsWindow(window) ? window : nullptr)) { GlobalFree(memory); return 0; }
-    if (!EmptyClipboard() || !SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
+    if (!OpenClipboard(IsWindow(window) ? window : nullptr)) {
+        const DWORD error = GetLastError();
+        GlobalFree(memory);
+        return (int)(error ? error : ERROR_ACCESS_DENIED);
+    }
+    DWORD error = ERROR_SUCCESS;
+    if (!EmptyClipboard() || !SetClipboardData(CF_UNICODETEXT, memory)) {
+        error = GetLastError();
+        if (!error) error = ERROR_WRITE_FAULT;
+        GlobalFree(memory);
+    }
     CloseClipboard();
-    return 0;
+    return (int)error;
 }
 
 extern "C" void* vex_terminal_symbol(const char* name) {

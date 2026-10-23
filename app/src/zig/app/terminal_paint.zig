@@ -21,11 +21,18 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
             tab_icons[0] = active_session.icon;
             icon_count = 1;
         }
-        const is_editing = if (self.editing_tab) |edit| edit.tab_id == tab.id else false;
         const reported_title = status_presentation.statusTitle(presentation.summary, active_session.displayTitle());
         const default_title = tab.customTitle() orelse reported_title;
-        const tab_title = if (self.editing_tab) |*edit| (if (edit.tab_id == tab.id) edit.buf[0..edit.len] else default_title) else default_title;
-        platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, is_editing, tab_title, tab_icons[0..icon_count], presentation.summary, self.status_pulse.phaseIndex(), presentation.attention);
+        const tab_edit: ?platform.TabEdit = if (self.editing_tab) |*edit|
+            (if (edit.tab_id == tab.id) .{
+                .text = edit.slice(),
+                .placeholder = reported_title,
+                .cursor = edit.cursor,
+                .select_all = edit.select_all,
+            } else null)
+        else
+            null;
+        platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, tab_edit, default_title, tab_icons[0..icon_count], presentation.summary, self.status_pulse.phaseIndex(), presentation.attention);
     }
     if (self.pointer_drag == .tab) {
         const metrics = self.metrics orelse return;

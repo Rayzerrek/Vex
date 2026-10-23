@@ -36,23 +36,49 @@ pub fn onKey(self: *Application, key: u32, modifiers: u32) bool {
             self.cancelTabRename();
             return true;
         }
-        if (key == 0x08 or key == 0x2E) {
-            if (edit.select_all or (modifiers & 2) != 0) {
-                edit.len = 0;
-                edit.select_all = false;
-            } else if (edit.len > 0) {
-                var idx: u8 = edit.len - 1;
-                while (idx > 0 and (edit.buf[idx] & 0xC0) == 0x80) : (idx -= 1) {}
-                edit.len = idx;
-            }
-            platform.invalidateWindow();
+        if (key == 0x08) {
+            if (edit.deleteBackward((modifiers & 2) != 0)) platform.invalidateWindow();
+            return true;
+        }
+        if (key == 0x2E) {
+            if (edit.deleteForward((modifiers & 2) != 0)) platform.invalidateWindow();
+            return true;
+        }
+        if (key == 0x25) {
+            if (edit.moveLeft((modifiers & 2) != 0)) platform.invalidateWindow();
+            return true;
+        }
+        if (key == 0x27) {
+            if (edit.moveRight((modifiers & 2) != 0)) platform.invalidateWindow();
+            return true;
+        }
+        if (key == 0x24) {
+            if (edit.moveHome()) platform.invalidateWindow();
+            return true;
+        }
+        if (key == 0x23) {
+            if (edit.moveEnd()) platform.invalidateWindow();
+            return true;
+        }
+        if (modifiers == 2 and key == 'A') {
+            if (edit.selectAll()) platform.invalidateWindow();
+            return true;
+        }
+        if (modifiers == 2 and key == 'V') {
+            platform.pasteClipboard();
+            return true;
+        }
+        if (modifiers == 2 and (key == 'C' or key == 'X') and edit.select_all and edit.len > 0) {
+            platform.writeClipboardText(edit.slice()) catch |err| {
+                self.fail(err);
+                return true;
+            };
+            if (key == 'X' and edit.deleteBackward(false)) platform.invalidateWindow();
             return true;
         }
         if ((modifiers & 6) == 0 and key >= 0x20 and !(key >= 0x21 and key <= 0x28) and !(key >= 0x70 and key <= 0x87)) {
             return false;
         }
-        edit.select_all = false;
-        platform.invalidateWindow();
         return true;
     }
     if (platform.workspaceShortcut(key, modifiers)) |action| {

@@ -1,6 +1,15 @@
 # Changelog
 
-## 2.0.0 — unreleased
+## 2.0.1
+
+- Inline tab renaming with UTF-8 cursor navigation, word deletion, clipboard shortcuts and automatic-title reset.
+- Settings grouped into labeled cards, with shared compact layout and inline font-size validation.
+- Reuse tab rename text layouts and avoid redundant settings-page refreshes and invisible exit animations.
+- Preserve tab names when clipboard writes fail; reject control characters in pasted names.
+- Improve application icon contrast and soften TUI highlights across theme changes.
+- Clear terminal selection after copying.
+
+## 2.0.0
 
 - Rewritten in Zig/Win32 with ConPTY, libghostty-vt and D3D12; no .NET runtime.
 - Lua preferences and custom Windows/WSL shells, with atomic saves and backups.

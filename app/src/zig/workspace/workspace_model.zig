@@ -27,6 +27,11 @@ pub const WorkspaceTab = struct {
         @memcpy(self.custom_title[0..limit], trimmed[0..limit]);
         self.custom_title_len = @intCast(limit);
     }
+
+    /// Clears any user-assigned tab name so dynamic terminal or status titles resume.
+    pub fn clearCustomTitle(self: *WorkspaceTab) void {
+        self.custom_title_len = 0;
+    }
 };
 
 /// Result of applying a process exit to its owning tab; stale tokens never target a replacement pane.

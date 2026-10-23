@@ -29,6 +29,12 @@ typedef struct {
 typedef struct {
     uint16_t row, start_col, end_col;
 } VexCopySpan;
+typedef struct {
+    bool editing, select_all;
+    uint8_t cursor;
+    const uint8_t* placeholder;
+    size_t placeholder_length;
+} VexTabEdit;
 /* Borrowed UTF-16 strings exclude sentinel lengths; environment includes its final double NUL. */
 typedef struct {
     const uint16_t* program; size_t program_length;
@@ -146,7 +152,7 @@ bool vex_pty_wsl_snapshot(VexPty* session, uint8_t* bytes, size_t capacity, size
 bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length);
 void vex_pty_ack_output(uint32_t token);
 bool vex_pty_exists(uint32_t token);
-void vex_draw_tab(uint32_t index, uint32_t count, bool active, bool editing, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention);
+void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTabEdit edit, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention);
 void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status);
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity);

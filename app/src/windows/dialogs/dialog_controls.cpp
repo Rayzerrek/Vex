@@ -495,11 +495,12 @@ LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARA
     }
     return result;
 }
+HFONT controlFont(int id) { return id == titleId ? host.heading : host.font; }
 HWND control(const wchar_t* klass, const wchar_t* text, DWORD style, int id, float x, float y, float width, float height) {
     if (host.controlCount >= 40) return nullptr;
     HWND result = CreateWindowExW(0, klass, text, WS_CHILD | WS_VISIBLE | style, px(x), px(y), px(width), px(height), host.window, reinterpret_cast<HMENU>((INT_PTR)id), GetModuleHandleW(nullptr), nullptr);
     if (!result) return nullptr;
-    SendMessageW(result, WM_SETFONT, reinterpret_cast<WPARAM>(id == pageTitleId || (id == titleId && host.model.kind != 4) ? host.heading : host.font), FALSE);
+    SendMessageW(result, WM_SETFONT, reinterpret_cast<WPARAM>(controlFont(id)), FALSE);
     const bool edit = wcscmp(klass, L"EDIT") == 0, list = wcscmp(klass, L"LISTBOX") == 0;
     const bool button = wcscmp(klass, L"BUTTON") == 0, combo = wcscmp(klass, L"COMBOBOX") == 0;
     if (edit && !SetWindowSubclass(result, selectableText, 1, 0)) { DestroyWindow(result); return nullptr; }
@@ -606,7 +607,52 @@ float dialogHeight() {
         const size_t rows = host.model.count > shellLimit ? shellLimit : host.model.count;
         return 120.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
     }
-    return host.model.kind == 8 ? 184.0f : host.model.kind == 6 ? 208.0f : host.model.kind == 4 ? 620.0f : 520.0f;
+    return host.model.kind == 8 ? 184.0f : host.model.kind == 6 ? 208.0f : host.model.kind == 4 ? 580.0f : 520.0f;
+}
+bool settingsRect(int id, float& x, float& y, float& w, float& h) {
+    if (host.model.kind != 4) return false;
+    const auto general = settingsGeometry(SettingsPage::general);
+    const auto terminal = settingsGeometry(SettingsPage::terminal);
+    const auto appearance = settingsGeometry(SettingsPage::appearance);
+    const bool compact = general.compact;
+    const float rowHeight = general.rowHeight, inner = 20;
+    const auto rowTop = [&](const SettingsGeometry& g, int card, int row) { return g.cards[card].top + (float)row * rowHeight; };
+    // Labels end before the row's trailing control so long translations or fonts never overlap it.
+    const auto label = [&](const SettingsGeometry& g, int card, int row, float trailingWidth, bool detail) {
+        x = g.left + inner; w = g.right - inner - trailingWidth - 16 - x;
+        y = rowTop(g, card, row) + (compact ? (rowHeight - 22) / 2 : detail ? 31.0f : 10.0f);
+        h = detail ? 20.0f : 22.0f;
+    };
+    const auto trailing = [&](const SettingsGeometry& g, int card, int row, float width, float height, float closed, float reserve) {
+        w = width; h = height; x = g.right - inner - reserve - width; y = rowTop(g, card, row) + (rowHeight - closed) / 2;
+    };
+    // Toggle rows keep a gutter so their hit area never paints over the card's rounded corners or dividers.
+    const auto toggle = [&](const SettingsGeometry& g, int card, int row) {
+        x = g.left + 8; y = rowTop(g, card, row) + 4; w = g.right - g.left - 16; h = rowHeight - 8;
+    };
+    if (id >= firstPageId && id < firstPageId + 4) { x = (host.width - 448) / 2 + (float)(id - firstPageId) * 112; y = compact ? 44.0f : 56.0f; w = 108; h = compact ? 44.0f : 68.0f; return true; }
+    switch (id) {
+    case titleId: x = 120; y = compact ? 12.0f : 18.0f; w = host.width - 240; h = 28; return true;
+    case closeId: x = host.width - 42; y = 12; w = 28; h = 28; return true;
+    case themeGridId: x = 16; y = appearance.gridTop; w = host.width - 32; h = appearance.gridHeight; return true;
+    case shellLabelId: label(general, 0, 0, 248, false); return true;
+    case shellDetailId: label(general, 0, 0, 248, true); return true;
+    case shellId: trailing(general, 0, 0, 248, 220, 30, 0); return true;
+    case customShellLabelId: label(general, 0, 1, 168, false); return true;
+    case customShellDetailId: label(general, 0, 1, 168, true); return true;
+    case addShellId: trailing(general, 0, 1, 168, 30, 30, 0); return true;
+    case copyOnSelectId: toggle(general, 1, 0); return true;
+    case confirmCloseId: toggle(general, 1, 1); return true;
+    case fontLabelId: label(terminal, 0, 0, 288, false); return true;
+    case fontDetailId: label(terminal, 0, 0, 288, true); return true;
+    case fontId: trailing(terminal, 0, 0, 288, 240, 30, 0); return true;
+    case fontSizeLabelId: label(terminal, 0, 1, 96, false); return true;
+    case fontSizeDetailId: label(terminal, 0, 1, 96, true); return true;
+    // The edit sits inside a painted field that extends 8 dip past it on each side.
+    case sizeId: trailing(terminal, 0, 1, 64, 26, 26, 8); return true;
+    case blinkId: toggle(terminal, 1, 0); return true;
+    }
+    return false;
 }
 void setPageControlVisibility(int id, bool visible) {
     HWND child = GetDlgItem(host.window, id);
@@ -615,39 +661,37 @@ void setPageControlVisibility(int id, bool visible) {
 }
 void showPage(SettingsPage previousPage) {
     const bool general = host.page == SettingsPage::general, appearance = host.page == SettingsPage::appearance, terminal = host.page == SettingsPage::terminal;
+    const bool compact = host.height < 430, detail = !compact;
     if (terminal && SendDlgItemMessageW(host.window, fontId, CB_GETCOUNT, 0, 0) == 0) {
         // General/Appearance need no system font enumeration on the dialog's opening path.
         fillFonts(GetDlgItem(host.window, fontId));
     }
     const struct PageControl { int id; bool visible; } controls[] = {
-        { shellId, general }, { 122, general }, { 123, general && host.height >= 430 }, { copyOnSelectId, general }, { confirmCloseId, general }, { confirmCloseDetailId, general && host.height >= 430 }, { addShellId, general }, { themeGridId, appearance },
-        { sizeId, terminal }, { blinkId, terminal }, { 121, terminal }, { 126, terminal }, { fontId, terminal }, { fontLabelId, terminal },
+        { shellId, general }, { shellLabelId, general }, { shellDetailId, general && detail }, { customShellLabelId, general }, { customShellDetailId, general && detail },
+        { addShellId, general }, { copyOnSelectId, general }, { confirmCloseId, general }, { themeGridId, appearance },
+        { sizeId, terminal }, { blinkId, terminal }, { fontSizeLabelId, terminal }, { fontSizeDetailId, terminal && detail }, { fontId, terminal }, { fontLabelId, terminal }, { fontDetailId, terminal && detail },
     };
     constexpr UINT visibilityFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
-    HDWP batch = BeginDeferWindowPos(8);
+    HDWP batch = BeginDeferWindowPos((int)(sizeof(controls) / sizeof(controls[0])));
     for (const auto& entry : controls) {
         HWND child = GetDlgItem(host.window, entry.id);
         if (batch && ((GetWindowLongPtrW(child, GWL_STYLE) & WS_VISIBLE) != 0) != entry.visible)
             batch = DeferWindowPos(batch, child, nullptr, 0, 0, 0, 0, visibilityFlags | (entry.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
     }
     if (!batch || !EndDeferWindowPos(batch)) for (const auto& entry : controls) setPageControlVisibility(entry.id, entry.visible);
-    const wchar_t* names[] = { L"General", L"Theme Studio", L"Terminal", L"About" };
-    const wchar_t* descriptions[] = { L"Shell defaults and clipboard behavior.", host.model.palette.is_dark ? L"Dark collection · Click a theme to apply. Changes save automatically." : L"Light collection · Click a theme to apply. Changes save automatically.", L"Font size and cursor behavior.", L"Vex native terminal\r\nWindows + WSL · ConPTY · libghostty" };
+    // The window title follows the selected page, as the section tabs already name it.
+    const wchar_t* names[] = { L"General", L"Appearance", L"Terminal", L"About" };
     const bool active = host.phase == DialogHost::Phase::active;
+    if (active) SendDlgItemMessageW(host.window, titleId, WM_SETREDRAW, FALSE, 0);
+    SetDlgItemTextW(host.window, titleId, names[(int)host.page]);
     if (active) {
-        SendDlgItemMessageW(host.window, pageTitleId, WM_SETREDRAW, FALSE, 0);
-        SendDlgItemMessageW(host.window, pageDetailId, WM_SETREDRAW, FALSE, 0);
-    }
-    SetDlgItemTextW(host.window, pageTitleId, names[(int)host.page]);
-    SetDlgItemTextW(host.window, pageDetailId, descriptions[(int)host.page]);
-    if (active) {
-        SendDlgItemMessageW(host.window, pageTitleId, WM_SETREDRAW, TRUE, 0);
-        SendDlgItemMessageW(host.window, pageDetailId, WM_SETREDRAW, TRUE, 0);
+        SendDlgItemMessageW(host.window, titleId, WM_SETREDRAW, TRUE, 0);
+        InvalidateRect(GetDlgItem(host.window, titleId), nullptr, FALSE);
         if (previousPage != host.page) {
             InvalidateRect(GetDlgItem(host.window, firstPageId + (int)previousPage), nullptr, FALSE);
             InvalidateRect(GetDlgItem(host.window, firstPageId + (int)host.page), nullptr, FALSE);
         }
-        RECT content = { 0, px(host.height < 430 ? 92 : 136), px(host.width), px(host.height - 16) };
+        RECT content = { 0, px(compact ? 88 : 124), px(host.width), px(host.height) };
         RedrawWindow(host.window, &content, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
     }
 }
@@ -655,34 +699,41 @@ bool createControls(float width, float height) {
     const bool settings = host.model.kind == 4, commands = host.model.kind == 2, shells = host.model.kind == 5, closing = destructiveDialog();
     const bool exiting = host.model.kind == 9;
     bool ok = true;
-    if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | (settings ? SS_CENTER : SS_LEFT) | (closing ? SS_ENDELLIPSIS : 0), titleId, settings ? 120 : closing && !exiting ? 68 : 24, settings ? 18 : closing ? 24 : 22, settings ? width - 240 : closing && !exiting ? width - 88 : width - 48, 28) != nullptr;
+    // Settings geometry comes from one description shared with painting and relayout.
+    const auto place = [](const wchar_t* klass, const wchar_t* text, DWORD style, int id) {
+        float x = 0, y = 0, w = 1, h = 1;
+        settingsRect(id, x, y, w, h);
+        return control(klass, text, style, id, x, y, w, h);
+    };
+    if (settings) ok = place(L"STATIC", L"General", SS_NOPREFIX | SS_CENTER, titleId) != nullptr;
+    else if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | SS_LEFT | (closing ? SS_ENDELLIPSIS : 0), titleId, closing && !exiting ? 68 : 24, closing ? 24 : 22, closing && !exiting ? width - 88 : width - 48, 28) != nullptr;
     if (settings) {
         const wchar_t* pages[] = { L"General", L"Appearance", L"Terminal", L"About" };
-        for (int i = 0; i < 4; ++i) ok = control(L"BUTTON", pages[i], BS_OWNERDRAW | WS_TABSTOP, firstPageId + i, (width - 448) / 2 + i * 112.0f, 56, 108, 68) && ok;
-        ok = control(L"STATIC", L"General", SS_NOPREFIX, pageTitleId, 32, 146, width - 64, 28) && ok;
-        ok = control(L"STATIC", L"Defaults for new terminal sessions.", SS_NOPREFIX, pageDetailId, 32, 181, width - 64, 32) && ok;
-        HWND grid = control(L"LISTBOX", L"", WS_TABSTOP | WS_HSCROLL | LBS_MULTICOLUMN | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, themeGridId, 16, 222, width - 32, height - 246);
+        for (int i = 0; i < 4; ++i) ok = place(L"BUTTON", pages[i], BS_OWNERDRAW | WS_TABSTOP, firstPageId + i) && ok;
+        HWND grid = place(L"LISTBOX", L"", WS_TABSTOP | WS_HSCROLL | LBS_MULTICOLUMN | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, themeGridId);
         ok = grid && ok;
         if (grid) { SendMessageW(grid, LB_SETITEMHEIGHT, 0, px(themeRowHeight())); SendMessageW(grid, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0); fillList(themeGridId); }
-        ok = control(L"STATIC", L"Font size", 0, 121, 46, 242, 180, 24) && ok;
-        ok = control(L"STATIC", L"Terminal text size · 9–32 pt", 0, 126, 46, 268, 300, 24) && ok;
+        ok = place(L"STATIC", L"Font size", SS_NOPREFIX | SS_ENDELLIPSIS, fontSizeLabelId) && ok;
+        ok = place(L"STATIC", L"Terminal text size · 9–32 pt", SS_NOPREFIX | SS_ENDELLIPSIS, fontSizeDetailId) && ok;
         wchar_t size[8]; swprintf(size, 8, L"%u", host.model.settings.font_size);
-        HWND fontSize = control(L"EDIT", size, ES_NUMBER | ES_AUTOHSCROLL | ES_CENTER | WS_TABSTOP, sizeId, width - 126, 248, 64, 26);
+        HWND fontSize = place(L"EDIT", size, ES_NUMBER | ES_AUTOHSCROLL | ES_CENTER | WS_TABSTOP, sizeId);
         ok = fontSize && ok;
         if (fontSize) SendMessageW(fontSize, EM_SETLIMITTEXT, 2, 0);
-        ok = control(L"STATIC", L"Font family", 0, fontLabelId, 46, 312, 180, 24) && ok;
-        HWND fonts = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_SORT | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, fontId, width - 340, 308, 288, 240);
+        ok = place(L"STATIC", L"Font family", SS_NOPREFIX | SS_ENDELLIPSIS, fontLabelId) && ok;
+        ok = place(L"STATIC", L"Monospace fonts installed on this PC", SS_NOPREFIX | SS_ENDELLIPSIS, fontDetailId) && ok;
+        HWND fonts = place(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_SORT | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, fontId);
         ok = fonts && ok;
-        ok = control(L"BUTTON", L"Blink terminal cursor", BS_OWNERDRAW | WS_TABSTOP, blinkId, 34, 368, width - 68, 40) && ok;
-        ok = control(L"STATIC", L"Default shell", 0, 122, 46, 242, 160, 24) && ok;
-        ok = control(L"STATIC", L"Used for new tabs and splits.", 0, 123, 46, 268, 300, 24) && ok;
-        HWND shell = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, shellId, width - 300, 244, 248, 220);
+        ok = place(L"BUTTON", L"Blink terminal cursor", BS_OWNERDRAW | WS_TABSTOP, blinkId) && ok;
+        ok = place(L"STATIC", L"Default shell", SS_NOPREFIX | SS_ENDELLIPSIS, shellLabelId) && ok;
+        ok = place(L"STATIC", L"Used for new tabs and splits", SS_NOPREFIX | SS_ENDELLIPSIS, shellDetailId) && ok;
+        HWND shell = place(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, shellId);
         ok = shell && ok;
         if (shell) fillCombo(shell, host.model.shells, host.model.shellCount, host.model.settings.shell);
-        ok = control(L"BUTTON", L"Add custom shell...", BS_OWNERDRAW | WS_TABSTOP, addShellId, 46, 300, 184, 32) && ok;
-        ok = control(L"BUTTON", L"Copy on selection", BS_OWNERDRAW | WS_TABSTOP, copyOnSelectId, 34, 352, width - 68, 40) && ok;
-        ok = control(L"BUTTON", L"Confirm before closing active programs", BS_OWNERDRAW | WS_TABSTOP, confirmCloseId, 34, 408, width - 68, 40) && ok;
-        ok = control(L"STATIC", L"For panes, tabs and quitting Vex. When off, running programs close immediately.", SS_NOPREFIX, confirmCloseDetailId, 46, 454, width - 92, 40) && ok;
+        ok = place(L"STATIC", L"Custom shells", SS_NOPREFIX | SS_ENDELLIPSIS, customShellLabelId) && ok;
+        ok = place(L"STATIC", L"Add a program or WSL command to the list", SS_NOPREFIX | SS_ENDELLIPSIS, customShellDetailId) && ok;
+        ok = place(L"BUTTON", L"Add custom shell...", BS_OWNERDRAW | WS_TABSTOP, addShellId) && ok;
+        ok = place(L"BUTTON", L"Copy on selection", BS_OWNERDRAW | WS_TABSTOP, copyOnSelectId) && ok;
+        ok = place(L"BUTTON", L"Confirm before closing active programs", BS_OWNERDRAW | WS_TABSTOP, confirmCloseId) && ok;
         showPage(host.page);
     } else {
         if (!commands && !shells) ok = control(L"STATIC", host.model.description, SS_NOPREFIX, descriptionId, 24, exiting ? 58 : closing ? 68 : 58, width - 48, exiting ? 40 : closing ? height - 132 : 38) && ok;
