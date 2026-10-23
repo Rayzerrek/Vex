@@ -851,8 +851,26 @@ const AppearanceCorrection = struct {
     }
 };
 
+// Reverse-video and explicit TUI highlights are surfaces, not text. Mapping them
+// all the way to the foreground endpoint produces black/white selection bars.
+fn softenHighlight(style: terminal.TextStyle, theme: terminal_theme.TerminalTheme) terminal.TextStyle {
+    const surface = srgbToOklab(style.background);
+    if (surface.a * surface.a + surface.b * surface.b > 0.0144) return style;
+    const base = srgbToOklab(theme.background);
+    const selection = srgbToOklab(theme.selection_background);
+    const direction: f32 = if (theme.is_dark) 1 else -1;
+    if ((surface.l - selection.l) * direction <= 0 or (selection.l - base.l) * direction <= 0) return style;
+    var result = style;
+    result.background = theme.selection_background;
+    // Keep intentionally blank/hidden cells blank after changing their surface.
+    if (style.foreground == style.background) result.foreground = result.background;
+    return result;
+}
+
 fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
     var appearance = AppearanceCorrection.init(frame, theme);
+    var highlight_source: ?terminal.TextStyle = null;
+    var highlight_style: terminal.TextStyle = undefined;
     var cached_fg: u32 = theme.foreground;
     var cached_bg: u32 = theme.background;
     var cached_corrected_fg: u32 = theme.foreground;
@@ -870,6 +888,13 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
             const in_link = if (row_link) |hl| (column >= hl.start_col and column <= hl.end_col) else false;
             var cell_style = cell.style;
             if (appearance) |*correction| cell_style = correction.apply(cell_style);
+            if (!isBlockGraphic(text)) {
+                if (highlight_source == null or !std.meta.eql(highlight_source.?, cell_style)) {
+                    highlight_source = cell_style;
+                    highlight_style = softenHighlight(cell_style, theme);
+                }
+                cell_style = highlight_style;
+            }
             if (in_link) {
                 cell_style.underline = true;
             }
@@ -1215,6 +1240,34 @@ test "explicit RGB alternate-screen output follows host mode without program coo
     try std.testing.expect(AppearanceCorrection.init(frame, terminal_theme.themes[terminal_theme.default_light_index]) == null);
     try std.testing.expectEqual(@as(u32, 0xfafafa), frame.cells.items[0].style.background);
     try std.testing.expectEqual(generation, (try emulator.readFrame()).generation);
+}
+
+test "TUI highlights use theme surfaces across dark light dark switches without mutating RGB output" {
+    for ([_]bool{ false, true }) |dark_source| {
+        const background: u32 = if (dark_source) 0x181818 else 0xfafafa;
+        const foreground: u32 = if (dark_source) 0xe6e6e6 else 0x202020;
+        var cells: [8]terminal.TerminalCell = @splat(.{ .width = .narrow, .style = .{ .foreground = foreground, .background = background }, .text_start = 0, .text_length = 0 });
+        cells[0].style = .{ .foreground = background, .background = foreground };
+        var frame: terminal.TerminalFrame = .{ .cells = .{ .items = &cells, .capacity = cells.len } };
+        const original = cells;
+        for ([_]usize{ terminal_theme.default_dark_index, terminal_theme.default_light_index, terminal_theme.default_dark_index }) |index| {
+            const theme = terminal_theme.themes[index];
+            var correction = AppearanceCorrection.init(&frame, theme);
+            const mapped = if (correction) |*value| value.apply(cells[0].style) else cells[0].style;
+            const highlight = softenHighlight(mapped, theme);
+            try std.testing.expectEqual(theme.selection_background, highlight.background);
+            try std.testing.expect(contrastRatio(ensureMinimumContrast(highlight.foreground, highlight.background), highlight.background) >= 4.5);
+            try std.testing.expectEqualDeep(highlight, softenHighlight(highlight, theme));
+            const normal = terminal.TextStyle{ .foreground = theme.foreground, .background = theme.background };
+            try std.testing.expectEqualDeep(normal, softenHighlight(normal, theme));
+            const hidden = softenHighlight(.{ .foreground = mapped.background, .background = mapped.background }, theme);
+            try std.testing.expectEqual(hidden.foreground, hidden.background);
+        }
+        try std.testing.expectEqualDeep(original, cells);
+    }
+    const theme = terminal_theme.themes[terminal_theme.default_dark_index];
+    const colored = terminal.TextStyle{ .foreground = 0, .background = 0xffff00 };
+    try std.testing.expectEqualDeep(colored, softenHighlight(colored, theme));
 }
 
 test "appearance correction ignores isolated opposite accents, split palettes and saturated surfaces" {

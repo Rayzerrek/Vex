@@ -28,6 +28,10 @@ int child(const char* scenario) {
             : "\x1b[?1049h\x1b[48;2;250;250;250m\x1b[38;2;32;32;32m\x1b[2J\x1b[HStatic RGB palette - no theme protocol\r\n\x1b[38;2;180;40;40mRED  \x1b[38;2;30;130;50mGREEN  \x1b[38;2;50;70;180mBLUE\r\n\x1b[38;2;32;32;32mThe application keeps its original colors.";
         DWORD written;
         if (!WriteFile(output, screen, (DWORD)strlen(screen), &written, nullptr)) return 22;
+        const char* highlights = dark
+            ? "\r\n\x1b[7m REVERSE VIDEO SELECTION \x1b[27m\r\n\x1b[48;2;230;230;230m\x1b[38;2;24;24;24m EXPLICIT RGB SELECTION \x1b[0m"
+            : "\r\n\x1b[7m REVERSE VIDEO SELECTION \x1b[27m\r\n\x1b[48;2;32;32;32m\x1b[38;2;250;250;250m EXPLICIT RGB SELECTION \x1b[0m";
+        if (!WriteFile(output, highlights, (DWORD)strlen(highlights), &written, nullptr)) return 23;
         Sleep(30000);
         return 0;
     }
