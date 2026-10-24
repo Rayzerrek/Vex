@@ -24,7 +24,7 @@ class PackageTests(unittest.TestCase):
         struct.pack_into("<I", pe, 60, 128)
         pe[128:132] = b"PE\0\0"
         struct.pack_into("<H", pe, 132, 0x8664)
-        for name in ("vex-native.exe", "ghostty-vt.dll", "conpty.dll", "OpenConsole.exe", "app.ico"):
+        for name in ("vex-native.exe", "vex-update.exe", "ghostty-vt.dll", "conpty.dll", "OpenConsole.exe", "app.ico"):
             path = self.bin / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(pe if path.suffix in (".exe", ".dll") else b"fixture\n")
@@ -57,8 +57,8 @@ class PackageTests(unittest.TestCase):
             package.package(self.bin, self.output, "1.7.0")
         self.assertTrue((self.output / "app/Vex.exe").is_file())
 
-    def test_bundled_conpty_pair_is_required_before_replacing_staging(self):
-        for name in ("conpty.dll", "OpenConsole.exe"):
+    def test_bundled_runtime_and_updater_are_required_before_replacing_staging(self):
+        for name in ("conpty.dll", "OpenConsole.exe", "vex-update.exe"):
             with self.subTest(name=name):
                 package.package(self.bin, self.output, "1.7.0")
                 path = self.bin / name
@@ -122,6 +122,27 @@ class PackageTests(unittest.TestCase):
         (self.output / "app/Vex.exe").write_bytes(b"tampered")
         with self.assertRaisesRegex(ValueError, "ZIP differs from staged payload: Vex.exe"):
             package.verify(self.output, "1.7.0")
+
+    def test_update_manifest_matches_verified_msi_and_rejects_tampering(self):
+        archive = package.package(self.bin, self.output, "2.0.2")
+        msi = archive.with_suffix(".msi")
+        msi.write_bytes(b"\0" * (1024 * 1024))
+        package.write_checksum(msi)
+        manifest = package.write_update_manifest(self.output, "2.0.2")
+        self.assertEqual(manifest.read_bytes(),
+                         f"VEX-UPDATE-1\n2.0.2\n1048576\n{package.sha256(msi)}\n".encode("ascii"))
+        msi.write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "small"):
+            package.write_update_manifest(self.output, "2.0.2")
+
+    def test_update_manifest_rejects_oversized_packages_without_reading_them(self):
+        self.output.mkdir()
+        msi = self.output / (package.artifact_name("2.0.2") + ".msi")
+        with msi.open("wb") as stream:
+            stream.truncate(512 * 1024 * 1024 + 1)
+        with self.assertRaisesRegex(ValueError, "update size limit"):
+            package.write_update_manifest(self.output, "2.0.2")
+        self.assertFalse((self.output / "vex-update.txt").exists())
 
     def test_msi_presence_size_and_checksum_are_required(self):
         path = package.package(self.bin, self.output, "1.7.0")

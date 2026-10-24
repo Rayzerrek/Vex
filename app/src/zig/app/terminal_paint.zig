@@ -82,8 +82,6 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         if (geometry) |sb| {
             if (opacity > 0) platform.drawScrollbar(placement.bounds, sb, sb_active, opacity);
         }
-        if (session.state == .exited and scrollbar.offset == scrollbar.scrollable())
-            platform.drawSessionExit(placement.bounds, session.state.exited);
     }
     if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging and self.pointer_drag.pane.zone != .none) {
         if (self.findPlacement(self.pointer_drag.pane.pane_id)) |placement| {

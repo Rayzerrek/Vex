@@ -2,6 +2,7 @@
 #include "windows_capture.h"
 #include "windows_dialog.h"
 #include "windows_notification.h"
+#include "windows_update.h"
 #include "drawing_color.h"
 #include "windows_renderer.h"
 #include "windows_chrome.h"
@@ -73,6 +74,16 @@ static bool hoveredTabClose;
 static bool trackingMouseLeave;
 enum class PointerCaptureState { none, armed, dragging, cancelled };
 static PointerCaptureState pointerCaptureState = PointerCaptureState::none;
+static uint32_t notificationMouseButtons;
+static NotificationHit notificationPointer(float x, float y, bool click) {
+    const auto transient = terminalNotificationPointer(x, y, click);
+    const auto update = windowsUpdatePointer(x, y, click && transient == NotificationHit::none);
+    return transient != NotificationHit::none ? transient : update;
+}
+static void setNotificationCursor(NotificationHit hit) {
+    const bool clickable = hit == NotificationHit::action || hit == NotificationHit::close;
+    SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(clickable ? 32649 : 32512)));
+}
 static VexChromePalette chromePalette = {
     0x080a0d, 0x0b0d11, 0x2f323a, 0x0d0f14, 0x0a0c10,
     0x1e2128, 0x514998, 0x171a20,
@@ -416,7 +427,8 @@ static void renderScene(double timeMs) {
     callbacks.paint(callbacks.context);
     drawCaptionButtons();
     drawTerminalDialogBackdrop(*target, *brush, dpiScale);
-    drawTerminalNotification(*target, *brush, chromeBoldFont, notificationFont, chromePalette);
+    const float noticeInset = drawWindowsUpdate(*target, *brush, textFactory, chromeFont, chromePalette, timeMs);
+    drawTerminalNotification(*target, *brush, textFactory, chromeBoldFont, notificationFont, chromePalette, noticeInset, timeMs);
     if (uiVerificationMode) renderUiVerificationScene();
 }
 
@@ -448,7 +460,8 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     rendererRecoveryAttempts = 0;
     // Preparation and a blocking Present already consume the interval; do not add another full period afterward.
     nextOutputFrame = sceneBegin.QuadPart + outputFrameTicks;
-    if ((windowChromeAnimationPending() || windowChromeEffectsPending()) && frameSchedule != FrameSchedule::synchronized) invalidateOutputFrame();
+    if ((windowChromeAnimationPending() || windowChromeEffectsPending() || terminalNotificationAnimationPending() || windowsUpdateAnimationPending()) &&
+        frameSchedule != FrameSchedule::synchronized) invalidateOutputFrame();
     if (SUCCEEDED(result) && !firstFrame) {
         firstFrame = true;
         startupMilestone("first frame");
@@ -531,7 +544,9 @@ static void pasteClipboard() {
     if (error) {
         char message[160];
         snprintf(message, sizeof(message), "Vex native paste failed (Win32 %lu). Clipboard text must be valid Unicode and at most 1 MiB.", (unsigned long)error);
-        vex_dialog_warning(VexDialogText{reinterpret_cast<const uint8_t*>(message), strlen(message)});
+        constexpr uint8_t title[] = "Clipboard unavailable";
+        vex_window_notice(VexNoticeRequest{VEX_NOTICE_ERROR, {title, sizeof(title) - 1},
+            {reinterpret_cast<const uint8_t*>(message), strlen(message)}});
     }
 }
 extern "C" void vex_window_paste_clipboard() { pasteClipboard(); }
@@ -591,16 +606,19 @@ static void setPointerCursor(uint32_t response) {
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(resource)));
 }
 static void refreshHoverCursor(HWND hwnd) {
-    if (pointerCaptureState != PointerCaptureState::none) return;
+    if (!IsWindowEnabled(hwnd) || pointerCaptureState != PointerCaptureState::none) return;
     POINT point;
-    if (!GetCursorPos(&point) || !ScreenToClient(hwnd, &point)) return;
+    if (!GetCursorPos(&point) || WindowFromPoint(point) != hwnd || !ScreenToClient(hwnd, &point)) return;
     RECT bounds;
     if (!GetClientRect(hwnd, &bounds) || point.x < 0 || point.y < 0 || point.x >= bounds.right || point.y >= bounds.bottom) return;
     float scale = GetDpiForWindow(hwnd) / 96.0f;
     float x = point.x / scale, y = point.y / scale;
     updateTopChromeHover(x, y);
+    const auto notice = notificationPointer(x, y, false);
+    if (notice != NotificationHit::none) { setNotificationCursor(notice); return; }
     setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y, currentModifiers()));
 }
+extern "C" void vex_window_refresh_hover_cursor() { if (window) refreshHoverCursor(window); }
 extern "C" int vex_window_cancel_pointer_capture() {
     if (pointerCaptureState == PointerCaptureState::none || pointerCaptureState == PointerCaptureState::cancelled) return 0;
     bool captured = pointerCaptureState == PointerCaptureState::dragging;
@@ -730,6 +748,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             float scale = GetDpiForWindow(hwnd) / 96.0f;
             float x = point.x / scale, y = point.y / scale;
             updateTopChromeHover(x, y);
+            const auto notice = notificationPointer(x, y, false);
+            if (notice != NotificationHit::none) { setNotificationCursor(notice); return TRUE; }
             setPointerCursor(callbacks.pointer(callbacks.context, VEX_POINTER_HOVER, x, y, currentModifiers()));
             return TRUE;
         }
@@ -754,7 +774,14 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         pointerCaptureState = PointerCaptureState::none;
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
-        if (message == WM_LBUTTONDOWN && dismissTerminalNotificationAt(x, y)) return 0;
+        const uint32_t noticeButton = message == WM_MBUTTONDOWN ? 4u : 1u;
+        notificationMouseButtons &= ~noticeButton;
+        const auto notice = notificationPointer(x, y, message == WM_LBUTTONDOWN);
+        if (notice != NotificationHit::none) {
+            notificationMouseButtons |= noticeButton;
+            setNotificationCursor(message == WM_LBUTTONDOWN && notice == NotificationHit::close ? NotificationHit::body : notice);
+            return 0;
+        }
         if (message != WM_MBUTTONDOWN && y < 44 && x >= clientWidth - 120) {
             pressedCaptionButton = (x >= clientWidth - 40) ? 3 : (x >= clientWidth - 80) ? 2 : 1;
             vex_window_invalidate();
@@ -781,6 +808,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_MBUTTONUP: {
+        if (notificationMouseButtons & 4u) { notificationMouseButtons &= ~4u; return 0; }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         callbacks.mouse_button(callbacks.context, 3, false, x, y, currentModifiers());
@@ -789,6 +817,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_RBUTTONDOWN: {
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        notificationMouseButtons &= ~2u;
+        if (notificationPointer(x, y, false) != NotificationHit::none) { notificationMouseButtons |= 2u; return 0; }
         if (y >= 44) {
             SetFocus(hwnd);
             callbacks.mouse_button(callbacks.context, 2, true, x, y, currentModifiers());
@@ -796,12 +826,14 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_RBUTTONUP: {
+        if (notificationMouseButtons & 2u) { notificationMouseButtons &= ~2u; return 0; }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         callbacks.mouse_button(callbacks.context, 2, false, x, y, currentModifiers());
         return 0;
     }
     case WM_LBUTTONUP: {
+        if (notificationMouseButtons & 1u) { notificationMouseButtons &= ~1u; return 0; }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         int wasPressedCaption = pressedCaptionButton;
@@ -835,6 +867,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        if (pointerCaptureState == PointerCaptureState::none) {
+            const auto notice = notificationPointer(x, y, false);
+            if (notice != NotificationHit::none) { setNotificationCursor(notice); return 0; }
+        } else notificationPointer(-1, -1, false);
         if (pointerCaptureState == PointerCaptureState::armed && !(wparam & MK_LBUTTON)) cancelPointerGesture();
         uint32_t event = pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging ? VEX_POINTER_MOVE : VEX_POINTER_HOVER;
         uint32_t response = callbacks.pointer(callbacks.context, event, x, y, currentModifiers());
@@ -845,6 +881,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_MOUSELEAVE:
+        notificationPointer(-1, -1, false);
         trackingMouseLeave = false;
         if (hoveredCaptionButton != 0 || pressedCaptionButton != 0 || hoveredNewTab || hoveredShellPicker || hoveredTabIndex != -1 || hoveredTabClose) {
             hoveredCaptionButton = 0;
@@ -1037,6 +1074,15 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 63: return clipboardToken;
             case 64: return clipboardReadError;
             case 65: return terminalNotificationVisible() ? 1 : 0;
+            case 90: case 91: case 92: case 93: testTerminalNotification((uint32_t)wparam - 90); return 1;
+            case 94: dismissTerminalNotification(); return 1;
+            case 95: return terminalNotificationAnimationPending() || windowsUpdateAnimationPending() ? 1 : 0;
+            case 96: testTerminalNotification(4); return 1;
+            case 97: return GetCursor() == LoadCursorW(nullptr, MAKEINTRESOURCEW(32649)) ? 1 : 0;
+            case 98: testTerminalNotification(5); return 1;
+            case 99: testTerminalNotification(6); return 1;
+            case 70: case 71: case 72: case 73: case 74: case 75: case 76: case 77: case 78: case 80: case 81:
+                return testWindowsUpdate((uint32_t)wparam - 70);
             case 66: {
                 const uint64_t token = callbacks.probe(callbacks.context, 12);
                 return token <= UINT32_MAX && vex_pty_test_delay_close((uint32_t)token) ? 1 : 0;
@@ -1053,11 +1099,27 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             }
         }
         return 0;
+    case WM_APP + 12: {
+        if (!selftestEnabled() || wparam > 1) return 0;
+        const float scale = GetDpiForWindow(hwnd) / 96.0f;
+        const auto hit = notificationPointer(GET_X_LPARAM(lparam) / scale, GET_Y_LPARAM(lparam) / scale, wparam == 1);
+        setNotificationCursor(hit);
+        return (LRESULT)hit;
+    }
+    case windowsUpdateMessage:
+        if (wparam == 1) callbacks.action(callbacks.context, 20, 0);
+        else if (refreshWindowsUpdate()) callbacks.action(callbacks.context, 20, 0);
+        return 0;
     case WM_CLIPBOARDUPDATE:
         clipboardRetries = 0;
         clipboardUpdated();
         return 0;
     case WM_TIMER:
+        if (wparam == windowsUpdateTimer) {
+            SetTimer(hwnd, windowsUpdateTimer, 6 * 60 * 60 * 1000, nullptr);
+            checkWindowsUpdatesAutomatically();
+            return 0;
+        }
         if (wparam == copyCheckTimer) {
             KillTimer(hwnd, copyCheckTimer);
             copyCheckDeadline = 0;
@@ -1065,7 +1127,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             return 0;
         }
         if (wparam == clipboardRetryTimer) { clipboardUpdated(); return 0; }
-        if (wparam == 4) { clearTerminalNotification(); return 0; }
+        if (wparam == 4) { dismissTerminalNotification(); return 0; }
         if (wparam == 3) {
             KillTimer(hwnd, 3); cursorWakeArmed = false;
             callbacks.cursor_wake(callbacks.context);
@@ -1078,6 +1140,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN:
+        if (terminalNotificationKey((uint32_t)wparam, currentModifiers()) || windowsUpdateKey((uint32_t)wparam, currentModifiers())) { refreshHoverCursor(hwnd); return 1; }
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
         return handleKey((uint32_t)wparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
@@ -1091,6 +1154,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         callbacks.cursor_activity(callbacks.context, wparam && !IsIconic(hwnd) && GetFocus() == hwnd);
         break;
     case WM_KILLFOCUS:
+        notificationMouseButtons = 0;
         cancelPointerGesture(); pendingSurrogate = 0;
         callbacks.cursor_activity(callbacks.context, false);
         return 0;
@@ -1110,6 +1174,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         POINT point = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
         ScreenToClient(hwnd, &point);
         float scale = GetDpiForWindow(hwnd) / 96.0f;
+        if (notificationPointer(point.x / scale, point.y / scale, false) != NotificationHit::none) return 0;
         callbacks.scroll(callbacks.context, -GET_WHEEL_DELTA_WPARAM(wparam), point.x / scale, point.y / scale, currentModifiers());
         return 0;
     }
@@ -1230,6 +1295,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.5f, L"en-us", &chromeFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(chromeFont);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.5f, L"en-us", &notificationFont);
+    if (SUCCEEDED(result)) result = configureChromeFormat(notificationFont);
     if (SUCCEEDED(result)) result = notificationFont->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"en-us", &paneTitleFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(paneTitleFont);
@@ -1258,6 +1324,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 clipboardSequence = GetClipboardSequenceNumber();
                 clipboardListening = AddClipboardFormatListener(window) != FALSE;
                 initializeTerminalDialogs(window, callbacks);
+                initializeWindowsUpdates(window, selftestEnabled());
                 if (iconBig) SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconBig));
                 if (iconSmall) SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
                 MARGINS margins = { 1, 1, 1, 1 };
@@ -1285,6 +1352,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
             }
         }
     } else platformError = (int)result;
+    shutdownWindowsUpdates();
     if (outputFrameTimer) { CloseHandle(outputFrameTimer); outputFrameTimer = nullptr; }
     destroyTerminalDialogs();
     if (iconBig) DestroyIcon(iconBig);

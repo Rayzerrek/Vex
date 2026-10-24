@@ -130,7 +130,11 @@ fn handleDialogEvent(self: *Application, event: native.DialogEvent) !void {
                 try presentTerminalModal(self);
                 return;
             }
-            if (self.overlay == .exit_confirm) self.exit_review.rows.clearRetainingCapacity();
+            if (self.overlay == .exit_confirm) {
+                self.exit_review.rows.clearRetainingCapacity();
+                if (self.update_restart_pending) platform.c.vex_update_cancel_install();
+                self.update_restart_pending = false;
+            }
             self.overlay = .none;
             if (return_to_peek) |index| overlays.restorePeek(self, index);
             platform.invalidateWindow();

@@ -284,8 +284,9 @@ pub const TerminalSession = struct {
             try self.writePty(report);
         }
     }
-    /// Returns the active title for tab and pane headers, falling back to the detected foreground process name or the session's shell name when the shell has not set an app title.
+    /// Retained exited sessions keep a persistent header label after their transient notification is dismissed.
     pub fn displayTitle(self: *const TerminalSession) []const u8 {
+        if (self.state == .exited) return if (self.state.exited == 0) "Session finished" else "Process exited";
         const title = self.terminal.title.slice();
         if (title.len > 0) return title;
         if (self.active_process_title_len > 0) return self.active_process_title[0..self.active_process_title_len];

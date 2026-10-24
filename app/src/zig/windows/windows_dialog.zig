@@ -79,26 +79,37 @@ pub fn firstVisibleRow() usize {
 pub fn closeDialog() void {
     c.vex_dialog_close();
 }
-/// Reports expected preference IO failures without terminating the terminal window.
-pub fn showCloseFailure(message: []const u8) void {
-    c.vex_dialog_warning(nativeText(message));
+/// Typed native notifications copy their UTF-8 strings before the application returns to terminal IO.
+pub const NoticeKind = enum(u32) { info = c.VEX_NOTICE_INFO, success = c.VEX_NOTICE_SUCCESS, warning = c.VEX_NOTICE_WARNING, err = c.VEX_NOTICE_ERROR };
+pub fn showNotification(kind: NoticeKind, title: []const u8, message: []const u8) void {
+    c.vex_window_notice(.{ .kind = @intFromEnum(kind), .title = nativeText(title), .message = nativeText(message) });
+}
+/// Expected action failures never close the terminal window or replace its sessions.
+pub fn showOperationFailure(message: []const u8) void {
+    showNotification(.err, "Action could not be completed", message);
+}
+/// Final session exit uses the same transient notification surface as other status messages.
+pub fn showSessionExit(code: u32) void {
+    var buffer: [192]u8 = undefined;
+    const message = std.fmt.bufPrint(&buffer, "Exit code {d}. Output is preserved. Ctrl+Shift+T opens a new terminal.", .{code}) catch "Output is preserved. Ctrl+Shift+T opens a new terminal.";
+    showNotification(if (code == 0) .success else .warning, if (code == 0) "Session finished" else "Process exited", message);
 }
 pub fn showSettingsFailure(err: anyerror) void {
     var buffer: [256]u8 = undefined;
     const message = std.fmt.bufPrint(&buffer, "Vex settings: preferences were not saved ({s}). Existing sessions are unchanged.", .{@errorName(err)}) catch "Vex settings: preferences were not saved. Existing sessions are unchanged.";
-    c.vex_dialog_warning(nativeText(message));
+    showNotification(.err, "Settings were not saved", message);
 }
 pub fn showShellLaunchFailure(err: anyerror) void {
     var buffer: [256]u8 = undefined;
     const message = std.fmt.bufPrint(&buffer, "The selected shell could not be started ({s}). Existing sessions are unchanged.", .{@errorName(err)}) catch "The selected shell could not be started. Existing sessions are unchanged.";
-    c.vex_dialog_warning(nativeText(message));
+    showNotification(.err, "Shell could not start", message);
 }
 /// Reports configuration errors without blocking input or modifying the user's Lua source.
 pub fn showSettingsLoadFailure(err: anyerror, diagnostic: *const preferences.SettingsDiagnostic, context: enum { startup, reload }) void {
     var buffer: [1024]u8 = undefined;
     const reason = if (diagnostic.message().len > 0 and std.unicode.utf8ValidateSlice(diagnostic.message())) diagnostic.message() else @errorName(err);
     const message = std.fmt.bufPrint(&buffer, "{s}\n{s} Your Lua files have not been changed.", .{ reason, if (context == .reload) "Previous settings are still active." else "Using default settings." }) catch "Vex configuration could not be loaded. Your Lua files have not been changed.";
-    c.vex_dialog_warning(nativeText(message));
+    showNotification(.warning, "Configuration needs attention", message);
 }
 /// Parses bounded native control data, including settings enums, before entering the application.
 pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUserSettings) !DialogEvent {

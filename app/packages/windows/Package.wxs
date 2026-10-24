@@ -5,13 +5,15 @@
            UpgradeCode="f3cd9022-815c-4211-ac09-2938d95b26a4"
            Scope="perUserOrMachine">
 
-    <MajorUpgrade AllowSameVersionUpgrades="yes"
+    <MajorUpgrade Schedule="afterInstallExecute" AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
 
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Icon Id="AppIcon" SourceFile="..\..\assets\app.ico" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="INSTALLFOLDER" Secure="yes" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute" />
 
     <Feature Id="MainFeature" Title="Vex" Level="1">
       <ComponentGroupRef Id="AppComponents" />

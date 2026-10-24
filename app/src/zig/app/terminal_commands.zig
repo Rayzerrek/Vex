@@ -24,6 +24,8 @@ pub const CommandId = enum {
     toggle_cursor_blink,
     open_settings,
     reload_configuration,
+    check_for_updates,
+    update_restart,
 };
 
 pub const CommandDef = struct {
@@ -55,6 +57,8 @@ pub const command_defs = [_]CommandDef{
     .{ .id = .toggle_cursor_blink, .title = "Cursor: Toggle Blinking", .shortcut = "" },
     .{ .id = .open_settings, .title = "Settings: Open Preferences...", .shortcut = "Ctrl+," },
     .{ .id = .reload_configuration, .title = "Configuration: Reload init.lua", .shortcut = "" },
+    .{ .id = .check_for_updates, .title = "Updates: Check for Updates", .shortcut = "" },
+    .{ .id = .update_restart, .title = "Updates: Install Downloaded Update and Restart", .shortcut = "Ctrl+Shift+U" },
 };
 
 pub fn filterCommands(query: []const u8, out: *[command_defs.len]CommandDef) usize {

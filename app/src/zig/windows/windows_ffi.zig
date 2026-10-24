@@ -15,7 +15,7 @@ pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18, settings = 19 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18, settings = 19, update_restart = 20 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -244,6 +244,7 @@ pub fn workspaceShortcut(key: u32, modifiers: u32) ?WorkspaceAction {
         'P' => .command_palette,
         'M' => .theme_picker,
         'F' => .path_completion,
+        'U' => .update_restart,
         0x20 => .tab_peek,
         9 => .previous_tab,
         0xBB, 0x6B => .zoom_in,
@@ -528,6 +529,10 @@ pub fn openUrl(url: []const u8) !void {
 pub fn beginStartup() void {
     c.vex_startup_begin();
 }
+/// Declines startup before loading terminal DLLs if this installation is being replaced.
+pub fn updateStartupAllowed() bool {
+    return c.vex_update_can_start();
+}
 /// Coalesces presentation requests without a repeating idle timer.
 pub fn invalidateWindow() void {
     c.vex_window_invalidate();
@@ -577,7 +582,7 @@ pub fn reportOperationFailure(err: anyerror) void {
         std.fmt.bufPrint(&buffer, "{s} ({s}; Win32 {d})", .{ message, @errorName(err), last_pty_launch_error }) catch message
     else
         std.fmt.bufPrint(&buffer, "{s} ({s})", .{ message, @errorName(err) }) catch message;
-    dialogs.showCloseFailure(text);
+    dialogs.showOperationFailure(text);
     invalidateWindow();
 }
 
@@ -604,6 +609,58 @@ test "tab rename reuses DirectWrite layout across repaints and invalidates chang
     const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "tab-rename-layout" }, .max_output_bytes = 4096 });
     defer allocator.free(output.stdout);
     defer allocator.free(output.stderr);
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
+test "update feed parser, protected staging, size and hash verification reject invalid packages" {
+    const allocator = std.testing.allocator;
+    const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(executable_directory);
+    const fixture = try std.fs.path.join(allocator, &.{ executable_directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "update-system" }, .max_output_bytes = 4096 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    if (output.term != .Exited or output.term.Exited != 0) std.debug.print("{s}", .{output.stderr});
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
+test "update guards and helper acknowledgements reject concurrency, cancellation and pre-commit crashes" {
+    const allocator = std.testing.allocator;
+    const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(executable_directory);
+    const fixture = try std.fs.path.join(allocator, &.{ executable_directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "update-concurrency" }, .max_output_bytes = 4096 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    if (output.term != .Exited or output.term.Exited != 0) std.debug.print("{s}", .{output.stderr});
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
+test "update HTTP edges reject oversized and truncated responses, propagate write failures and cancel blocked IO" {
+    const allocator = std.testing.allocator;
+    const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(executable_directory);
+    const fixture = try std.fs.path.join(allocator, &.{ executable_directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "update-download-edges" }, .max_output_bytes = 4096 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    if (output.term != .Exited or output.term.Exited != 0) std.debug.print("{s}", .{output.stderr});
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
+test "notification surfaces share compact geometry, exact close targets and bounded reduced-motion transitions" {
+    const allocator = std.testing.allocator;
+    const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(executable_directory);
+    const fixture = try std.fs.path.join(allocator, &.{ executable_directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "notification-surface" }, .max_output_bytes = 4096 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    if (output.term != .Exited or output.term.Exited != 0) std.debug.print("{s}", .{output.stderr});
     try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
 }
 
@@ -731,10 +788,6 @@ pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active
 pub fn drawCopyFeedback(bounds: panes.PaneRect, cell_width: f32, cell_height: f32, spans: []const c.VexCopySpan, progress: f32) void {
     if (spans.len == 0) return;
     c.vex_draw_copy_feedback(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, cell_width, cell_height, spans.ptr, spans.len, progress);
-}
-/// Draws the retained final session's exit code without writing UI text into terminal output.
-pub fn drawSessionExit(bounds: panes.PaneRect, exit_code: u32) void {
-    c.vex_draw_session_exit(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, exit_code);
 }
 /// Draws the translucent split preview overlay for an active pane header drag-to-split gesture.
 pub fn drawSplitPreview(bounds: panes.PaneRect) void {
@@ -1182,13 +1235,14 @@ test "native status bridge carries bounded UTF-8 detail only for synchronous pre
     try std.testing.expect(empty.detail == null);
 }
 
-test "workspace shortcuts exactly match implemented WPF chords without stealing terminal Ctrl keys" {
+test "workspace shortcuts match implemented chords without stealing terminal Ctrl keys" {
     try std.testing.expectEqual(@as(?WorkspaceAction, .new_tab), workspaceShortcut('T', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .split_right), workspaceShortcut('R', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .split_down), workspaceShortcut('D', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .close_active), workspaceShortcut('W', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .command_palette), workspaceShortcut('P', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .theme_picker), workspaceShortcut('M', 3));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .update_restart), workspaceShortcut('U', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .path_completion), workspaceShortcut('F', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .tab_peek), workspaceShortcut(0x20, 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .next_tab), workspaceShortcut(9, 2));
@@ -1197,7 +1251,7 @@ test "workspace shortcuts exactly match implemented WPF chords without stealing 
     try std.testing.expectEqual(@as(?WorkspaceAction, .zoom_in), workspaceShortcut(0xBB, 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .zoom_out), workspaceShortcut(0xBD, 2));
     try std.testing.expectEqual(@as(?WorkspaceAction, .zoom_reset), workspaceShortcut('0', 2));
-    for ([_]u32{ 'T', 'R', 'D', 'W', 'C', 'S', 'P', 'M', 'F' }) |key| try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, 2));
+    for ([_]u32{ 'T', 'R', 'D', 'W', 'C', 'S', 'P', 'M', 'F', 'U' }) |key| try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, 2));
     try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut('T', 7));
 }
 

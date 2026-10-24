@@ -73,9 +73,30 @@ int child(const char* scenario) {
 }
 
 int testTabRenameLayout();
+int testUpdateSystem();
+int testNotificationSurface();
+int testUpdatePackage();
+int testUpdateDownload();
+int testUpdateInstallation();
+int testUpdateConcurrency();
+int testUpdateDownloadEdges();
+int testUpdateHandoffChild();
+int testUpdateInstallerParent();
+int testUpdateInstallerRestarted();
 
 // Headless transport fixture: the Zig tests feed stdout through the real terminal parser.
 int main(int argc, char** argv) {
+    if (argc == 1) return testUpdateInstallerRestarted();
+    if (argc == 4 && !strcmp(argv[1], "--update-parent")) return testUpdateInstallerParent();
+    if (argc == 2 && !strcmp(argv[1], "--update-hold")) { Sleep(30000); return 0; }
+    if (argc == 7 && !strcmp(argv[1], "--apply")) return testUpdateHandoffChild();
+    if (argc == 2 && !strcmp(argv[1], "update-concurrency")) return testUpdateConcurrency();
+    if (argc == 2 && !strcmp(argv[1], "update-download-edges")) return testUpdateDownloadEdges();
+    if (argc == 2 && !strcmp(argv[1], "update-system")) return testUpdateSystem();
+    if (argc == 2 && !strcmp(argv[1], "notification-surface")) return testNotificationSurface();
+    if (argc == 4 && !strcmp(argv[1], "update-package")) return testUpdatePackage();
+    if (argc == 3 && !strcmp(argv[1], "update-download")) return testUpdateDownload();
+    if (argc == 3 && !strcmp(argv[1], "update-installation")) return testUpdateInstallation();
     if (argc == 2 && !strcmp(argv[1], "tab-rename-layout")) return testTabRenameLayout();
     if (argc == 3 && !strcmp(argv[1], "--child")) return child(argv[2]);
     if (argc != 2) return 4;

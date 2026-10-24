@@ -131,6 +131,7 @@ jobs:
             app/publish/*.msi
             app/publish/*.sha256
             app/publish/build-info.json
+            app/publish/vex-update.txt
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v7
@@ -169,7 +170,7 @@ jobs:
         run: |
           set -euo pipefail
           base="publish/Vex-Native-$VERSION-win-x64"
-          assets=("$base.zip" "$base.zip.sha256" "$base.msi" "$base.msi.sha256")
+          assets=("$base.zip" "$base.zip.sha256" "$base.msi" "$base.msi.sha256" "publish/vex-update.txt")
           for asset in "${assets[@]}"; do test -f "$asset"; done
           (cd publish && sha256sum --check "$(basename "$base").zip.sha256" "$(basename "$base").msi.sha256")
           if ! gh release view "$TAG" > /dev/null 2>&1; then
@@ -179,5 +180,7 @@ jobs:
             fi
             gh release create "$TAG" --verify-tag --draft --title "Vex $VERSION" "${notes[@]}"
           fi
-          gh release upload "$TAG" "${assets[@]}" --clobber
+          # Publish discovery metadata only after all versioned packages have uploaded.
+          gh release upload "$TAG" "${assets[@]:0:4}" --clobber
+          gh release upload "$TAG" "publish/vex-update.txt" --clobber
           gh release edit "$TAG" --draft=false

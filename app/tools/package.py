@@ -14,6 +14,7 @@ REPO_DIR = APP_DIR.parent
 PAYLOAD = (
     "Vex.exe",
     "vex-native.exe",
+    "vex-update.exe",
     "ghostty-vt.dll",
     "conpty.dll",
     "OpenConsole.exe",
@@ -137,6 +138,21 @@ def verify(output_dir, version, label="", require_msi=False):
         verify_checksum(msi)
 
 
+def write_update_manifest(output_dir, version):
+    """Publish an update feed only after both stable release artifacts have verified."""
+    msi = output_dir / (artifact_name(version) + ".msi")
+    if msi.stat().st_size > 512 * 1024 * 1024:
+        raise ValueError("MSI exceeds the update size limit (512 MiB)")
+    verify(output_dir, version, require_msi=True)
+    manifest = output_dir / "vex-update.txt"
+    manifest.write_text(
+        f"VEX-UPDATE-1\n{version}\n{msi.stat().st_size}\n{sha256(msi)}\n",
+        encoding="ascii",
+        newline="\n",
+    )
+    return manifest
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", type=Path, default=APP_DIR / "zig-out/bin")
@@ -145,13 +161,18 @@ def main():
     parser.add_argument("--label", default="")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--require-msi", action="store_true")
+    parser.add_argument("--update-manifest", action="store_true")
     args = parser.parse_args()
     version = release_version()
     if args.version and args.version != version:
         parser.error(f"Expected {args.version}, but app/VERSION is {version}")
     if args.require_msi and not args.verify:
         parser.error("--require-msi requires --verify")
-    if args.verify:
+    if args.update_manifest:
+        if args.label or not args.verify or not args.require_msi:
+            parser.error("--update-manifest requires --verify --require-msi and no preview label")
+        print(write_update_manifest(args.output_dir, version))
+    elif args.verify:
         verify(args.output_dir, version, args.label, args.require_msi)
         print("Release payload and checksums verified")
     else:

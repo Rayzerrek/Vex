@@ -65,7 +65,10 @@ typedef struct {
 int vex_dialog_open(VexDialogRequest request);
 void vex_dialog_form_error(VexDialogText message);
 void vex_dialog_close(void);
-void vex_dialog_warning(VexDialogText message);
+typedef enum { VEX_NOTICE_INFO = 0, VEX_NOTICE_SUCCESS = 1, VEX_NOTICE_WARNING = 2, VEX_NOTICE_ERROR = 3 } VexNoticeKind;
+/* Native notification strings are copied/decoded before return; no terminal or dialog storage is retained. */
+typedef struct { uint32_t kind; VexDialogText title, message; } VexNoticeRequest;
+void vex_window_notice(VexNoticeRequest request);
 uint32_t vex_dialog_first_visible(void);
 /* All callbacks run on the window thread. Context and borrowed bytes must remain live. */
 typedef struct {
@@ -103,6 +106,15 @@ void vex_startup_begin(void);
 void vex_window_invalidate(void);
 void vex_window_defer_synchronized(void);
 void vex_window_close(void);
+/* Startup declines new sessions while this install is being replaced; no MSI/network IO. */
+bool vex_update_can_start(void);
+/* Window-thread actions. Preflight is asynchronous; install only commits an acknowledged helper. */
+void vex_update_check(void);
+bool vex_update_ready(void);
+bool vex_update_prepare(void);
+bool vex_update_prepared(void);
+void vex_update_cancel_install(void);
+bool vex_update_install(void);
 void vex_window_paste_clipboard(void);
 void vex_window_schedule_copy_check(uint32_t delay_ms);
 void vex_window_set_chrome_palette(VexChromePalette palette);
@@ -114,6 +126,8 @@ uint64_t vex_window_paint_count(void);
 int vex_window_schedule_cursor_wake(uint32_t delay_ms);
 bool vex_window_cursor_wake_armed(void);
 bool vex_window_animations_enabled(void);
+// Notification geometry can change under a stationary pointer.
+void vex_window_refresh_hover_cursor(void);
 uint32_t vex_window_wheel_scroll_lines(void);
 /* Window thread only; releasing capture may synchronously deliver WM_CAPTURECHANGED. */
 int vex_window_cancel_pointer_capture(void);
@@ -157,7 +171,6 @@ void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_foc
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity);
 void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress);
-void vex_draw_session_exit(VexPaneRect bounds, uint32_t exit_code);
 void vex_draw_split_preview(VexPaneRect bounds);
 void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns, uint16_t rows);
 void vex_draw_tab_overview(bool animating);

@@ -7,6 +7,7 @@ fn addWindowsIncludePaths(b: *std.Build, module: *std.Build.Module) void {
         "src/windows/dialogs",
         "src/windows/renderer",
         "src/windows/pty",
+        "src/windows/update",
     }) |path| module.addIncludePath(b.path(path));
 }
 
@@ -26,6 +27,8 @@ pub fn build(b: *std.Build) void {
     b.step("test-portable", "Run portable performance regression tests on the host").dependOn(&portable_test_run.step);
     const module = b.createModule(.{ .root_source_file = b.path("src/zig/main.zig"), .target = target, .optimize = optimize });
     addWindowsIncludePaths(b, module);
+    const version = std.mem.trim(u8, @embedFile("VERSION"), "\r\n ");
+    module.addCMacro("VEX_VERSION", b.fmt("\"{s}\"", .{version}));
     module.addIncludePath(b.path("vendor/include"));
     module.addIncludePath(b.path("src/lua"));
     module.addIncludePath(b.path("vendor/lua/src"));
@@ -39,10 +42,17 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/window/windows_chrome.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_drawing.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/platform/windows_system.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/update/windows_update.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/update/update_download.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/update/update_package.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/update/update_install_guard.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/update/update_handoff.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/dialogs/windows_dialog.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/dialogs/dialog_controls.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/dialogs/dialog_paint.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/dialogs/windows_notification.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/dialogs/notification_surface.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/dialogs/notification_geometry.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_pty.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_wsl_probe.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_conpty.cpp"), .flags = native_flags });
@@ -55,7 +65,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/renderer/ui_renderer.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/renderer/app_icon_renderer.cpp"), .flags = native_flags });
     module.link_libc = true;
-    for ([_][]const u8{ "user32", "kernel32", "gdi32", "d2d1", "dwrite", "d3d12", "dxgi", "dwmapi", "ole32", "windowscodecs", "uuid", "advapi32", "userenv", "shell32", "comctl32", "gdiplus", "uxtheme" }) |lib| module.linkSystemLibrary(lib, .{});
+    for ([_][]const u8{ "user32", "kernel32", "gdi32", "d2d1", "dwrite", "d3d12", "dxgi", "dwmapi", "ole32", "windowscodecs", "uuid", "advapi32", "userenv", "shell32", "comctl32", "gdiplus", "uxtheme", "winhttp", "bcrypt", "msi" }) |lib| module.linkSystemLibrary(lib, .{});
     const exe = b.addExecutable(.{ .name = "vex-native", .root_module = module });
     exe.subsystem = .Windows;
     const dll = b.addInstallFileWithDir(b.path("vendor/libghostty/ghostty-vt.dll"), .bin, "ghostty-vt.dll");
@@ -63,6 +73,16 @@ pub fn build(b: *std.Build) void {
     const conpty_host = b.addInstallFileWithDir(b.path("vendor/conpty/OpenConsole.exe"), .bin, "OpenConsole.exe");
     const app_icon = b.addInstallFileWithDir(b.path("assets/app.ico"), .bin, "app.ico");
     b.installArtifact(exe);
+    const updater_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
+    addWindowsIncludePaths(b, updater_module);
+    updater_module.addCMacro("VEX_VERSION", b.fmt("\"{s}\"", .{version}));
+    updater_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_installer.cpp"), .flags = native_flags });
+    updater_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_package.cpp"), .flags = native_flags });
+    updater_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_install_guard.cpp"), .flags = native_flags });
+    for ([_][]const u8{ "kernel32", "user32", "shell32", "advapi32", "bcrypt", "msi" }) |lib| updater_module.linkSystemLibrary(lib, .{});
+    const updater = b.addExecutable(.{ .name = "vex-update", .root_module = updater_module });
+    updater.subsystem = .Windows;
+    b.installArtifact(updater);
     b.getInstallStep().dependOn(&dll.step);
     b.getInstallStep().dependOn(&conpty_dll.step);
     b.getInstallStep().dependOn(&conpty_host.step);
@@ -75,14 +95,26 @@ pub fn build(b: *std.Build) void {
     const install_tests = b.addInstallArtifact(tests, .{ .dest_sub_path = "vex-native-tests.exe" });
     const fixture_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
     addWindowsIncludePaths(b, fixture_module);
+    fixture_module.addCMacro("VEX_VERSION", b.fmt("\"{s}\"", .{version}));
+    fixture_module.addCMacro("VEX_UPDATE_TEST", "1");
     fixture_module.addCSourceFile(.{ .file = b.path("tests/conpty_fixture.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/chrome_motion.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/tab_rename_layout.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/update_system.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/notification_surface.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/dialogs/notification_geometry.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/update_concurrency.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/update_download_edges.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_download.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_package.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_install_guard.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_handoff.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/terminal_cell_glyph.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/wsl_probe_schedule.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_conpty.cpp"), .flags = native_flags });
     fixture_module.linkSystemLibrary("kernel32", .{});
     fixture_module.linkSystemLibrary("dwrite", .{});
+    for ([_][]const u8{ "shell32", "advapi32", "bcrypt", "msi", "winhttp", "ws2_32" }) |lib| fixture_module.linkSystemLibrary(lib, .{});
     const fixture = b.addExecutable(.{ .name = "vex-conpty-fixture", .root_module = fixture_module });
     const install_fixture = b.addInstallArtifact(fixture, .{});
     const test_build = b.step("test-build", "Compile native tests without running Windows tools");

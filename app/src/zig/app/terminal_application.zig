@@ -65,6 +65,7 @@ pub const TerminalApplication = struct {
     editing_tab: ?keyboard.TabRename = null,
     overlay: overlays.OverlayState = .none,
     exit_review: close_confirmation.ExitReview = .{},
+    update_restart_pending: bool = false,
     path_completion: path_completion.PathCompletion,
     path_index: ?*PathIndex = null,
     path_index_revision: u64 = 0,
@@ -661,7 +662,7 @@ pub const TerminalApplication = struct {
         return self.reviewWindowClose() catch |err| {
             var buffer: [256]u8 = undefined;
             const message = std.fmt.bufPrint(&buffer, "Could not review running programs ({s}). Vex was not closed. Please try again.", .{@errorName(err)}) catch "Could not review running programs. Vex was not closed.";
-            dialogs.showCloseFailure(message);
+            dialogs.showOperationFailure(message);
             return false;
         };
     }
@@ -696,12 +697,40 @@ pub const TerminalApplication = struct {
             },
         }
     }
+    /// Update restarts use the same live-process review as an ordinary window close.
+    pub fn requestUpdateRestart(self: *TerminalApplication) void {
+        if (self.overlay == .exit_confirm) return;
+        if (!platform.c.vex_update_prepared()) {
+            if (platform.c.vex_update_ready()) {
+                if (!platform.c.vex_update_prepare()) dialogs.showOperationFailure("Could not prepare the updater. Vex and your terminals were not closed. Please try again.");
+            } else platform.c.vex_update_check();
+            return;
+        }
+        self.update_restart_pending = true;
+        if (self.onCloseRequested()) {
+            self.completeWindowExit();
+        } else if (self.overlay != .exit_confirm) {
+            self.update_restart_pending = false;
+            platform.c.vex_update_cancel_install();
+        }
+    }
+    fn completeWindowExit(self: *TerminalApplication) void {
+        if (self.update_restart_pending) {
+            self.update_restart_pending = false;
+            if (!platform.c.vex_update_install()) {
+                platform.c.vex_update_cancel_install();
+                dialogs.showOperationFailure("Could not start the updater. Check for updates and try again. Vex and your terminals were not closed.");
+                return;
+            }
+        }
+        platform.closeWindow();
+    }
     pub fn confirmExit(self: *TerminalApplication) void {
         if (self.overlay != .exit_confirm) return;
         dialogs.closeDialog();
         self.overlay = .none;
         self.exit_review.rows.clearRetainingCapacity();
-        platform.closeWindow();
+        self.completeWindowExit();
     }
     pub fn requestClosePane(self: *TerminalApplication, pane_id: panes.PaneId) !void {
         self.commitTabRename();
@@ -942,6 +971,8 @@ pub const TerminalApplication = struct {
             .open_theme_picker => self.openThemePicker(),
             .open_settings => try self.applyAction(.settings, 0),
             .reload_configuration => self.reloadUserConfiguration(),
+            .check_for_updates => platform.c.vex_update_check(),
+            .update_restart => self.requestUpdateRestart(),
             .toggle_dark_light => try self.toggleDarkLightTheme(),
             .open_tab_peek => self.openTabPeek(),
             .new_tab => try self.applyAction(.new_tab, 0),
@@ -1029,6 +1060,10 @@ pub const TerminalApplication = struct {
     pub fn applyAction(self: *TerminalApplication, action: platform.WorkspaceAction, index: u32) !void {
         if (try pointer.cancelPointerDrag(self)) try self.updateLayout();
         switch (action) {
+            .update_restart => {
+                self.requestUpdateRestart();
+                return;
+            },
             .settings => {
                 self.commitTabRename();
                 self.discoverAvailableShells();
@@ -1195,7 +1230,7 @@ pub const TerminalApplication = struct {
                 if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
-            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink, .shell_picker, .settings => unreachable,
+            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink, .shell_picker, .settings, .update_restart => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
@@ -1259,11 +1294,7 @@ pub const TerminalApplication = struct {
         switch (model.closeExitedPane(id)) {
             .stale => return error.MissingPaneSession,
             .retained_final => {
-                // Leave room for the native exit card without covering the final output.
-                if (self.metrics) |metrics| {
-                    const gap_rows: usize = @intFromFloat(std.math.clamp(@ceil(84 / metrics.cell_height), 1, 16));
-                    for (0..gap_rows) |_| try session.terminal.feedOutput("\r\n");
-                }
+                dialogs.showSessionExit(code);
                 _ = session.refreshAppIcon(false);
                 platform.invalidateWindow();
             },
@@ -1335,6 +1366,42 @@ fn recoveryTestApplication(config_path: []const u8) !TerminalApplication {
         .path_completion = path_completion.PathCompletion.init(allocator),
         .cursor_clock = try std.time.Timer.start(),
     };
+}
+
+test "final session exit preserves terminal output and uses a persistent header instead of injecting popup padding" {
+    for ([_]u32{ 0, 7 }) |code| {
+        var app = try recoveryTestApplication("unused-recovery-test.lua");
+        defer app.deinit();
+        const session = try app.addSession(app.startup_directory);
+        app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+        try session.terminal.resize(40, 4, 8, 16);
+        try session.terminal.feedOutput("final output");
+        const cursor = (try session.terminal.readFrame()).cursor;
+        app.onExited(session.id, code);
+        try std.testing.expect(app.health == .running);
+        try std.testing.expect(session.state == .exited);
+        try std.testing.expectEqual(code, session.state.exited);
+        try std.testing.expect(try session.terminal.containsViewportText("final output"));
+        try std.testing.expectEqual(cursor.row, (try session.terminal.readFrame()).cursor.row);
+        try std.testing.expectEqual(cursor.column, (try session.terminal.readFrame()).cursor.column);
+        try std.testing.expectEqualStrings(if (code == 0) "Session finished" else "Process exited", session.displayTitle());
+    }
+}
+
+test "cancelling update restart clears the install intent without closing sessions" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const session = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+    app.overlay = .exit_confirm;
+    app.update_restart_pending = true;
+    modals.onDialogEvent(&app, .cancel);
+    try std.testing.expect(!app.update_restart_pending);
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expectEqual(@as(usize, 1), app.sessions.items.len);
+    try std.testing.expect(session.state == .running);
+    try session.writePty("echo update-cancelled\r");
 }
 
 test "copy clears selection and rendered highlights while pointer copies preserve multi-click history" {

@@ -87,5 +87,9 @@ try {
 } finally {
     if (Test-Path $verification) { Remove-Item $verification -Recurse -Force }
 }
+if (!$Label) {
+    & $Python @packageArgs --verify --require-msi --update-manifest
+    if ($LASTEXITCODE -ne 0) { throw 'Update manifest generation failed.' }
+}
 Write-Host '==> Verified artifacts'
 Get-ChildItem $PublishDir -File | Where-Object { $_.Extension -ne '.log' } | Select-Object Name, Length

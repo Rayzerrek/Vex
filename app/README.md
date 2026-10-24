@@ -49,7 +49,8 @@ See [testing](../docs/testing.md) for the complete checks and desktop validation
 Build output lives in `zig-out/` and `.zig-cache/`; packages in `publish/`.
 Generated shaders are checked in. Regenerate on Windows with
 `python3 tools/compile_terminal_shaders.py`.
-See [architecture](../docs/architecture.md) and [configuration](../docs/configuration.md).
+See [architecture](../docs/architecture.md), [configuration](../docs/configuration.md)
+and [native updates](../docs/updates.md).
 
 ## Package
 
@@ -60,8 +61,9 @@ python3 tools/package.py
 python3 tools/package.py --verify
 ```
 
-This stages `publish/app/` and creates a ZIP plus SHA-256 checksum. Test
-executables and debug symbols are excluded. Shell integration is embedded.
+This stages `publish/app/` (including the standalone updater) and creates a ZIP
+plus SHA-256 checksum. Test executables and debug symbols are excluded. Shell
+integration is embedded.
 
 For ZIP + MSI, from the repository root on Windows with Python, the pinned Zig
 and .NET SDK 10 (WiX is restored by the project):
