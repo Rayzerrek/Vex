@@ -9,6 +9,7 @@ void shutdownWindowsUpdates();
 // True only on the transition to a preflight-acknowledged helper, before the live-process close review.
 bool refreshWindowsUpdate();
 void checkWindowsUpdatesAutomatically();
+void expireWindowsUpdateNotice();
 NotificationHit windowsUpdatePointer(float x, float y, bool click);
 bool windowsUpdateKey(uint32_t key, uint32_t modifiers);
 // Called only behind the window adapter's VEX_NATIVE_SELFTEST gate; never enables downloads/installations.
@@ -18,3 +19,4 @@ bool windowsUpdateAnimationPending();
 // Dedicated posted message/timers avoid polling or keeping an idle animation clock alive.
 inline constexpr UINT windowsUpdateMessage = WM_APP + 11;
 inline constexpr UINT_PTR windowsUpdateTimer = 7;
+inline constexpr UINT_PTR windowsUpdateNoticeTimer = 9;

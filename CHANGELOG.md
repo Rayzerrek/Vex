@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.3
+
+- Automatically dismiss the up-to-date notification after five seconds without hiding pending updates.
+- Add Windows desktop tests for notification expiry and repeated update checks.
+
 ## 2.0.1
 
 - Inline tab renaming with UTF-8 cursor navigation, word deletion, clipboard shortcuts and automatic-title reset.

@@ -13,6 +13,8 @@ and unpublished commits are not an update channel.
   progress, verification and **Update & restart**. Its background is 90% opaque;
   text/buttons remain readable. Alpha composition uses the existing GPU renderer,
   not Windows 11-only Mica, a blur pass or an additional overlay window.
+- **You're up to date** disappears automatically after five seconds. Pending updates
+  remain visible until dismissed or installed.
 - **X** or `Ctrl+Shift+.` hides the notification without interrupting terminals.
 - **Update & restart** or `Ctrl+Shift+U` runs the existing close review for active
   programs, respecting the user's close-confirmation preference. Cancelling the

@@ -49,6 +49,28 @@ try {
     if ($window -eq [IntPtr]::Zero) { throw 'No Vex window' }
     Start-Sleep -Seconds 3
     $token = Send-Vex 0x8002 12
+    $null = Send-Vex 0x8008 72
+    if ((Send-Vex 0x8008 78) -ne 1) { throw 'Up-to-date notice is not visible' }
+    Start-Sleep -Seconds 3
+    if ((Send-Vex 0x8008 78) -ne 1) { throw 'Up-to-date notice expired too early' }
+    # Rechecking must give the new result its own full lifetime.
+    $null = Send-Vex 0x8008 71
+    $null = Send-Vex 0x8008 72
+    Start-Sleep -Seconds 3
+    if ((Send-Vex 0x8008 78) -ne 1) { throw 'An earlier check expired the new result' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while ((Send-Vex 0x8008 78) -ne 0) {
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'Up-to-date notice did not expire automatically' }
+        Start-Sleep -Milliseconds 100
+    }
+    Start-Sleep -Milliseconds 300
+    $frames = Send-Vex 0x8008 2
+    Start-Sleep -Seconds 1
+    if ((Send-Vex 0x8008 2) -ne $frames) { throw 'Expired update notice keeps repainting' }
+    $null = Send-Vex 0x8008 72
+    $null = Send-Vex 0x8008 75
+    Start-Sleep -Seconds 6
+    if ((Send-Vex 0x8008 78) -ne 1) { throw 'Up-to-date expiry dismissed a ready update' }
     foreach ($state in (@(71..77) + @(80,81))) {
         if ((Send-Vex 0x8008 $state) -ne 1) { throw "Cannot set update state $state" }
         $null = Send-Vex 0x8009 2
@@ -137,7 +159,7 @@ try {
     $null = Send-Vex 0x10
     if (!$process.WaitForExit(15000)) { throw "Vex did not shut down (PID $($process.Id))" }
     if ($process.ExitCode -ne 0) { throw "Vex exited with error $($process.ExitCode)" }
-    Write-Host "Update UI ($theme): all states, real GPU capture, idle paint budget, X/hand cursor/hover, retained text, Unicode/long/malformed content, session exit and shutdown passed."
+    Write-Host "Update UI ($theme): all states, up-to-date expiry/reset and persistent ready update, real GPU capture, idle paint budget, X/hand cursor/hover, retained text, Unicode/long/malformed content, session exit and shutdown passed."
 } finally {
     if ($process) {
         $process.Refresh()

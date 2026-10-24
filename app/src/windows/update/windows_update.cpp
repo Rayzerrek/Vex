@@ -29,6 +29,16 @@ bool stopping = false, disabled = true, dismissed = false, manualCheck = false, 
 wchar_t stage[MAX_PATH] = {}, executable[MAX_PATH] = {};
 vex::UpdateInstallation installation;
 NotificationSurface updateSurface;
+ULONGLONG currentNoticeDeadline = 0;
+void resetCurrentNoticeTimer() {
+    KillTimer(updateWindow, windowsUpdateNoticeTimer);
+    currentNoticeDeadline = 0;
+    if (snapshot.state == UpdateState::current && manualCheck && !dismissed) {
+        constexpr UINT lifetime = 5000;
+        currentNoticeDeadline = GetTickCount64() + lifetime;
+        SetTimer(updateWindow, windowsUpdateNoticeTimer, lifetime, nullptr);
+    }
+}
 void publish(UpdateSnapshot value) {
     AcquireSRWLockExclusive(&updateLock);
     sharedSnapshot = value;
@@ -185,6 +195,8 @@ void initializeWindowsUpdates(HWND window, bool selftest) {
 }
 void shutdownWindowsUpdates() {
     KillTimer(updateWindow, windowsUpdateTimer);
+    KillTimer(updateWindow, windowsUpdateNoticeTimer);
+    currentNoticeDeadline = 0;
     AcquireSRWLockExclusive(&updateLock);
     stopping = true; updateWindow = nullptr;
     ReleaseSRWLockExclusive(&updateLock);
@@ -202,6 +214,7 @@ extern "C" void vex_update_check() {
     if (snapshot.state == UpdateState::ready) { vex_window_invalidate(); return; }
     if (worker) { CloseHandle(worker); worker = nullptr; }
     snapshot = {}; snapshot.state = UpdateState::checking;
+    resetCurrentNoticeTimer();
     publish(snapshot);
     worker = CreateThread(nullptr, 0, checkUpdateWorker, nullptr, 0, nullptr);
     if (!worker) { snapshot.state = UpdateState::failed; snapshot.error = GetLastError(); publish(snapshot); }
@@ -215,8 +228,19 @@ void checkWindowsUpdatesAutomatically() {
 bool refreshWindowsUpdate() {
     const auto previous = snapshot.state;
     AcquireSRWLockShared(&updateLock); snapshot = sharedSnapshot; ReleaseSRWLockShared(&updateLock);
+    if (snapshot.state != previous) resetCurrentNoticeTimer();
     vex_window_invalidate();
     return snapshot.state == UpdateState::confirmation && previous != UpdateState::confirmation;
+}
+void expireWindowsUpdateNotice() {
+    // A queued WM_TIMER from an earlier check must not hide a newer result.
+    if (!currentNoticeDeadline || GetTickCount64() < currentNoticeDeadline) return;
+    KillTimer(updateWindow, windowsUpdateNoticeTimer);
+    currentNoticeDeadline = 0;
+    if (snapshot.state == UpdateState::current && !dismissed) {
+        dismissed = true;
+        vex_window_invalidate();
+    }
 }
 extern "C" bool vex_update_ready() { return !disabled && (snapshot.state == UpdateState::ready || retryablePreflight()); }
 extern "C" bool vex_update_prepared() { return !disabled && snapshot.state == UpdateState::confirmation && handoff.prepared(); }
@@ -250,6 +274,7 @@ uint32_t testWindowsUpdate(uint32_t command) {
     snapshot.percent = 47;
     snapshot.error = ERROR_CRC;
     dismissed = false; manualCheck = true;
+    resetCurrentNoticeTimer();
     vex_window_invalidate();
     return 1;
 }

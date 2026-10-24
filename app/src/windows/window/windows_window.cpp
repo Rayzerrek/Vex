@@ -1115,6 +1115,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         clipboardUpdated();
         return 0;
     case WM_TIMER:
+        if (wparam == windowsUpdateNoticeTimer) {
+            expireWindowsUpdateNotice();
+            return 0;
+        }
         if (wparam == windowsUpdateTimer) {
             SetTimer(hwnd, windowsUpdateTimer, 6 * 60 * 60 * 1000, nullptr);
             checkWindowsUpdatesAutomatically();
