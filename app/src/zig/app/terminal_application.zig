@@ -519,6 +519,10 @@ pub const TerminalApplication = struct {
             try tab.tree.layout(self.allocator, &self.placements, bounds);
         }
         const now = std.time.milliTimestamp();
+        for (self.sessions.items) |session| {
+            if (session.process_probe.noteVisibility(now, self.findPlacement(session.id) != null))
+                session.pty.noteProcessInput();
+        }
         for (self.placements.items) |placement| {
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             const size = try metrics.terminalSize(placement.bounds);
@@ -530,8 +534,8 @@ pub const TerminalApplication = struct {
                     self.fail(err);
                 } else return err;
             };
-            _ = session.refreshAppIcon(true);
-            session.last_icon_probe_ms = now;
+            _ = session.refreshAppIconIfDue(now);
+            if (session.process_probe.nextFastCheck(now)) |delay| platform.scheduleDeferredTick(delay);
         }
         platform.invalidateWindow();
     }
@@ -579,10 +583,10 @@ pub const TerminalApplication = struct {
             return chrome_changed or overlays.peekContainsPane(self, id);
         }
         const now_probe = std.time.milliTimestamp();
-        if (chrome_changed or now_probe - session.last_icon_probe_ms >= 200) {
-            session.last_icon_probe_ms = now_probe;
-            _ = session.refreshAppIcon(true);
-        }
+        session.process_probe.noteOutput(now_probe);
+        if (chrome_changed) _ = session.refreshAppIcon(false);
+        _ = session.refreshAppIconIfDue(now_probe);
+        if (session.process_probe.nextFastCheck(now_probe)) |delay| platform.scheduleDeferredTick(delay);
         const sync_active = session.terminal.synchronizedOutput() catch |err| {
             self.fail(err);
             return false;
@@ -604,6 +608,14 @@ pub const TerminalApplication = struct {
         if (self.overlay == .tab_peek) return chrome_changed or overlays.peekContainsPane(self, id);
         return true;
     }
+    pub fn onProcessChanged(self: *TerminalApplication, id: panes.PaneId) void {
+        if (self.health == .failed) return;
+        const session = self.findSession(id) orelse return;
+        if (session.state != .running) return;
+        session.process_probe.last_probe_ms = std.time.milliTimestamp();
+        if (session.refreshAppIcon(true)) platform.invalidateWindow();
+    }
+
     pub fn onClipboard(self: *TerminalApplication, token: u32, text: []const u8) void {
         if (self.health == .failed or !self.cursor_window_active or self.overlay != .none or self.editing_tab != null) return;
         const session = self.activeSession() orelse return;
@@ -632,9 +644,9 @@ pub const TerminalApplication = struct {
         }
         for (self.placements.items) |placement| {
             if (self.findSession(placement.id)) |session| {
-                if (now - session.last_icon_probe_ms >= 200) {
-                    session.last_icon_probe_ms = now;
-                    if (session.refreshAppIcon(true)) any_changed = true;
+                if (session.refreshAppIconIfDue(now)) any_changed = true;
+                if (session.state == .running) {
+                    if (session.process_probe.nextFastCheck(now)) |delay| platform.scheduleDeferredTick(delay);
                 }
             }
         }
@@ -1366,6 +1378,33 @@ fn recoveryTestApplication(config_path: []const u8) !TerminalApplication {
         .path_completion = path_completion.PathCompletion.init(allocator),
         .cursor_clock = try std.time.Timer.start(),
     };
+}
+
+test "OSC identities bypass process polling in visible and hidden panes and late metadata is harmless" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    const hidden = try app.addSession(app.startup_directory);
+    const hidden_id = hidden.id;
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    try app.model.?.newTab(hidden_id);
+    try std.testing.expect(app.model.?.selectTab(0));
+    const future = std.time.milliTimestamp() + 10000;
+    first.process_probe.last_probe_ms = future;
+    hidden.process_probe.last_probe_ms = future;
+    _ = app.onOutput(first.id, "\x1b]7501;state=working:app=node\x07");
+    _ = app.onOutput(hidden.id, "\x1b]7501;state=working:app=python\x07");
+    try std.testing.expectEqual(app_icon.GlyphId.nodedotjs, first.icon.glyph);
+    try std.testing.expectEqual(app_icon.GlyphId.python, hidden.icon.glyph);
+    try std.testing.expectEqual(future, first.process_probe.last_probe_ms);
+    try std.testing.expectEqual(future, hidden.process_probe.last_probe_ms);
+    app.onProcessChanged(hidden.id);
+    try std.testing.expectEqual(app_icon.GlyphId.python, hidden.icon.glyph);
+    app.onExited(hidden_id, 0);
+    app.onProcessChanged(hidden_id);
+    app.onProcessChanged(@enumFromInt(0xfffffff0));
+    try std.testing.expect(app.findSession(hidden_id) == null);
+    try std.testing.expect(app.health == .running);
 }
 
 test "final session exit preserves terminal output and uses a persistent header instead of injecting popup padding" {

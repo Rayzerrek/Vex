@@ -92,6 +92,7 @@ typedef struct {
     void (*exited)(void*, uint32_t, uint32_t);
     /* Transport failure affects only the owning pane, not the window. */
     void (*session_error)(void*, uint32_t, uint32_t);
+    void (*process_changed)(void*, uint32_t);
     void (*tick)(void*);
     void (*cursor_wake)(void*);
     void (*cursor_activity)(void*, bool);
@@ -155,6 +156,7 @@ bool vex_pty_test_delay_close(uint32_t token);
 enum { VEX_PTY_INPUT_FULL = 1816 }; /* ERROR_NOT_ENOUGH_QUOTA */
 /* Atomic enqueue: ERROR_NOT_ENOUGH_QUOTA leaves the queue unchanged. */
 int vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
+void vex_pty_note_process_input(VexPty* session);
 /* Same FIFO, but can consume reserved protocol capacity after a maximum clipboard paste. */
 int vex_pty_write_response(VexPty* session, const uint8_t* bytes, size_t length);
 bool vex_pty_resize(VexPty* session, uint16_t columns, uint16_t rows);

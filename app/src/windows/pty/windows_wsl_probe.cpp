@@ -8,9 +8,12 @@ struct WslProcessProbe {
     CRITICAL_SECTION lock;
     HANDLE thread, requested, stopping;
     wchar_t* command;
+    HWND window;
+    uint32_t token;
     uint8_t snapshot[128 * 1024];
     size_t length;
-    ULONGLONG createdAt, requestedAt, completedAt;
+    ULONGLONG createdAt, requestedAt, completedAt, activeUntil;
+    bool pending;
 };
 
 namespace {
@@ -111,28 +114,39 @@ DWORD WINAPI run(void* context) {
     for (;;) {
         // No periodic subprocesses for inactive panes. Only visible metadata reads request work.
         if (WaitForMultipleObjects(2, events, FALSE, INFINITE) != WAIT_OBJECT_0 + 1) break;
-        if (GetTickCount64() < nextQueryAt || !TryAcquireSRWLockExclusive(&queryGate)) continue;
+        if (GetTickCount64() < nextQueryAt || !TryAcquireSRWLockExclusive(&queryGate)) {
+            EnterCriticalSection(&probe->lock);
+            probe->pending = false;
+            LeaveCriticalSection(&probe->lock);
+            continue;
+        }
         size_t length = 0;
         const bool valid = query(probe, bytes, sizeof(probe->snapshot), length);
         ReleaseSRWLockExclusive(&queryGate);
         failures = valid ? 0 : (failures < 4 ? failures + 1 : 4);
-        nextQueryAt = GetTickCount64() + wslProbeSchedule::retryDelayMs(failures);
+        nextQueryAt = valid ? 0 : GetTickCount64() + wslProbeSchedule::retryDelayMs(failures);
         EnterCriticalSection(&probe->lock);
         probe->length = valid ? length : 0;
         if (valid) memcpy(probe->snapshot, bytes, length);
         probe->completedAt = GetTickCount64();
+        probe->pending = false;
         LeaveCriticalSection(&probe->lock);
+        // Publish asynchronously; never wait for another UI polling interval.
+        if (valid && WaitForSingleObject(probe->stopping, 0) == WAIT_TIMEOUT)
+            PostMessageW(probe->window, WM_APP + 13, probe->token, 0);
     }
     free(bytes);
     return 0;
 }
 }
 
-WslProcessProbe* createWslProcessProbe(const wchar_t* command) {
+WslProcessProbe* createWslProcessProbe(const wchar_t* command, HWND window, uint32_t token) {
     auto probe = static_cast<WslProcessProbe*>(calloc(1, sizeof(WslProcessProbe)));
     if (!probe) return nullptr;
     InitializeCriticalSection(&probe->lock);
     probe->command = _wcsdup(command);
+    probe->window = window;
+    probe->token = token;
     probe->createdAt = GetTickCount64();
     probe->requested = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     probe->stopping = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -156,6 +170,13 @@ void destroyWslProcessProbe(WslProcessProbe* probe) {
     free(probe);
 }
 
+void noteWslProcessInput(WslProcessProbe* probe) {
+    if (!probe) return;
+    EnterCriticalSection(&probe->lock);
+    probe->activeUntil = GetTickCount64() + wslProbeSchedule::activityWindowMs;
+    LeaveCriticalSection(&probe->lock);
+}
+
 bool readWslProcessSnapshot(WslProcessProbe* probe, uint8_t* bytes, size_t capacity, size_t* length) {
     if (!probe || !bytes || !length) return false;
     const ULONGLONG now = GetTickCount64();
@@ -163,7 +184,11 @@ bool readWslProcessSnapshot(WslProcessProbe* probe, uint8_t* bytes, size_t capac
     const bool valid = probe->length > 0 && probe->length <= capacity && now - probe->completedAt <= 2000;
     *length = valid ? probe->length : 0;
     if (valid) memcpy(bytes, probe->snapshot, *length);
-    if (wslProbeSchedule::requestDue(now, probe->createdAt, probe->requestedAt)) { probe->requestedAt = now; SetEvent(probe->requested); }
+    if (!probe->pending && wslProbeSchedule::requestDue(now, probe->createdAt, probe->requestedAt, probe->activeUntil, probe->completedAt)) {
+        probe->requestedAt = now;
+        probe->pending = true;
+        SetEvent(probe->requested);
+    }
     LeaveCriticalSection(&probe->lock);
     return valid;
 }

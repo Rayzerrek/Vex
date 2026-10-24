@@ -224,7 +224,7 @@ extern "C" int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, Vex
     if (!error && launch.wsl_probe_command_length) {
         if (!validLaunchString(launch.wsl_probe_command, launch.wsl_probe_command_length)) error = ERROR_INVALID_PARAMETER;
         else {
-            session->wslProbe = createWslProcessProbe(reinterpret_cast<const wchar_t*>(launch.wsl_probe_command));
+            session->wslProbe = createWslProcessProbe(reinterpret_cast<const wchar_t*>(launch.wsl_probe_command), session->window, token);
             // Process metadata is optional; an unavailable probe must not kill a live shell.
         }
     }
@@ -428,6 +428,10 @@ extern "C" uint32_t vex_pty_clipboard_token(uint32_t process_id) {
     CloseHandle(process);
     return token;
 }
+extern "C" void vex_pty_note_process_input(VexPty* session) {
+    if (session) noteWslProcessInput(session->wslProbe);
+}
+
 extern "C" bool vex_pty_wsl_snapshot(VexPty* session, uint8_t* bytes, size_t capacity, size_t* length) {
     return session && readWslProcessSnapshot(session->wslProbe, bytes, capacity, length);
 }

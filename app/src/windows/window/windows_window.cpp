@@ -969,6 +969,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam))
             callbacks.session_error(callbacks.context, (uint32_t)wparam, lparam ? (uint32_t)lparam : ERROR_WRITE_FAULT);
         return 0;
+    case WM_APP + 13:
+        if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam) && callbacks.process_changed)
+            callbacks.process_changed(callbacks.context, (uint32_t)wparam);
+        return 0;
     case WM_APP + 4:
         if (wparam <= UINT32_MAX && vex_pty_exists((uint32_t)wparam)) callbacks.exited(callbacks.context, (uint32_t)wparam, (uint32_t)lparam);
         return 0;

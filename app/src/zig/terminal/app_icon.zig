@@ -342,7 +342,7 @@ pub fn resolveDirect(raw_name: []const u8) ?AppIcon {
     if (clean.len == 0) return null;
 
     if (isShellName(clean)) return AppIcon.terminal_shell;
-    var canonical = clean;
+    var canonical = if (command_identity.isPythonExecutable(clean)) "python" else clean;
     for (aliases) |entry| {
         if (std.ascii.eqlIgnoreCase(clean, entry.alias)) {
             canonical = entry.canonical;
@@ -372,11 +372,19 @@ pub fn fromCommandLine(command_line: []const u8, shim_name: []const u8) ?AppIcon
     if (trimmed.len == 0) return null;
     const clean_shim = cleanExecutableName(shim_name);
 
-    if (command_identity.parseCommandLineApp(trimmed)) |app| {
+    if (command_identity.parseCommandLineIdentity(trimmed)) |identity| {
+        const app = identity.name;
         if (!std.ascii.eqlIgnoreCase(app, clean_shim)) {
             if (resolveDirect(app)) |icon| {
                 if (!icon.is_shell) return icon;
             } else if (app.len > 0) {
+                // A user's script is not a new brand; keep the runtime visible like its REPL.
+                // Package and module identities still receive their own deterministic badges.
+                if (identity.is_local_script) {
+                    if (resolveDirect(clean_shim)) |runtime| {
+                        if (!runtime.is_shell) return runtime;
+                    }
+                }
                 return fromProcess(app);
             }
         }
@@ -602,6 +610,35 @@ test "app icon resolution handles shim command lines, OSC titles, and unknown pr
     const idle_shell = resolve(null, null, "C:\\Users\\Ziut\\code\\vex", null);
     try std.testing.expectEqual(Kind.shell, idle_shell.kind);
     try std.testing.expect(idle_shell.is_shell);
+}
+
+test "runtime icons survive local scripts and versioned Python executables" {
+    const cases = [_]struct { process: []const u8, command: []const u8, glyph: GlyphId }{
+        .{ .process = "python3", .command = "python3 kitty-live-check.py --pause", .glyph = .python },
+        .{ .process = "python3.13", .command = "/usr/bin/python3.13 project/server.py", .glyph = .python },
+        .{ .process = "python3.13t.exe", .command = "python3.13t.exe -u server.py", .glyph = .python },
+        .{ .process = "python.exe", .command = "python.exe -m pytest tests/", .glyph = .python },
+        .{ .process = "node.exe", .command = "node.exe \"C:\\My Project\\server.js\"", .glyph = .nodedotjs },
+        .{ .process = "nodejs", .command = "nodejs --enable-source-maps server.mjs", .glyph = .nodedotjs },
+        .{ .process = "bun", .command = "bun run server.ts", .glyph = .bun },
+        .{ .process = "tsx", .command = "tsx server.ts", .glyph = .typescript },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqual(case.glyph, resolve(case.process, case.command, "nvim", null).glyph);
+    }
+    for ([_][]const u8{ "python", "pythonw.exe", "python3.12", "python3.14t", "C:\\Python313\\PYTHON.EXE" }) |name| {
+        try std.testing.expectEqual(GlyphId.python, fromProcess(name).glyph);
+    }
+    for ([_][]const u8{ "python-editor", "python3.foo", "python3.", "python..3", "pythont" }) |name| {
+        try std.testing.expect(resolveDirect(name) == null);
+    }
+
+    const module = resolve("python3.13", "python3.13 -m custom_module", null, null);
+    try std.testing.expectEqual(Kind.badge, module.kind);
+    const package = resolve("node", "node node_modules/@future/custom-agent/dist/cli.js", null, null);
+    try std.testing.expectEqual(Kind.badge, package.kind);
+    try std.testing.expectEqualStrings("C", package.badgeSlice());
+    try std.testing.expectEqual(GlyphId.neovim, resolve("node", "node server.js", null, "nvim").glyph);
 }
 
 test "explicit shim app beats stale OSC title and native processes keep their own identity" {

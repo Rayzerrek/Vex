@@ -5,6 +5,14 @@ SVG snapshots from [Simple Icons](https://simpleicons.org/), retrieved via
 Simple Icons publishes its collection under CC0; brand names and marks remain
 subject to their respective owners' trademark and usage guidelines.
 
+Tabs and pane headers resolve these icons automatically from the foreground
+process. Local scripts retain their runtime icon (for example, `python3 server.py`
+and `node server.js`), while recognized CLI tools and installed npm packages can
+supply a more specific identity. Versioned Python binaries such as `python3.13`
+and `python3.13t` use the Python icon too. Unknown packages and Python modules
+keep deterministic letter badges; explicit OSC 7501 application identity takes
+precedence. No shell configuration or executable-icon lookup is required.
+
 The other bundled brand paths were carried over from the previous WPF app's
 curated icon snapshot (available in Git history). The application does not load
 WPF or access the network at runtime.

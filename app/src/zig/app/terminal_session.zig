@@ -62,7 +62,7 @@ pub const TerminalSession = struct {
     sync_defer_since_ms: ?i64 = null,
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
     process_icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
-    last_icon_probe_ms: i64 = 0,
+    process_probe: @import("../terminal/process_probe_schedule.zig").ProcessProbeSchedule = .{},
     active_process_title: [64]u8 = undefined,
     active_process_title_len: usize = 0,
     has_foreground_process: bool = false,
@@ -193,12 +193,15 @@ pub const TerminalSession = struct {
     }
     /// User input acknowledges completed results; emulator replies deliberately bypass this path.
     pub fn writeUserInput(self: *TerminalSession, bytes: []const u8) !void {
-        self.last_icon_probe_ms = 0;
         self.recordApplicationInput();
         const previous = status_presentation.statusPresentationKey(self.terminal.program_status.programStatus());
         self.terminal.program_status.acknowledgeProgramStatus();
         if (previous != status_presentation.statusPresentationKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
         try self.writePty(bytes);
+        if (self.process_probe.noteInput(std.time.milliTimestamp(), bytes)) {
+            self.pty.noteProcessInput();
+            platform.scheduleDeferredTick(50);
+        }
     }
     /// A dead transport is quarantined; its screen remains available for copying.
     pub fn stopAfterTransportFailure(self: *TerminalSession, code: u32) void {
@@ -292,6 +295,12 @@ pub const TerminalSession = struct {
         if (self.active_process_title_len > 0) return self.active_process_title[0..self.active_process_title_len];
         return self.shell_name;
     }
+    pub fn refreshAppIconIfDue(self: *TerminalSession, now: i64) bool {
+        if (self.state != .running or !self.process_probe.due(now)) return false;
+        self.process_probe.last_probe_ms = now;
+        return self.refreshAppIcon(true);
+    }
+
     /// Resolves the active foreground program icon and process title using cached PID inspection or OSC title/status fallback.
     pub fn refreshAppIcon(self: *TerminalSession, query_process: bool) bool {
         const previous_icon = self.icon;
@@ -343,6 +352,7 @@ pub const TerminalSession = struct {
             const status_app = self.terminal.program_status.programStatus().app;
             self.icon = if (status_app) |app| app_icon.fromProcess(app) else if (self.has_foreground_process) self.process_icon else app_icon.resolve(null, null, osc_title, null);
         }
+        self.process_probe.foreground = self.has_foreground_process;
         const title_changed = self.active_process_title_len != previous_title_len or
             !std.mem.eql(u8, previous_title_buf[0..previous_title_len], self.active_process_title[0..self.active_process_title_len]);
         return !previous_icon.eql(self.icon) or title_changed;
@@ -351,7 +361,7 @@ pub const TerminalSession = struct {
     pub fn closeSnapshot(self: *TerminalSession, query_process: bool) close_confirmation.PaneCloseSnapshot {
         if (query_process and self.state == .running) {
             // A destructive action must not reuse an idle-shell result from the UI polling interval.
-            self.last_icon_probe_ms = std.time.milliTimestamp();
+            self.process_probe.last_probe_ms = std.time.milliTimestamp();
             _ = self.refreshAppIcon(true);
         }
         const prog_status = self.terminal.program_status.programStatus();

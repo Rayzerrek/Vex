@@ -49,15 +49,32 @@ pub fn executableStem(raw: []const u8) []const u8 {
     return leaf;
 }
 
-/// Decodes launcher structure without application allowlists or allocations; ambiguous options retain the host.
+/// Borrows the actual executable token, independently of any script/package it launches.
+pub fn commandExecutable(raw: []const u8) []const u8 {
+    return executableStem(nextToken(raw).token);
+}
+
+pub const CommandIdentity = struct {
+    name: []const u8,
+    is_local_script: bool = false,
+};
+
 pub fn parseCommandLineApp(raw: []const u8) ?[]const u8 {
+    return if (parseCommandLineIdentity(raw)) |identity| identity.name else null;
+}
+
+/// Decodes launcher structure without application allowlists or allocations; ambiguous options retain the host.
+pub fn parseCommandLineIdentity(raw: []const u8) ?CommandIdentity {
     if (raw.len == 0 or raw.len > 32768 or !std.unicode.utf8ValidateSlice(raw)) return null;
     var remaining = std.mem.trim(u8, raw, whitespace);
     for (0..8) |_| {
         const first = nextToken(remaining);
         const name = programName(first.token);
         if (name.len == 0) return null;
-        const mode = hostMode(name) orelse return name;
+        const mode = hostMode(name) orelse return .{
+            .name = name,
+            .is_local_script = std.mem.eql(u8, name, executableStem(first.token)) and isScriptPath(first.token),
+        };
         var rest = first.rest;
         while (rest.len > 0) {
             // cmd /s /c wraps the entire quoted command in one extra quote pair.
@@ -66,19 +83,19 @@ pub fn parseCommandLineApp(raw: []const u8) ?[]const u8 {
                 if (std.mem.endsWith(u8, rest, "\"")) rest = rest[0 .. rest.len - 1];
             }
             const arg = nextToken(rest);
-            if (arg.token.len == 0) return name;
+            if (arg.token.len == 0) return .{ .name = name };
             if (std.mem.eql(u8, arg.token, "--")) {
                 rest = arg.rest;
                 break;
             }
             if (mode == .powershell) {
-                if (equals(arg.token, "-File") or equals(arg.token, "-f")) return programName(nextToken(arg.rest).token);
+                if (equals(arg.token, "-File") or equals(arg.token, "-f")) return .{ .name = programName(nextToken(arg.rest).token) };
                 // Inline shell source is not an application identity.
-                if (equals(arg.token, "-Command") or equals(arg.token, "-c") or equals(arg.token, "-EncodedCommand")) return name;
+                if (equals(arg.token, "-Command") or equals(arg.token, "-c") or equals(arg.token, "-EncodedCommand")) return .{ .name = name };
             }
             if (mode == .python and std.mem.eql(u8, arg.token, "-m")) {
                 const module = nextToken(arg.rest).token;
-                return if (module.len > 0) module else name;
+                return .{ .name = if (module.len > 0) module else name };
             }
             if (mode == .shell and (equals(arg.token, "/c") or equals(arg.token, "/k") or equals(arg.token, "-c"))) {
                 rest = std.mem.trim(u8, arg.rest, whitespace);
@@ -91,24 +108,24 @@ pub fn parseCommandLineApp(raw: []const u8) ?[]const u8 {
             }
             if (mode == .subcommand and equals(arg.token, "run")) {
                 // npm scripts are arbitrary labels, not executable identities.
-                if (equals(name, "npm") or equals(name, "pnpm") or equals(name, "yarn")) return name;
+                if (equals(name, "npm") or equals(name, "pnpm") or equals(name, "yarn")) return .{ .name = name };
                 rest = arg.rest;
                 continue;
             }
             if (arg.token[0] == '-' or (mode == .shell and arg.token[0] == '/')) {
                 if (takesValue(mode, arg.token)) {
                     const value = nextToken(arg.rest);
-                    if (value.token.len == 0) return name;
+                    if (value.token.len == 0) return .{ .name = name };
                     rest = value.rest;
                     continue;
                 }
-                if (!isFlag(mode, arg.token)) return name;
+                if (!isFlag(mode, arg.token)) return .{ .name = name };
                 rest = arg.rest;
                 continue;
             }
             break;
         }
-        if (rest.len == 0) return name;
+        if (rest.len == 0) return .{ .name = name };
         if (mode == .shell and std.mem.startsWith(u8, rest, "\"\"")) {
             rest = rest[1..];
             if (std.mem.endsWith(u8, rest, "\"")) rest = rest[0 .. rest.len - 1];
@@ -158,7 +175,36 @@ pub fn shellHasCommand(raw: []const u8) bool {
     return false;
 }
 
+/// Python installs expose versioned binaries on Unix and free-threaded builds on Windows.
+pub fn isPythonExecutable(raw: []const u8) bool {
+    const name = executableStem(raw);
+    if (equals(name, "py") or equals(name, "python") or equals(name, "pythonw")) return true;
+    if (name.len <= 6 or !std.ascii.startsWithIgnoreCase(name, "python")) return false;
+    var version = name[6..];
+    if (version[version.len - 1] == 't') version = version[0 .. version.len - 1];
+    var digits = std.mem.splitScalar(u8, version, '.');
+    var count: usize = 0;
+    while (digits.next()) |part| {
+        if (part.len == 0) return false;
+        for (part) |byte| if (!std.ascii.isDigit(byte)) return false;
+        count += 1;
+    }
+    return count > 0 and count <= 2;
+}
+
+fn isScriptPath(path: []const u8) bool {
+    var parts = std.mem.tokenizeAny(u8, path, "/\\");
+    while (parts.next()) |part| {
+        if (equals(part, "node_modules")) return false;
+    }
+    for ([_][]const u8{ ".js", ".mjs", ".cjs", ".ts", ".py" }) |extension| {
+        if (std.ascii.endsWithIgnoreCase(path, extension)) return true;
+    }
+    return false;
+}
+
 fn hostMode(name: []const u8) ?Mode {
+    if (isPythonExecutable(name)) return .python;
     for (hosts) |host| if (equals(name, host.name)) return host.mode;
     return null;
 }
@@ -209,6 +255,17 @@ test "interactive shell switches do not hide scripts or inline shell commands" {
     }
     for ([_][]const u8{ "", "pwsh -Command Start-Sleep", "powershell -NoExit -EncodedCommand AAAA", "bash -c 'sleep 100'", "fish script.fish", "cmd /k task.cmd", "nu --commands sleep", "zsh --unknown-option", "pwsh -File powershell.ps1", "pwsh -c sleep", "cmd -i", "bash -NoProfile", "pwsh -ExecutionPolicy", "zsh -lic 'sleep 100'" }) |raw| {
         try std.testing.expect(shellHasCommand(raw));
+    }
+}
+
+test "command identity distinguishes local scripts from modules and installed tools" {
+    for ([_][]const u8{ "python3.13 server.py", "node server.js", "bun run server.ts" }) |raw| {
+        const identity = parseCommandLineIdentity(raw) orelse return error.MissingCommandIdentity;
+        try std.testing.expect(identity.is_local_script);
+    }
+    for ([_][]const u8{ "python3.13 -m server", "node node_modules/cli/cli.js", "node node_modules/.bin/server.js", "npx future-tool", "node --eval 'server.js'" }) |raw| {
+        const identity = parseCommandLineIdentity(raw) orelse return error.MissingCommandIdentity;
+        try std.testing.expect(!identity.is_local_script);
     }
 }
 

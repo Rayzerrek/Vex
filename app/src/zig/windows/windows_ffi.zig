@@ -195,6 +195,10 @@ pub const PtyOwner = struct {
     pub fn processId(self: *const PtyOwner) u32 {
         return c.vex_pty_process_id(self.handle);
     }
+    pub fn noteProcessInput(self: *const PtyOwner) void {
+        c.vex_pty_note_process_input(self.handle);
+    }
+
     /// Queries the foreground application or fallback shell, preserving root identity for bootstrap handling.
     pub fn foregroundProcess(self: *const PtyOwner, exe_buf: []u8, cmd_buf: []u8) struct { exe: []const u8, cmd: []const u8, is_root: bool = false, is_shell: bool = false, is_linux: bool = false } {
         if (exe_buf.len == 0 or cmd_buf.len == 0) return .{ .exe = &.{}, .cmd = &.{} };
@@ -375,6 +379,9 @@ pub fn runWindow(owner: anytype) !void {
         fn sessionError(context: ?*anyopaque, token: u32, code: u32) callconv(.c) void {
             if (token != 0) if (recover(context)) |app| app.onSessionError(@enumFromInt(token), code);
         }
+        fn processChanged(context: ?*anyopaque, token: u32) callconv(.c) void {
+            if (token != 0) if (recover(context)) |app| app.onProcessChanged(@enumFromInt(token));
+        }
         fn tick(context: ?*anyopaque) callconv(.c) void {
             if (recover(context)) |app| app.onTick();
         }
@@ -405,7 +412,7 @@ pub fn runWindow(owner: anytype) !void {
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .clipboard = Adapter.clipboard, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .session_error = Adapter.sessionError, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .clipboard = Adapter.clipboard, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .session_error = Adapter.sessionError, .process_changed = Adapter.processChanged, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
@@ -513,8 +520,13 @@ pub fn writeClipboardText(text: []const u8) !void {
     if (c.vex_clipboard_write(text.ptr, text.len) != 0) return error.ClipboardWriteFailed;
 }
 /// Reads CF_UNICODETEXT from the system clipboard and routes it through the active session paste handler.
-pub fn scheduleCopyCheck(delay_ms: u32) void {
+/// Shared earliest-deadline tick: metadata bursts and copy feedback must not postpone each other.
+pub fn scheduleDeferredTick(delay_ms: u32) void {
     c.vex_window_schedule_copy_check(delay_ms);
+}
+
+pub fn scheduleCopyCheck(delay_ms: u32) void {
+    scheduleDeferredTick(delay_ms);
 }
 
 pub fn pasteClipboard() void {

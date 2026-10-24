@@ -69,7 +69,15 @@ pub fn parseSnapshot(text: []const u8) ?ForegroundProcess {
             selected_depth = depth;
         }
     }
-    if (selected) |process| return .{ .name = identity.parseCommandLineApp(process.command) orelse process.name, .command = process.command, .is_shell = false };
+    if (selected) |process| {
+        const target = identity.parseCommandLineIdentity(process.command);
+        const name = if (target) |app|
+            // Keep local scripts attached to their runtime, just like native Windows processes.
+            (if (app.is_local_script) identity.commandExecutable(process.command) else app.name)
+        else
+            process.name;
+        return .{ .name = name, .command = process.command, .is_shell = false };
+    }
     return .{ .name = shell.name, .command = shell.command, .is_shell = true };
 }
 
@@ -104,6 +112,22 @@ test "WSL foreground groups isolate panes, background jobs and application worke
     const idle = parseSnapshot("100\n100 1 100 100 arbitrary-shell arbitrary-shell\n300 100 300 100 work work\n") orelse return error.MissingProcess;
     try std.testing.expect(idle.is_shell);
     try std.testing.expectEqualStrings("arbitrary-shell", idle.name);
+}
+
+test "WSL local scripts retain runtime icons while installed tools keep their identity" {
+    const app_icon = @import("../terminal/app_icon.zig");
+    const cases = [_]struct { row: []const u8, glyph: app_icon.GlyphId }{
+        .{ .row = "200 100 200 200 python3.13 /usr/bin/python3.13 server.py", .glyph = .python },
+        .{ .row = "200 100 200 200 MainThread node server.js", .glyph = .nodedotjs },
+        .{ .row = "200 100 200 200 bun bun run server.ts", .glyph = .bun },
+        .{ .row = "200 100 200 200 node node /npm/node_modules/@anthropic-ai/claude-code/cli.js", .glyph = .claudecode },
+    };
+    for (cases) |case| {
+        const snapshot = try std.mem.concat(std.testing.allocator, u8, &.{ "100\n100 1 100 200 bash bash\n", case.row, "\n" });
+        defer std.testing.allocator.free(snapshot);
+        const process = parseSnapshot(snapshot) orelse return error.MissingProcess;
+        try std.testing.expectEqual(case.glyph, app_icon.resolve(process.name, process.command, null, null).glyph);
+    }
 }
 
 test "WSL process snapshots fail closed on missing roots, malformed input and parent cycles" {
