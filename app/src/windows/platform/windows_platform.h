@@ -181,6 +181,16 @@ void vex_draw_tab_preview_card(VexPaneRect bounds, const uint8_t* title, size_t 
 void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, uint32_t flags);
 int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags);
 void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color);
+typedef struct {
+    uint64_t generation;
+    const uint8_t* rgba;
+    uint32_t width, height;
+    float left, top, right, bottom;
+    float u0, v0, u1, v1;
+} VexTerminalImage;
+int vex_draw_terminal_image(VexTerminalImage image);
+/* 0: normal; 1: backgrounds only; 2: text/decorations only. */
+void vex_terminal_cell_layer(uint32_t layer);
 /* Exact scalar key: pane, dimensions, palette, block cursor and hovered link. No borrowed pointers. */
 typedef struct {
     uint64_t generation;

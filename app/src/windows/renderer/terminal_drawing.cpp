@@ -12,6 +12,7 @@ ID2D1RenderTarget* glyphTarget;
 ID2D1SolidColorBrush* glyphBrush;
 float dpiScale, cellWidth, cellHeight, gridLeft, gridTop;
 uint32_t paneBackground;
+uint32_t cellLayer = 0;
 }
 void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
     renderer = frame.renderer;
@@ -21,6 +22,7 @@ void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
     paneBackground = frame.paneBackground;
 }
 void beginTerminalPane(VexPaneRect bounds) {
+    cellLayer = 0;
     gridLeft = bounds.x + 6; gridTop = bounds.y + 30;
     const float scale = dpiScale;
     const D3D12_RECT clip = {
@@ -336,8 +338,8 @@ static HRESULT paintAtlasGlyph(ID2D1RenderTarget* raster, ID2D1SolidColorBrush* 
 extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags) {
     const float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight, width = cells * cellWidth;
     HRESULT result = S_OK;
-    if (background != paneBackground) result = renderer->terminal.drawSolid(snapDip(x), snapDip(y), snapDip(x + width), snapDip(y + cellHeight), background);
-    if (!length || (flags & 16) || FAILED(result)) return (int)renderer->terminalResult(result);
+    if (cellLayer != 2 && background != paneBackground) result = renderer->terminal.drawSolid(snapDip(x), snapDip(y), snapDip(x + width), snapDip(y + cellHeight), background);
+    if (cellLayer == 1 || !length || (flags & 16) || FAILED(result)) return (int)renderer->terminalResult(result);
     if (!utf8 || length > 65536) return (int)renderer->terminalResult(E_INVALIDARG);
     size_t trimmed = length;
     while (trimmed && utf8[trimmed - 1] == ' ') trimmed--;
@@ -351,6 +353,13 @@ extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const
     if (SUCCEEDED(result) && (flags & 4)) result = renderer->terminal.drawSolid(x, y + cellHeight - 2, x + width, y + cellHeight - 1, foreground);
     if (SUCCEEDED(result) && (flags & 8)) result = renderer->terminal.drawSolid(x, y + cellHeight * 0.55f, x + width, y + cellHeight * 0.55f + 1, foreground);
     return (int)renderer->terminalResult(result);
+}
+extern "C" void vex_terminal_cell_layer(uint32_t layer) { cellLayer = layer; }
+extern "C" int vex_draw_terminal_image(VexTerminalImage image) {
+    const float bounds[] = { gridLeft + image.left * cellWidth, gridTop + image.top * cellHeight,
+        gridLeft + image.right * cellWidth, gridTop + image.bottom * cellHeight };
+    const float uv[] = { image.u0, image.v0, image.u1, image.v1 };
+    return (int)renderer->terminalResult(renderer->terminal.drawImage(image.generation, image.rgba, image.width, image.height, bounds, uv));
 }
 extern "C" void vex_draw_cursor(uint16_t column, uint16_t row, uint32_t style, uint32_t color) {
     const float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight;
@@ -378,6 +387,7 @@ extern "C" int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reu
 }
 extern "C" void vex_terminal_geometry_end(bool complete) { renderer->terminal.endGeometry(complete); }
 extern "C" void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns, uint16_t rows) {
+    cellLayer = 0;
     gridLeft = 0; gridTop = 0;
     const float factor = fminf(bounds.width / fmaxf(1, columns * cellWidth), bounds.height / fmaxf(1, rows * cellHeight));
     const D3D12_RECT clip = {

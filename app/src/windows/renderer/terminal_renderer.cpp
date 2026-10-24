@@ -53,7 +53,10 @@ HRESULT TerminalRenderer::createPipelineState() {
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC rootDescription = {};
     rootDescription.NumParameters = 2; rootDescription.pParameters = parameters;
-    rootDescription.NumStaticSamplers = 1; rootDescription.pStaticSamplers = &sampler;
+    D3D12_STATIC_SAMPLER_DESC samplers[] = { sampler, sampler };
+    samplers[1].ShaderRegister = 1;
+    samplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    rootDescription.NumStaticSamplers = 2; rootDescription.pStaticSamplers = samplers;
     rootDescription.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
     ComPtr<ID3DBlob> signature, errors;
     HRESULT result = D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &errors);
@@ -125,6 +128,19 @@ HRESULT TerminalRenderer::beginFrame(UINT index) {
     frameIndex = index;
     frameTimeMs = GetTickCount64();
     auto& frame = frames[index];
+    // beginFrame is called only after this slot's fence completes.
+    for (UINT i = 0; i < frame.imageCount; ++i) {
+        frame.images[i].reset();
+        frame.imageUploads[i].Reset();
+    }
+    frame.imageCount = 0;
+    frame.imageUploadBytes = 0;
+    for (auto& image : images) {
+        if (image.resource.texture && frameTimeMs - image.lastUsed > 2000) {
+            imageBytes -= image.bytes;
+            image.reset();
+        }
+    }
     frame.pageIndex = 0;
     for (UINT i = 0; i < frame.pageCount; i++) frame.pages[i].used = 0;
     return frame.allocator->Reset();
@@ -141,6 +157,7 @@ HRESULT TerminalRenderer::beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR
     ID3D12DescriptorHeap* heaps[] = { descriptors.Get() };
     commands->SetDescriptorHeaps(1, heaps);
     commands->SetGraphicsRootDescriptorTable(1, descriptors->GetGPUDescriptorHandleForHeapStart());
+    boundTexture = descriptors.Get();
     const float viewportSize[] = { (float)width, (float)height };
     commands->SetGraphicsRoot32BitConstants(0, 2, viewportSize, 0);
     D3D12_VIEWPORT viewport = { 0, 0, (float)width, (float)height, 0, 1 };
@@ -192,7 +209,17 @@ void TerminalRenderer::flushQuads() {
     drawCalls++; pendingQuads = 0;
 }
 
+void TerminalRenderer::bindTexture(ID3D12DescriptorHeap* heap) {
+    if (boundTexture == heap) return;
+    flushQuads();
+    ID3D12DescriptorHeap* heaps[] = { heap };
+    commands->SetDescriptorHeaps(1, heaps);
+    commands->SetGraphicsRootDescriptorTable(1, heap->GetGPUDescriptorHandleForHeapStart());
+    boundTexture = heap;
+}
+
 HRESULT TerminalRenderer::appendQuad(const Quad& quad) {
+    if (quad.kind != 5) bindTexture(descriptors.Get());
     UINT page, offset;
     HRESULT result = allocateUpload(sizeof(quad), 4, page, offset);
     if (FAILED(result)) return result;
@@ -226,6 +253,7 @@ void TerminalRenderer::recordQuad(const Quad& quad) {
 }
 
 HRESULT TerminalRenderer::replayGeometry(const Geometry& entry) {
+    bindTexture(descriptors.Get());
     UINT copied = 0;
     while (copied < entry.count) {
         const UINT count = entry.count - copied < pageBytes / sizeof(Quad)
@@ -257,7 +285,7 @@ HRESULT TerminalRenderer::beginGeometry(uint64_t generation, const uint32_t (&ke
     Geometry* entry = nullptr;
     Geometry* oldest = &geometries[0];
     for (auto& candidate : geometries) {
-        if (candidate.key[0] == key[0]) { entry = &candidate; break; }
+        if (candidate.key[0] == key[0] && candidate.key[8] == key[8]) { entry = &candidate; break; }
         if (candidate.lastUsed < oldest->lastUsed) oldest = &candidate;
     }
     if (!entry) entry = oldest;
@@ -287,6 +315,108 @@ UINT64 TerminalRenderer::geometryCapacity() const {
     UINT64 bytes = 0;
     for (const auto& entry : geometries) bytes += (UINT64)entry.capacity * sizeof(Quad);
     return bytes;
+}
+
+HRESULT TerminalRenderer::uploadImage(CachedImage& image, const uint8_t* rgba, UINT width, UINT height) {
+    D3D12_HEAP_PROPERTIES heap = {}; heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC texture = {};
+    texture.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    texture.Width = width; texture.Height = height;
+    texture.DepthOrArraySize = 1; texture.MipLevels = 1;
+    texture.Format = DXGI_FORMAT_R8G8B8A8_UNORM; texture.SampleDesc.Count = 1;
+    HRESULT result = deviceOwner->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &texture,
+        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&image.resource.texture));
+    D3D12_DESCRIPTOR_HEAP_DESC description = {};
+    description.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    description.NumDescriptors = 1; description.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    if (SUCCEEDED(result)) result = deviceOwner->CreateDescriptorHeap(&description, IID_PPV_ARGS(&image.resource.view));
+    if (FAILED(result)) return result;
+    D3D12_SHADER_RESOURCE_VIEW_DESC view = {};
+    view.Format = texture.Format; view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    view.Texture2D.MipLevels = 1;
+    deviceOwner->CreateShaderResourceView(image.resource.texture.Get(), &view, image.resource.view->GetCPUDescriptorHandleForHeapStart());
+    auto& frame = frames[frameIndex];
+    const UINT slot = frame.imageCount;
+    result = frame.images[slot].retain(image.resource);
+    if (FAILED(result)) return result;
+    frame.imageCount++;
+    // Image transfers must not exhaust the pages reserved for glyphs and terminal geometry.
+    const UINT pitch = (width * 4 + 255) & ~255u;
+    const UINT64 bytes = (UINT64)pitch * height;
+    heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC buffer = {};
+    buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; buffer.Width = bytes;
+    buffer.Height = 1; buffer.DepthOrArraySize = 1; buffer.MipLevels = 1;
+    buffer.SampleDesc.Count = 1; buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    result = deviceOwner->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&frame.imageUploads[slot]));
+    if (FAILED(result)) return result;
+    void* mapped = nullptr;
+    const D3D12_RANGE noRead = { 0, 0 };
+    result = frame.imageUploads[slot]->Map(0, &noRead, &mapped);
+    if (FAILED(result)) return result;
+    auto destination = static_cast<uint8_t*>(mapped);
+    for (UINT row = 0; row < height; ++row) memcpy(destination + (size_t)row * pitch, rgba + (size_t)row * width * 4, width * 4);
+    frame.imageUploads[slot]->Unmap(0, nullptr);
+    frame.imageUploadBytes += bytes;
+    flushQuads();
+    D3D12_TEXTURE_COPY_LOCATION from = {}, to = {};
+    from.pResource = frame.imageUploads[slot].Get(); from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    from.PlacedFootprint.Footprint = { texture.Format, width, height, 1, pitch };
+    to.pResource = image.resource.texture.Get(); to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    commands->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+    auto barrier = terminalTransition(image.resource.texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    commands->ResourceBarrier(1, &barrier);
+    return S_OK;
+}
+
+HRESULT TerminalRenderer::drawImage(uint64_t generation, const uint8_t* rgba, UINT width, UINT height, const float (&bounds)[4], const float (&uv)[4]) {
+    if (!passOpen || recording || !generation || !rgba || !width || !height || width > 8192 || height > 8192 ||
+        (UINT64)width * height * 4 > 32 * 1024 * 1024) return E_INVALIDARG;
+    for (UINT i = 0; i < 4; ++i) if (!isfinite(bounds[i]) || !isfinite(uv[i])) return E_INVALIDARG;
+    if (bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) return S_OK;
+    auto& frame = frames[frameIndex];
+    CachedImage* cached = nullptr;
+    for (auto& image : images) if (image.generation == generation) { cached = &image; break; }
+    if (!cached) {
+        // A full image working set must not turn another pane's output into a fatal frame error.
+        if (frame.imageCount == maxImages) return S_OK;
+        const UINT64 uploadBytes = (UINT64)((width * 4 + 255) & ~255u) * height;
+        if (uploadBytes > 64 * 1024 * 1024 - frame.imageUploadBytes) return S_OK;
+        const UINT64 bytes = (UINT64)width * height * 4;
+        for (;;) {
+            CachedImage* oldest = nullptr;
+            const bool mustEvict = imageBytes + bytes > 64 * 1024 * 1024;
+            for (auto& image : images) {
+                if (mustEvict && !image.resource.texture) continue;
+                if (!oldest || image.lastUsed < oldest->lastUsed) oldest = &image;
+            }
+            if (!oldest) return E_UNEXPECTED;
+            if (oldest->resource.texture) { imageBytes -= oldest->bytes; oldest->reset(); }
+            if (imageBytes + bytes <= 64 * 1024 * 1024) { cached = oldest; break; }
+        }
+        HRESULT result = uploadImage(*cached, rgba, width, height);
+        if (FAILED(result)) { cached->reset(); return result; }
+        cached->generation = generation; cached->bytes = bytes;
+        imageBytes += bytes; imageUploads++;
+    } else {
+        bool retained = false;
+        for (UINT i = 0; i < frame.imageCount; ++i) if (frame.images[i].texture.Get() == cached->resource.texture.Get()) { retained = true; break; }
+        if (!retained) {
+            if (frame.imageCount == maxImages) return S_OK;
+            HRESULT result = frame.images[frame.imageCount].retain(cached->resource);
+            if (FAILED(result)) return result;
+            frame.imageCount++;
+        }
+        imageHits++;
+    }
+    cached->lastUsed = frameTimeMs;
+    // Consecutive placements of the same texture share an instanced draw.
+    bindTexture(cached->resource.view.Get());
+    Quad quad = { { bounds[0] * scale, bounds[1] * scale, bounds[2] * scale, bounds[3] * scale },
+        { uv[0], uv[1], uv[2], uv[3] }, 0xffffffff, 5 };
+    return appendQuad(quad);
 }
 
 HRESULT TerminalRenderer::drawSolid(float left, float top, float right, float bottom, uint32_t color, uint8_t alpha) {
@@ -430,7 +560,7 @@ HRESULT TerminalRenderer::endPass(ID3D12CommandQueue* queue) {
     commands->ResourceBarrier(1, &barrier);
     HRESULT result = commands->Close();
     if (SUCCEEDED(result)) { ID3D12CommandList* lists[] = { commands.Get() }; queue->ExecuteCommandLists(1, lists); }
-    passOpen = false; passBuffer = nullptr;
+    passOpen = false; passBuffer = nullptr; boundTexture = nullptr;
     return result;
 }
 
@@ -470,7 +600,13 @@ void TerminalRenderer::shutdown() {
         entry = {};
     }
     clearGlyphCache();
+    for (auto& image : images) image.reset();
+    imageBytes = 0;
     for (auto& frame : frames) {
+        for (auto& image : frame.images) image.reset();
+        for (auto& upload : frame.imageUploads) upload.Reset();
+        frame.imageCount = 0;
+        frame.imageUploadBytes = 0;
         for (auto& upload : frame.pages) {
             if (upload.resource && upload.mapped) upload.resource->Unmap(0, nullptr);
             upload.resource.Reset(); upload.mapped = nullptr; upload.used = 0;

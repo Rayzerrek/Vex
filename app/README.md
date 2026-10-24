@@ -37,6 +37,13 @@ zig build run -- --program 'C:\Windows\System32\cmd.exe' --arguments /d
 
 See [testing](../docs/testing.md) for the complete checks and desktop validation.
 
+## Terminal images
+
+Kitty Graphics direct RGB/RGBA/PNG images use generation-cached D3D12 textures.
+For a local smoke check, run `python3 tools/kitty_graphics_probe.py --show` inside
+Vex. File/shared-memory transfers and Unicode placeholders are not supported.
+See [Kitty Graphics](../docs/kitty-graphics.md) for limits and verification.
+
 ## Source map
 
 - `src/zig/`: application, shell, terminal and workspace models; Windows adapters.

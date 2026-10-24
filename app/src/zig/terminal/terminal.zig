@@ -5,6 +5,7 @@ const check = binding.checkResult;
 const status = @import("program_status.zig");
 const feed = @import("terminal_feed.zig");
 const title_mod = @import("terminal_title.zig");
+pub const kitty = @import("kitty_graphics.zig");
 pub const TerminalTitle = title_mod.TerminalTitle;
 
 /// Rendered cell width comes from the public Ghostty API, never packed cell bits.
@@ -42,6 +43,9 @@ pub const TerminalFrame = struct {
     utf8: std.ArrayList(u8) = .empty,
     cursor: TerminalCursor = .{},
     generation: u64 = 0,
+    graphics: kitty.Snapshot = .{},
+    cell_width_px: u32 = 9,
+    cell_height_px: u32 = 17,
     /// Bounds-checked UTF-8 text for one parsed cell, never a null-terminated C string.
     pub fn cellText(self: *const TerminalFrame, cell: TerminalCell) []const u8 {
         return self.utf8.items[cell.text_start..][0..cell.text_length];
@@ -123,6 +127,7 @@ pub const Terminal = struct {
     kb_focus_col: u16 = 0,
     kb_focus_row: u16 = 0,
     frame: TerminalFrame = .{},
+    graphics_iterator: c.GhosttyKittyGraphicsPlacementIterator = null,
     grapheme: std.ArrayList(u8) = .empty,
     search_row: std.ArrayList(u8) = .empty,
     frame_valid: bool = false,
@@ -146,6 +151,15 @@ pub const Terminal = struct {
         try check(api.terminal_new(null, &terminal, 80, 24));
         const handle = terminal orelse return error.TerminalNullHandle;
         errdefer api.terminal_free(handle);
+        const image_storage_limit: u64 = kitty.storage_limit;
+        try check(api.terminal_set(handle, c.GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &image_storage_limit));
+        const apc_limit: usize = 64 * 1024;
+        try check(api.terminal_set(handle, c.GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY, &apc_limit));
+        // Terminal output must not grant filesystem/shared-memory access to a sender.
+        const disabled = false;
+        try check(api.terminal_set(handle, c.GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &disabled));
+        try check(api.terminal_set(handle, c.GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, null));
+        try check(api.terminal_set(handle, c.GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &disabled));
         var render: c.GhosttyRenderState = null;
         try check(api.render_state_new(null, &render));
         const render_state = render orelse return error.TerminalNullHandle;
@@ -224,6 +238,8 @@ pub const Terminal = struct {
         self.api.render_state_row_cells_free(self.row_cells);
         self.api.render_state_row_iterator_free(self.row_iterator);
         self.api.render_state_free(self.render_state);
+        if (self.graphics_iterator != null) self.api.kitty_graphics_placement_iterator_free(self.graphics_iterator);
+        self.frame.graphics.deinit(self.allocator);
         self.api.terminal_free(self.handle);
         self.frame.cells.deinit(self.allocator);
         self.frame.utf8.deinit(self.allocator);
@@ -805,6 +821,9 @@ pub const Terminal = struct {
         var dirty: c.GhosttyRenderStateDirty = undefined;
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
         self.frame.cursor = try self.readCursor();
+        try self.frame.graphics.update(self.allocator, self.api, self.handle, &self.graphics_iterator, dirty != c.GHOSTTY_RENDER_STATE_DIRTY_FALSE or !self.frame_valid);
+        self.frame.cell_width_px = self.cell_width_px;
+        self.frame.cell_height_px = self.cell_height_px;
         if (dirty == c.GHOSTTY_RENDER_STATE_DIRTY_FALSE and self.frame_valid) return &self.frame;
         if (dirty > c.GHOSTTY_RENDER_STATE_DIRTY_FULL) return error.InvalidTerminalDirtyState;
         self.frame_valid = false;

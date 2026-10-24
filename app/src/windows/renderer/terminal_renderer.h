@@ -17,6 +17,8 @@ public:
     HRESULT beginFrame(UINT index);
     HRESULT beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_RECT clip, UINT width, UINT height, float dpi);
     HRESULT endPass(ID3D12CommandQueue* queue);
+    HRESULT drawImage(uint64_t generation, const uint8_t* rgba, UINT width, UINT height, const float (&bounds)[4], const float (&uv)[4]);
+    UINT64 imageHits = 0, imageUploads = 0;
     HRESULT drawSolid(float left, float top, float right, float bottom, uint32_t color, uint8_t alpha = 255);
     HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha = 255, bool cellAligned = false);
     HRESULT drawRounded(float left, float top, float right, float bottom, float radius, float stroke, uint32_t color, uint8_t alpha);
@@ -41,8 +43,33 @@ private:
     template<class T> using ComPtr = RendererComPtr<T>;
     static constexpr UINT frameCount = 2, pageBytes = 256 * 1024, maxPages = 256, maxGlyphs = 2048, cacheSlots = 4096;
     struct UploadPage { ComPtr<ID3D12Resource> resource; uint8_t* mapped = nullptr; UINT used = 0; ULONGLONG lastUsedMs = 0; };
+    static constexpr UINT maxImages = 128;
+    struct ImageResource {
+        ComPtr<ID3D12Resource> texture;
+        ComPtr<ID3D12DescriptorHeap> view;
+        void reset() { texture.Reset(); view.Reset(); }
+        HRESULT retain(const ImageResource& source) {
+            reset();
+            HRESULT result = source.texture.As(&texture);
+            if (SUCCEEDED(result)) result = source.view.As(&view);
+            if (FAILED(result)) reset();
+            return result;
+        }
+    };
+    struct CachedImage {
+        ImageResource resource;
+        UINT64 generation = 0, bytes = 0;
+        ULONGLONG lastUsed = 0;
+        void reset() { resource.reset(); generation = bytes = lastUsed = 0; }
+    };
+    CachedImage images[maxImages];
+    UINT64 imageBytes = 0;
     struct Frame {
         ComPtr<ID3D12CommandAllocator> allocator;
+        ImageResource images[maxImages];
+        ComPtr<ID3D12Resource> imageUploads[maxImages];
+        UINT imageCount = 0;
+        UINT64 imageUploadBytes = 0;
         UploadPage pages[maxPages];
         UINT pageCount = 0, pageIndex = 0;
     };
@@ -84,6 +111,8 @@ private:
     float previewScale = 1, previewX = 0, previewY = 0;
     bool apartmentOwned = false, passOpen = false;
     ID3D12Resource* passBuffer = nullptr;
+    ID3D12DescriptorHeap* boundTexture = nullptr;
+    void bindTexture(ID3D12DescriptorHeap* heap);
     HRESULT createPipeline(const TerminalRenderer* sharedPipeline);
     HRESULT createPipelineState();
     HRESULT allocateUpload(UINT bytes, UINT alignment, UINT& page, UINT& offset);
@@ -92,4 +121,5 @@ private:
     void recordQuad(const Quad& quad);
     HRESULT replayGeometry(const Geometry& geometry);
     HRESULT uploadGlyph(Glyph& glyph);
+    HRESULT uploadImage(CachedImage& image, const uint8_t* rgba, UINT width, UINT height);
 };

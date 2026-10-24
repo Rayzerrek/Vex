@@ -8,6 +8,156 @@ const CellWidth = terminal_mod.CellWidth;
 const MouseTrackingMode = terminal_mod.MouseTrackingMode;
 const MouseFormat = terminal_mod.MouseFormat;
 
+test "Kitty graphics storage is bounded and filesystem media are disabled" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var limit: u64 = 1;
+    try binding.checkResult(api.terminal_get(terminal.handle, c.GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT, &limit));
+    try std.testing.expectEqual(terminal_mod.kitty.storage_limit, limit);
+    for ([_]c.GhosttyTerminalData{ c.GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE, c.GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM }) |kind| {
+        var enabled = true;
+        try binding.checkResult(api.terminal_get(terminal.handle, kind, &enabled));
+        try std.testing.expect(!enabled);
+    }
+}
+
+test "Kitty direct RGB chunks survive every feed boundary and deletion releases the image" {
+    const api = try binding.Api.load();
+    // Two RGB pixels, split into independent base64 chunks as specified by Kitty.
+    const bytes = "\x1b_Ga=t,f=24,s=2,v=1,i=42,m=1;/wAA\x1b\\\x1b_Gm=0;AP8A\x1b\\";
+    for (0..bytes.len + 1) |split| {
+        var terminal = try Terminal.init(std.testing.allocator, &api);
+        defer terminal.deinit();
+        const limit: u64 = 1024 * 1024;
+        try binding.checkResult(api.terminal_set(terminal.handle, c.GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &limit));
+        try terminal.feedOutput(bytes[0..split]);
+        try terminal.feedOutput(bytes[split..]);
+        var graphics: c.GhosttyKittyGraphics = null;
+        try binding.checkResult(api.terminal_get(terminal.handle, c.GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, @ptrCast(&graphics)));
+        const image = api.kitty_graphics_image(graphics, 42) orelse return error.MissingKittyImage;
+        var width: u32 = 0;
+        var height: u32 = 0;
+        var length: usize = 0;
+        var pixels: [*c]const u8 = null;
+        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_IMAGE_DATA_WIDTH, &width));
+        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, &height));
+        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &length));
+        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, @ptrCast(&pixels)));
+        try std.testing.expectEqual(@as(u32, 2), width);
+        try std.testing.expectEqual(@as(u32, 1), height);
+        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 0, 255, 0 }, pixels[0..length]);
+        // Uppercase I deletes both placements and the underlying image data.
+        try terminal.feedOutput("\x1b_Ga=d,d=I,i=42\x1b\\");
+        try binding.checkResult(api.terminal_get(terminal.handle, c.GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, @ptrCast(&graphics)));
+        try std.testing.expect(api.kitty_graphics_image(graphics, 42) == null);
+        try terminal.feedOutput("after-image");
+        try std.testing.expect(try terminal.containsViewportText("after-image"));
+    }
+}
+
+test "Kitty snapshots reuse pixels, replace same-sized images, isolate screens and delete owned data" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(40, 5, 9, 17);
+    try terminal.feedOutput("\x1b_Ga=T,f=24,s=2,v=1,i=42,c=2,r=1;/wAAAP8A\x1b\\");
+    const frame = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.placements.items.len);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 255, 0, 255 }, frame.graphics.images.items[0].rgba);
+    const generation = frame.graphics.images.items[0].generation;
+    const pixels = frame.graphics.images.items[0].rgba.ptr;
+    try terminal.feedOutput("text-only-update");
+    _ = try terminal.readFrame();
+    try std.testing.expectEqual(generation, frame.graphics.images.items[0].generation);
+    try std.testing.expectEqual(pixels, frame.graphics.images.items[0].rgba.ptr);
+    try terminal.feedOutput("\x1b_Ga=t,f=24,s=2,v=1,i=42;AAAA////\x1b\\");
+    _ = try terminal.readFrame();
+    try std.testing.expect(frame.graphics.images.items[0].generation != generation);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255, 255, 255, 255, 255 }, frame.graphics.images.items[0].rgba);
+    try terminal.feedOutput("\x1b[?1049h");
+    _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 0), frame.graphics.placements.items.len);
+    try std.testing.expectEqual(@as(usize, 0), frame.graphics.images.items.len);
+    try terminal.feedOutput("\x1b[?1049l");
+    _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.placements.items.len);
+    try terminal.feedOutput("\x1b_Ga=d,d=I,i=42\x1b\\");
+    _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 0), frame.graphics.images.items.len);
+}
+
+test "Kitty snapshots preserve cropping offsets and z-order and follow viewport scrolling" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(40, 5, 9, 17);
+    try terminal.feedOutput("\x1b_Ga=T,f=24,s=2,v=1,i=42,x=1,w=1,c=2,r=1,X=2,Y=3,z=-1,C=1;/wAAAP8A\x1b\\");
+    const frame = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.placements.items.len);
+    const placement = frame.graphics.placements.items[0];
+    try std.testing.expectEqual(@as(i32, -1), placement.z);
+    try std.testing.expectEqual(@as(u32, 1), placement.source_x);
+    try std.testing.expectEqual(@as(u32, 1), placement.source_width);
+    try std.testing.expectEqual(@as(u32, 2), placement.x_offset);
+    try std.testing.expectEqual(@as(u32, 3), placement.y_offset);
+    try terminal.feedOutput("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6");
+    _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 0), frame.graphics.placements.items.len);
+    terminal.scrollToTop();
+    _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.placements.items.len);
+    try std.testing.expectEqual(placement.generation, frame.graphics.placements.items[0].generation);
+}
+
+test "Kitty snapshot cache admits replacements after reaching its entry limit" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(40, 5, 9, 17);
+    var buffer: [128]u8 = undefined;
+    for (1..129) |id| {
+        try terminal.feedOutput(try std.fmt.bufPrint(&buffer, "\x1b_Ga=T,f=24,s=1,v=1,i={d},c=1,r=1,C=1;/wAA\x1b\\", .{id}));
+    }
+    const frame = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 128), frame.graphics.images.items.len);
+    try terminal.feedOutput("\x1b_Ga=d,d=A\x1b\\\x1b_Ga=T,f=24,s=1,v=1,i=129,c=1,r=1,C=1;AP8A\x1b\\");
+    _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.images.items.len);
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.placements.items.len);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, frame.graphics.images.items[0].rgba);
+}
+
+test "Kitty snapshot allocation failures release partial images and placements" {
+    const api = try binding.Api.load();
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(allocator: std.mem.Allocator, loaded: *const binding.Api) !void {
+            var terminal = try Terminal.init(allocator, loaded);
+            defer terminal.deinit();
+            try terminal.resize(40, 5, 9, 17);
+            try terminal.feedOutput("\x1b_Ga=T,f=24,s=2,v=1,i=42,c=2,r=1;/wAAAP8A\x1b\\");
+            _ = try terminal.readFrame();
+            try terminal.feedOutput("\x1b_Ga=T,f=24,s=2,v=1,i=43,c=2,r=1;AAAA////\x1b\\");
+            _ = try terminal.readFrame();
+        }
+    }.run, .{&api});
+}
+
+test "Kitty PNG decodes through WIC with straight alpha and malformed data stays harmless" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(40, 5, 9, 17);
+    try terminal.feedOutput("\x1b_Ga=T,f=100,i=71,c=1,r=1;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DQAAAEgQGALFXOsAAAAABJRU5ErkJggg==\x1b\\");
+    const frame = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.images.items.len);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 128 }, frame.graphics.images.items[0].rgba);
+    try terminal.feedOutput("\x1b_Ga=T,f=100,i=72;bm90LWEtcG5n\x1b\\after-bad-png");
+    _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.images.items.len);
+    try std.testing.expect(try terminal.containsViewportText("after-bad-png"));
+}
+
 test "pinned sized structs and UTF-8/color/wide cells match the actual DLL" {
     try std.testing.expectEqual(@as(usize, 72), @sizeOf(c.GhosttyStyle));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(c.GhosttyBuffer));
@@ -870,6 +1020,43 @@ test "RIS clears mouse motion deduplication before a new application tracks the 
     try terminal.feedOutput("\x1bc" ++ enable);
     try std.testing.expectEqualStrings("\x1b[<35;2;2M", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
     try std.testing.expectEqualStrings("", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
+}
+
+test "Kitty D3D12 WARP renders alpha and reuses textures until their generation changes" {
+    const allocator = std.testing.allocator;
+    const directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(directory);
+    const fixture = try std.fs.path.join(allocator, &.{ directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "kitty-renderer" }, .max_output_bytes = 64 * 1024 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
+test "bundled ConPTY forwards Kitty graphics to the image snapshot" {
+    const allocator = std.testing.allocator;
+    const directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(directory);
+    const fixture = try std.fs.path.join(allocator, &.{ directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "kitty-graphics" }, .max_output_bytes = 64 * 1024 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(40, 5, 9, 17);
+    var reply: TestReply = .{};
+    try terminal.attachResponseSink(.{ .context = &reply, .write = TestReply.write });
+    try terminal.feedOutput(output.stdout);
+    try std.testing.expectEqualStrings("\x1b_Gi=43;OK\x1b\\", reply.bytes[0..reply.length]);
+    const frame = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.placements.items.len);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255, 0, 255, 0, 255 }, frame.graphics.images.items[0].rgba);
+    try std.testing.expect(try terminal.containsViewportText("KITTY_TRANSPORT_END"));
+    try std.testing.expect(std.mem.indexOf(u8, output.stdout, "KITTY_REPLY_OK") != null);
 }
 
 test "bundled ConPTY forwards color scheme negotiation to the host terminal" {

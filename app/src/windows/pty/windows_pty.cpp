@@ -1,5 +1,6 @@
 #include "windows_platform.h"
 #include "windows_conpty.h"
+#include "conpty_graphics_reply.h"
 #include "windows_wsl_probe.h"
 #include <windows.h>
 #include <tlhelp32.h>
@@ -392,6 +393,12 @@ extern "C" int vex_pty_write(VexPty* session, const uint8_t* bytes, size_t lengt
     return queuePtyInput(session, bytes, length, false);
 }
 extern "C" int vex_pty_write_response(VexPty* session, const uint8_t* bytes, size_t length) {
+    if (bytes && length >= 3 && bytes[0] == 0x1b && bytes[1] == '_' && bytes[2] == 'G') {
+        uint8_t encoded[64 * 1024];
+        const size_t count = encodeConptyGraphicsReply(bytes, length, encoded, sizeof(encoded));
+        if (!count) return ERROR_INVALID_DATA;
+        return queuePtyInput(session, encoded, count, true);
+    }
     return queuePtyInput(session, bytes, length, true);
 }
 

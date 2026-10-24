@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.0
+
+- Display direct Kitty Graphics RGB/RGBA/PNG images with cropping, scaling, transparency, z-order and scrolling.
+- Reuse generation-cached GPU textures and batch consecutive placements of the same image.
+- Deliver Kitty protocol replies correctly through ConPTY using literal character records.
+- Bound image storage and transfers, isolate image uploads from text buffers, and retain in-flight GPU resources safely.
+- Keep filesystem/shared-memory transfers, animation and Unicode placeholders outside the initial support scope.
+- Reduce application icon detection latency.
+- Record local hardware benchmarks and add Windows image, PNG, transport and offscreen GPU regression coverage.
+
 ## 2.0.3
 
 - Automatically dismiss the up-to-date notification after five seconds without hiding pending updates.

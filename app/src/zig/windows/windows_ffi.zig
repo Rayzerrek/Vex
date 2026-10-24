@@ -823,14 +823,15 @@ pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalF
     const cursor = frame.cursor;
     const cursor_visible = focused and cursor_shown and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
     const block_cursor = cursor_visible and cursor.shape == .block;
-    const key = terminalGeometryKey(pane_id, frame, hovered_link, theme);
-    var reused = false;
-    if (c.vex_terminal_geometry_begin(key, &reused) != 0) return error.NativeTextRenderingFailed;
-    if (!reused) {
-        var complete = false;
-        defer c.vex_terminal_geometry_end(complete);
-        try drawTerminalCells(frame, hovered_link, theme);
-        complete = true;
+    if (frame.graphics.placements.items.len == 0 or frame.graphics.placements.items[0].z >= 0) {
+        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 0);
+        try drawTerminalImages(frame, 0, std.math.maxInt(i32));
+    } else {
+        try drawTerminalImages(frame, std.math.minInt(i32), -1073741825);
+        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 1);
+        try drawTerminalImages(frame, -1073741824, -1);
+        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 2);
+        try drawTerminalImages(frame, 0, std.math.maxInt(i32));
     }
     if (block_cursor) {
         if (blockCursorRun(frame, hovered_link, theme)) |run| {
@@ -839,6 +840,52 @@ pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalF
         }
     } else if (cursor_visible) {
         c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), theme.cursor);
+    }
+}
+
+fn drawTerminalGeometry(pane_id: panes.PaneId, frame: *const terminal.TerminalFrame, link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme, layer: u32) !void {
+    var key = terminalGeometryKey(pane_id, frame, link, theme);
+    // Independent cached background/text layers keep images out of glyph geometry replay.
+    key.is_dark |= layer << 1;
+    c.vex_terminal_cell_layer(layer);
+    defer c.vex_terminal_cell_layer(0);
+    var reused = false;
+    if (c.vex_terminal_geometry_begin(key, &reused) != 0) return error.NativeTextRenderingFailed;
+    if (!reused) {
+        var complete = false;
+        defer c.vex_terminal_geometry_end(complete);
+        try drawTerminalCells(frame, link, theme);
+        complete = true;
+    }
+}
+
+fn drawTerminalImages(frame: *const terminal.TerminalFrame, min_z: i32, max_z: i32) !void {
+    const cw: f32 = @floatFromInt(@max(1, frame.cell_width_px));
+    const ch: f32 = @floatFromInt(@max(1, frame.cell_height_px));
+    for (frame.graphics.placements.items) |placement| {
+        if (placement.z < min_z or placement.z > max_z) continue;
+        for (frame.graphics.images.items) |image| {
+            if (image.generation != placement.generation) continue;
+            const left = @as(f32, @floatFromInt(placement.column)) + @as(f32, @floatFromInt(placement.x_offset)) / cw;
+            const top = @as(f32, @floatFromInt(placement.row)) + @as(f32, @floatFromInt(placement.y_offset)) / ch;
+            const iw: f32 = @floatFromInt(image.width);
+            const ih: f32 = @floatFromInt(image.height);
+            if (c.vex_draw_terminal_image(.{
+                .generation = image.generation,
+                .rgba = image.rgba.ptr,
+                .width = image.width,
+                .height = image.height,
+                .left = left,
+                .top = top,
+                .right = left + @as(f32, @floatFromInt(placement.width)) / cw,
+                .bottom = top + @as(f32, @floatFromInt(placement.height)) / ch,
+                .u0 = @as(f32, @floatFromInt(placement.source_x)) / iw,
+                .v0 = @as(f32, @floatFromInt(placement.source_y)) / ih,
+                .u1 = @as(f32, @floatFromInt(@as(u64, placement.source_x) + placement.source_width)) / iw,
+                .v1 = @as(f32, @floatFromInt(@as(u64, placement.source_y) + placement.source_height)) / ih,
+            }) != 0) return error.NativeImageRenderingFailed;
+            break;
+        }
     }
 }
 

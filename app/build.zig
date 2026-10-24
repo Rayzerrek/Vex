@@ -41,6 +41,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/window/windows_capture.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/window/windows_chrome.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_drawing.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_image.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/platform/windows_system.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/update/windows_update.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/update/update_download.cpp"), .flags = native_flags });
@@ -110,11 +111,13 @@ pub fn build(b: *std.Build) void {
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_install_guard.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_handoff.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/terminal_cell_glyph.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/kitty_image_renderer.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_renderer.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/wsl_probe_schedule.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_conpty.cpp"), .flags = native_flags });
     fixture_module.linkSystemLibrary("kernel32", .{});
     fixture_module.linkSystemLibrary("dwrite", .{});
-    for ([_][]const u8{ "shell32", "advapi32", "bcrypt", "msi", "winhttp", "ws2_32" }) |lib| fixture_module.linkSystemLibrary(lib, .{});
+    for ([_][]const u8{ "shell32", "advapi32", "bcrypt", "msi", "winhttp", "ws2_32", "d2d1", "d3d12", "dxgi", "ole32", "windowscodecs" }) |lib| fixture_module.linkSystemLibrary(lib, .{});
     const fixture = b.addExecutable(.{ .name = "vex-conpty-fixture", .root_module = fixture_module });
     const install_fixture = b.addInstallArtifact(fixture, .{});
     const test_build = b.step("test-build", "Compile native tests without running Windows tools");

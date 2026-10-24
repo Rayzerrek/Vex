@@ -3,6 +3,7 @@
 - [Application development](../app/README.md): build, run, package and release.
 - [Architecture](architecture.md): source boundaries and ownership.
 - [Testing](testing.md): automated checks, desktop validation and benchmarks.
+- [Kitty Graphics](kitty-graphics.md): terminal image support, limits and verification.
 - [Configuration](configuration.md): files, backups and reload behavior.
 - [Shortcuts](shortcuts.md): quick reference.
 - [Website](../web/README.md): detailed user guides and their source.

@@ -1,6 +1,7 @@
 cbuffer Viewport : register(b0) { float2 viewportSize; };
-Texture2D<float> glyphAtlas : register(t0);
+Texture2D<float4> glyphAtlas : register(t0);
 SamplerState atlasSampler : register(s0);
+SamplerState imageSampler : register(s1);
 
 struct Instance {
     float4 bounds : POSITION;
@@ -37,10 +38,11 @@ float boxDistance(float2 local, float2 halfSize, float radius) {
 }
 
 float4 terminalPixel(Fragment input) : SV_Target {
+    if (input.kind == 5) return glyphAtlas.Sample(imageSampler, input.uv);
     float alpha = 1;
     if (input.kind == 0) {
         // Negative UV denotes a solid rectangle, without an atlas texture access.
-        alpha = input.uv.x < 0 ? 1 : glyphAtlas.Sample(atlasSampler, input.uv);
+        alpha = input.uv.x < 0 ? 1 : glyphAtlas.Sample(atlasSampler, input.uv).r;
     } else {
         const float2 center = (input.bounds.xy + input.bounds.zw) * 0.5;
         const float2 extent = (input.bounds.zw - input.bounds.xy) * 0.5;

@@ -2,6 +2,7 @@
 pub const c = @cImport({
     @cInclude("ghostty/vt.h");
     @cInclude("windows_platform.h");
+    @cInclude("terminal_image.h");
 });
 
 fn Function(comptime name: []const u8) type {
@@ -15,6 +16,15 @@ pub const Api = struct {
     terminal_set: Function("terminal_set"),
     terminal_get: Function("terminal_get"),
     terminal_vt_write: Function("terminal_vt_write"),
+    sys_set: Function("sys_set"),
+    kitty_graphics_get: Function("kitty_graphics_get"),
+    kitty_graphics_placement_iterator_new: Function("kitty_graphics_placement_iterator_new"),
+    kitty_graphics_placement_iterator_free: Function("kitty_graphics_placement_iterator_free"),
+    kitty_graphics_placement_next: Function("kitty_graphics_placement_next"),
+    kitty_graphics_placement_get: Function("kitty_graphics_placement_get"),
+    kitty_graphics_placement_render_info: Function("kitty_graphics_placement_render_info"),
+    kitty_graphics_image: Function("kitty_graphics_image"),
+    kitty_graphics_image_get: Function("kitty_graphics_image_get"),
     color_scheme_report_encode: Function("color_scheme_report_encode"),
     terminal_resize: Function("terminal_resize"),
     terminal_scroll_viewport: Function("terminal_scroll_viewport"),
@@ -74,6 +84,8 @@ pub const Api = struct {
             // GetProcAddress has no typed result; pinned headers plus ABI tests are the contract.
             @field(loaded, field.name) = @ptrCast(pointer);
         }
+        const decode: c.GhosttySysDecodePngFn = c.vex_terminal_decode_png;
+        try checkResult(loaded.sys_set(c.GHOSTTY_SYS_OPT_DECODE_PNG, @ptrCast(decode)));
         return loaded;
     }
 };
