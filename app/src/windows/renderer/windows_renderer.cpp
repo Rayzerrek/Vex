@@ -12,14 +12,40 @@ bool WindowsRenderer::deviceLost(HRESULT result) {
         result == DXGI_ERROR_DEVICE_HUNG || result == D2DERR_RECREATE_TARGET;
 }
 
-HRESULT WindowsRenderer::initialize(HWND window, ID2D1Factory1* factory, bool forceWarp) {
+DWORD WINAPI WindowsRenderer::prepareDeviceWorker(void* context) {
+    auto* renderer = static_cast<WindowsRenderer*>(context);
+    renderer->devicePreparationResult = renderer->initializeAdapter(renderer->deviceForceWarp);
+    return 0;
+}
+
+HRESULT WindowsRenderer::prepareDeviceAsync(bool forceWarp) {
+    if (devicePreparationRequested || dxgiFactory || device) return E_UNEXPECTED;
+    devicePreparationRequested = true;
+    deviceForceWarp = forceWarp;
+    deviceThread = CreateThread(nullptr, 0, prepareDeviceWorker, this, 0, nullptr);
+    // Thread creation is an optimization, not a new startup prerequisite.
+    if (!deviceThread) devicePreparationResult = initializeAdapter(forceWarp);
+    return deviceThread ? S_OK : devicePreparationResult;
+}
+
+HRESULT WindowsRenderer::finishDevicePreparation() {
+    if (deviceThread) {
+        // Join even when startup fails before the first paint: the worker borrows this owner.
+        if (WaitForSingleObject(deviceThread, INFINITE) != WAIT_OBJECT_0) RaiseFailFastException(nullptr, nullptr, 0);
+        CloseHandle(deviceThread);
+        deviceThread = nullptr;
+    }
+    return devicePreparationResult;
+}
+
+HRESULT WindowsRenderer::initialize(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*)) {
     if (ready() || !factory || !IsWindow(window)) return E_INVALIDARG;
-    HRESULT result = initializeDevice(window, factory, forceWarp);
+    HRESULT result = initializeDevice(window, factory, forceWarp, milestone);
     if (FAILED(result)) shutdown();
     return result;
 }
 
-HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, bool forceWarp) {
+HRESULT WindowsRenderer::initializeAdapter(bool forceWarp) {
 #ifdef VEX_GRAPHICS_DEBUG
     ComPtr<ID3D12Debug> debug;
     HRESULT result = D3D12GetDebugInterface(IID_PPV_ARGS(&debug));
@@ -62,7 +88,16 @@ HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, b
     if (FAILED(result)) return result;
     fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!fenceEvent) return HRESULT_FROM_WIN32(GetLastError());
+    return S_OK;
+}
 
+HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*)) {
+    HRESULT result = finishDevicePreparation();
+    if (FAILED(result)) return result;
+    if (devicePreparationRequested && deviceForceWarp != forceWarp) return E_INVALIDARG;
+    if (!device) result = initializeAdapter(forceWarp);
+    if (FAILED(result)) return result;
+    if (milestone) milestone("device ready");
     RECT bounds;
     if (!GetClientRect(window, &bounds)) return HRESULT_FROM_WIN32(GetLastError());
     pixelWidth = bounds.right > 0 ? (UINT)bounds.right : 1;
@@ -88,7 +123,9 @@ HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, b
     views.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; views.NumDescriptors = bufferCount;
     result = device->CreateDescriptorHeap(&views, IID_PPV_ARGS(&renderViews));
     if (FAILED(result)) return result;
+    if (milestone) milestone("swap chain ready");
     result = terminal.initialize(device.Get(), factory);
+    if (SUCCEEDED(result) && milestone) milestone("terminal renderer ready");
     if (SUCCEEDED(result)) result = ui.batches.initialize(device.Get(), factory, &terminal);
     if (FAILED(result)) return result;
     return createBuffers((float)GetDpiForWindow(window));
@@ -293,7 +330,7 @@ HRESULT WindowsRenderer::trimUnusedTerminalUploads() {
 }
 
 HRESULT WindowsRenderer::videoMemoryUsage(bool local, UINT64& bytes) const {
-    if (!device || !dxgiFactory) return E_UNEXPECTED;
+    if (!ready()) return E_UNEXPECTED;
     ComPtr<IDXGIAdapter3> adapter;
     HRESULT result = dxgiFactory->EnumAdapterByLuid(device->GetAdapterLuid(), IID_PPV_ARGS(&adapter));
     if (FAILED(result)) return result;
@@ -305,13 +342,13 @@ HRESULT WindowsRenderer::videoMemoryUsage(bool local, UINT64& bytes) const {
 
 bool WindowsRenderer::debugValidationEnabled() const {
     ComPtr<ID3D12InfoQueue> messages;
-    return device && SUCCEEDED(device.As(&messages));
+    return ready() && SUCCEEDED(device.As(&messages));
 }
 
 UINT64 WindowsRenderer::debugErrorCount() const {
 #ifdef VEX_GRAPHICS_DEBUG
     ComPtr<ID3D12InfoQueue> messages;
-    if (device && SUCCEEDED(device.As(&messages))) {
+    if (ready() && SUCCEEDED(device.As(&messages))) {
         UINT64 errors = 0;
         wchar_t logPath[32768];
         const DWORD length = GetEnvironmentVariableW(L"VEX_NATIVE_GRAPHICS_LOG", logPath, 32768);
@@ -346,9 +383,11 @@ void WindowsRenderer::releaseDevice() {
     swapChain.Reset(); fence.Reset(); queue.Reset(); device.Reset(); dxgiFactory.Reset();
     if (fenceEvent) { CloseHandle(fenceEvent); fenceEvent = nullptr; }
     pixelWidth = 0; pixelHeight = 0; nextFence = 1; phase = FramePhase::none;
+    devicePreparationRequested = false; devicePreparationResult = S_OK; deviceForceWarp = false;
 }
 
 HRESULT WindowsRenderer::shutdown() {
+    finishDevicePreparation();
     HRESULT result = waitIdle();
     if (FAILED(result) && !deviceLost(result)) {
         // We cannot safely destroy native D3D12 resources still referenced by a live GPU.

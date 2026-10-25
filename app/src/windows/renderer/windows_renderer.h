@@ -6,7 +6,7 @@
 #include <d3d12.h>
 #include <dxgi1_4.h>
 
-// Window-thread owner. UI, terminal, capture and presentation use one native D3D12 queue.
+// Window-thread owner after device preparation joins. UI, terminal and capture share one D3D12 queue.
 class WindowsRenderer final {
 public:
     WindowsRenderer() = default;
@@ -14,7 +14,10 @@ public:
     WindowsRenderer& operator=(const WindowsRenderer&) = delete;
     ~WindowsRenderer();
 
-    HRESULT initialize(HWND window, ID2D1Factory1* factory, bool forceWarp);
+    // Only adapter/device/queue creation runs off-thread; HWND and D2D resources stay on the window thread.
+    HRESULT prepareDeviceAsync(bool forceWarp);
+    HRESULT finishDevicePreparation();
+    HRESULT initialize(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*) = nullptr);
     HRESULT resize(UINT width, UINT height, float dpi);
     HRESULT beginFrame();
     // Optional BGRA readback is bottom-up, tightly packed, and only used by desktop capture.
@@ -27,7 +30,7 @@ public:
     UiRenderer ui;
     UiRenderer* drawingTarget() { return &ui; }
     bool ready() const { return swapChain.Get() != nullptr; }
-    bool software() const { return usesWarp; }
+    bool software() const { return ready() && usesWarp; }
     UINT width() const { return pixelWidth; }
     UINT height() const { return pixelHeight; }
     UINT64 framesPresented() const { return presented; }
@@ -53,6 +56,10 @@ private:
     ComPtr<ID3D12DescriptorHeap> renderViews;
     Frame frames[bufferCount];
     HANDLE fenceEvent = nullptr;
+    HANDLE deviceThread = nullptr;
+    HRESULT devicePreparationResult = S_OK;
+    bool devicePreparationRequested = false;
+    bool deviceForceWarp = false;
     UINT64 nextFence = 1;
     UINT64 presented = 0;
     UINT pixelWidth = 0, pixelHeight = 0, frameIndex = 0;
@@ -62,7 +69,9 @@ private:
     FramePhase phase = FramePhase::none;
     HRESULT frameError = S_OK;
 
-    HRESULT initializeDevice(HWND window, ID2D1Factory1* factory, bool forceWarp);
+    static DWORD WINAPI prepareDeviceWorker(void* context);
+    HRESULT initializeAdapter(bool forceWarp);
+    HRESULT initializeDevice(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*));
     HRESULT createBuffers(float dpi);
     HRESULT waitForFence(UINT64 value);
     HRESULT waitIdle();

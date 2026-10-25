@@ -1022,6 +1022,19 @@ test "RIS clears mouse motion deduplication before a new application tracks the 
     try std.testing.expectEqualStrings("", try terminal.encodeMouse(.motion, .none, 0, 15, 25, false, &out));
 }
 
+test "renderer device warmup joins on abort, preserves WARP pixels and supports synchronous recovery" {
+    const allocator = std.testing.allocator;
+    const directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(directory);
+    const fixture = try std.fs.path.join(allocator, &.{ directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "renderer-startup" }, .max_output_bytes = 64 * 1024 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    if (!std.meta.eql(std.process.Child.Term{ .Exited = 0 }, output.term)) std.debug.print("{s}", .{output.stderr});
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
 test "Kitty D3D12 WARP renders alpha and reuses textures until their generation changes" {
     const allocator = std.testing.allocator;
     const directory = try std.fs.selfExeDirPathAlloc(allocator);

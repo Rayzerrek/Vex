@@ -109,10 +109,14 @@ pub fn build(b: *std.Build) void {
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_handoff.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/terminal_cell_glyph.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/kitty_image_renderer.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/renderer_startup.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/windows_renderer.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/ui_renderer.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_renderer.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/wsl_probe_schedule.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_conpty.cpp"), .flags = native_flags });
     fixture_module.linkSystemLibrary("kernel32", .{});
+    fixture_module.linkSystemLibrary("user32", .{});
     fixture_module.linkSystemLibrary("dwrite", .{});
     for ([_][]const u8{ "shell32", "advapi32", "bcrypt", "msi", "winhttp", "ws2_32", "d2d1", "d3d12", "dxgi", "ole32", "windowscodecs" }) |lib| fixture_module.linkSystemLibrary(lib, .{});
     const fixture = b.addExecutable(.{ .name = "vex-conpty-fixture", .root_module = fixture_module });

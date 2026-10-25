@@ -96,6 +96,7 @@ int child(const char* scenario) {
 }
 
 int testKittyImageRenderer();
+int testRendererStartup();
 int testTabRenameLayout();
 int testUpdateSystem();
 int testNotificationSurface();
@@ -112,6 +113,7 @@ int testUpdateInstallerRestarted();
 int main(int argc, char** argv) {
     if (argc == 1) return testUpdateInstallerRestarted();
     if (argc == 2 && !strcmp(argv[1], "kitty-renderer")) return testKittyImageRenderer();
+    if (argc == 2 && !strcmp(argv[1], "renderer-startup")) return testRendererStartup();
     if (argc == 4 && !strcmp(argv[1], "--update-parent")) return testUpdateInstallerParent();
     if (argc == 2 && !strcmp(argv[1], "--update-hold")) { Sleep(30000); return 0; }
     if (argc == 7 && !strcmp(argv[1], "--apply")) return testUpdateHandoffChild();

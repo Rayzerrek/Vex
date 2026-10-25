@@ -136,7 +136,8 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
     if (!session->inputReady) return GetLastError();
     HANDLE inputRead = nullptr, outputWrite = nullptr;
     if (!CreatePipe(&inputRead, &session->input, nullptr, 0)) return GetLastError();
-    if (!CreatePipe(&session->output, &outputWrite, nullptr, 0)) {
+    // Match the bounded reader block so bursts can drain in one handoff instead of 4 KiB round trips.
+    if (!CreatePipe(&session->output, &outputWrite, nullptr, sizeof(session->outputBuffer))) {
         DWORD error = GetLastError(); CloseHandle(inputRead); return error;
     }
     HRESULT result = session->conpty.create(COORD{(SHORT)columns, (SHORT)rows}, inputRead, outputWrite, 0, &session->console);

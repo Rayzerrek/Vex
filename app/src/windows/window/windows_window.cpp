@@ -142,7 +142,12 @@ static bool selftestEnabled() {
     wchar_t enabled[2];
     return GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", enabled, 2) == 1 && enabled[0] == L'1';
 }
+static bool forceWarpEnabled() {
+    wchar_t warp[2];
+    return selftestEnabled() && GetEnvironmentVariableW(L"VEX_NATIVE_WARP", warp, 2) == 1 && warp[0] == L'1';
+}
 static HRESULT releaseRenderer() {
+    renderer.finishDevicePreparation();
     target = nullptr;
     rendererDebugMessages += renderer.debugErrorCount();
     return renderer.shutdown();
@@ -162,9 +167,8 @@ static void rendererFault(HRESULT result) {
 }
 static HRESULT createRenderTarget() {
     if (!renderer.ready()) {
-        wchar_t warp[2];
-        const bool forceWarp = selftestEnabled() && GetEnvironmentVariableW(L"VEX_NATIVE_WARP", warp, 2) == 1 && warp[0] == L'1';
-        HRESULT result = renderer.initialize(window, drawingFactory, forceWarp);
+        if (!firstFrame) startupMilestone("renderer begin");
+        HRESULT result = renderer.initialize(window, drawingFactory, forceWarpEnabled(), firstFrame ? nullptr : startupMilestone);
         if (SUCCEEDED(result) && !firstFrame) startupMilestone("renderer ready");
         if (FAILED(result)) return result;
         rendererGeneration++;
@@ -1286,8 +1290,9 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     callbacks = value;
     startupMilestone("application ready");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    HRESULT result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &drawingFactory);
-    if (FAILED(result)) return (int)result;
+    HRESULT result = renderer.prepareDeviceAsync(forceWarpEnabled());
+    if (SUCCEEDED(result)) result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &drawingFactory);
+    if (FAILED(result)) { releaseRenderer(); return (int)result; }
     result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&textFactory);
     const auto configureChromeFormat = [](IDWriteTextFormat* fmt) -> HRESULT {
         HRESULT hr = fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -1342,7 +1347,9 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 SetWindowPos(window, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
                 SetTimer(window, 2, 250, nullptr);
                 SetEnvironmentVariableW(L"TERM", L"xterm-256color"); SetEnvironmentVariableW(L"COLORTERM", L"truecolor");
+                startupMilestone("window ready");
                 updateWindowMetrics();
+                startupMilestone("workspace ready");
                 const BOOL cloak = TRUE;
                 startupCloaked = SUCCEEDED(DwmSetWindowAttribute(window, DWMWA_CLOAK, &cloak, sizeof(cloak)));
                 if (!startupCloaked) drawWindow();
