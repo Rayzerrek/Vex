@@ -1,9 +1,10 @@
 # Native application updates
 
-Vex checks the latest **published stable GitHub Release** ten seconds after startup,
-then every six hours while running. Checks and downloads run on one native worker;
-the terminal/window thread never performs HTTP or hashes a package. Preview artifacts
-and unpublished commits are not an update channel.
+Vex starts checking the latest **published stable GitHub Release** immediately at
+startup, then every six hours while running. An available update is shown as soon
+as the release feed responds; there is no fixed startup delay. Checks and downloads
+run on one native worker; the terminal/window thread never performs HTTP or hashes
+a package. Preview artifacts and unpublished commits are not an update channel.
 
 ## Using updates
 

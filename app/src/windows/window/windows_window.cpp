@@ -1124,7 +1124,6 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             return 0;
         }
         if (wparam == windowsUpdateTimer) {
-            SetTimer(hwnd, windowsUpdateTimer, 6 * 60 * 60 * 1000, nullptr);
             checkWindowsUpdatesAutomatically();
             return 0;
         }

@@ -190,7 +190,12 @@ void initializeWindowsUpdates(HWND window, bool selftest) {
     if (!disabled) {
         workerStop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!workerStop) disabled = true;
-        else SetTimer(window, windowsUpdateTimer, 10000, nullptr);
+        else {
+            SetTimer(window, windowsUpdateTimer, 6 * 60 * 60 * 1000, nullptr);
+            // HTTP stays on the worker; do not make an available update wait
+            // behind an artificial startup delay before it can be discovered.
+            checkWindowsUpdatesAutomatically();
+        }
     }
 }
 void shutdownWindowsUpdates() {
