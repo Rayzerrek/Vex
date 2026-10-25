@@ -231,6 +231,11 @@ pub const ShellLaunch = struct {
             .wsl => |*profile| profile.commandForSessionAlloc(allocator, self.command_line, path, token),
         };
     }
+    /// A saved shell profile explicitly declares its role, including profiles with custom executable names.
+    /// Bare --program launches can still be arbitrary applications and retain close protection.
+    pub fn isDeclaredShell(self: *const ShellLaunch) bool {
+        return self.kind != .custom or self.profile_program != null;
+    }
     /// Resolved display names are not raw terminal titles or untrusted profile text.
     pub fn shellName(self: *const ShellLaunch) []const u8 {
         return self.display_name orelse self.kind.displayName();
@@ -509,6 +514,9 @@ fn checkShellResolveAllocations(allocator: std.mem.Allocator, root: []const u8) 
     defer custom.deinit();
     try std.testing.expectEqual(.custom, custom.kind);
     try std.testing.expect(std.mem.endsWith(u8, custom.command_line, " /d"));
+    try std.testing.expect(!custom.isDeclaredShell());
+    try custom.identifyProfile(@intFromEnum(ShellKind.custom), "Custom shell", custom.program, "/d");
+    try std.testing.expect(custom.isDeclaredShell());
     try custom.identifyProfile(256, "Future shell", custom.program, "/d");
     try std.testing.expectEqualStrings("Future shell", custom.shellName());
     try std.testing.expect(custom.matchesProfile(256, "Future shell", custom.program, "/d"));

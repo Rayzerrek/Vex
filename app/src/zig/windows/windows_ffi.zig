@@ -169,7 +169,7 @@ pub const PtyOwner = struct {
         const probe = if (probe_bytes) |text| try std.unicode.utf8ToUtf16LeAllocZ(allocator, text) else null;
         defer if (probe) |owned| allocator.free(owned);
         var pointer: ?*c.VexPty = null;
-        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.kind != .custom, .wsl_probe_command = if (probe) |value| value.ptr else null, .wsl_probe_command_length = if (probe) |value| value.len else 0 };
+        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.isDeclaredShell(), .wsl_probe_command = if (probe) |value| value.ptr else null, .wsl_probe_command_length = if (probe) |value| value.len else 0 };
         const result = c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer);
         last_pty_launch_error = @bitCast(result);
         if (result != 0) return error.PtyLaunchFailed;

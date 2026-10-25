@@ -604,6 +604,16 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
         else refreshProcessSnapshot();
     }
 
+    // MSYS can leave live commands behind an already-exited fork parent. The
+    // non-breakaway job remains authoritative even when the snapshot tree has a gap.
+    struct JobPids { DWORD assigned, count; ULONG_PTR ids[4096]; } jobPids = {};
+    if (qHead < qTail && session->job &&
+        !QueryInformationJobObject(session->job, JobObjectBasicProcessIdList, &jobPids, sizeof(jobPids), nullptr)) jobPids.count = 0;
+    auto inJob = [&](DWORD pid) {
+        for (DWORD i = 0; i < jobPids.count; ++i) if (jobPids.ids[i] == pid) return true;
+        return false;
+    };
+
     DWORD fallbackShellPid = 0;
     const wchar_t* fallbackShellExe = nullptr;
     wchar_t fallbackShellStem[64] = {};
@@ -613,7 +623,8 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
 
         for (size_t i = 0; i < snapshotCount; ++i) {
             DWORD childPid = snapshotNodes[i].pid;
-            if (snapshotNodes[i].ppid != curr.pid || childPid == curr.pid || childPid == rootPid) continue;
+            const bool orphan = curr.pid == rootPid && inJob(childPid) && !inJob(snapshotNodes[i].ppid);
+            if ((snapshotNodes[i].ppid != curr.pid && !orphan) || childPid == curr.pid || childPid == rootPid) continue;
             bool alreadyQueued = false;
             for (size_t q = 0; q < qTail; ++q) {
                 if (queue[q].pid == childPid) { alreadyQueued = true; break; }
@@ -624,7 +635,11 @@ extern "C" int vex_pty_foreground_process(VexPty* session, uint8_t* exe_bytes, s
             extractLowerStem(snapshotNodes[i].exe, stem);
             if (isIgnoredHelper(stem)) continue;
 
-            bool isShell = isConfiguredShell(childPid, stem);
+            // Shell distributions can bootstrap another image with the same executable name
+            // (for example Git's bin/bash.exe -> usr/bin/bash.exe). This is a handoff
+            // from this pane's declared shell, not a global executable-name allowlist.
+            bool isShell = (session->declaredShell && wcscmp(session->rootStem, stem) == 0) ||
+                isConfiguredShell(childPid, stem);
             if (!isShell && !chosenPid) {
                 chosenPid = childPid;
                 chosenExe = snapshotNodes[i].exe;

@@ -42,6 +42,15 @@ From the repository root on Windows:
 # Use your installed distribution; optionally add -Warp for software rendering.
 ```
 
+With Git Bash installed, verify idle-shell closure and active-command protection:
+
+```powershell
+./app/tools/test-close-confirmation.ps1
+```
+
+This local desktop check covers Git's shell trampoline and MSYS commands whose
+fork parent has already exited. It uses isolated settings and software rendering.
+
 The recovery smoke uses isolated settings and checks tab churn, pane-local
 transport failures, stale events, toasts, renderer recovery and delayed teardown.
 It is local interactive coverage, not hosted CI or a guarantee for every driver/WSL version.
