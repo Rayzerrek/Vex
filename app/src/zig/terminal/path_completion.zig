@@ -47,6 +47,7 @@ pub const Entry = struct {
     name: []u8,
     display_name: ?[]u8 = null,
     is_directory: bool,
+    is_symbolic_link: bool = false,
 
     pub fn displayName(self: Entry) []const u8 {
         return self.display_name orelse self.name;
@@ -62,6 +63,13 @@ pub const max_entries: usize = 16_384;
 pub const max_matches: usize = 50;
 pub const max_index_bytes: usize = 8 * 1024 * 1024;
 
+pub const Snapshot = struct {
+    context: *anyopaque,
+    publish: *const fn (context: *anyopaque, model: *PathCompletion) void,
+    every: usize,
+    next_at: usize,
+};
+
 pub const PathCompletion = struct {
     allocator: std.mem.Allocator,
     directory: []u8 = &.{},
@@ -70,6 +78,12 @@ pub const PathCompletion = struct {
     query_len: usize = 0,
     entries: std.ArrayList(Entry) = .empty,
     matches: std.ArrayList(Match) = .empty,
+    /// Candidate entry indices that matched `candidate_query_buf[0..candidate_query_len]`.
+    /// Extending the query filters only this subset instead of scanning all entries.
+    candidates: std.ArrayList(u32) = .empty,
+    candidate_query_buf: [128]u8 = undefined,
+    candidate_query_len: usize = 0,
+    candidate_entries_len: usize = 0,
     selected_index: usize = 0,
     hovered_index: ?usize = null,
     first_visible: usize = 0,
@@ -78,8 +92,12 @@ pub const PathCompletion = struct {
     has_skipped_entries: bool = false,
     index: union(enum) { synchronous, deferred: struct { revision: u64 = 0, loading: bool = false } } = .synchronous,
     recursive: bool = false,
+    /// Cached once per directory: re-parsing the UNC prefix for every indexed entry is wasted work.
+    is_wsl: bool = false,
     indexed_name_bytes: usize = 0,
     scan_revision: ?struct { latest: *const std.atomic.Value(u64), expected: u64 } = null,
+    /// Lets a background scan publish usable partial indexes so results appear while the walk continues.
+    snapshot: ?Snapshot = null,
 
     pub fn init(allocator: std.mem.Allocator) PathCompletion {
         return .{ .allocator = allocator };
@@ -89,6 +107,7 @@ pub const PathCompletion = struct {
         self.clearEntries();
         self.entries.deinit(self.allocator);
         self.matches.deinit(self.allocator);
+        self.candidates.deinit(self.allocator);
         if (self.directory.len > 0) self.allocator.free(self.directory);
         if (self.display_directory) |text| self.allocator.free(text);
         self.* = .{ .allocator = self.allocator };
@@ -100,6 +119,9 @@ pub const PathCompletion = struct {
             if (entry.display_name) |name| self.allocator.free(name);
         }
         self.entries.clearRetainingCapacity();
+        self.candidates.clearRetainingCapacity();
+        self.candidate_query_len = 0;
+        self.candidate_entries_len = 0;
         self.indexed_name_bytes = 0;
     }
 
@@ -124,12 +146,14 @@ pub const PathCompletion = struct {
         errdefer next.deinit();
         next.directory = try self.allocator.dupe(u8, effective);
         if (try wsl_paths.networkDistribution(effective)) |distro| {
+            next.is_wsl = true;
             const linux = try wsl_paths.linuxDirectoryFromNetworkAlloc(self.allocator, effective, distro);
             defer self.allocator.free(linux);
             next.display_directory = try std.fmt.allocPrint(self.allocator, "{s}:{s}", .{ distro.bytes, linux });
         }
         next.recursive = self.recursive;
         next.scan_revision = self.scan_revision;
+        next.snapshot = self.snapshot;
         next.index = switch (self.index) {
             .synchronous => .synchronous,
             .deferred => |state| .{ .deferred = .{ .revision = try std.math.add(u64, state.revision, 1), .loading = true } },
@@ -155,9 +179,20 @@ pub const PathCompletion = struct {
 
     pub fn enterSelectedDirectory(self: *PathCompletion) !bool {
         const entry = self.selectedEntry() orelse return false;
-        if (!entry.is_directory) return false;
+        if (!entry.is_directory and !(self.is_wsl and entry.is_symbolic_link)) return false;
         const child = try std.fs.path.join(self.allocator, &.{ self.directory, entry.name });
         defer self.allocator.free(child);
+        if (!entry.is_directory) {
+            if (std.fs.openDirAbsolute(child, .{})) |dir| {
+                var owned = dir;
+                owned.close();
+            } else |_| {
+                const target = try @import("../shell/wsl_links.zig").directoryTargetAlloc(self.allocator, child) orelse return false;
+                defer self.allocator.free(target);
+                try self.openDirectory(target, "");
+                return true;
+            }
+        }
         try self.openDirectory(child, "");
         return true;
     }
@@ -312,6 +347,11 @@ pub const PathCompletion = struct {
         var walker = try @import("path_walker.zig").Walker.init(self.allocator, dir);
         defer walker.deinit();
         walker.recursive = self.recursive;
+        walker.probe_symlink_directories = !(self.is_wsl and self.recursive);
+        if (self.is_wsl and self.display_directory != null) {
+            const label = self.display_directory.?;
+            if (std.mem.endsWith(u8, label, ":/")) walker.skip_root_names = @import("path_walker.zig").Walker.wsl_root_skip_names;
+        }
         try self.scanWalker(&walker);
     }
 
@@ -336,7 +376,15 @@ pub const PathCompletion = struct {
                 self.has_skipped_entries = true;
                 continue;
             } orelse break;
+            const previous_len = self.entries.items.len;
             if (!try self.appendIndexedEntry(entry.path, entry.kind == .directory)) break;
+            if (self.entries.items.len > previous_len) self.entries.items[previous_len].is_symbolic_link = entry.kind == .sym_link;
+            if (self.snapshot) |*hook| {
+                if (self.entries.items.len >= hook.next_at) {
+                    hook.next_at = self.entries.items.len + hook.every;
+                    hook.publish(hook.context, self);
+                }
+            }
         }
     }
 
@@ -346,7 +394,7 @@ pub const PathCompletion = struct {
         }
     }
     fn appendIndexedEntry(self: *PathCompletion, name: []const u8, is_directory: bool) !bool {
-        const is_wsl = (wsl_paths.networkDistribution(self.directory) catch null) != null;
+        const is_wsl = self.is_wsl;
         if (!isUsablePathText(name) or (is_wsl and !wsl_paths.networkNameIsUsable(name))) {
             self.has_skipped_entries = true;
             return true;
@@ -377,6 +425,15 @@ pub const PathCompletion = struct {
 
     /// Adopts a completed index transactionally while retaining text typed during background scanning.
     pub fn applyDeferredIndex(self: *PathCompletion, result: *PathCompletion) !void {
+        try self.adoptIndex(result, false);
+    }
+
+    /// Adopts a partial index; the picker keeps reporting that loading continues.
+    pub fn applyPartialIndex(self: *PathCompletion, result: *PathCompletion) !void {
+        try self.adoptIndex(result, true);
+    }
+
+    fn adoptIndex(self: *PathCompletion, result: *PathCompletion, loading: bool) !void {
         const state = switch (self.index) {
             .synchronous => return error.NotDeferredPathIndex,
             .deferred => |value| value,
@@ -385,10 +442,47 @@ pub const PathCompletion = struct {
         @memcpy(result.query_buf[0..self.query_len], self.query());
         result.query_len = self.query_len;
         try result.refreshMatches();
-        result.index = .{ .deferred = .{ .revision = state.revision, .loading = false } };
+        result.index = .{ .deferred = .{ .revision = state.revision, .loading = loading } };
+        // New entries can reorder matches. Preserve the path, not its old row,
+        // even when the last snapshot finishes loading while the user navigates.
+        result.selected_index = @min(self.selected_index, result.matches.items.len -| 1);
+        if (self.selectedEntry()) |selected| {
+            for (result.matches.items, 0..) |match, i| {
+                if (std.mem.eql(u8, selected.name, result.entries.items[match.entry_index].name)) {
+                    result.selected_index = i;
+                    break;
+                }
+            }
+        }
+        result.first_visible = @min(self.first_visible, result.selected_index);
+        // A hovered row may now refer to a different path until the next pointer move.
+        result.hovered_index = null;
         self.deinit();
         self.* = result.*;
         result.* = PathCompletion.init(self.allocator);
+    }
+
+    /// Copies the scanned index (not query or selection) so it can outlive or race the original.
+    pub fn cloneIndexAlloc(self: *const PathCompletion) !PathCompletion {
+        var next = PathCompletion.init(self.allocator);
+        errdefer next.deinit();
+        next.directory = try self.allocator.dupe(u8, self.directory);
+        if (self.display_directory) |text| next.display_directory = try self.allocator.dupe(u8, text);
+        next.recursive = self.recursive;
+        next.is_wsl = self.is_wsl;
+        next.scan_error = self.scan_error;
+        next.is_truncated = self.is_truncated;
+        next.has_skipped_entries = self.has_skipped_entries;
+        next.index = self.index;
+        try next.entries.ensureTotalCapacity(self.allocator, self.entries.items.len);
+        for (self.entries.items) |entry| {
+            const name = try self.allocator.dupe(u8, entry.name);
+            errdefer self.allocator.free(name);
+            const display = if (entry.display_name) |text| try self.allocator.dupe(u8, text) else null;
+            next.entries.appendAssumeCapacity(.{ .name = name, .display_name = display, .is_directory = entry.is_directory, .is_symbolic_link = entry.is_symbolic_link });
+            next.indexed_name_bytes += entry.name.len + (if (display) |text| text.len else 0);
+        }
+        return next;
     }
 
     /// Retains the best fifty path matches using bounded scratch space; warm queries reuse output storage.
@@ -401,16 +495,65 @@ pub const PathCompletion = struct {
         try best.ensureTotalCapacityPrecise(max_matches);
 
         const q = self.query();
-        for (self.entries.items, 0..) |entry, idx| {
-            const score = scorePath(entry.displayName(), entry.is_directory, q) orelse continue;
-            const candidate = Match{ .entry_index = idx, .score = score };
-            if (best.count() < max_matches) {
-                try best.add(candidate);
-            } else if (best.peek()) |worst| {
-                if (ranking.bestFirst(candidate, worst)) {
-                    _ = best.remove();
+        var folded_buf: [128]u8 = undefined;
+        const folded_q = normalizeQuerySlice(q, &folded_buf);
+
+        const entries_len = self.entries.items.len;
+        const prev_q = self.candidate_query_buf[0..self.candidate_query_len];
+        const can_filter_candidates = self.candidate_entries_len == entries_len and
+            self.candidate_query_len > 0 and
+            q.len >= self.candidate_query_len and
+            std.mem.startsWith(u8, q, prev_q);
+
+        if (can_filter_candidates) {
+            var write: usize = 0;
+            for (self.candidates.items) |entry_idx| {
+                const idx: usize = entry_idx;
+                const entry = self.entries.items[idx];
+                const score = scorePathNormalized(entry.displayName(), entry.is_directory, folded_q) orelse continue;
+                self.candidates.items[write] = entry_idx;
+                write += 1;
+                const candidate = Match{ .entry_index = idx, .score = score };
+                if (best.count() < max_matches) {
                     try best.add(candidate);
+                } else if (best.peek()) |worst| {
+                    if (ranking.bestFirst(candidate, worst)) {
+                        _ = best.remove();
+                        try best.add(candidate);
+                    }
                 }
+            }
+            self.candidates.items.len = write;
+            @memcpy(self.candidate_query_buf[0..q.len], q);
+            self.candidate_query_len = q.len;
+        } else {
+            const record_candidates = if (q.len > 0 and q.len <= self.candidate_query_buf.len)
+                if (self.candidates.ensureTotalCapacity(self.allocator, entries_len)) |_| true else |_| false
+            else
+                false;
+            if (record_candidates) self.candidates.clearRetainingCapacity();
+
+            for (self.entries.items, 0..) |entry, idx| {
+                const score = scorePathNormalized(entry.displayName(), entry.is_directory, folded_q) orelse continue;
+                if (record_candidates) self.candidates.appendAssumeCapacity(@intCast(idx));
+                const candidate = Match{ .entry_index = idx, .score = score };
+                if (best.count() < max_matches) {
+                    try best.add(candidate);
+                } else if (best.peek()) |worst| {
+                    if (ranking.bestFirst(candidate, worst)) {
+                        _ = best.remove();
+                        try best.add(candidate);
+                    }
+                }
+            }
+
+            if (record_candidates) {
+                @memcpy(self.candidate_query_buf[0..q.len], q);
+                self.candidate_query_len = q.len;
+                self.candidate_entries_len = entries_len;
+            } else {
+                self.candidate_query_len = 0;
+                self.candidate_entries_len = 0;
             }
         }
 
@@ -477,12 +620,64 @@ const MatchRanking = struct {
     }
 };
 
+/// Table lookup keeps the per-character fold in the hot scoring loops branch-free.
+const fold_table = blk: {
+    var table: [256]u8 = undefined;
+    for (&table, 0..) |*slot, i| {
+        const c: u8 = @intCast(i);
+        slot.* = if (c == '/') '\\' else std.ascii.toLower(c);
+    }
+    break :blk table;
+};
+
 fn normalizeQueryChar(c: u8) u8 {
-    if (c == '/') return '\\';
-    return std.ascii.toLower(c);
+    return fold_table[c];
+}
+
+fn normalizeQuerySlice(query: []const u8, buf: *[128]u8) []const u8 {
+    const len = @min(query.len, buf.len);
+    for (query[0..len], 0..) |c, i| buf[i] = fold_table[c];
+    return buf[0..len];
 }
 
 pub fn scorePath(relative_path: []const u8, is_directory: bool, query: []const u8) ?i32 {
+    if (query.len <= 128) {
+        var folded_buf: [128]u8 = undefined;
+        return scorePathNormalized(relative_path, is_directory, normalizeQuerySlice(query, &folded_buf));
+    }
+    return scorePathSlow(relative_path, is_directory, query);
+}
+
+fn scorePathNormalized(relative_path: []const u8, is_directory: bool, folded_query: []const u8) ?i32 {
+    var filename_offset: usize = 0;
+    if (std.mem.lastIndexOfAny(u8, relative_path, "\\/")) |sep| {
+        filename_offset = sep + 1;
+    }
+    if (folded_query.len == 0) {
+        if (filename_offset != 0) return null;
+        return if (is_directory) 100 else 0;
+    }
+
+    const name_score = scoreSubsequenceNormalized(relative_path, folded_query, filename_offset);
+    var best: i32 = if (name_score) |ns|
+        ns + 80
+    else if (filename_offset > 0)
+        (scoreSubsequenceNormalized(relative_path, folded_query, 0) orelse return null)
+    else
+        return null;
+
+    const filename = relative_path[filename_offset..];
+    if (startsWithFolded(filename, folded_query)) {
+        best += 160;
+        if (filename.len == folded_query.len) {
+            best += 320;
+        }
+    }
+    if (is_directory) best += 10;
+    return best;
+}
+
+fn scorePathSlow(relative_path: []const u8, is_directory: bool, query: []const u8) ?i32 {
     var filename_offset: usize = 0;
     if (std.mem.lastIndexOfAny(u8, relative_path, "\\/")) |sep| {
         filename_offset = sep + 1;
@@ -511,10 +706,79 @@ pub fn scorePath(relative_path: []const u8, is_directory: bool, query: []const u
     return best;
 }
 
+fn startsWithFolded(haystack: []const u8, folded_query: []const u8) bool {
+    if (haystack.len < folded_query.len) return false;
+    for (folded_query, 0..) |qc, i| {
+        if (fold_table[haystack[i]] != qc) return false;
+    }
+    return true;
+}
+
 fn startsWithNormalized(haystack: []const u8, query: []const u8) bool {
     if (haystack.len < query.len) return false;
     for (query, 0..) |qc, i| {
         if (normalizeQueryChar(haystack[i]) != normalizeQueryChar(qc)) return false;
+    }
+    return true;
+}
+
+fn scoreSubsequenceNormalized(path: []const u8, folded_query: []const u8, start: usize) ?i32 {
+    if (path.len - start < folded_query.len) return null;
+    var previous: i32 = -2;
+    var score: i32 = 0;
+    var offset: usize = start;
+
+    for (folded_query, 0..) |qc, q_idx| {
+        var found_index: ?usize = null;
+        var idx = offset;
+        while (idx < path.len) : (idx += 1) {
+            if (fold_table[path[idx]] == qc) {
+                found_index = idx;
+                break;
+            }
+        }
+        var i = found_index orelse return null;
+        const is_contiguous = previous >= 0 and @as(i32, @intCast(i)) == previous + 1;
+        if (!is_contiguous and !isWordStart(path, i, start)) {
+            var scan = i + 1;
+            const remaining = folded_query[q_idx + 1 ..];
+            while (scan + remaining.len < path.len) : (scan += 1) {
+                if (fold_table[path[scan]] == qc and
+                    isWordStart(path, scan, start) and
+                    hasSubsequenceFolded(path, remaining, scan + 1))
+                {
+                    i = scan;
+                    break;
+                }
+            }
+        }
+        const i_i32: i32 = @intCast(i);
+        score += 20;
+        if (i_i32 == previous + 1) score += 24;
+        if (i == start or isBoundaryChar(path[i - 1])) score += 32;
+        if (i > 0 and std.ascii.isLower(path[i - 1]) and std.ascii.isUpper(path[i])) score += 28;
+        if (previous >= 0) {
+            score -= @min(@as(i32, 12), i_i32 - previous - 1);
+        }
+        previous = i_i32;
+        offset = i + 1;
+    }
+    const tail_penalty: i32 = @intCast((path.len - start) / 4);
+    return @max(@as(i32, 0), score - tail_penalty);
+}
+
+fn hasSubsequenceFolded(path: []const u8, folded_query: []const u8, start: usize) bool {
+    var offset = start;
+    for (folded_query) |qc| {
+        var found: ?usize = null;
+        var idx = offset;
+        while (idx < path.len) : (idx += 1) {
+            if (fold_table[path[idx]] == qc) {
+                found = idx;
+                break;
+            }
+        }
+        offset = (found orelse return false) + 1;
     }
     return true;
 }
@@ -1344,4 +1608,133 @@ test "formatPathAlloc quotes per shell dialect and rejects control characters" {
         error.ControlCharacterInPath,
         formatPathAlloc(allocator, "C:\\bad\npath", .cmd, false),
     );
+}
+
+test "partial and final indexes preserve the selected path across reordered matches" {
+    for ([_]bool{ true, false }) |partial| {
+        var current = PathCompletion.init(std.testing.allocator);
+        defer current.deinit();
+        current.index = .{ .deferred = .{} };
+        try current.openDirectory("C:\\review", "txt");
+        for ([_][]const u8{ "b.txt", "c.txt" }) |name| _ = try current.appendIndexedEntry(name, false);
+        try current.refreshMatches();
+        current.selected_index = 1;
+        current.first_visible = 1;
+        current.hovered_index = 1;
+
+        var update = PathCompletion.init(std.testing.allocator);
+        defer update.deinit();
+        update.index = .{ .deferred = .{} };
+        try update.openDirectory("C:\\review", "");
+        for ([_][]const u8{ "a.txt", "b.txt", "c.txt" }) |name| _ = try update.appendIndexedEntry(name, false);
+        if (partial) try current.applyPartialIndex(&update) else try current.applyDeferredIndex(&update);
+
+        try std.testing.expectEqualStrings("c.txt", current.selectedEntry().?.name);
+        try std.testing.expectEqualStrings("txt", current.query());
+        try std.testing.expectEqual(@as(usize, 2), current.selected_index);
+        try std.testing.expectEqual(@as(usize, 1), current.first_visible);
+        try std.testing.expectEqual(@as(?usize, null), current.hovered_index);
+        try std.testing.expectEqual(partial, current.index.deferred.loading);
+
+        var final = try current.cloneIndexAlloc();
+        defer final.deinit();
+        try current.applyDeferredIndex(&final);
+        try std.testing.expectEqualStrings("c.txt", current.selectedEntry().?.name);
+        try std.testing.expect(!current.index.deferred.loading);
+
+        var empty = PathCompletion.init(std.testing.allocator);
+        defer empty.deinit();
+        empty.index = .{ .deferred = .{} };
+        try empty.openDirectory("C:\\review", "");
+        try current.applyDeferredIndex(&empty);
+        try std.testing.expectEqual(@as(usize, 0), current.selected_index);
+        try std.testing.expectEqual(@as(usize, 0), current.first_visible);
+        try std.testing.expectEqual(@as(?Entry, null), current.selectedEntry());
+    }
+}
+
+test "index snapshots preserve unresolved symbolic link metadata" {
+    const Walker = struct {
+        step: usize = 0,
+        stack: struct { items: []const u8 = &.{1} } = .{},
+
+        fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
+            defer self.step += 1;
+            return switch (self.step) {
+                0 => .{ .path = "bad\nlink", .kind = .sym_link },
+                1 => .{ .path = "link", .kind = .sym_link },
+                2 => .{ .path = "file", .kind = .file },
+                else => null,
+            };
+        }
+    };
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    var walker = Walker{};
+    try completion.scanWalker(&walker);
+    try std.testing.expect(completion.has_skipped_entries);
+    var snapshot = try completion.cloneIndexAlloc();
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 2), snapshot.entries.items.len);
+    try std.testing.expect(snapshot.entries.items[0].is_symbolic_link);
+    try std.testing.expect(!snapshot.entries.items[0].is_directory);
+    try std.testing.expect(!snapshot.entries.items[1].is_symbolic_link);
+}
+
+test "path picker opens directory symlinks without indexing link cycles" {
+    var fixture = std.testing.tmpDir(.{ .iterate = true });
+    defer fixture.cleanup();
+    try fixture.dir.makeDir("child");
+    const file = try fixture.dir.createFile("child/file.txt", .{});
+    file.close();
+    fixture.dir.symLink(".", "loop", .{ .is_directory = true }) catch |err| switch (err) {
+        error.AccessDenied => return error.SkipZigTest,
+        else => return err,
+    };
+    const root = try fixture.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    completion.recursive = true;
+    try completion.openDirectory(root, "loop");
+    try std.testing.expectEqual(@as(usize, 3), completion.entries.items.len);
+    try std.testing.expect(completion.selectedEntry().?.is_directory);
+    try std.testing.expect(try completion.enterSelectedDirectory());
+    try std.testing.expect(!completion.scan_error);
+    try std.testing.expectEqual(@as(usize, 3), completion.entries.items.len);
+}
+
+test "incremental candidate filtering matches full rescan across query extensions and backspaces" {
+    const allocator = std.testing.allocator;
+    var incremental = PathCompletion.init(allocator);
+    defer incremental.deinit();
+    var baseline = PathCompletion.init(allocator);
+    defer baseline.deinit();
+
+    const samples = [_][]const u8{
+        "src/zig/terminal/path_completion.zig",
+        "src/zig/terminal/path_walker.zig",
+        "src/zig/terminal/path_index.zig",
+        "src/zig/shell/wsl_paths.zig",
+        "src/zig/app/terminal_application.zig",
+        "README.md",
+        "build.zig",
+    };
+    for (samples, 0..) |sample, i| {
+        try std.testing.expect(try incremental.appendIndexedEntry(sample, i % 3 == 0));
+        try std.testing.expect(try baseline.appendIndexedEntry(sample, i % 3 == 0));
+    }
+
+    for ([_][]const u8{ "p", "a", "t", "h", "_", "c", "o" }) |ch| {
+        try incremental.appendQuery(ch);
+        baseline.candidate_query_len = 0;
+        try baseline.setQuery(incremental.query());
+        try std.testing.expectEqualSlices(Match, baseline.matches.items, incremental.matches.items);
+    }
+    while (incremental.query_len > 0) {
+        _ = try incremental.backspaceQuery();
+        baseline.candidate_query_len = 0;
+        try baseline.setQuery(incremental.query());
+        try std.testing.expectEqualSlices(Match, baseline.matches.items, incremental.matches.items);
+    }
 }

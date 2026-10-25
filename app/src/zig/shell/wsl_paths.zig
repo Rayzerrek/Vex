@@ -75,8 +75,15 @@ pub fn linuxDirectoryFromNetworkAlloc(allocator: std.mem.Allocator, bytes: []con
 }
 
 pub fn linuxPathFromNetworkSuffixAlloc(allocator: std.mem.Allocator, suffix: []const u8) ![]u8 {
+    if (isAscii(suffix)) {
+        for (suffix) |c| if (c < 0x20 or c == 0x7f) return error.InvalidWslPathText;
+        const copy = try allocator.dupe(u8, suffix);
+        std.mem.replaceScalar(u8, copy, '\\', '/');
+        return copy;
+    }
     var path: std.ArrayList(u8) = .empty;
     errdefer path.deinit(allocator);
+    try path.ensureTotalCapacity(allocator, suffix.len);
     var scalars = (try std.unicode.Utf8View.init(suffix)).iterator();
     while (scalars.nextCodepoint()) |scalar| {
         const decoded = decodeNetworkCharacter(scalar);
@@ -131,6 +138,8 @@ fn decodeNetworkCharacter(scalar: u21) u21 {
 }
 
 pub fn networkNameNeedsDecoding(bytes: []const u8) bool {
+    // Escapes live in the private-use area, so pure ASCII (most names) can skip UTF-8 decoding.
+    if (isAscii(bytes)) return std.mem.indexOfScalar(u8, bytes, '\\') != null;
     var scalars = (std.unicode.Utf8View.init(bytes) catch return false).iterator();
     while (scalars.nextCodepoint()) |scalar| {
         if (scalar == '\\' or decodeNetworkCharacter(scalar) != scalar) return true;
@@ -138,9 +147,18 @@ pub fn networkNameNeedsDecoding(bytes: []const u8) bool {
     return false;
 }
 
+fn isAscii(bytes: []const u8) bool {
+    for (bytes) |c| if (c >= 0x80) return false;
+    return true;
+}
+
 /// Controls cannot be inserted into a terminal, and Linux backslashes are not
 /// supported by the directory contract. Do not offer those lossy UNC names.
 pub fn networkNameIsUsable(bytes: []const u8) bool {
+    if (isAscii(bytes)) {
+        for (bytes) |c| if (c < 0x20 or c == 0x7f) return false;
+        return true;
+    }
     var scalars = (std.unicode.Utf8View.init(bytes) catch return false).iterator();
     while (scalars.nextCodepoint()) |scalar| {
         const decoded = decodeNetworkCharacter(scalar);

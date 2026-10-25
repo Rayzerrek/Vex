@@ -17,6 +17,7 @@ const terminal_theme = @import("../workspace/terminal_theme.zig");
 const path_completion = @import("../terminal/path_completion.zig");
 const completion_popup = @import("../workspace/completion_popup.zig");
 const PathIndex = @import("../terminal/path_index.zig").PathIndex;
+const PathIndexCache = @import("../terminal/path_index.zig").IndexCache;
 const close_confirmation = @import("../workspace/close_confirmation.zig");
 const cursor_blink = @import("../workspace/cursor_blink.zig");
 const status_pulse = @import("../workspace/status_pulse.zig");
@@ -69,6 +70,7 @@ pub const TerminalApplication = struct {
     path_completion: path_completion.PathCompletion,
     path_index: ?*PathIndex = null,
     path_index_revision: u64 = 0,
+    path_index_cache: PathIndexCache = .{},
     cursor_clock: std.time.Timer,
     cursor_blink: cursor_blink.CursorBlink = .{},
     status_pulse: status_pulse.StatusPulse = .{},
@@ -181,6 +183,7 @@ pub const TerminalApplication = struct {
         self.placements.deinit(self.allocator);
         self.preview_placements.deinit(self.allocator);
         if (self.path_index) |index| index.destroy();
+        self.path_index_cache.clear();
         self.path_completion.deinit();
         self.allocator.free(self.startup_directory.bytes);
         self.allocator.free(self.machine_name);
@@ -853,6 +856,8 @@ pub const TerminalApplication = struct {
         defer self.allocator.free(dir);
         if (self.path_completion.index == .synchronous) self.path_completion.index = .{ .deferred = .{} };
         self.path_completion.recursive = true;
+        // Folder contents may have changed since the previous session.
+        self.path_index_cache.clear();
         try self.path_completion.openDirectory(dir, "");
         try self.syncPathIndex();
         self.overlay = .{ .path_completion = .{ .pane_id = pane_id, .anchor = anchor } };
@@ -864,6 +869,19 @@ pub const TerminalApplication = struct {
             .deferred => |value| value,
         };
         if (state.loading and state.revision != self.path_index_revision) {
+            if (self.path_index_cache.cloneFor(self.path_completion.directory) catch null) |cached| {
+                var hit = cached;
+                defer hit.deinit();
+                self.path_index_revision = state.revision;
+                if (self.path_index) |running| running.supersede(state.revision);
+                self.path_completion.applyDeferredIndex(&hit) catch |err| {
+                    self.path_completion.failDeferredIndex();
+                    if (self.overlay == .path_completion) platform.invalidateWindow();
+                    return err;
+                };
+                if (self.overlay == .path_completion) platform.invalidateWindow();
+                return;
+            }
             const index = self.path_index orelse blk: {
                 const created = try PathIndex.create(self.allocator);
                 self.path_index = created;
@@ -883,10 +901,17 @@ pub const TerminalApplication = struct {
                     if (self.overlay == .path_completion) platform.invalidateWindow();
                     return err;
                 },
-                .index => |*completed| self.path_completion.applyDeferredIndex(completed) catch |err| {
-                    self.path_completion.failDeferredIndex();
-                    if (self.overlay == .path_completion) platform.invalidateWindow();
-                    return err;
+                .index => |*completed| {
+                    const applied = if (result.partial)
+                        self.path_completion.applyPartialIndex(completed)
+                    else
+                        self.path_completion.applyDeferredIndex(completed);
+                    applied catch |err| {
+                        self.path_completion.failDeferredIndex();
+                        if (self.overlay == .path_completion) platform.invalidateWindow();
+                        return err;
+                    };
+                    if (!result.partial) self.path_index_cache.put(&self.path_completion) catch {};
                 },
             }
             if (self.overlay == .path_completion) platform.invalidateWindow();

@@ -79,6 +79,10 @@ session. These are local desktop checks, not hosted CI coverage:
   literal private-use names colliding with WSL's escapes are not representable.
 - Include directory symlink/junction cycles: indexing must not recurse through
   links. Explicitly opening a supported directory link may index its target.
+  If Windows cannot follow a Linux link over the WSL share, Open resolves it in
+  that distribution and browses the canonical directory target. File links and
+  unresolvable links must not open as directories; link resolution must not launch a
+  process per entry during indexing.
 - Exercise Home/End, paging, filtering to zero results, Backspace, Enter on an
   empty result, Escape, outside clicks, and rapid navigation while indexing.
   Neither stale results nor old hover positions may replace the current search.

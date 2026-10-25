@@ -11,10 +11,14 @@ pub const PathIndex = struct {
     pending: ?Request = null,
     result: ?Result = null,
     latest_revision: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    /// Worker-thread only: revision of the scan currently publishing snapshots.
+    scanning_revision: u64 = 0,
     const Request = struct { revision: u64, directory: []u8 };
     pub const Result = struct {
         revision: u64,
         outcome: union(enum) { index: paths.PathCompletion, failure: anyerror },
+        /// Partial snapshots arrive while the scan is still running; only a non-partial result ends loading.
+        partial: bool = false,
         pub fn deinit(self: *Result) void {
             if (self.outcome == .index) self.outcome.index.deinit();
         }
@@ -51,6 +55,25 @@ pub const PathIndex = struct {
         self.mutex.unlock();
         if (previous) |pending| self.allocator.free(pending.directory);
     }
+    /// Aborts a scan whose answer came from elsewhere (e.g. the recent-index cache).
+    pub fn supersede(self: *PathIndex, revision: u64) void {
+        self.latest_revision.store(revision, .release);
+    }
+    fn publishPartial(context: *anyopaque, model: *paths.PathCompletion) void {
+        const self: *PathIndex = @ptrCast(@alignCast(context));
+        const copy = model.cloneIndexAlloc() catch return;
+        var result = Result{ .revision = self.scanning_revision, .outcome = .{ .index = copy }, .partial = true };
+        self.mutex.lock();
+        if (self.stopping or self.latest_revision.load(.acquire) != result.revision) {
+            self.mutex.unlock();
+            result.deinit();
+            return;
+        }
+        var previous = self.result;
+        self.result = result;
+        self.mutex.unlock();
+        if (previous) |*old| old.deinit();
+    }
     /// Transfers a completed owner to the window thread without waiting for scanning to finish.
     pub fn takeResult(self: *PathIndex) ?Result {
         self.mutex.lock();
@@ -76,8 +99,11 @@ pub const PathIndex = struct {
             var model = paths.PathCompletion.init(self.allocator);
             model.recursive = true;
             model.scan_revision = .{ .latest = &self.latest_revision, .expected = request_value.revision };
+            self.scanning_revision = request_value.revision;
+            model.snapshot = .{ .context = self, .publish = publishPartial, .every = 2048, .next_at = 2048 };
             const outcome: Result = if (model.openDirectory(request_value.directory, "")) blk: {
                 model.scan_revision = null;
+                model.snapshot = null;
                 break :blk .{ .revision = request_value.revision, .outcome = .{ .index = model } };
             } else |err| blk: {
                 model.deinit();
@@ -96,6 +122,50 @@ pub const PathIndex = struct {
             self.mutex.unlock();
             if (previous) |*result| result.deinit();
         }
+    }
+};
+
+/// Small per-session memory of finished indexes so returning to a folder is instant.
+pub const IndexCache = struct {
+    const slot_count = 4;
+    items: [slot_count]?paths.PathCompletion = .{null} ** slot_count,
+    next: usize = 0,
+
+    pub fn clear(self: *IndexCache) void {
+        for (&self.items) |*slot| {
+            if (slot.*) |*model| model.deinit();
+            slot.* = null;
+        }
+        self.next = 0;
+    }
+
+    /// Best-effort: callers may ignore allocation failure because the cache is only an accelerator.
+    pub fn put(self: *IndexCache, model: *const paths.PathCompletion) !void {
+        if (model.scan_error) return;
+        var copy = try model.cloneIndexAlloc();
+        errdefer copy.deinit();
+        for (&self.items) |*slot| {
+            if (slot.*) |*existing| {
+                if (std.mem.eql(u8, existing.directory, model.directory)) {
+                    existing.deinit();
+                    slot.* = copy;
+                    return;
+                }
+            }
+        }
+        if (self.items[self.next]) |*old| old.deinit();
+        self.items[self.next] = copy;
+        self.next = (self.next + 1) % slot_count;
+    }
+
+    /// Returns an independent copy owned by the caller.
+    pub fn cloneFor(self: *const IndexCache, directory: []const u8) !?paths.PathCompletion {
+        for (self.items) |slot| {
+            if (slot) |model| {
+                if (std.mem.eql(u8, model.directory, directory)) return try model.cloneIndexAlloc();
+            }
+        }
+        return null;
     }
 };
 
