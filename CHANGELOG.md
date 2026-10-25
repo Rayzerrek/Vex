@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.1
+
+- Make recursive path picking breadth-first, publish partial results, cache recent folders, and filter extended queries incrementally.
+- Keep the selected path stable as partial and final indexes arrive.
+- Skip dependency, VCS and WSL system trees while keeping their directories available for explicit navigation.
+- Follow the WSL shell's current directory without requiring OSC 7 and harden path decoding, navigation and shell quoting.
+- Open Linux directory symlinks on Windows 10 through on-demand WSL resolution without probing every link during indexing.
+- Improve shell-handoff and orphaned-command detection.
+
 ## 2.1.0
 
 - Display direct Kitty Graphics RGB/RGBA/PNG images with cropping, scaling, transparency, z-order and scrolling.
