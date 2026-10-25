@@ -1,92 +1,43 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Icon, Mark } from "./icons";
-import { StateIcon } from "./state-icon";
+import { useEffect, useRef } from "react";
+import { Outlet, useLocation } from "@tanstack/react-router";
+import { resolveRoute } from "../routes";
+import { SiteHeader } from "./site-header";
+import { SiteFooter } from "./site-footer";
 import { useInputModality } from "./use-input-modality";
 
-const repository = "https://github.com/Rayzerrek/Vex";
-
-export function SiteLayout({
-  isDocs,
-  children
-}: {
-  isDocs: boolean;
-  children: ReactNode;
-}) {
+export function RouteLayout() {
   useInputModality();
-  const [dark, setDark] = useState(false);
-  useEffect(
-    () => setDark(document.documentElement.classList.contains("dark")),
-    []
-  );
-  function toggleTheme() {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    document
-      .querySelector('meta[name="theme-color"]')
-      ?.setAttribute("content", next ? "#101117" : "#f8f9fc");
-    try {
-      localStorage.setItem("vex-theme", next ? "dark" : "light");
-    } catch {
-      /* Storage is optional; theme switching is not. */
+  const path = useLocation({ select: (location) => location.pathname });
+  const route = resolveRoute(path);
+  const previousPath = useRef(path);
+  useEffect(() => {
+    if (previousPath.current !== path) {
+      document.getElementById("main-content")?.focus({ preventScroll: true });
+      previousPath.current = path;
     }
-  }
+    if (route.kind === "docs") return;
+    document.title =
+      route.kind === "home"
+        ? "Vex — Room for the real work."
+        : "Page not found — Vex";
+    document
+      .querySelector('meta[name="description"]')
+      ?.setAttribute(
+        "content",
+        "A native terminal workspace for Windows. Your shells, tabs, and split panes, without the extra layers."
+      );
+  }, [path, route.kind]);
   return (
-    <div className={`site-shell ${isDocs ? "docs-shell" : "home-shell"}`}>
-      <a className="skip-link" href="#main-content">
+    <div className={route.kind === "docs" ? "docs-shell" : "home-shell"}>
+      <a
+        className="fixed top-2 left-2 z-50 -translate-y-20 rounded-md bg-ink px-4 py-3 text-paper focus:translate-y-0"
+        href="#main-content"
+      >
         Skip to content
       </a>
-      <header className="site-header">
-        <div className="header-inner">
-          <a className="brand" href="/" aria-label="Vex home">
-            <Mark />
-            <span>vex</span>
-          </a>
-          <nav aria-label="Main navigation">
-            <a className="nav-features" href="/#features">
-              Why Vex
-            </a>
-            <a
-              href="/docs/getting-started"
-              aria-current={isDocs ? "true" : undefined}
-            >
-              Docs
-            </a>
-            <a className="nav-github" href={repository}>
-              GitHub
-              <Icon name="external" />
-            </a>
-            <button
-              className="icon-button theme-toggle"
-              type="button"
-              onClick={toggleTheme}
-              aria-label={
-                dark ? "Switch to light theme" : "Switch to dark theme"
-              }
-              aria-pressed={dark}
-            >
-              <StateIcon active={dark} from="moon" to="sun" />
-            </button>
-            <a className="header-download" href="/#download">
-              Download
-              <Icon name="download" />
-            </a>
-          </nav>
-        </div>
-      </header>
-      {children}
-      <footer className="site-footer page-width">
-        <a className="brand footer-brand" href="/" aria-label="Vex home">
-          <Mark />
-          <span>vex</span>
-        </a>
-        <span>A little more space to work.</span>
-        <nav aria-label="Footer">
-          <a href="/docs/getting-started">Documentation</a>
-          <a href={repository}>Source code</a>
-          <span>© 2026 Vex</span>
-        </nav>
-      </footer>
+      <SiteHeader />
+      <Outlet />
+      <SiteFooter />
     </div>
   );
 }

@@ -152,7 +152,7 @@ const pages: PageContent[] = [
               <code>Vex-&lt;version&gt;</code> use <code>Vex.App.exe</code>.
               Back up old settings before upgrading: JSON preferences and
               sessions are not imported. See{" "}
-              <a href="/docs/workspace#persistence">what is saved</a>.
+              <a href="/vex/docs/workspace#persistence">what is saved</a>.
             </p>
             <Note>
               <p>
@@ -185,8 +185,8 @@ const pages: PageContent[] = [
             </ol>
             <p>
               Try <Key>Ctrl+Shift+M</Key> for Theme Studio, or continue to the{" "}
-              <a href="/docs/workspace">workspace guide</a>. Configuration is
-              optional; Vex runs with defaults when no Lua file exists.
+              <a href="/vex/docs/workspace">workspace guide</a>. Configuration
+              is optional; Vex runs with defaults when no Lua file exists.
             </p>
           </>
         )
@@ -353,9 +353,11 @@ const pages: PageContent[] = [
           <>
             <p>
               Vex saves preferences and custom shell profiles in{" "}
-              <a href="/docs/configuration#storage">Lua configuration files</a>.
-              The current native application does not provide project grouping,
-              saved layout templates, or session restoration.
+              <a href="/vex/docs/customize/config#storage">
+                Lua configuration files
+              </a>
+              . The current native application does not provide project
+              grouping, saved layout templates, or session restoration.
             </p>
             <p>
               Closing Vex ends its terminal processes. It does not save running
@@ -460,7 +462,10 @@ const pages: PageContent[] = [
                   <code key="shell">default_shell</code>,
                   "startup",
                   <>
-                    A <a href="/docs/shells#default-shell">built-in shell ID</a>{" "}
+                    A{" "}
+                    <a href="/vex/docs/customize/shells#default-shell">
+                      built-in shell ID
+                    </a>{" "}
                     or saved reference such as <code>custom:256</code>.
                   </>
                 ]
@@ -1021,8 +1026,10 @@ const pages: PageContent[] = [
               The default preference{" "}
               <code>vex.config.default_shell = "startup"</code> respects this
               launch choice. Set a specific shell in{" "}
-              <a href="/docs/shells#default-shell">configuration</a> when you
-              want a persistent default for new tabs and splits.
+              <a href="/vex/docs/customize/shells#default-shell">
+                configuration
+              </a>{" "}
+              when you want a persistent default for new tabs and splits.
             </p>
           </>
         )
@@ -1043,8 +1050,10 @@ const pages: PageContent[] = [
             </CodeBlock>
             <p>
               For reusable launches, add a{" "}
-              <a href="/docs/shells#custom-shells">custom shell profile</a> in
-              Settings instead.
+              <a href="/vex/docs/customize/shells#custom-shells">
+                custom shell profile
+              </a>{" "}
+              in Settings instead.
             </p>
           </>
         )
@@ -1088,7 +1097,7 @@ const pages: PageContent[] = [
             </CodeBlock>
             <p>
               See{" "}
-              <a href="/docs/getting-started#build-from-source">
+              <a href="/vex/docs/installation#build-from-source">
                 build from source
               </a>{" "}
               for the pinned compiler and verification commands.
@@ -1179,9 +1188,9 @@ const pages: PageContent[] = [
               plugin, or Lua event APIs.
             </p>
             <p>
-              <a href="/docs/workspace#closing">Close protection</a> also uses
-              process information. A missing status report is not proof that a
-              process is safe to terminate; uncertain activity remains
+              <a href="/vex/docs/workspace#closing">Close protection</a> also
+              uses process information. A missing status report is not proof
+              that a process is safe to terminate; uncertain activity remains
               protected.
             </p>
           </>
@@ -1212,7 +1221,7 @@ export function DocContent({ slug }: { slug: string }) {
     return (
       <p>
         Guide not found. Start with{" "}
-        <a href="/docs/getting-started">installation</a>.
+        <a href="/vex/docs/installation">installation</a>.
       </p>
     );
   return (

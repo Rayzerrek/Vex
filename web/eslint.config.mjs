@@ -18,10 +18,6 @@ export default defineConfig([
     languageOptions: { globals: globals.node }
   },
   {
-    files: ["scripts/capture-site.mjs"],
-    languageOptions: { globals: globals.browser }
-  },
-  {
     files: ["**/*.{ts,tsx}"],
     extends: [js.configs.recommended, tseslint.configs.recommended],
     languageOptions: { globals: { ...globals.browser, ...globals.node } },

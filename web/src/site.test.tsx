@@ -2,10 +2,19 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DocContent, docsPages } from "./features/docs/content";
 import { render, staticPages } from "./entry-server";
+import {
+  docsPath,
+  guidePath,
+  homePath,
+  legacyPaths,
+  resolveRoute
+} from "./routes";
+
+const guide = (slug: string) => render(guidePath(slug));
 
 describe("documentation", () => {
   it("has unique routes and matching section anchors", () => {
-    expect(new Set(docsPages.map((page) => page.slug)).size).toBe(
+    expect(new Set(docsPages.map((page) => guidePath(page.slug))).size).toBe(
       docsPages.length
     );
     for (const page of docsPages) {
@@ -20,51 +29,62 @@ describe("documentation", () => {
     }
   });
 
-  it("only links to existing documentation pages and sections, including the homepage", () => {
+  it("only links to existing guides and sections", async () => {
     for (const path of [
-      "/",
-      ...docsPages.map((page) => `/docs/${page.slug}`)
+      homePath,
+      docsPath,
+      ...docsPages.map((page) => guidePath(page.slug))
     ]) {
-      for (const match of render(path).matchAll(
-        /href="\/docs\/([^"#]+)(?:#([^"]+))?"/g
+      const html = await render(path);
+      expect(html).not.toContain('href="/docs');
+      for (const match of html.matchAll(
+        /href="(\/vex\/docs[^"#]*)(?:#([^"]+))?"/g
       )) {
-        const target = docsPages.find(
-          (candidate) => candidate.slug === match[1]
-        );
-        expect(target, match[0]).toBeDefined();
-        if (match[2])
+        const route = resolveRoute(match[1]);
+        expect(route.kind, match[0]).toBe("docs");
+        if (route.kind === "docs" && match[2]) {
+          const target = docsPages.find((page) => page.slug === route.slug);
           expect(
             target?.sections.some((section) => section.id === match[2]),
             match[0]
           ).toBe(true);
+        }
       }
     }
   });
 
-  it("documents appearance, configuration backups and clipboard trust", () => {
-    const configuration = render("/docs/configuration");
-    expect(configuration).toContain("vex.config.appearance");
-    expect(configuration).toContain("init.backup.lua");
-    expect(configuration).toContain("one rotating backup, not a history");
-    expect(configuration).toContain("&lt;name&gt;.backup.lua");
-    expect(render("/docs/appearance")).toContain('id="terminal-colors"');
-    expect(render("/docs/shortcuts")).toContain(
+  it("documents appearance, backups and clipboard trust", async () => {
+    const configuration = await guide("configuration");
+    for (const text of [
+      "vex.config.appearance",
+      "init.backup.lua",
+      "one rotating backup, not a history",
+      "&lt;name&gt;.backup.lua",
+      "Saving through Settings replaces init.lua.",
+      "Legacy JSON settings are no longer read."
+    ])
+      expect(configuration).toContain(text);
+    expect(await guide("appearance")).toContain('id="terminal-colors"');
+    expect(await guide("shortcuts")).toContain(
       "Clipboard read/query access is not enabled."
     );
   });
 
-  it("documents the bounded recursive path index", () => {
-    const shortcuts = render("/docs/shortcuts");
-    expect(shortcuts).toContain("Bounded recursive search.");
-    expect(shortcuts).toContain("16,384");
-    expect(shortcuts).toContain("8 MiB");
-    expect(shortcuts).toContain("OSC 7");
+  it("documents the bounded recursive path index", async () => {
+    const shortcuts = await guide("shortcuts");
+    for (const text of [
+      "Bounded recursive search.",
+      "16,384",
+      "8 MiB",
+      "OSC 7"
+    ])
+      expect(shortcuts).toContain(text);
     expect(shortcuts).not.toContain("Local, not recursive.");
     expect(shortcuts).not.toContain("100,000");
   });
 
-  it("documents native packaging and the absence of legacy workspace persistence", () => {
-    const installation = render("/docs/getting-started");
+  it("documents native packaging and workspace persistence limitations", async () => {
+    const installation = await guide("getting-started");
     for (const file of [
       "Vex.exe",
       "ghostty-vt.dll",
@@ -72,35 +92,46 @@ describe("documentation", () => {
       "OpenConsole.exe"
     ])
       expect(installation).toContain(file);
-    expect(render("/docs/workspace")).toContain(
+    expect(await guide("workspace")).toContain(
       "does not provide project grouping, saved layout templates, or session restoration"
-    );
-    expect(render("/docs/configuration")).toContain(
-      "Saving through Settings replaces init.lua."
-    );
-    expect(render("/docs/configuration")).toContain(
-      "Legacy JSON settings are no longer read."
     );
   });
 });
 
-describe("static rendering", () => {
-  it("renders every route without browser globals", () => {
+describe("routing and static rendering", () => {
+  it("prerenders every route without browser globals", async () => {
     expect(staticPages).toHaveLength(docsPages.length + 3);
     for (const page of staticPages) {
-      const html = render(page.path);
+      const html = await render(page.path);
       expect(html).toContain('id="main-content"');
       expect(html.match(/<h1[ >]/g)).toHaveLength(1);
     }
   });
-  it("does not render screenshots or application mockups", () => {
-    const html = render("/");
+
+  it("maps legacy bookmarks to canonical routes", () => {
+    expect(resolveRoute("/").path).toBe(homePath);
+    expect(resolveRoute("/docs").path).toBe(docsPath);
+    for (const path of legacyPaths) {
+      const canonical = resolveRoute(path);
+      expect(resolveRoute(`${canonical.path}/`)).toEqual(canonical);
+      expect(canonical.kind).not.toBe("not-found");
+    }
+  });
+
+  it("does not render screenshots or application mockups", async () => {
+    const html = await render(homePath);
     expect(html).not.toContain("<img");
     expect(html).not.toContain("/shots/");
     expect(html).not.toContain('role="tablist"');
   });
-  it("renders unknown and nested routes as not-found pages", () => {
-    for (const path of ["/missing", "/docs/missing", "/docs/workspace/missing"])
-      expect(render(path)).toContain("That page isn’t here.");
+
+  it("renders unknown and nested routes as not-found pages", async () => {
+    for (const path of [
+      "/missing",
+      "/vex/docs/missing",
+      "/vex/docs/workspace/missing",
+      "/docs/missing"
+    ])
+      expect(await render(path)).toContain("That page isn’t here.");
   });
 });

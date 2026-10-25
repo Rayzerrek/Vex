@@ -1,21 +1,25 @@
+import { Suspense } from "react";
 import { renderToString } from "react-dom/server";
-import { App } from "./app";
+import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import { createSiteRouter } from "./router";
 import { docsPages } from "./features/docs/content";
+import { docsPath, guidePath, homePath, resolveRoute } from "./routes";
+export { legacyPaths, resolveRoute } from "./routes";
 
 export const staticPages = [
   {
-    path: "/",
+    path: homePath,
     title: "Vex — Room for the real work.",
     description:
       "A native terminal workspace for Windows. Your shells, tabs, and split panes, without the extra layers."
   },
   {
-    path: "/docs",
+    path: docsPath,
     title: "Installation — Vex Docs",
     description: docsPages[0].description
   },
   ...docsPages.map((page) => ({
-    path: `/docs/${page.slug}`,
+    path: guidePath(page.slug),
     title: `${page.title} — Vex Docs`,
     description: page.description
   })),
@@ -26,6 +30,15 @@ export const staticPages = [
   }
 ];
 
-export function render(path: string) {
-  return renderToString(<App initialPath={path} />);
+export async function render(path: string) {
+  const router = createSiteRouter(
+    createMemoryHistory({ initialEntries: [resolveRoute(path).path] })
+  );
+  await router.load();
+  // TanStack adds this outer boundary in the browser; mirror it in static HTML.
+  return renderToString(
+    <Suspense>
+      <RouterProvider router={router} />
+    </Suspense>
+  );
 }

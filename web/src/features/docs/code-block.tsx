@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { StateIcon } from "../../components/state-icon";
+import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
+import { CopyIcon } from "@phosphor-icons/react/dist/csr/Copy";
 
 export function CodeBlock({
   language,
@@ -37,7 +38,14 @@ export function CodeBlock({
           aria-label={`Copy ${language} code`}
           data-status={status}
         >
-          <StateIcon active={status === "copied"} from="copy" to="check" />
+          <span
+            className="icon-swap"
+            data-active={status === "copied"}
+            aria-hidden="true"
+          >
+            <CopyIcon />
+            <CheckIcon />
+          </span>
           <span aria-live="polite">
             {status === "copied"
               ? "Copied"

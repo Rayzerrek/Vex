@@ -1,43 +1,48 @@
 # Website
 
-React, TypeScript and Vite. Use Node.js 24 and the pnpm version in `package.json`.
-From `web/`:
+React, TypeScript, TanStack Router, Tailwind CSS 4 and Vite. Use Node.js 24
+and the pnpm version pinned in `package.json`.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm run dev
 ```
 
-## Checks
+## Verify
 
 ```sh
 pnpm run check
 pnpm run test
 pnpm run build
+pnpm run test:e2e
 ```
 
-`check` runs Prettier, ESLint and TypeScript. Use `pnpm run format` to apply
-formatting. Tests use Vitest; no global CLI is needed.
-The build checks types and prerenders all public routes.
+`check` runs Prettier, ESLint and TypeScript. `build` prerenders every public
+route. Playwright runs against that production build; install Chromium first
+with `pnpm exec playwright install chromium` if needed.
 
-## Editing
+## Structure
 
-- `src/features/docs/content.tsx`: user guides, section anchors and navigation metadata.
-- `src/pages/`, `src/components/`: pages and shared UI.
-- `src/app.tsx`: routing and metadata.
-- `src/index.css`, `src/motion.css`: themes, layout and motion.
-- `src/entry-server.tsx`, `scripts/prerender.mjs`: static route generation.
+- `src/router.ts`: nested TanStack routes, lazy page loading and legacy redirects.
+- `src/routes.ts`: shared paths and canonical URL resolution.
+- `src/components/`: site header, footer, branding, theme and layout.
+- `src/pages/`: home, documentation and not-found page composition.
+- `src/features/docs/`: guide content, sidebar search, contents rail, pagination and code blocks.
+- `src/index.css`: Tailwind tokens, reusable content styles and small CSS transitions.
+- `src/entry-server.tsx`, `scripts/prerender.mjs`: build-time static rendering.
 
-Keep guides aligned with the application source and `docs/`. Do not advertise
-legacy WPF features such as saved layouts or session restoration.
-Repository guides stay short; detailed feature explanations belong here.
+The product lives at `/vex`, with guides under `/vex/docs`. Customization,
+automation and integration guides use grouped paths. Legacy `/` and `/docs/...`
+bookmarks redirect to their canonical equivalents, preserving query and hash.
 
-Keep content/navigation readable without JavaScript and respect reduced motion.
-IBM Plex fonts are bundled locally; their licenses ship under `public/licenses/`.
-Captures in `public/shots/` are legacy assets, not current product screenshots.
+Keep guides aligned with the native application and repository `docs/`. Do not
+advertise legacy WPF features such as saved layouts or session restoration.
+Content and navigation must work without JavaScript. Animations respect reduced
+motion and keyboard navigation. Phosphor icons use direct imports; locally
+bundled IBM Plex fonts ship with licenses in `public/licenses/`.
 
 ## Deploy
 
 Serve `dist/` on a static host with directory `index.html` resolution and
-`404.html` for missing routes. Guides also have flat `.html` aliases for
-extensionless hosts. No SPA fallback or application server is needed.
+`404.html` for missing routes. Guides also ship flat `.html` aliases for
+extensionless hosts. No SPA fallback or application server is required.

@@ -1,6 +1,11 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { render, staticPages } from "../dist-ssr/entry-server.js";
+import {
+  legacyPaths,
+  render,
+  resolveRoute,
+  staticPages
+} from "../dist-ssr/entry-server.js";
 
 const template = await readFile("dist/index.html", "utf8");
 const escape = (text) =>
@@ -19,7 +24,7 @@ for (const page of staticPages) {
     )
     .replace(
       '<div id="root"></div>',
-      `<div id="root">${render(page.path)}</div>`
+      `<div id="root">${await render(page.path)}</div>`
     );
   const target =
     page.path === "/404"
@@ -32,6 +37,16 @@ for (const page of staticPages) {
   if (page.path !== "/" && page.path !== "/404") {
     await writeFile(resolve("dist", `.${page.path}.html`), html);
   }
+}
+
+// Static hosts have no redirect middleware. Keep old bookmarks working without JS.
+for (const path of legacyPaths) {
+  const target = resolveRoute(path).path;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${target}"><title>Redirecting — Vex</title></head><body><a href="${target}">Continue to Vex</a><script>location.replace(${JSON.stringify(target)} + location.search + location.hash)</script></body></html>`;
+  const file = resolve("dist", `.${path}`, "index.html");
+  await mkdir(resolve(file, ".."), { recursive: true });
+  await writeFile(file, html);
+  if (path !== "/") await writeFile(resolve("dist", `.${path}.html`), html);
 }
 
 // Keep only deployable files; the server bundle is a build-time tool.
