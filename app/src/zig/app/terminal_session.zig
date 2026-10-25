@@ -319,7 +319,9 @@ pub const TerminalSession = struct {
         if (query_process) {
             var exe_buf: [256]u8 = undefined;
             var cmd_buf: [512]u8 = undefined;
-            const fg = self.pty.foregroundProcess(&exe_buf, &cmd_buf);
+            var cwd_buf: [directory.DirectoryPath.max_bytes]u8 = undefined;
+            const fg = self.pty.foregroundProcess(&exe_buf, &cmd_buf, &cwd_buf);
+            if (fg.cwd) |cwd| self.directory.applyProbedDirectory(cwd) catch {};
             const proc_name: ?[]const u8 = if (fg.exe.len > 0) fg.exe else null;
             const proc_cmd: ?[]const u8 = if (fg.cmd.len > 0) fg.cmd else null;
             self.foreground_is_shell = fg.is_shell;

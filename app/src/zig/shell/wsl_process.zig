@@ -81,6 +81,22 @@ pub fn parseSnapshot(text: []const u8) ?ForegroundProcess {
     return .{ .name = shell.name, .command = shell.command, .is_shell = true };
 }
 
+/// Decode the shell's cwd, never terminal display text or a foreground child's cwd.
+/// Old/failed probes have no directory; callers retain their last known path.
+pub fn snapshotDirectory(text: []const u8, buffer: []u8) ?[]const u8 {
+    if (text.len > max_snapshot_bytes) return null;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    const root = std.fmt.parseInt(u32, lines.next() orelse return null, 10) catch return null;
+    if (root == 0) return null;
+    const header = lines.next() orelse return null;
+    if (!std.mem.startsWith(u8, header, "cwd ")) return null;
+    const hex = header[4..];
+    if (hex.len % 2 != 0 or hex.len / 2 > buffer.len) return null;
+    const path = std.fmt.hexToBytes(buffer, hex) catch return null;
+    _ = @import("wsl_paths.zig").LinuxDirectory.parse(path) catch return null;
+    return path;
+}
+
 fn parseRow(raw: []const u8) ?Process {
     const line = std.mem.trim(u8, raw, " \t\r");
     var fields = std.mem.tokenizeAny(u8, line, " \t");
@@ -128,6 +144,17 @@ test "WSL local scripts retain runtime icons while installed tools keep their id
         const process = parseSnapshot(snapshot) orelse return error.MissingProcess;
         try std.testing.expectEqual(case.glyph, app_icon.resolve(process.name, process.command, null, null).glyph);
     }
+}
+
+test "WSL cwd frames preserve spaces and Unicode without corrupting process rows" {
+    var buffer: [256]u8 = undefined;
+    const snapshot = "100\ncwd 2f686f6d652f757365722f4d7920c5bbc3b3c582c487\n100 1 100 100 bash bash\n";
+    try std.testing.expectEqualStrings("/home/user/My Żółć", snapshotDirectory(snapshot, &buffer).?);
+    try std.testing.expect(parseSnapshot(snapshot).?.is_shell);
+    for ([_][]const u8{ "100\n", "0\ncwd 2f\n", "100\ncwd \n", "100\ncwd 2\n", "100\ncwd zz\n", "100\ncwd 2f610a62\n", "100\ncwd 72656c6174697665\n", "100\ncwd 2fff\n" }) |text| {
+        try std.testing.expect(snapshotDirectory(text, &buffer) == null);
+    }
+    try std.testing.expect(snapshotDirectory(snapshot, buffer[0..2]) == null);
 }
 
 test "WSL process snapshots fail closed on missing roots, malformed input and parent cycles" {

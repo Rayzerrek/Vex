@@ -34,7 +34,7 @@ pub const ShellQuoteKind = enum {
     }
 };
 
-/// Without an OSC 7 report, WSL's launch-home sentinel is not a Windows cwd.
+/// Without a report or process cwd, WSL's launch-home sentinel is not a Windows cwd.
 /// Browse the known distribution root instead of guessing the Linux user's home.
 pub fn initialDirectoryAlloc(allocator: std.mem.Allocator, path: directory.DirectoryPath, context: directory.DirectoryContext) ![]u8 {
     if (path.shell_home and context == .wsl) {

@@ -60,7 +60,9 @@ It is local interactive coverage, not hosted CI or a guarantee for every driver/
 Use an isolated Vex window and configuration on Windows, with a real WSL
 session. These are local desktop checks, not hosted CI coverage:
 
-- Open from a reported WSL cwd; without OSC 7, the fallback must be the
+- Open from a reported WSL cwd. Without OSC 7, verify the picker's initial
+  directory follows the shell's `/proc` cwd, including after `cd`, and uses the
+  correct distribution. Until either source is available, the fallback is the
   distribution root, never the Windows user's profile directory.
 - Compare empty/missing/unreadable roots with a readable directory containing
   unreadable children. Children must not erase readable results. Skipped paths

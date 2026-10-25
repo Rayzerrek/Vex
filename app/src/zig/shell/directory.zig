@@ -31,6 +31,7 @@ pub const PaneDirectory = struct {
     context: DirectoryContext = .windows,
     launch_home: bool = false,
     reported: ?[]u8 = null,
+    probed: ?[]u8 = null,
     last_report: std.ArrayList(u8) = .empty,
 
     /// Clones a parsed launch directory so sibling panes never borrow each other's storage.
@@ -49,11 +50,30 @@ pub const PaneDirectory = struct {
     pub fn deinit(self: *PaneDirectory) void {
         self.allocator.free(self.launch);
         if (self.reported) |path| self.allocator.free(path);
+        if (self.probed) |path| self.allocator.free(path);
         self.last_report.deinit(self.allocator);
     }
-    /// Returns the last valid report, otherwise the original launch directory.
+    /// OSC 7 stays authoritative; process inspection supports shells without integration.
     pub fn current(self: *const PaneDirectory) DirectoryPath {
-        return .{ .bytes = self.reported orelse self.launch, .shell_home = self.reported == null and self.launch_home };
+        return .{ .bytes = self.reported orelse self.probed orelse self.launch, .shell_home = self.reported == null and self.probed == null and self.launch_home };
+    }
+    pub fn applyProbedDirectory(self: *PaneDirectory, bytes: []const u8) !void {
+        if (self.context != .wsl or self.reported != null) return;
+        const linux = wsl.LinuxDirectory.parse(bytes) catch return;
+        const owned = try wsl.networkDirectoryFromLinuxAlloc(self.allocator, self.context.wsl, linux);
+        errdefer self.allocator.free(owned);
+        _ = DirectoryPath.parse(owned) catch {
+            self.allocator.free(owned);
+            return;
+        };
+        if (self.probed) |previous| {
+            if (std.mem.eql(u8, previous, owned)) {
+                self.allocator.free(owned);
+                return;
+            }
+            self.allocator.free(previous);
+        }
+        self.probed = owned;
     }
     /// Invalid/remote/empty reports preserve the last local path, matching the WPF feed contract.
     pub fn applyReport(self: *PaneDirectory, bytes: []const u8, machine_name: []const u8) !void {
@@ -131,6 +151,36 @@ test "local OSC 7 paths decode Unicode/space escapes and local hostnames" {
         try pane.applyReport(report, "my-pc");
         try std.testing.expectEqualStrings("C:\\My files\\Żółć", pane.current().bytes);
     }
+}
+
+fn checkProbedDirectoryAllocations(allocator: std.mem.Allocator) !void {
+    const context: DirectoryContext = .{ .wsl = try wsl.WslDistribution.parse("NixOS") };
+    var pane = try PaneDirectory.initForContext(allocator, .{ .bytes = "C:\\launch", .shell_home = true }, context);
+    defer pane.deinit();
+    try pane.applyProbedDirectory("/home/user/My Żółć");
+    try std.testing.expect(!pane.current().shell_home);
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\NixOS\\home\\user\\My Żółć", pane.current().bytes);
+    try pane.applyProbedDirectory("/home/user/My Żółć");
+    pane.applyProbedDirectory("/tmp/project") catch |err| {
+        try std.testing.expectEqualStrings("\\\\wsl.localhost\\NixOS\\home\\user\\My Żółć", pane.current().bytes);
+        return err;
+    };
+    try pane.applyProbedDirectory("/bad\npath");
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\NixOS\\tmp\\project", pane.current().bytes);
+    var sibling = try PaneDirectory.initForContext(allocator, pane.current(), context);
+    defer sibling.deinit();
+    try pane.applyReport("file:///home/reported", "my-pc");
+    try pane.applyProbedDirectory("/stale");
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\NixOS\\home\\reported", pane.current().bytes);
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\NixOS\\tmp\\project", sibling.current().bytes);
+}
+
+test "WSL process cwd follows cd without OSC 7 and preserves authoritative reports and owners" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkProbedDirectoryAllocations, .{});
+    var pane = try PaneDirectory.init(std.testing.allocator, try DirectoryPath.parse("C:\\native"));
+    defer pane.deinit();
+    try pane.applyProbedDirectory("/tmp");
+    try std.testing.expectEqualStrings("C:\\native", pane.current().bytes);
 }
 
 test "WSL home launch survives splits until a directory report arrives" {

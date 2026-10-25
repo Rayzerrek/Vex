@@ -200,7 +200,7 @@ pub const PtyOwner = struct {
     }
 
     /// Queries the foreground application or fallback shell, preserving root identity for bootstrap handling.
-    pub fn foregroundProcess(self: *const PtyOwner, exe_buf: []u8, cmd_buf: []u8) struct { exe: []const u8, cmd: []const u8, is_root: bool = false, is_shell: bool = false, is_linux: bool = false } {
+    pub fn foregroundProcess(self: *const PtyOwner, exe_buf: []u8, cmd_buf: []u8, cwd_buf: []u8) struct { exe: []const u8, cmd: []const u8, cwd: ?[]const u8 = null, is_root: bool = false, is_shell: bool = false, is_linux: bool = false } {
         if (exe_buf.len == 0 or cmd_buf.len == 0) return .{ .exe = &.{}, .cmd = &.{} };
         const wsl_process = @import("../shell/wsl_process.zig");
         var snapshot: [wsl_process.max_snapshot_bytes]u8 = undefined;
@@ -209,7 +209,7 @@ pub const PtyOwner = struct {
             if (wsl_process.parseSnapshot(snapshot[0..snapshot_len])) |process| {
                 const exe = @import("../terminal/terminal_title.zig").sanitizeDisplayText(process.name, exe_buf) orelse "";
                 const cmd = @import("../terminal/terminal_title.zig").sanitizeDisplayText(process.command, cmd_buf) orelse "";
-                return .{ .exe = exe, .cmd = cmd, .is_root = process.is_shell, .is_shell = process.is_shell, .is_linux = true };
+                return .{ .exe = exe, .cmd = cmd, .cwd = wsl_process.snapshotDirectory(snapshot[0..snapshot_len], cwd_buf), .is_root = process.is_shell, .is_shell = process.is_shell, .is_linux = true };
             }
         }
         var exe_len: usize = 0;
