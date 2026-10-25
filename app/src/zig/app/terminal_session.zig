@@ -193,11 +193,16 @@ pub const TerminalSession = struct {
     }
     /// User input acknowledges completed results; emulator replies deliberately bypass this path.
     pub fn writeUserInput(self: *TerminalSession, bytes: []const u8) !void {
+        if (bytes.len == 0) return;
         self.recordApplicationInput();
         const previous = status_presentation.statusPresentationKey(self.terminal.program_status.programStatus());
         self.terminal.program_status.acknowledgeProgramStatus();
         if (previous != status_presentation.statusPresentationKey(self.terminal.program_status.programStatus())) platform.invalidateWindow();
         try self.writePty(bytes);
+        if (try self.terminal.revealInput()) {
+            self.copy_feedback.clear();
+            platform.invalidateWindow();
+        }
         if (self.process_probe.noteInput(std.time.milliTimestamp(), bytes)) {
             self.pty.noteProcessInput();
             platform.scheduleDeferredTick(50);

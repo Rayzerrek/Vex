@@ -655,6 +655,14 @@ pub const Terminal = struct {
         self.kb_selection_active = false;
         self.frame_valid = false;
     }
+    /// User input returns primary scrollback to the live cursor; output and mouse reports do not.
+    pub fn revealInput(self: *Terminal) !bool {
+        if (try self.isAlternateScreen()) return false;
+        const info = try self.scrollbar();
+        if (info.offset == info.scrollable()) return false;
+        self.scrollToBottom();
+        return true;
+    }
     /// True while the alternate screen buffer (?1049h / ?1047h / ?47h) is active.
     pub fn isAlternateScreen(self: *const Terminal) !bool {
         var screen: c.GhosttyTerminalScreen = c.GHOSTTY_TERMINAL_SCREEN_PRIMARY;

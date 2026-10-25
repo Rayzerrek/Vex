@@ -1,4 +1,5 @@
 #include "chrome_motion.h"
+#include "chrome_tooltip.h"
 #include "overlay_scrollbar.h"
 #include "dialog_motion.h"
 #include "pixel_scroll.h"
@@ -90,6 +91,33 @@ constexpr bool pixelScrollRetargetsClampsAndStops() {
     scroll.range(0, 500);
     return scroll.sample(500) == 0 && !scroll.pending(500);
 }
+constexpr bool tooltipDelaysOnceThenSettlesWithoutWakes() {
+    ChromeTooltip tooltip;
+    tooltip.update(1, 100);
+    if (tooltip.visible(549) || tooltip.deadline(200) != 550 || tooltip.opacity(549, true) != 0) return false;
+    tooltip.update(1, 300);
+    if (tooltip.deadline(300) != 550 || !tooltip.visible(550)) return false;
+    if (!tooltip.animating(590, true) || tooltip.opacity(590, true) != 0.875f) return false;
+    if (tooltip.animating(630, true) || tooltip.deadline(630) != 0 || tooltip.opacity(630, true) != 1) return false;
+    return tooltip.opacity(550, false) == 1 && !tooltip.animating(550, false);
+}
+constexpr bool tooltipNeighboursSkipDelayButInputAndExpiredHoversReset() {
+    ChromeTooltip tooltip;
+    tooltip.update(1, 100);
+    tooltip.update(2, 200); // Moving before the first reveal is not a warm hover.
+    if (tooltip.deadline(200) != 650) return false;
+    tooltip.update(0, 700);
+    tooltip.update(3, 750);
+    if (!tooltip.visible(750) || tooltip.opacity(750, true) != 1) return false;
+    tooltip.reset();
+    tooltip.update(4, 760);
+    if (tooltip.visible(760) || tooltip.deadline(760) != 1210) return false;
+    tooltip.update(0, 800);
+    tooltip.update(5, 2000);
+    return !tooltip.visible(2000) && tooltip.deadline(2000) == 2450;
+}
+static_assert(tooltipDelaysOnceThenSettlesWithoutWakes());
+static_assert(tooltipNeighboursSkipDelayButInputAndExpiredHoversReset());
 static_assert(tabSelectionCloseRetargetsPositionAndWidth());
 static_assert(switchMotionReversesAndRespectsReducedMotion());
 static_assert(pixelScrollRetargetsClampsAndStops());

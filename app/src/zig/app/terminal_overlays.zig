@@ -17,7 +17,7 @@ pub const OverlayState = union(enum) {
     none,
     theme_picker: struct { initial_theme_index: usize },
     command_palette: palette.CommandPalette,
-    tab_peek: struct { selected_index: usize = 0, started_ms: u64 = 0, closing: bool = false, accept: bool = false, hovered_close: ?CloseTarget = null },
+    tab_peek: struct { selected_index: usize = 0, started_ms: u64 = 0, hovered_close: ?CloseTarget = null },
     path_completion: struct { pane_id: panes.PaneId, anchor: ?completion_popup.Anchor = null },
     close_confirm: struct { target: CloseTarget, confirmation: close_confirmation.CloseConfirmation, return_to_peek: ?usize = null },
     exit_confirm,
@@ -26,7 +26,7 @@ pub const OverlayState = union(enum) {
     custom_shell,
 };
 
-const peek_duration_ms = 180;
+const peek_duration_ms = 120;
 
 pub fn peekContainsPane(self: *Application, id: panes.PaneId) bool {
     if (self.overlay != .tab_peek) return false;
@@ -39,23 +39,14 @@ pub fn peekAnimating(self: *Application) bool {
     return self.overlay == .tab_peek and platform.animationsEnabled() and self.cursorNowMs() -| self.overlay.tab_peek.started_ms < peek_duration_ms;
 }
 
-fn closePeek(self: *Application, accept: bool) void {
-    if (!accept) {
-        if (self.model) |model| self.overlay.tab_peek.selected_index = model.selected_tab;
-    }
-    self.overlay.tab_peek.closing = true;
-    self.overlay.tab_peek.accept = accept;
-    self.overlay.tab_peek.started_ms = self.cursorNowMs();
-    self.resetCursorOnInput() catch |err| self.fail(err);
-    platform.invalidateWindow();
-}
-
-pub fn finishPeek(self: *Application) !void {
-    if (self.overlay != .tab_peek or !self.overlay.tab_peek.closing) return;
-    if (peekAnimating(self)) return;
-    const peek = self.overlay.tab_peek;
+/// Committing never waits for a paint or an exit animation, so the next keystroke reaches the shell.
+pub fn closePeek(self: *Application, accept: bool) !void {
+    if (self.overlay != .tab_peek) return;
+    const selected = self.overlay.tab_peek.selected_index;
     self.overlay = .none;
-    if (peek.accept) try self.applyAction(.select_tab, @intCast(peek.selected_index));
+    if (accept) try self.applyAction(.select_tab, @intCast(selected));
+    try self.resetCursorOnInput();
+    platform.invalidateWindow();
 }
 
 fn drawTabOverview(self: *Application) !void {
@@ -67,24 +58,10 @@ fn drawTabOverview(self: *Application) !void {
     const progress: f32 = if (platform.animationsEnabled()) @min(1, @as(f32, @floatFromInt(elapsed)) / peek_duration_ms) else 1;
     const layout = overview.Layout.init(metrics.width, metrics.height, model.tabs.items.len);
     platform.c.vex_draw_tab_overview(progress < 1);
-    // The selected card is last so its expansion occludes neighbours without extra layers/textures.
+    // A small local reveal avoids shrinking the whole workspace and keeps every target usable immediately.
     for (0..layout.count) |index| {
-        if (index != peek.selected_index) {
-            const card = layout.card(index);
-            const recessed: panes.PaneRect = .{
-                .x = card.x + card.width * 0.04,
-                .y = card.y + card.height * 0.04 + 6,
-                .width = card.width * 0.92,
-                .height = card.height * 0.92,
-            };
-            const card_bounds = if (peek.closing) overview.interpolate(card, recessed, progress) else overview.interpolate(recessed, card, progress);
-            try drawTabCard(self, index, card_bounds, false);
-        }
+        try drawTabCard(self, index, overview.revealBounds(layout.card(index), progress), index == peek.selected_index);
     }
-    const full = @import("terminal_application.zig").windowContentBounds(metrics);
-    const destination = layout.card(peek.selected_index);
-    const bounds = if (peek.closing) overview.interpolate(destination, full, progress) else overview.interpolate(full, destination, progress);
-    try drawTabCard(self, peek.selected_index, bounds, true);
 }
 
 fn drawTabCard(self: *Application, index: usize, bounds: panes.PaneRect, selected: bool) !void {
@@ -169,7 +146,6 @@ pub fn drawActiveOverlay(self: *Application) !void {
 /// Native dialogs own keyboard navigation; the inline path popup still routes terminal-window keys.
 pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
     if (self.overlay == .tab_peek) {
-        if (self.overlay.tab_peek.closing) return true;
         const model = if (self.model) |*model| model else return true;
         if (overview.closeShortcut(key, modifiers)) |shortcut| {
             const index = @min(self.overlay.tab_peek.selected_index, model.tabs.items.len - 1);
@@ -185,8 +161,8 @@ pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
         const layout = overview.Layout.init(metrics.width, metrics.height, model.tabs.items.len);
         const selected = &self.overlay.tab_peek.selected_index;
         switch (key) {
-            0x1B => closePeek(self, false),
-            0x0D => closePeek(self, true),
+            0x1B => try closePeek(self, false),
+            0x0D => try closePeek(self, true),
             0x25 => selected.* -|= 1,
             0x26, 0x28 => selected.* = layout.verticalNeighbor(selected.*, key == 0x28),
             0x21, 0x24 => selected.* = 0,
@@ -194,7 +170,12 @@ pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
             0x27, 0x09 => {
                 if (key == 0x09 and (modifiers & 1) != 0) selected.* -|= 1 else selected.* = @min(model.tabs.items.len - 1, selected.* + 1);
             },
-            else => {},
+            else => {
+                if ((modifiers & 6) == 0 and key >= 0x20 and !(key >= 0x70 and key <= 0x87)) {
+                    try closePeek(self, true);
+                    return false;
+                }
+            },
         }
         platform.invalidateWindow();
         return true;
@@ -242,12 +223,19 @@ pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
 /// The popup reuses identical row hit regions for selection and cursor feedback; other dialogs own their HWND input.
 pub fn handleOverlayPointer(self: *Application, event: platform.PointerEvent, x: f32, y: f32) !platform.PointerResponse {
     if (self.overlay == .tab_peek) {
-        if (self.overlay.tab_peek.closing or peekAnimating(self)) return .normal;
         const model = if (self.model) |*model| model else return .normal;
         const metrics = self.metrics orelse return .normal;
         const layout = overview.Layout.init(metrics.width, metrics.height, model.tabs.items.len);
-        const hit = layout.hit(x, y);
-        const close_target = if (hit) |index| try peekCloseHit(self, index, layout.card(index), x, y) else null;
+        const elapsed = self.cursorNowMs() -| self.overlay.tab_peek.started_ms;
+        const progress: f32 = if (platform.animationsEnabled()) @min(1, @as(f32, @floatFromInt(elapsed)) / peek_duration_ms) else 1;
+        var hit: ?usize = null;
+        for (0..layout.count) |index| {
+            if (overview.revealBounds(layout.card(index), progress).contains(x, y)) {
+                hit = index;
+                break;
+            }
+        }
+        const close_target = if (hit) |index| try peekCloseHit(self, index, overview.revealBounds(layout.card(index), progress), x, y) else null;
         if (event == .hover or event == .move or event == .cancel) {
             const hovered = if (event == .cancel) null else close_target;
             if (!std.meta.eql(self.overlay.tab_peek.hovered_close, hovered)) {
@@ -268,8 +256,8 @@ pub fn handleOverlayPointer(self: *Application, event: platform.PointerEvent, x:
                     platform.invalidateWindow();
                 }
             }
-            if (event == .begin) closePeek(self, true);
-        } else if (event == .begin) closePeek(self, false);
+            if (event == .begin) try closePeek(self, true);
+        } else if (event == .begin) try closePeek(self, false);
         return if (hit != null) .link else .normal;
     }
     if (self.overlay != .path_completion) return .normal;

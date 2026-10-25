@@ -6,7 +6,7 @@ const strip = @import("tab_strip.zig");
 pub const TabDrag = union(enum) {
     none,
     armed: struct { id: workspace.TabId, start: strip.TabPointer },
-    dragging: struct { id: workspace.TabId, destination: ?usize },
+    dragging: struct { id: workspace.TabId, destination: ?usize, point: strip.TabPointer, grab_fraction: f32, grab_y: f32 },
 
     /// Arm only an existing tab in a multi-tab strip; the caller selects it before arming, as in WPF.
     pub fn begin(self: *TabDrag, model: *const workspace.WorkspaceModel, layout: strip.TabStripLayout, id: workspace.TabId, point: strip.TabPointer) !bool {
@@ -29,13 +29,21 @@ pub const TabDrag = union(enum) {
             .none => return false,
             .armed => |armed| {
                 if (@abs(point.x - armed.start.x) + @abs(point.y - armed.start.y) < 6) return false;
-                self.* = .{ .dragging = .{ .id = id, .destination = try layout.insertionSlot(source, point) } };
+                const source_x = strip.TabStripLayout.left + @as(f32, @floatFromInt(source)) * layout.slotWidth();
+                self.* = .{ .dragging = .{
+                    .id = id,
+                    .destination = try layout.insertionSlot(source, point),
+                    .point = point,
+                    .grab_fraction = std.math.clamp((armed.start.x - source_x) / layout.tab_width, 0, 1),
+                    .grab_y = armed.start.y - 5,
+                } };
                 return true;
             },
             .dragging => |*dragging| {
                 const destination = try layout.insertionSlot(source, point);
-                if (destination == dragging.destination) return false;
+                if (destination == dragging.destination and point.x == dragging.point.x and point.y == dragging.point.y) return false;
                 dragging.destination = destination;
+                dragging.point = point;
                 return true;
             },
         }
@@ -71,7 +79,18 @@ pub const TabDrag = union(enum) {
         const destination = dragging.destination orelse return null;
         return try layout.markerX(destination);
     }
-    fn tabId(self: *const TabDrag) ?workspace.TabId {
+    /// Only lightweight header geometry follows the pointer; terminal surfaces stay put.
+    pub fn ghostBounds(self: *const TabDrag, layout: strip.TabStripLayout, width: f32, height: f32) ?@import("pane_tree.zig").PaneRect {
+        if (self.* != .dragging) return null;
+        const drag = self.dragging;
+        return .{
+            .x = std.math.clamp(drag.point.x - drag.grab_fraction * layout.tab_width, 4, @max(4, width - layout.tab_width - 4)),
+            .y = std.math.clamp(drag.point.y - drag.grab_y - 2, 3, @max(3, height - 38)),
+            .width = layout.tab_width,
+            .height = 34,
+        };
+    }
+    pub fn tabId(self: *const TabDrag) ?workspace.TabId {
         return switch (self.*) {
             .none => null,
             .armed => |armed| armed.id,
@@ -112,6 +131,30 @@ test "tab drag threshold, home/no-target preview, commit and cancellation preser
     try std.testing.expectEqual(@as(workspace.TabId, @enumFromInt(1)), model.tabs.items[2].id);
     try std.testing.expectEqual(@as(workspace.TabId, @enumFromInt(3)), model.activeTab().id);
     try std.testing.expect(drag == .none);
+}
+
+test "drag ghost follows within a slot, preserves the grab anchor and stays inside resized clients" {
+    var model = try workspace.WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+    defer model.deinit();
+    try model.newTab(@enumFromInt(2));
+    const layout = try strip.TabStripLayout.init(1120, 2);
+    var drag: TabDrag = .none;
+    try std.testing.expect(try drag.begin(&model, layout, @enumFromInt(1), .{ .x = 58, .y = 20 }));
+    try std.testing.expect(drag.ghostBounds(layout, 1120, 700) == null);
+    try std.testing.expect(try drag.move(&model, layout, .{ .x = 70, .y = 20 }));
+    const first = drag.ghostBounds(layout, 1120, 700).?;
+    try std.testing.expectEqual(@as(f32, 20), first.x);
+    try std.testing.expect(try drag.move(&model, layout, .{ .x = 80, .y = 22 }));
+    try std.testing.expectEqual(first.x + 10, drag.ghostBounds(layout, 1120, 700).?.x);
+    try std.testing.expect(!try drag.move(&model, layout, .{ .x = 80, .y = 22 }));
+    try std.testing.expect(try drag.move(&model, layout, .{ .x = 2000, .y = 2000 }));
+    const small = try strip.TabStripLayout.init(320, 2);
+    const ghost = drag.ghostBounds(small, 320, 200).?;
+    try std.testing.expect(ghost.x >= 4 and ghost.x + ghost.width <= 316);
+    try std.testing.expect(ghost.y >= 3 and ghost.y + ghost.height <= 200);
+    try std.testing.expectEqual(@as(workspace.TabId, @enumFromInt(1)), model.tabs.items[0].id);
+    drag.cancel();
+    try std.testing.expect(drag.ghostBounds(layout, 1120, 700) == null);
 }
 
 test "tab drag ignores stale IDs and plain releases and rejects invalid boundary data before mutation" {

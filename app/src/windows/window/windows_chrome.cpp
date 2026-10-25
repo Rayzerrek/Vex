@@ -4,6 +4,7 @@
 #include "ui_renderer.h"
 #include "terminal_drawing.h"
 #include "chrome_motion.h"
+#include "chrome_tooltip.h"
 #include "tab_rename_layout.h"
 #include <math.h>
 #include <stdio.h>
@@ -17,7 +18,21 @@ IDWriteTextFormat* chromeFont;
 IDWriteTextFormat* chromeBoldFont;
 IDWriteTextFormat* badgeFont;
 IDWriteTextFormat* paneTitleFont;
+IDWriteTextFormat* tabTitleFont;
+IDWriteTextFormat* tooltipFont;
 TabRenameLayout tabRenameLayout;
+TabRenameLayout titleLayouts[32];
+size_t titleLayoutIndex;
+struct TooltipRegion { VexPaneRect bounds; wchar_t text[257]; uint64_t key; };
+TooltipRegion tooltipRegions[40];
+size_t tooltipRegionCount;
+ChromeTooltip tooltip;
+float pointerX, pointerY;
+bool tooltipsEnabled, chromeShortcutsEnabled;
+IDWriteTextLayout* tooltipLayout;
+IDWriteTextFormat* tooltipLayoutFont;
+wchar_t tooltipLayoutText[257];
+float tooltipLayoutWidth, tooltipTextWidth, tooltipTextHeight;
 VexChromePalette chromePalette;
 float tabWidthDip;
 uint32_t tabStripCount;
@@ -71,6 +86,13 @@ void beginWindowChromeFrame(const WindowChromeFrame& frame) {
     chromeBoldFont = frame.boldFont;
     badgeFont = frame.badgeFont;
     paneTitleFont = frame.paneTitleFont;
+    tabTitleFont = frame.normalFont;
+    tooltipFont = frame.tooltipFont;
+    titleLayoutIndex = 0;
+    tooltipRegionCount = 0;
+    pointerX = frame.pointerX; pointerY = frame.pointerY;
+    tooltipsEnabled = frame.tooltipsEnabled;
+    chromeShortcutsEnabled = true;
     chromePalette = frame.palette;
     tabWidthDip = frame.tabWidth;
     tabStripCount = frame.tabCount;
@@ -86,6 +108,85 @@ bool windowChromeAnimationPending() { return chromeMotionPending; }
 bool windowChromeEffectsPending() { return chromeEffectsPending; }
 WindowChromeDiagnostics windowChromeDiagnostics() {
     return { activeTabIconKey, focusedPaneIconKey, activeTabIconCount, tabSelectionMotion.sample(chromeTimeMs) };
+}
+
+namespace {
+struct TooltipLayoutOwner {
+    ~TooltipLayoutOwner() {
+        if (tooltipLayout) tooltipLayout->Release();
+        if (tooltipLayoutFont) tooltipLayoutFont->Release();
+    }
+} tooltipLayoutOwner;
+static bool contains(VexPaneRect bounds, float x, float y) {
+    return x >= bounds.x && x < bounds.x + bounds.width && y >= bounds.y && y < bounds.y + bounds.height;
+}
+static void offerTooltip(const wchar_t* text, VexPaneRect bounds) {
+    if (!tooltipsEnabled || !text || !*text || tooltipRegionCount >= 40 || bounds.width <= 0 || bounds.height <= 0) return;
+    auto& region = tooltipRegions[tooltipRegionCount++];
+    region.bounds = bounds;
+    wcsncpy(region.text, text, 256); region.text[256] = 0;
+    uint64_t hash = 14695981039346656037ull;
+    const auto add = [&hash](const void* data, size_t size) {
+        const auto* bytes = (const uint8_t*)data;
+        for (size_t i = 0; i < size; ++i) { hash ^= bytes[i]; hash *= 1099511628211ull; }
+    };
+    add(&bounds, sizeof(bounds)); add(region.text, wcslen(region.text) * sizeof(wchar_t));
+    region.key = hash ? hash : 1;
+}
+static const TooltipRegion* tooltipAt(float x, float y) {
+    if (tooltipsEnabled) for (size_t i = tooltipRegionCount; i > 0; --i) {
+        if (contains(tooltipRegions[i - 1].bounds, x, y)) return &tooltipRegions[i - 1];
+    }
+    return nullptr;
+}
+}
+void offerWindowChromeShortcut(const wchar_t* text, VexPaneRect bounds) {
+    if (chromeShortcutsEnabled) offerTooltip(text, bounds);
+}
+bool windowChromeTooltipPointer(float x, float y) {
+    const auto* region = tooltipAt(x, y);
+    return (region ? region->key : 0) != tooltip.key;
+}
+bool dismissWindowChromeTooltip() {
+    const bool hadTooltip = tooltip.key != 0;
+    tooltip.reset();
+    return hadTooltip;
+}
+double windowChromeTooltipDeadline() { return tooltip.deadline(chromeTimeMs); }
+void drawWindowChromeTooltip() {
+    const auto* region = tooltipAt(pointerX, pointerY);
+    tooltip.update(region ? region->key : 0, chromeTimeMs);
+    if (!region || !tooltip.visible(chromeTimeMs) || !tooltipFont || !textFactory) return;
+    const auto viewport = target->GetSize();
+    const float maxWidth = fminf(520.0f, viewport.width - 40.0f);
+    if (maxWidth <= 0) return;
+    if (!tooltipLayout || tooltipLayoutFont != tooltipFont || tooltipLayoutWidth != maxWidth || wcscmp(tooltipLayoutText, region->text)) {
+        if (tooltipLayout) { tooltipLayout->Release(); tooltipLayout = nullptr; }
+        if (tooltipLayoutFont) { tooltipLayoutFont->Release(); tooltipLayoutFont = nullptr; }
+        if (FAILED(textFactory->CreateTextLayout(region->text, (UINT32)wcslen(region->text), tooltipFont, maxWidth, 4096, &tooltipLayout))) return;
+        tooltipLayoutFont = tooltipFont; tooltipLayoutFont->AddRef();
+        wcscpy(tooltipLayoutText, region->text); tooltipLayoutWidth = maxWidth;
+        DWRITE_TEXT_METRICS metrics = {};
+        if (FAILED(tooltipLayout->GetMetrics(&metrics))) return;
+        tooltipTextWidth = ceilf(metrics.widthIncludingTrailingWhitespace);
+        tooltipTextHeight = ceilf(metrics.height);
+    }
+    const float w = fminf(maxWidth, tooltipTextWidth) + 20;
+    const float h = fminf(viewport.height - 24, tooltipTextHeight + 14);
+    const auto anchor = region->bounds;
+    const float x = fmaxf(8, fminf(viewport.width - w - 8, anchor.x + anchor.width * 0.5f - w * 0.5f));
+    const float below = anchor.y + anchor.height + 7;
+    const float y = below + h <= viewport.height - 8 ? below : fmaxf(8, anchor.y - h - 7);
+    const float alpha = tooltip.opacity(chromeTimeMs, chromeMotionEnabled);
+    chromeEffectsPending |= tooltip.animating(chromeTimeMs, chromeMotionEnabled);
+    brush->SetColor(rgb(0, (chromePalette.is_dark ? 0.26f : 0.10f) * alpha));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 2, y + 1, x + w + 2, y + h + 4), 9, 9), brush);
+    const auto box = D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), 7, 7);
+    brush->SetColor(rgb(chromePalette.active_tab_bg, alpha)); target->FillRoundedRectangle(box, brush);
+    brush->SetColor(rgb(blendRgb(chromePalette.border, chromePalette.text_muted, 0.25f), alpha)); target->DrawRoundedRectangle(box, brush, 1);
+    brush->SetColor(rgb(chromePalette.text_primary, alpha));
+    // Keep the layout width used for measurement: wrapping must match the cached raster exactly.
+    target->DrawText(region->text, (UINT32)wcslen(region->text), tooltipFont, D2D1::RectF(x + 10, y + 7, x + 10 + maxWidth, y + h - 7), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 static uint64_t computeIconCacheKey(VexAppIcon icon, uint32_t sizeCode) {
@@ -234,6 +335,22 @@ static void labelUtf8OrDefault(const uint8_t* bytes, size_t length, float x, flo
     }
     labelWithFont(font, shellName, x, y, width, color);
 }
+static float titleLabel(const uint8_t* bytes, size_t length, float x, float y, float width, uint32_t color, IDWriteTextFormat* font, VexPaneRect hitBounds) {
+    wchar_t text[257];
+    const int count = bytes && length > 0 && length <= 256
+        ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(bytes), (int)length, text, 256) : 0;
+    if (count > 0) text[count] = 0;
+    else wcscpy(text, shellName);
+    float fullWidth = 0;
+    auto& cache = titleLayouts[titleLayoutIndex++ % 32];
+    if (auto* layout = cache.get(textFactory, font, text, (UINT32)wcslen(text))) {
+        DWRITE_TEXT_METRICS metrics = {};
+        if (SUCCEEDED(layout->GetMetrics(&metrics))) fullWidth = metrics.widthIncludingTrailingWhitespace;
+    }
+    if (width > 0) labelWithFont(font, text, x, y, width, color);
+    if (width <= 0 || fullWidth > width + 0.5f) offerTooltip(text, hitBounds);
+    return fminf(fmaxf(0, width), fullWidth);
+}
 extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
     if (!bytes || !length || length >= sizeof(shellName) / sizeof(shellName[0]) || memchr(bytes, 0, length)) return ERROR_INVALID_PARAMETER;
     int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(bytes), (int)length, shellName, (int)(sizeof(shellName) / sizeof(shellName[0]) - 1));
@@ -268,6 +385,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
     if (count != tabStripCount || index >= count) return;
     float width = tabWidthDip, x = tabStripLeft + index * (width + 4);
     if (active) activeTabIconCount = icon_count;
+    if (edit.editing) tooltipsEnabled = false;
     const bool isHovered = (int)index == hoveredTabIndex;
     if (active && !edit.editing) tabRenameLayout.clear();
     const float editT = index < 8
@@ -398,12 +516,14 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
                 target->PopAxisAlignedClip();
             }
         }
-    } else if (width >= 95.0f) {
-        const float textW = fmaxf(0.0f, width - inset - rightReserve);
-        labelUtf8OrDefault(title, title_length, x + inset, 13.0f, textW, active ? chromePalette.text_primary : chromePalette.text_muted);
-    } else if (width < 68.0f) {
-        wchar_t number[12]; swprintf(number, 12, L"%u", index + 1);
-        label(number, x + 8.0f, 13.0f, fmaxf(0.0f, width - 22.0f), active ? chromePalette.text_primary : chromePalette.text_muted);
+    } else {
+        const float textW = width >= 68.0f ? fmaxf(0.0f, width - inset - rightReserve) : 0;
+        titleLabel(title, title_length, x + inset, 13.0f, textW, active ? chromePalette.text_primary : chromePalette.text_muted, tabTitleFont,
+            { x, 5, fmaxf(0, width - 22), 34 });
+        if (width < 68.0f) {
+            wchar_t number[12]; swprintf(number, 12, L"%u", index + 1);
+            label(number, x + 8.0f, 13.0f, fmaxf(0.0f, width - 22.0f), active ? chromePalette.text_primary : chromePalette.text_muted);
+        }
     }
     const float closeX = x + width - 21.0f, closeY = 14.0f;
     const bool closeHot = isHovered && hoveredTabClose;
@@ -461,6 +581,7 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
     }
     {
         const float bx = right - 64.0f, cx = bx + 10.0f, cy = top + 9.5f;
+        offerTooltip(L"Ctrl + Shift + R", { bx, top, 20, 19 });
         drawButtonPill(bx, chromePalette.inactive_tab_hover_bg, actionAlpha[1]);
         brush->SetColor(rgb(blendRgb(baseColor, chromePalette.text_primary, actionAlpha[1])));
         target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 6.0f, cy - 6.0f, cx + 6.0f, cy + 6.0f), 1.8f, 1.8f), brush, 1.4f);
@@ -468,6 +589,7 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
     }
     {
         const float bx = right - 42.0f, cx = bx + 10.0f, cy = top + 9.5f;
+        offerTooltip(L"Ctrl + Shift + D", { bx, top, 20, 19 });
         drawButtonPill(bx, chromePalette.inactive_tab_hover_bg, actionAlpha[2]);
         brush->SetColor(rgb(blendRgb(baseColor, chromePalette.text_primary, actionAlpha[2])));
         target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 6.0f, cy - 6.0f, cx + 6.0f, cy + 6.0f), 1.8f, 1.8f), brush, 1.4f);
@@ -475,6 +597,8 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
     }
     {
         const float bx = right - 20.0f, cx = bx + 10.0f, cy = top + 9.5f;
+        // The keyboard chord closes the active pane, never a different hovered pane.
+        if (focused) offerTooltip(L"Ctrl + Shift + W", { bx, top, 20, 19 });
         drawButtonPill(bx, chromePalette.is_dark ? 0x4d2b31 : 0xfad2d8, actionAlpha[3]);
         brush->SetColor(rgb(blendRgb(baseColor, chromePalette.is_dark ? 0xffb4be : 0xb42336, actionAlpha[3])));
         target->DrawLine(D2D1::Point2F(cx - 3.5f, cy - 3.5f), D2D1::Point2F(cx + 3.5f, cy + 3.5f), brush, 1.25f, roundCaps);
@@ -508,21 +632,10 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
         titleInset = 30.0f;
     }
     const float titleWidth = fmaxf(0, remainingWidth - titleInset - statusWidth - 12);
-    labelUtf8OrDefault(title, title_length, bounds.x + titleInset, bounds.y + 4.0f, titleWidth, focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont);
+    const float captionWidth = titleLabel(title, title_length, bounds.x + titleInset, bounds.y + 4.0f, titleWidth,
+        focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont, { bounds.x, bounds.y, remainingWidth, 26 });
     if (statusWidth > 0 && titleWidth > 0) {
-        wchar_t text[257];
-        int count = title && title_length > 0 && title_length <= 256
-            ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(title), (int)title_length, text, 256) : 0;
-        const wchar_t* caption = count > 0 ? text : shellName;
-        const UINT32 units = count > 0 ? (UINT32)count : (UINT32)wcslen(shellName);
-        float captionWidth = titleWidth;
-        IDWriteTextLayout* layout = nullptr;
-        if (SUCCEEDED(textFactory->CreateTextLayout(caption, units, paneTitleFont, titleWidth, 24, &layout))) {
-            DWRITE_TEXT_METRICS metrics = {};
-            if (SUCCEEDED(layout->GetMetrics(&metrics))) captionWidth = fminf(titleWidth, metrics.width);
-            layout->Release();
-        }
-        // Follow short titles closely, but reserve the indicator's space when text is clipped.
+        // Follow short titles closely, but reserve the indicator's space when text is trimmed.
         drawProgramStatus(status, bounds.x + titleInset + captionWidth + 4, bounds.y + 4, statusWidth, true);
     }
     beginTerminalPane(bounds);
@@ -610,6 +723,9 @@ extern "C" void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, flo
     target->PopAxisAlignedClip();
 }
 extern "C" void vex_draw_tab_overview(bool animating) {
+    // Only preview titles are interactive here, never the obscured workspace chrome.
+    tooltipRegionCount = 0;
+    chromeShortcutsEnabled = false;
     // Share monitor-paced scheduling with tab chrome; settled previews request no frames.
     chromeMotionPending = chromeMotionPending || animating;
     const auto size = target->GetSize();
@@ -646,7 +762,35 @@ extern "C" void vex_draw_tab_preview_card(VexPaneRect bounds, const uint8_t* tit
     }
     brush->SetColor(rgb(selected ? chromePalette.accent : chromePalette.border));
     target->DrawRoundedRectangle(card, brush, selected ? 2.0f : 1.0f);
-    labelUtf8OrDefault(title, length, bounds.x + 10, bounds.y + 4, fmaxf(0, bounds.width - 44), selected ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont);
+    titleLabel(title, length, bounds.x + 10, bounds.y + 4, fmaxf(0, bounds.width - 44),
+        selected ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont, { bounds.x + 2, bounds.y + 2, fmaxf(0, bounds.width - 32), 26 });
+}
+extern "C" void vex_draw_tab_drag(VexPaneRect bounds, uint32_t source, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, bool valid_target) {
+    tooltipsEnabled = false;
+    if (source >= tabStripCount || !isfinite(bounds.x) || !isfinite(bounds.y) || bounds.width <= 0 || bounds.height <= 0) return;
+    const float sourceX = tabStripLeft + source * (tabWidthDip + 4);
+    const auto placeholder = D2D1::RoundedRect(D2D1::RectF(sourceX, 5, sourceX + tabWidthDip, 39), 10, 10);
+    brush->SetColor(rgb(chromePalette.titlebar_bg, 0.84f)); target->FillRoundedRectangle(placeholder, brush);
+    brush->SetColor(rgb(chromePalette.border, 0.6f)); target->DrawRoundedRectangle(placeholder, brush, 1);
+    const float x = bounds.x, y = bounds.y, w = bounds.width, h = bounds.height;
+    brush->SetColor(rgb(0, chromePalette.is_dark ? 0.28f : 0.12f));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 2, y + 2, x + w + 2, y + h + 5), 12, 12), brush);
+    const auto card = D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), 10, 10);
+    brush->SetColor(rgb(chromePalette.active_tab_bg)); target->FillRoundedRectangle(card, brush);
+    brush->SetColor(rgb(valid_target ? chromePalette.accent : chromePalette.text_muted, valid_target ? 0.85f : 0.6f));
+    target->DrawRoundedRectangle(card, brush, 1);
+    float inset = 10;
+    if (icons && icon_count && w >= 68) {
+        const size_t visible = w >= 132 ? (icon_count > 3 ? 3 : icon_count) : 1;
+        for (size_t i = 0; i < visible; ++i) drawAppIconTile(icons[i], x + 8 + (float)i * 12, y + 8);
+        inset = 30 + (float)(visible - 1) * 12;
+    }
+    titleLabel(title, title_length, x + inset, y + 8, fmaxf(0, w - inset - 20), chromePalette.text_primary, tabTitleFont, {});
+    if (w >= 48) {
+        brush->SetColor(rgb(chromePalette.text_muted, 0.65f));
+        for (int row = 0; row < 3; ++row) for (int col = 0; col < 2; ++col)
+            target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + w - 12 + col * 3, y + 12 + row * 4), 0.7f, 0.7f), brush);
+    }
 }
 extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
     if (!target || !brush || bounds.width <= 0.0f || bounds.height <= 0.0f) return;
@@ -672,6 +816,7 @@ extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
 }
 extern "C" void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, uint32_t flags) {
     if (!target || !brush || bounds.width <= 0.0f || bounds.height <= 0.0f) return;
+    tooltipsEnabled = false;
     pathCompletionSeenThisFrame = true;
     if (!pathCompletionSeenLastFrame) {
         pathOpenMotion = {};

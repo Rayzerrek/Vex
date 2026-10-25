@@ -152,6 +152,10 @@ pub fn onText(self: *Application, bytes: []const u8) void {
         self.fail(err);
         return;
     };
+    if (self.overlay == .tab_peek) overlays.closePeek(self, true) catch |err| {
+        self.fail(err);
+        return;
+    };
     if (self.overlay == .command_palette) {
         if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
         var cp = &self.overlay.command_palette;
@@ -193,6 +197,10 @@ pub fn onText(self: *Application, bytes: []const u8) void {
 pub fn onPaste(self: *Application, bytes: []const u8) void {
     if (self.health == .failed) return;
     self.resetCursorOnInput() catch |err| {
+        self.fail(err);
+        return;
+    };
+    if (self.overlay == .tab_peek) overlays.closePeek(self, true) catch |err| {
         self.fail(err);
         return;
     };

@@ -72,6 +72,24 @@ static bool hoveredShellPicker;
 static int hoveredTabIndex = -1;
 static bool hoveredTabClose;
 static bool trackingMouseLeave;
+static float chromePointerX = -1, chromePointerY = -1;
+static bool tooltipSuppressed;
+// Updates own timers 7 and 9 on this HWND.
+static constexpr UINT_PTR tooltipTimer = 10;
+static_assert(tooltipTimer != windowsUpdateTimer && tooltipTimer != windowsUpdateNoticeTimer);
+static double tooltipDeadline;
+static void hideChromeTooltip() {
+    tooltipSuppressed = true;
+    if (tooltipDeadline) KillTimer(window, tooltipTimer);
+    tooltipDeadline = 0;
+    if (dismissWindowChromeTooltip()) vex_window_invalidate();
+}
+static void updateChromeTooltipPointer(float x, float y) {
+    if (x == chromePointerX && y == chromePointerY) return;
+    const bool changed = tooltipSuppressed || windowChromeTooltipPointer(x, y);
+    chromePointerX = x; chromePointerY = y; tooltipSuppressed = false;
+    if (changed) vex_window_invalidate();
+}
 enum class PointerCaptureState { none, armed, dragging, cancelled };
 static PointerCaptureState pointerCaptureState = PointerCaptureState::none;
 static uint32_t notificationMouseButtons;
@@ -110,7 +128,10 @@ extern "C" int vex_window_tab_strip(uint32_t count, float tab_width) {
 }
 extern "C" int vex_draw_tab_insertion_marker(float x) {
     if (!target || !brush || !isfinite(x) || x < tabStripLeft || x > tabStripEnd()) return ERROR_INVALID_PARAMETER;
-    rectangle(x - 1, 7, 2, 30, chromePalette.accent);
+    brush->SetColor(rgb(chromePalette.accent, 0.16f));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 5, 5, x + 5, 39), 5, 5), brush);
+    brush->SetColor(rgb(chromePalette.accent));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 1, 9, x + 1, 35), 1, 1), brush);
     return 0;
 }
 extern "C" void vex_window_set_chrome_palette(VexChromePalette palette) {
@@ -422,17 +443,26 @@ static void renderUiVerificationScene() {
 }
 
 static void renderScene(double timeMs) {
-    beginWindowChromeFrame({ target, textFactory, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
-        timeMs, vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window) });
+    beginWindowChromeFrame({ target, textFactory, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, notificationFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
+        timeMs, vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window),
+        chromePointerX, chromePointerY, !tooltipSuppressed && trackingMouseLeave && pointerCaptureState == PointerCaptureState::none && GetForegroundWindow() == window && IsWindowEnabled(window) });
     beginTerminalDrawingFrame({ &renderer, drawingFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
     target->Clear(rgb(chromePalette.window_bg));
     rectangle(0.0f, 0.0f, clientWidth, 44.0f, chromePalette.titlebar_bg);
     drawNewTabButton();
     callbacks.paint(callbacks.context);
+    if (tabStripCount < 8) offerWindowChromeShortcut(L"Ctrl + Shift + T", { plusLeft(), 7, 24, 30 });
     drawCaptionButtons();
     drawTerminalDialogBackdrop(*target, *brush, dpiScale);
     const float noticeInset = drawWindowsUpdate(*target, *brush, textFactory, chromeFont, chromePalette, timeMs);
     drawTerminalNotification(*target, *brush, textFactory, chromeBoldFont, notificationFont, chromePalette, noticeInset, timeMs);
+    drawWindowChromeTooltip();
+    const double deadline = windowChromeTooltipDeadline();
+    if (deadline != tooltipDeadline) {
+        if (tooltipDeadline) KillTimer(window, tooltipTimer);
+        tooltipDeadline = deadline;
+        if (deadline && !SetTimer(window, tooltipTimer, (UINT)fmax(1.0, ceil(deadline - timeMs)), nullptr)) hideChromeTooltip();
+    }
     if (uiVerificationMode) renderUiVerificationScene();
 }
 
@@ -617,6 +647,7 @@ static void refreshHoverCursor(HWND hwnd) {
     if (!GetClientRect(hwnd, &bounds) || point.x < 0 || point.y < 0 || point.x >= bounds.right || point.y >= bounds.bottom) return;
     float scale = GetDpiForWindow(hwnd) / 96.0f;
     float x = point.x / scale, y = point.y / scale;
+    updateChromeTooltipPointer(x, y);
     updateTopChromeHover(x, y);
     const auto notice = notificationPointer(x, y, false);
     if (notice != NotificationHit::none) { setNotificationCursor(notice); return; }
@@ -774,6 +805,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         [[fallthrough]];
     }
     case WM_LBUTTONDOWN: case WM_MBUTTONDOWN: {
+        hideChromeTooltip();
         cancelPointerGesture();
         pointerCaptureState = PointerCaptureState::none;
         float scale = GetDpiForWindow(hwnd) / 96.0f;
@@ -819,6 +851,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_RBUTTONDOWN: {
+        hideChromeTooltip();
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         notificationMouseButtons &= ~2u;
@@ -871,9 +904,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
+        updateChromeTooltipPointer(x, y);
         if (pointerCaptureState == PointerCaptureState::none) {
             const auto notice = notificationPointer(x, y, false);
-            if (notice != NotificationHit::none) { setNotificationCursor(notice); return 0; }
+            if (notice != NotificationHit::none) { hideChromeTooltip(); setNotificationCursor(notice); return 0; }
         } else notificationPointer(-1, -1, false);
         if (pointerCaptureState == PointerCaptureState::armed && !(wparam & MK_LBUTTON)) cancelPointerGesture();
         uint32_t event = pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging ? VEX_POINTER_MOVE : VEX_POINTER_HOVER;
@@ -885,6 +919,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_MOUSELEAVE:
+        hideChromeTooltip();
+        chromePointerX = chromePointerY = -1;
         notificationPointer(-1, -1, false);
         trackingMouseLeave = false;
         if (hoveredCaptionButton != 0 || pressedCaptionButton != 0 || hoveredNewTab || hoveredShellPicker || hoveredTabIndex != -1 || hoveredTabClose) {
@@ -1123,6 +1159,11 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         clipboardUpdated();
         return 0;
     case WM_TIMER:
+        if (wparam == tooltipTimer) {
+            KillTimer(hwnd, tooltipTimer); tooltipDeadline = 0;
+            vex_window_invalidate();
+            return 0;
+        }
         if (wparam == windowsUpdateNoticeTimer) {
             expireWindowsUpdateNotice();
             return 0;
@@ -1151,6 +1192,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN:
+        hideChromeTooltip();
         if (terminalNotificationKey((uint32_t)wparam, currentModifiers()) || windowsUpdateKey((uint32_t)wparam, currentModifiers())) { refreshHoverCursor(hwnd); return 1; }
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
@@ -1165,11 +1207,13 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         callbacks.cursor_activity(callbacks.context, wparam && !IsIconic(hwnd) && GetFocus() == hwnd);
         break;
     case WM_KILLFOCUS:
+        hideChromeTooltip();
         notificationMouseButtons = 0;
         cancelPointerGesture(); pendingSurrogate = 0;
         callbacks.cursor_activity(callbacks.context, false);
         return 0;
     case WM_CHAR: case WM_SYSCHAR: {
+        hideChromeTooltip();
         uint16_t unit = (uint16_t)wparam;
         if (unit >= 0xd800 && unit <= 0xdbff) { pendingSurrogate = unit; return 0; }
         wchar_t text[2]; int count = 1;
@@ -1182,6 +1226,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     case WM_MOUSEWHEEL: {
+        hideChromeTooltip();
         POINT point = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
         ScreenToClient(hwnd, &point);
         float scale = GetDpiForWindow(hwnd) / 96.0f;
@@ -1198,7 +1243,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         motionPreferenceKnown = false;
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
-    case WM_DESTROY: clearTerminalNotification(); destroyTerminalDialogs(); cancelPointerGesture(); RemoveClipboardFormatListener(hwnd); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); KillTimer(hwnd, copyCheckTimer); KillTimer(hwnd, clipboardRetryTimer); copyCheckDeadline = 0; cursorWakeArmed = false; PostQuitMessage(0); return 0;
+    case WM_DESTROY: clearTerminalNotification(); destroyTerminalDialogs(); cancelPointerGesture(); RemoveClipboardFormatListener(hwnd); KillTimer(hwnd, 1); KillTimer(hwnd, 2); KillTimer(hwnd, 3); KillTimer(hwnd, copyCheckTimer); KillTimer(hwnd, clipboardRetryTimer); KillTimer(hwnd, tooltipTimer); tooltipDeadline = 0; copyCheckDeadline = 0; cursorWakeArmed = false; PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }

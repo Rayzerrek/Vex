@@ -87,6 +87,17 @@ pub fn closeButton(bounds: PaneRect) ?PaneRect {
     return .{ .x = bounds.x + bounds.width - 28, .y = bounds.y + 2, .width = 24, .height = 24 };
 }
 
+/// Paint and hit testing use the same small, non-overlapping reveal bounds.
+pub fn revealBounds(card_bounds: PaneRect, progress: f32) PaneRect {
+    const recessed: PaneRect = .{
+        .x = card_bounds.x + card_bounds.width * 0.01,
+        .y = card_bounds.y + card_bounds.height * 0.01 + 4,
+        .width = card_bounds.width * 0.98,
+        .height = card_bounds.height * 0.98,
+    };
+    return interpolate(recessed, card_bounds, progress);
+}
+
 pub fn interpolate(from: PaneRect, to: PaneRect, progress: f32) PaneRect {
     const t = 1 - std.math.pow(f32, 1 - std.math.clamp(progress, 0, 1), 3);
     return .{ .x = from.x + (to.x - from.x) * t, .y = from.y + (to.y - from.y) * t, .width = from.width + (to.width - from.width) * t, .height = from.height + (to.height - from.height) * t };
@@ -146,6 +157,21 @@ test "seven tabs remain together at equal size and compact layouts prefer three-
     const b = compact.card(1);
     try std.testing.expectEqual(a, interpolate(a, b, 0));
     try std.testing.expectEqual(b, interpolate(a, b, 1));
+}
+
+test "overview reveal is local, monotonic and settles at exact usable card bounds" {
+    const layout = Layout.init(640, 400, 8);
+    for (0..layout.count) |index| {
+        const card_bounds = layout.card(index);
+        const start = revealBounds(card_bounds, 0);
+        const middle = revealBounds(card_bounds, 0.5);
+        try std.testing.expect(start.width < middle.width and middle.width < card_bounds.width);
+        try std.testing.expect(start.width >= card_bounds.width * 0.97);
+        try std.testing.expectEqual(card_bounds, revealBounds(card_bounds, 1));
+        try std.testing.expectEqual(card_bounds, revealBounds(card_bounds, 2));
+        const button = closeButton(start).?;
+        try std.testing.expect(start.contains(button.x + 12, button.y + 12));
+    }
 }
 
 test "overview close shortcuts require exact modifiers" {

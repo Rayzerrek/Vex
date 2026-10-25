@@ -674,6 +674,24 @@ test "viewport scroll shortcuts move primary scrollback, yield on alternate scre
     try std.testing.expectError(error.InvalidTerminalBufferLength, terminal.encodeKey(0x08, 0, encoded[0..0]));
 }
 
+test "input reveal returns primary history to the cursor, is idle at bottom and leaves alternate screen alone" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(16, 2, 8, 16);
+    try terminal.feedOutput("old\r\nolder\r\nrecent\r\nlive");
+    terminal.scrollToTop();
+    try std.testing.expect(try terminal.containsViewportText("old"));
+    try std.testing.expect(try terminal.revealInput());
+    try std.testing.expect(try terminal.containsViewportText("live"));
+    try std.testing.expect(!try terminal.revealInput());
+    try terminal.feedOutput("\x1b[?1049hTUI");
+    try std.testing.expect(!try terminal.revealInput());
+    try std.testing.expect(try terminal.containsViewportText("TUI"));
+    try terminal.feedOutput("\x1b[?1049l");
+    try std.testing.expect(!try terminal.revealInput());
+}
+
 const ClipboardLog = struct {
     allocator: std.mem.Allocator,
     writes: std.ArrayList([]u8) = .empty,

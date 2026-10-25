@@ -13,6 +13,7 @@ struct WindowChromeFrame {
     IDWriteTextFormat* boldFont;
     IDWriteTextFormat* badgeFont;
     IDWriteTextFormat* paneTitleFont;
+    IDWriteTextFormat* tooltipFont;
     VexChromePalette palette;
     float tabWidth;
     uint32_t tabCount;
@@ -20,6 +21,8 @@ struct WindowChromeFrame {
     bool hoveredClose;
     double timeMs;
     bool motionEnabled;
+    float pointerX, pointerY;
+    bool tooltipsEnabled;
 };
 struct WindowChromeDiagnostics {
     uint64_t activeTabIconKey, focusedPaneIconKey;
@@ -31,3 +34,8 @@ WindowChromeDiagnostics windowChromeDiagnostics();
 // True only until a chrome transition settles; the window schedules refresh-paced wakes.
 bool windowChromeAnimationPending();
 bool windowChromeEffectsPending();
+void offerWindowChromeShortcut(const wchar_t* text, VexPaneRect bounds);
+void drawWindowChromeTooltip();
+double windowChromeTooltipDeadline();
+bool windowChromeTooltipPointer(float x, float y);
+bool dismissWindowChromeTooltip();

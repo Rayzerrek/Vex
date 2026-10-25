@@ -701,6 +701,13 @@ pub fn drawTab(index: usize, count: usize, active: bool, edit: ?TabEdit, title: 
     };
     c.vex_draw_tab(@intCast(index), @intCast(count), active, native_edit, if (display.len == 0) null else display.ptr, display.len, icons_ptr, icon_count, nativeProgramStatus(summary, phase), attention);
 }
+pub fn drawTabDrag(bounds: panes.PaneRect, source: usize, title: []const u8, icons: []const app_icon.AppIcon, valid_target: bool) void {
+    var native_icons: [8]c.VexAppIcon = undefined;
+    const count = @min(icons.len, native_icons.len);
+    for (icons[0..count], 0..) |icon, i| native_icons[i] = nativeAppIcon(icon);
+    c.vex_draw_tab_drag(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, @intCast(source), if (title.len == 0) null else title.ptr, title.len, &native_icons, count, valid_target);
+}
+
 pub fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
     var badge = [4]u8{ 0, 0, 0, 0 };
     const len: usize = @min(@as(usize, icon.badge_len), 2);

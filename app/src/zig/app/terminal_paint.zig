@@ -7,7 +7,6 @@ const cursor_blink = @import("../workspace/cursor_blink.zig");
 const overlays = @import("terminal_overlays.zig");
 
 pub fn paintWorkspace(self: *TerminalApplication) !void {
-    try overlays.finishPeek(self);
     const model = if (self.model) |*model| model else return;
     const active_theme = self.currentTheme();
     platform.drawTabStripBackground(model.selected_tab);
@@ -93,6 +92,25 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     if (!saw_active_pane) self.cursor_blink.synchronize(null, self.cursorNowMs());
     try self.syncAnimationWake();
     try overlays.drawActiveOverlay(self);
+    if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) {
+        const metrics = self.metrics orelse return;
+        const drag = &self.pointer_drag.tab;
+        const index = model.tabIndex(drag.tabId().?) orelse return;
+        const tab = &model.tabs.items[index];
+        const session = self.findSession(tab.active_pane) orelse return;
+        const layout = try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len);
+        if (drag.ghostBounds(layout, metrics.width, metrics.height)) |bounds| {
+            var icons: [8]app_icon.AppIcon = undefined;
+            var count: usize = 0;
+            try collectTabIcons(self, tab.tree.root, &icons, &count);
+            if (count == 0) {
+                icons[0] = session.icon;
+                count = 1;
+            }
+            const summary = try self.tabProgramStatus(tab.tree.root);
+            platform.drawTabDrag(bounds, index, tab.customTitle() orelse status_presentation.statusTitle(summary.summary, session.displayTitle()), icons[0..count], drag.dragging.destination != null);
+        }
+    }
 }
 
 fn collectTabIcons(self: *TerminalApplication, node: anytype, out: *[8]app_icon.AppIcon, count: *usize) anyerror!void {

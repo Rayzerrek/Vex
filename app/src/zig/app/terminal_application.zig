@@ -1516,6 +1516,67 @@ test "copy clears selection and rendered highlights while pointer copies preserv
     }
 }
 
+test "typing, encoded keys and paste reveal live input but viewport navigation and output preserve history" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const session = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+    try session.terminal.resize(20, 2, 8, 16);
+    try session.terminal.feedOutput("old\r\nmiddle\r\nrecent\r\nlive");
+    try std.testing.expect(app.onKey(0x24, 2));
+    try std.testing.expectEqual(@as(u64, 0), (try session.terminal.scrollbar()).offset);
+    try session.terminal.feedOutput(" output");
+    try std.testing.expectEqual(@as(u64, 0), (try session.terminal.scrollbar()).offset);
+    app.onText("x");
+    var sb = try session.terminal.scrollbar();
+    try std.testing.expectEqual(sb.scrollable(), sb.offset);
+    session.terminal.scrollToTop();
+    try std.testing.expect(app.onKey(0x25, 0));
+    sb = try session.terminal.scrollbar();
+    try std.testing.expectEqual(sb.scrollable(), sb.offset);
+    session.terminal.scrollToTop();
+    app.onPaste("pasted");
+    sb = try session.terminal.scrollbar();
+    try std.testing.expectEqual(sb.scrollable(), sb.offset);
+    session.terminal.scrollToTop();
+    try session.writeUserInput("");
+    try std.testing.expectEqual(@as(u64, 0), (try session.terminal.scrollbar()).offset);
+    try std.testing.expect(app.health == .running);
+}
+
+test "overview accepts during its entrance and never swallows follow-up typing or paste" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    const second = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    try app.model.?.newTab(second.id);
+    app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
+    app.openTabPeek();
+    app.overlay.tab_peek.selected_index = 0;
+    try std.testing.expect(app.onKey(0x0D, 0));
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqual(@as(usize, 0), app.model.?.selected_tab);
+    app.onText("x");
+    app.openTabPeek();
+    app.overlay.tab_peek.selected_index = 1;
+    try std.testing.expect(!app.onKey('A', 0));
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqual(@as(usize, 1), app.model.?.selected_tab);
+    app.onText("a");
+    app.openTabPeek();
+    app.overlay.tab_peek.selected_index = 0;
+    app.onPaste("text");
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqual(@as(usize, 0), app.model.?.selected_tab);
+    app.openTabPeek();
+    app.overlay.tab_peek.selected_index = 1;
+    try std.testing.expect(app.onKey(0x1B, 0));
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqual(@as(usize, 0), app.model.?.selected_tab);
+    try std.testing.expect(app.health == .running);
+}
+
 test "oversized paste rejects atomically without closing the workspace or poisoning subsequent input" {
     var app = try recoveryTestApplication("unused-recovery-test.lua");
     defer app.deinit();

@@ -137,6 +137,7 @@ bool vex_window_has_pointer_capture(void);
 int vex_window_tab_strip(uint32_t count, float tab_width);
 void vex_draw_tab_strip_background(uint32_t active_index);
 int vex_draw_tab_insertion_marker(float x);
+void vex_draw_tab_drag(VexPaneRect bounds, uint32_t source, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, bool valid_target);
 void vex_window_error(const char* message);
 int vex_window_shell_name(const uint8_t* bytes, size_t length);
 /* Tokens are nonzero, never reused, and cannot be interpreted as heap pointers. */
