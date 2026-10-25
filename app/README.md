@@ -40,8 +40,8 @@ See [testing](../docs/testing.md) for the complete checks and desktop validation
 ## Terminal images
 
 Kitty Graphics direct RGB/RGBA/PNG images use generation-cached D3D12 textures.
-For a local smoke check, run `python3 tools/kitty_graphics_probe.py --show` inside
-Vex. File/shared-memory transfers and Unicode placeholders are not supported.
+File/shared-memory transfers and Unicode placeholders are not supported.
+Interactive graphics checks and capture tooling are maintained separately.
 See [Kitty Graphics](../docs/kitty-graphics.md) for limits and verification.
 
 ## Source map

@@ -31,7 +31,12 @@ local WSL ZIP packaging does not need .NET. See `app/README.md`.
 - `app/assets/`, `app/tests/`, `app/tools/`: resources, tests and developer tools.
 - `app/packages/windows/`: WiX installer sources.
 - `app/vendor/`: bundled runtimes, Lua sources and Ghostty headers.
-- `docs/`: architecture, configuration, testing and historical reviews/releases.
+- `docs/`: architecture, configuration, correctness testing and releases.
+
+Keep machine-specific desktop automation, benchmark harnesses, captures and local
+measurement reports outside this repository. Retain genuine unit, integration,
+portable regression and packaging tests here. Diagnostic hooks consumed by local
+tools remain application infrastructure, not evidence that a desktop check ran.
 
 ## Website
 

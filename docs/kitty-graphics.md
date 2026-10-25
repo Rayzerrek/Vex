@@ -80,24 +80,11 @@ adjacent DLLs and fixture on Windows. The Kitty tests cover:
   reuse across frames, maximal-image transfer pressure and eviction while another
   frame retains its textures. This is offscreen rendering, not interactive desktop coverage.
 
-For local interactive inspection, from `app/`:
-
-```sh
-python3 tools/kitty_graphics_probe.py
-python3 tools/kitty_graphics_probe.py --show
-```
-
-The probe queries direct RGB support, waits up to two seconds, and optionally
-transmits a small chunked gradient after an `OK` reply. It needs no image library,
-reads no image files and restores console modes on exit. Run it in an idle
-foreground shell: it temporarily reads terminal input. The gradient is left
-visible for inspection. Success replies alone do not prove correct rendering or
-PNG support. Automated probe encoding tests run with the Python unittest suite.
-
-Local hardware measurements and review findings are recorded in
-[the Kitty Graphics review](reviews/kitty-graphics.md). Interactive Windows/WSL
-application compatibility still needs separate desktop validation; offscreen
-measurements are not application FPS or input-latency benchmarks.
+Interactive Windows/WSL application compatibility still needs separate desktop
+validation. Local protocol probes, capture tooling and hardware measurements are
+maintained outside this repository. A successful protocol reply does not prove
+correct rendering or PNG support; offscreen measurements are not application FPS
+or input-latency benchmarks.
 
 Protocol: <https://sw.kovidgoyal.net/kitty/graphics-protocol/>.
 Inspiration: <https://x.com/mitchellh/status/2113761797308391526>.

@@ -34,26 +34,14 @@ tabs/splits, shell selection, overlays and disabled animations. Check both theme
 Opening tab overview must not resize PTYs. Copy checks should include Unicode,
 blank/wrapped lines, repeated copies, cuts/deletes and background applications.
 
-From the repository root on Windows:
+Use isolated settings for desktop validation. Verify tab churn, pane-local
+transport failures, stale events, notifications, renderer recovery and delayed
+teardown. With Git Bash installed, check idle-shell closure and active-command
+protection, including MSYS commands whose fork parent has already exited.
 
-```powershell
-./app/tools/test-recovery.ps1
-./app/tools/test-recovery.ps1 -Shell wsl -Distribution NixOS -Cycles 30 -BatchSize 5
-# Use your installed distribution; optionally add -Warp for software rendering.
-```
-
-With Git Bash installed, verify idle-shell closure and active-command protection:
-
-```powershell
-./app/tools/test-close-confirmation.ps1
-```
-
-This local desktop check covers Git's shell trampoline and MSYS commands whose
-fork parent has already exited. It uses isolated settings and software rendering.
-
-The recovery smoke uses isolated settings and checks tab churn, pane-local
-transport failures, stale events, toasts, renderer recovery and delayed teardown.
-It is local interactive coverage, not hosted CI or a guarantee for every driver/WSL version.
+Machine-specific desktop automation, captures and performance measurements are
+maintained outside this repository. They are not hosted CI coverage or a guarantee
+for every driver/WSL version. Do not commit local measurement reports or captures.
 
 ### Path picker acceptance cases
 
@@ -94,15 +82,10 @@ A directory exactly at a limit must not claim that paths were omitted.
 
 ## Performance
 
-From `app/`, `zig build bench` runs ReleaseSafe CPU microbenchmarks for allocation,
-copy-feedback snapshots and feed filtering. These do not measure ConPTY, VT
-parsing, rendering or end-to-end input latency.
-
-Set `VEX_NATIVE_METRICS` to an absolute log path before launching on Windows for
-application/font/renderer readiness, first-frame and first-PTY-output timings.
-Times begin inside `main`, not at process creation. Compare alternating matching
-baseline/candidate runs after warmup; report medians and spread.
-See [local performance results](reviews/native-performance.md).
+Performance tooling and machine-specific results are kept outside the application
+repository. Compare matching baseline/candidate builds on the same Windows machine,
+alternating runs after warmup. Distinguish CPU microbenchmarks, renderer timings and
+end-to-end measurements; one does not establish the others.
 
 ## Packaging
 

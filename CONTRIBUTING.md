@@ -16,7 +16,8 @@
 - Add regression tests for behavior changes. Discuss new runtime dependencies first.
 - Comments explain why, rather than restating code.
 - Keep repository docs short and task-oriented. Detailed user guides belong in
-  `web/src/features/docs/content.tsx`; historical evidence belongs in `docs/reviews/`.
+  `web/src/features/docs/content.tsx`. Keep local captures, measurements and
+  machine-specific implementation reports outside this repository.
 - Start commits with `feat:`, `fix:`, `refactor:`, `perf:`, `docs:`, `chore:`,
   `ui:`, `vendor:`, `style:`, `test:`, `build:`, `ci:` or `revert:`;
   an optional scope is welcome.

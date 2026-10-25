@@ -156,29 +156,11 @@ size/hash/non-MSI rejection, portable installation detection, cancellation witho
 network access and cancellation of the restart confirmation without losing sessions.
 Python packaging tests verify helper inclusion and feed/artifact consistency.
 
-Local interactive desktop checks (not hosted CI coverage):
-
-```powershell
-./tools/test-updates.ps1
-./tools/test-updates.ps1 -Light
-```
-
-These isolate settings, disable real downloads/installations, exercise all banner
-states, capture the actual GPU-rendered scene, dismiss by mouse and check that an
-idle banner does not continuously repaint. They also check all notice severities,
-stacking, X hit targets, the window-thread OS hand/arrow cursor, hover without new text
-rasterization, replaced-card hover, animation completion, Unicode/maximum-length text,
-atomic rejection of malformed UTF-8 and a real final shell exit. They do not move the
-user's desktop cursor. Captures go to `app/publish/update-ui/`.
-
-To leave a safe mock open in the installed application:
-
-```powershell
-./tools/show-update-preview.ps1 -WithNotice
-```
-
-It uses isolated settings and disables real downloads/installations; the GPU capture
-is saved to `app/publish/update-preview/preview.png`.
+Local interactive checks are maintained outside this repository and are not
+hosted CI coverage. Use isolated settings with real downloads/installations
+disabled. Check both themes, all banner states, notification stacking and X hit
+targets, cursor/hover behavior, idle repaint budgets, Unicode/long/malformed text
+and a real final shell exit. Captures and local reports do not belong in Git.
 
 For an optional real-network check, supply a feed matching an **already published**
 MSI (version, size and hash from that release):
@@ -191,23 +173,12 @@ This downloads/verifies the real package, rejects a deliberately too-small byte
 limit and cancels an active transfer. It never installs a product. A locally rebuilt
 MSI's feed normally will not match the bytes of the published MSI.
 
-Repeatable local installation checks require WiX/.NET build tools and opt into
-installing **test-only products**, with a fresh UpgradeCode and no real Vex shortcuts:
-
-```powershell
-./tools/test-update-installer.ps1 -WhatIf
-./tools/test-update-installer.ps1
-```
-
-They use the production handoff/helper with isolated identity, exercise another open
-window, read-lease protection, cancellation, corruption, immediate parent exit,
-Unicode/spaced paths, an actual MSI upgrade and a deliberately failed transaction.
-Each package contains different executable/helper bytes. A deferred failing custom
-action runs after file copies have actually executed, not merely after the script was
-scheduled. Rollback checks both binary hashes and Windows Installer product registration;
-cleanup verifies that the resulting installation can be uninstalled. Diagnostics
-remain under `app/publish/update-installer-fixture-*/`. Never repurpose the real Vex
-UpgradeCode for an isolated test.
+Repeatable local installation checks require WiX/.NET tools and explicit consent
+to install **test-only products**, with a fresh UpgradeCode and no real Vex
+shortcuts. Keep this automation and its diagnostics outside the repository.
+Check handoff, concurrency, cancellation, corruption, Unicode paths, actual file
+replacement and MSI rollback/registration, followed by verified uninstallation.
+Never repurpose the real Vex UpgradeCode for an isolated test.
 
 The native suite also runs a fixture-only loopback HTTP transport (not compiled into
 either shipping executable) for 404/503, chunked/truncated/oversized bodies, failing
