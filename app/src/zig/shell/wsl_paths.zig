@@ -17,10 +17,16 @@ pub const WslDistribution = struct {
 pub const LinuxDirectory = struct {
     bytes: []const u8,
 
-    /// Rejects controls, relative paths and backslashes rather than changing a Linux filename.
+    /// Rejects paths that cannot roundtrip through WSL's Windows filesystem view.
     pub fn parse(bytes: []const u8) !LinuxDirectory {
         if (bytes.len == 0 or bytes.len > 32767 * 4 or bytes[0] != '/' or std.mem.indexOfScalar(u8, bytes, '\\') != null) return error.InvalidLinuxDirectory;
         try validateWslPathText(bytes);
+        var scalars = std.unicode.Utf8View.initUnchecked(bytes).iterator();
+        while (scalars.nextCodepoint()) |scalar| {
+            // Literal U+F0xx names collide with the provider's reserved-character
+            // escapes; treating them as Linux text would silently change the path.
+            if (decodeNetworkCharacter(scalar) != scalar) return error.InvalidLinuxDirectory;
+        }
         return .{ .bytes = bytes };
     }
 };
@@ -62,18 +68,111 @@ pub fn linuxDirectoryFromNetworkAlloc(allocator: std.mem.Allocator, bytes: []con
     const distribution = (try networkDistribution(bytes)) orelse return error.NotWslNetworkDirectory;
     if (!std.ascii.eqlIgnoreCase(distribution.bytes, expected.bytes)) return error.WslDistributionMismatch;
     const offset = (wslNetworkPrefix(bytes) orelse return error.NotWslNetworkDirectory) + distribution.bytes.len;
-    const path = try allocator.dupe(u8, if (offset == bytes.len) "/" else bytes[offset..]);
+    const path = try linuxPathFromNetworkSuffixAlloc(allocator, if (offset == bytes.len) "/" else bytes[offset..]);
     errdefer allocator.free(path);
-    std.mem.replaceScalar(u8, path, '\\', '/');
     _ = try LinuxDirectory.parse(path);
     return path;
 }
 
+pub fn linuxPathFromNetworkSuffixAlloc(allocator: std.mem.Allocator, suffix: []const u8) ![]u8 {
+    var path: std.ArrayList(u8) = .empty;
+    errdefer path.deinit(allocator);
+    var scalars = (try std.unicode.Utf8View.init(suffix)).iterator();
+    while (scalars.nextCodepoint()) |scalar| {
+        const decoded = decodeNetworkCharacter(scalar);
+        if (scalar == '\\') {
+            try path.append(allocator, '/');
+        } else {
+            var encoded: [4]u8 = undefined;
+            const len = try std.unicode.utf8Encode(decoded, &encoded);
+            try path.appendSlice(allocator, encoded[0..len]);
+        }
+    }
+    try validateWslPathText(path.items);
+    if (std.mem.indexOfScalar(u8, path.items, '\\') != null) return error.InvalidLinuxDirectory;
+    return path.toOwnedSlice(allocator);
+}
+
 /// Maps a Linux OSC 7 directory into this pane's distribution, without filesystem probes or Windows normalization.
 pub fn networkDirectoryFromLinuxAlloc(allocator: std.mem.Allocator, distribution: WslDistribution, path: LinuxDirectory) ![]u8 {
-    const result = try std.fmt.allocPrint(allocator, "\\\\wsl.localhost\\{s}{s}", .{ distribution.bytes, path.bytes });
-    std.mem.replaceScalar(u8, result, '/', '\\');
-    return result;
+    _ = try LinuxDirectory.parse(path.bytes);
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    try result.appendSlice(allocator, "\\\\wsl.localhost\\");
+    try result.appendSlice(allocator, distribution.bytes);
+    for (path.bytes) |byte| {
+        if (byte == '/') {
+            try result.append(allocator, '\\');
+        } else if (isNetworkEscapedByte(byte)) {
+            // WSL's UNC provider exposes Windows-reserved ASCII as U+F0xx.
+            var encoded: [4]u8 = undefined;
+            const len = try std.unicode.utf8Encode(@as(u21, 0xf000) + byte, &encoded);
+            try result.appendSlice(allocator, encoded[0..len]);
+        } else {
+            try result.append(allocator, byte);
+        }
+    }
+    return result.toOwnedSlice(allocator);
+}
+
+fn isNetworkEscapedByte(byte: u8) bool {
+    return byte < 0x20 or switch (byte) {
+        '"', '*', ':', '<', '>', '?', '\\', '|' => true,
+        else => false,
+    };
+}
+
+fn decodeNetworkCharacter(scalar: u21) u21 {
+    if (scalar >= 0xf000 and scalar <= 0xf0ff) {
+        const byte: u8 = @intCast(scalar - 0xf000);
+        if (isNetworkEscapedByte(byte)) return byte;
+    }
+    return scalar;
+}
+
+pub fn networkNameNeedsDecoding(bytes: []const u8) bool {
+    var scalars = (std.unicode.Utf8View.init(bytes) catch return false).iterator();
+    while (scalars.nextCodepoint()) |scalar| {
+        if (scalar == '\\' or decodeNetworkCharacter(scalar) != scalar) return true;
+    }
+    return false;
+}
+
+/// Controls cannot be inserted into a terminal, and Linux backslashes are not
+/// supported by the directory contract. Do not offer those lossy UNC names.
+pub fn networkNameIsUsable(bytes: []const u8) bool {
+    var scalars = (std.unicode.Utf8View.init(bytes) catch return false).iterator();
+    while (scalars.nextCodepoint()) |scalar| {
+        const decoded = decodeNetworkCharacter(scalar);
+        if (decoded < 0x20 or (decoded >= 0x7f and decoded <= 0x9f) or (decoded == '\\' and scalar != '\\')) return false;
+    }
+    return true;
+}
+
+test "WSL network escaping roundtrips reserved Linux filename characters" {
+    const allocator = std.testing.allocator;
+    const distro = try WslDistribution.parse("NixOS");
+    const linux = "/tmp/colon:name/question? star* quote\" pipe| less< greater>";
+    const network = try networkDirectoryFromLinuxAlloc(allocator, distro, try LinuxDirectory.parse(linux));
+    defer allocator.free(network);
+    try std.testing.expect(std.mem.indexOf(u8, network, "\xef\x80\xba") != null);
+    try std.testing.expect(networkNameIsUsable(network));
+    const decoded = try linuxDirectoryFromNetworkAlloc(allocator, network, distro);
+    defer allocator.free(decoded);
+    try std.testing.expectEqualStrings(linux, decoded);
+    for ([_][]const u8{ "bad\xef\x80\x8aname", "bad\xef\x81\x9cname" }) |unsafe| {
+        try std.testing.expect(!networkNameIsUsable(unsafe));
+    }
+    try std.testing.checkAllAllocationFailures(allocator, checkEscapedWslPathAllocations, .{});
+}
+
+fn checkEscapedWslPathAllocations(allocator: std.mem.Allocator) !void {
+    const distro = try WslDistribution.parse("NixOS");
+    const network = try networkDirectoryFromLinuxAlloc(allocator, distro, try LinuxDirectory.parse("/tmp/colon:name/star*"));
+    defer allocator.free(network);
+    const decoded = try linuxDirectoryFromNetworkAlloc(allocator, network, distro);
+    defer allocator.free(decoded);
+    try std.testing.expectEqualStrings("/tmp/colon:name/star*", decoded);
 }
 
 test "WSL network directories preserve distribution, Unicode and POSIX path spelling" {
@@ -102,7 +201,7 @@ test "WSL parsers reject corrupt distribution names and lossy or unsafe Linux di
         if (WslDistribution.parse(bytes)) |_| return error.ExpectedInvalidDistribution else |_| {}
     }
     try std.testing.expectError(error.InvalidWslProgram, LinuxProgram.parse("/"));
-    for ([_][]const u8{ "", "relative", "~/home", "/home\\filename", "/bad\x00path", "/bad\x1bpath", "/bad\xc2\x85path", "/bad\xffpath" }) |bytes| {
+    for ([_][]const u8{ "", "relative", "~/home", "/home\\filename", "/bad\x00path", "/bad\x1bpath", "/bad\xc2\x85path", "/bad\xffpath", "/literal\xef\x80\xbaescape" }) |bytes| {
         if (LinuxDirectory.parse(bytes)) |_| return error.ExpectedInvalidLinuxDirectory else |_| {}
     }
 }

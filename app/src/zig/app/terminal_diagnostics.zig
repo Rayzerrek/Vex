@@ -27,6 +27,15 @@ pub fn onProbe(self: *Application, query: u32) u64 {
         },
         102 => return if (self.overlay == .command_palette) dialogs.firstVisibleRow() else 0,
         103 => return if (self.overlay == .command_palette) self.overlay.command_palette.query_len else 0,
+        138 => return @as(u64, @intFromBool(self.path_completion.scan_error)) |
+            (@as(u64, @intFromBool(self.path_completion.is_truncated)) << 1) |
+            (@as(u64, @intFromBool(self.path_completion.has_skipped_entries)) << 2),
+        // Bounded suffix observations let desktop checks verify long/Unicode paths.
+        139...154 => return probeBytes(self.path_completion.directory, (self.path_completion.directory.len -| 128) + (query - 139) * 8),
+        155 => return self.path_completion.directory.len,
+        156 => return self.path_completion.selected_index,
+        157 => return self.path_completion.first_visible,
+        158 => return self.path_completion.query_len,
         104 => return @intFromBool(self.path_completion.index == .deferred and self.path_completion.index.deferred.loading),
         105 => return self.path_completion.entries.items.len,
         110...113 => {

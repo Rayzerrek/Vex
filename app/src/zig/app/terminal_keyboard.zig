@@ -161,7 +161,7 @@ pub fn onText(self: *Application, bytes: []const u8) void {
     if (self.overlay == .path_completion) {
         if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
         self.path_completion.appendQuery(bytes) catch |err| {
-            self.fail(err);
+            self.fail(if (err == error.InvalidUtf8) error.InvalidTextUtf8 else err);
             return;
         };
         self.syncPathIndex() catch |err| self.fail(err);
@@ -208,7 +208,7 @@ pub fn onPaste(self: *Application, bytes: []const u8) void {
         const trimmed = std.mem.trim(u8, bytes, " \t\r\n");
         if (trimmed.len > 0) {
             self.path_completion.appendQuery(trimmed) catch |err| {
-                self.fail(err);
+                self.fail(if (err == error.InvalidUtf8) error.InvalidPasteUtf8 else err);
                 return;
             };
             self.syncPathIndex() catch |err| self.fail(err);

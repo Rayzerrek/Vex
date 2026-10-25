@@ -55,6 +55,37 @@ The recovery smoke uses isolated settings and checks tab churn, pane-local
 transport failures, stale events, toasts, renderer recovery and delayed teardown.
 It is local interactive coverage, not hosted CI or a guarantee for every driver/WSL version.
 
+### Path picker acceptance cases
+
+Use an isolated Vex window and configuration on Windows, with a real WSL
+session. These are local desktop checks, not hosted CI coverage:
+
+- Open from a reported WSL cwd; without OSC 7, the fallback must be the
+  distribution root, never the Windows user's profile directory.
+- Compare empty/missing/unreadable roots with a readable directory containing
+  unreadable children. Children must not erase readable results. Skipped paths
+  and index limits must have distinct notices.
+- Navigate drive, UNC-share and distribution roots: Parent/empty Backspace are
+  no-ops at the root. Test absolute Linux paths, relative paths, typed/pasted UNC
+  paths, and pasted directory prefixes longer than the search field.
+- Check long paths, Polish characters, emoji, spaces, apostrophes and WSL's
+  escaped Windows-reserved filename characters (`:`, `?`, `*`, `"`, `<`, `>`, `|`).
+  Labels/search use Linux spelling; insertion must decode and quote that spelling,
+  including Nushell/PowerShell in WSL when process metadata identifies the shell.
+  In cmd, `%`/`!` paths require an explicit raw override instead of unsafe quoting.
+  Control-character names and Linux backslash names are intentionally omitted;
+  literal private-use names colliding with WSL's escapes are not representable.
+- Include directory symlink/junction cycles: indexing must not recurse through
+  links. Explicitly opening a supported directory link may index its target.
+- Exercise Home/End, paging, filtering to zero results, Backspace, Enter on an
+  empty result, Escape, outside clicks, and rapid navigation while indexing.
+  Neither stale results nor old hover positions may replace the current search.
+
+Zig regressions cover roots, escaping, Unicode boundaries, stale revisions,
+allocation rollback, symlink cycles and bounded indexing. Limits are 16,384
+entries, 8 MiB of indexed names (including display spelling), and 50 matches.
+A directory exactly at a limit must not claim that paths were omitted.
+
 ## Performance
 
 From `app/`, `zig build bench` runs ReleaseSafe CPU microbenchmarks for allocation,

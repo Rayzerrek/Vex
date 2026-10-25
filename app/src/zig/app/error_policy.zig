@@ -12,6 +12,7 @@ pub fn recoverable(err: anyerror) bool {
         error.InvalidTextUtf8,
         error.InvalidPasteInput,
         error.InvalidPasteUtf8,
+        error.UnquotableCmdPath,
         error.InvalidMouseButton,
         error.InvalidPointerEvent,
         error.InvalidDividerPoint,
@@ -46,7 +47,7 @@ pub const NoticeLimiter = struct {
 };
 
 test "expected input failures recover but unknown errors and corrupt state do not" {
-    for ([_]anyerror{ error.PtyInputFull, error.ClipboardWriteFailed, error.ShellStartFailed, error.InvalidPasteUtf8, error.InvalidDialogInput }) |err| {
+    for ([_]anyerror{ error.PtyInputFull, error.ClipboardWriteFailed, error.ShellStartFailed, error.InvalidPasteUtf8, error.UnquotableCmdPath, error.InvalidDialogInput }) |err| {
         try std.testing.expect(recoverable(err));
     }
     for ([_]anyerror{ error.OutOfMemory, error.MissingPaneSession, error.InvalidPtyOutput, error.PtyReplyWriteFailed, error.Unexpected }) |err| {

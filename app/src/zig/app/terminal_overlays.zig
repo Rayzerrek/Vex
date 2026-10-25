@@ -154,15 +154,16 @@ pub fn drawActiveOverlay(self: *Application) !void {
     for (0..visible) |i| {
         const match = self.path_completion.matches.items[start + i];
         const entry = self.path_completion.entries.items[match.entry_index];
+        const display_name = entry.displayName();
         items[i] = .{
-            .name = if (entry.name.len == 0) null else entry.name.ptr,
-            .name_length = entry.name.len,
+            .name = if (display_name.len == 0) null else display_name.ptr,
+            .name_length = display_name.len,
             .is_directory = entry.is_directory,
             .selected = start + i == self.path_completion.selected_index,
             .hovered = if (self.path_completion.hovered_index) |hover| hover == start + i else false,
         };
     }
-    platform.drawPathCompletion(layout.bounds, self.path_completion.directory, self.path_completion.query(), items[0..visible], self.path_completion.scan_error, self.path_completion.index == .deferred and self.path_completion.index.deferred.loading, self.path_completion.is_truncated);
+    platform.drawPathCompletion(layout.bounds, self.path_completion.directoryLabel(), self.path_completion.query(), items[0..visible], self.path_completion.scan_error, self.path_completion.index == .deferred and self.path_completion.index.deferred.loading, self.path_completion.is_truncated, self.path_completion.has_skipped_entries);
 }
 
 /// Native dialogs own keyboard navigation; the inline path popup still routes terminal-window keys.
@@ -217,11 +218,13 @@ pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
             try self.syncPathIndex();
             platform.invalidateWindow();
         },
-        0x26, 0x28, 0x21, 0x22 => {
+        0x26, 0x28, 0x21, 0x22, 0x24, 0x23 => {
             self.path_completion.moveSelection(switch (key) {
                 0x26 => -1,
                 0x28 => 1,
                 0x21 => -@as(isize, @intCast(rows)),
+                0x24 => std.math.minInt(isize),
+                0x23 => std.math.maxInt(isize),
                 else => @intCast(rows),
             }, rows);
             platform.invalidateWindow();

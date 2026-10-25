@@ -849,7 +849,8 @@ pub const TerminalApplication = struct {
         const placement = self.findPlacement(pane_id) orelse return;
         if (completion_popup.compute(.{ .x = 0, .y = 0, .width = metrics.width, .height = metrics.height }, placement.bounds, metrics.cell_width, metrics.cell_height, anchor) == null) return;
         // Only parsed OSC 7/launch metadata selects a directory; terminal text is not a trusted prompt.
-        const dir = session.directory.current().bytes;
+        const dir = try path_completion.initialDirectoryAlloc(self.allocator, session.directory.current(), session.directory.context);
+        defer self.allocator.free(dir);
         if (self.path_completion.index == .synchronous) self.path_completion.index = .{ .deferred = .{} };
         self.path_completion.recursive = true;
         try self.path_completion.openDirectory(dir, "");
@@ -877,8 +878,16 @@ pub const TerminalApplication = struct {
             defer result.deinit();
             if (result.revision != state.revision or !state.loading) return;
             switch (result.outcome) {
-                .failure => |err| return err,
-                .index => |*completed| try self.path_completion.applyDeferredIndex(completed),
+                .failure => |err| {
+                    self.path_completion.failDeferredIndex();
+                    if (self.overlay == .path_completion) platform.invalidateWindow();
+                    return err;
+                },
+                .index => |*completed| self.path_completion.applyDeferredIndex(completed) catch |err| {
+                    self.path_completion.failDeferredIndex();
+                    if (self.overlay == .path_completion) platform.invalidateWindow();
+                    return err;
+                },
             }
             if (self.overlay == .path_completion) platform.invalidateWindow();
         }
@@ -891,7 +900,10 @@ pub const TerminalApplication = struct {
         };
         const full_path = try self.path_completion.selectedFullPathAlloc(self.allocator) orelse return;
         defer self.allocator.free(full_path);
-        const quote_kind = path_completion.ShellQuoteKind.fromProgram(session.shell_program);
+        const quote_kind = if (session.directory.context == .wsl and session.foreground_is_shell and !session.foreground_is_transport)
+            path_completion.ShellQuoteKind.forWslShell(session.active_process_title[0..session.active_process_title_len])
+        else
+            path_completion.ShellQuoteKind.fromProgram(session.shell_program);
         // Foreground applications own their input syntax; only a shell prompt gets shell quoting.
         const literal = raw or session.has_foreground_process or session.terminal.program_status.programStatus().state == .blocked;
         const formatted = try path_completion.formatPathAlloc(self.allocator, full_path, quote_kind, literal);

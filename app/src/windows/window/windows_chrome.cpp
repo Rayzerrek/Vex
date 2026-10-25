@@ -696,11 +696,18 @@ extern "C" void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* dire
     target->PushAxisAlignedClip(D2D1::RectF(mx + 4.0f, my + 2.0f, mx + mw - 4.0f, my + mh - 2.0f), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
     if (directory && directory_length > 0) {
-        wchar_t dirBuf[260];
-        const int wlen = MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(directory), (int)directory_length, dirBuf, 259);
+        // Convert only the visible suffix: long UNC paths must not overflow the
+        // conversion buffer, and neither UTF-8 nor UTF-16 characters may be split.
+        size_t start = directory_length > 176 ? directory_length - 176 : 0;
+        while (start < directory_length && (directory[start] & 0xc0) == 0x80) ++start;
+        wchar_t dirBuf[180];
+        const int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(directory + start), (int)(directory_length - start), dirBuf + 1, 178);
         if (wlen > 0) {
-            dirBuf[wlen] = L'\0';
-            const wchar_t* displayDir = wlen > 44 ? (dirBuf + (wlen - 44)) : dirBuf;
+            int skip = wlen > 44 ? wlen - 44 : 0;
+            if (skip && dirBuf[skip + 1] >= 0xdc00 && dirBuf[skip + 1] <= 0xdfff) ++skip;
+            wchar_t* displayDir = dirBuf + 1 + skip;
+            if (start || skip) *--displayDir = L'\x2026';
+            dirBuf[wlen + 1] = L'\0';
             labelWithFont(badgeFont, displayDir, mx + 10.0f, my + 6.0f, mw - 20.0f, chromePalette.text_muted);
         }
     }
@@ -771,7 +778,9 @@ extern "C" void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* dire
         }
     }
     rectangle(mx + 8, my + mh - 30, mw - 16, 1, chromePalette.border);
-    const wchar_t* hint = (flags & 4) ? L"Index limit reached; narrow the folder" : L"\x2190 Parent   Tab Open   Enter Insert   Esc Close";
+    const wchar_t* hint = (flags & 4) ? ((flags & 8) ? L"Index limit reached; some paths skipped" : L"Index limit reached; narrow the folder")
+        : (flags & 8) || (flags & 1) ? L"Some paths could not be read or indexed"
+        : L"\x2190 Parent   Tab Open   Enter Insert   Esc Close";
     labelWithFont(badgeFont, hint, mx + 12, my + mh - 22, mw - 24, chromePalette.text_muted);
     target->PopAxisAlignedClip();
 }

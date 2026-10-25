@@ -580,6 +580,7 @@ pub fn reportOperationFailure(err: anyerror) void {
     const message = switch (err) {
         error.PtyInputFull => "Input queue is full. This input was not sent. Wait for the program to consume pending input, then retry or paste a smaller block.",
         error.SessionTransportFailed => "The connection to this pane failed. Its process was stopped; the screen remains available for copying. Other panes are still running.",
+        error.UnquotableCmdPath => "cmd can expand % and ! inside quoted paths. Nothing was inserted. Use another shell, or Shift+Enter for raw insertion if you intend to handle expansion yourself.",
         error.ClipboardWriteFailed => "Could not copy to the clipboard. It may be busy in another application. Please retry; your selection and sessions are preserved.",
         error.NativeDialogFailure => "The dialog could not be opened. Try again; your sessions remain open.",
         error.ProcessInitializationFailed => "Windows could not initialize the process (0xc0000142). The failed pane was retained; other sessions keep running. Try again or check Windows/WSL diagnostics.",
@@ -744,7 +745,7 @@ pub fn nativeChromePalette(palette: terminal_theme.ChromePalette) c.VexChromePal
     };
 }
 /// Draws the cursor-anchored inline path completion popup.
-pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: []const u8, items: []const c.VexPathCompletionItem, scan_error: bool, loading: bool, truncated: bool) void {
+pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: []const u8, items: []const c.VexPathCompletionItem, scan_error: bool, loading: bool, truncated: bool, skipped: bool) void {
     c.vex_draw_path_completion(
         .{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height },
         if (dir_text.len == 0) null else dir_text.ptr,
@@ -753,7 +754,7 @@ pub fn drawPathCompletion(bounds: panes.PaneRect, dir_text: []const u8, query: [
         query.len,
         if (items.len == 0) null else items.ptr,
         items.len,
-        @as(u32, @intFromBool(scan_error)) | (@as(u32, @intFromBool(loading)) << 1) | (@as(u32, @intFromBool(truncated)) << 2),
+        @as(u32, @intFromBool(scan_error)) | (@as(u32, @intFromBool(loading)) << 1) | (@as(u32, @intFromBool(truncated)) << 2) | (@as(u32, @intFromBool(skipped)) << 3),
     );
 }
 /// Dynamically updates the terminal font size in DIPs [9.0, 32.0] and triggers a grid layout resize.

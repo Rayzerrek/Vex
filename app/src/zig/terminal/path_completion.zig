@@ -9,6 +9,8 @@ pub const ShellQuoteKind = enum {
     nu,
     gitbash,
     wsl,
+    wsl_nu,
+    wsl_pwsh,
 
     pub fn fromProgram(program: []const u8) ShellQuoteKind {
         const base = std.fs.path.basename(program);
@@ -20,11 +22,35 @@ pub const ShellQuoteKind = enum {
         if (std.ascii.eqlIgnoreCase(stem, "cmd")) return .cmd;
         return .literal;
     }
+
+    /// WSL is a transport, not a quoting dialect. Use trusted foreground-shell
+    /// metadata when its Linux shell does not speak POSIX quoting.
+    pub fn forWslShell(program: []const u8) ShellQuoteKind {
+        return switch (fromProgram(program)) {
+            .nu => .wsl_nu,
+            .pwsh => .wsl_pwsh,
+            else => .wsl,
+        };
+    }
 };
+
+/// Without an OSC 7 report, WSL's launch-home sentinel is not a Windows cwd.
+/// Browse the known distribution root instead of guessing the Linux user's home.
+pub fn initialDirectoryAlloc(allocator: std.mem.Allocator, path: directory.DirectoryPath, context: directory.DirectoryContext) ![]u8 {
+    if (path.shell_home and context == .wsl) {
+        return wsl_paths.networkDirectoryFromLinuxAlloc(allocator, context.wsl, .{ .bytes = "/" });
+    }
+    return allocator.dupe(u8, path.bytes);
+}
 
 pub const Entry = struct {
     name: []u8,
+    display_name: ?[]u8 = null,
     is_directory: bool,
+
+    pub fn displayName(self: Entry) []const u8 {
+        return self.display_name orelse self.name;
+    }
 };
 
 pub const Match = struct {
@@ -39,6 +65,7 @@ pub const max_index_bytes: usize = 8 * 1024 * 1024;
 pub const PathCompletion = struct {
     allocator: std.mem.Allocator,
     directory: []u8 = &.{},
+    display_directory: ?[]u8 = null,
     query_buf: [128]u8 = undefined,
     query_len: usize = 0,
     entries: std.ArrayList(Entry) = .empty,
@@ -48,6 +75,7 @@ pub const PathCompletion = struct {
     first_visible: usize = 0,
     scan_error: bool = false,
     is_truncated: bool = false,
+    has_skipped_entries: bool = false,
     index: union(enum) { synchronous, deferred: struct { revision: u64 = 0, loading: bool = false } } = .synchronous,
     recursive: bool = false,
     indexed_name_bytes: usize = 0,
@@ -62,15 +90,21 @@ pub const PathCompletion = struct {
         self.entries.deinit(self.allocator);
         self.matches.deinit(self.allocator);
         if (self.directory.len > 0) self.allocator.free(self.directory);
+        if (self.display_directory) |text| self.allocator.free(text);
         self.* = .{ .allocator = self.allocator };
     }
 
     fn clearEntries(self: *PathCompletion) void {
         for (self.entries.items) |entry| {
             self.allocator.free(entry.name);
+            if (entry.display_name) |name| self.allocator.free(name);
         }
         self.entries.clearRetainingCapacity();
         self.indexed_name_bytes = 0;
+    }
+
+    pub fn directoryLabel(self: *const PathCompletion) []const u8 {
+        return self.display_directory orelse self.directory;
     }
 
     pub fn query(self: *const PathCompletion) []const u8 {
@@ -81,12 +115,19 @@ pub const PathCompletion = struct {
     /// Empty paths clear indexing; unavailable directories produce an explicit scan-error view.
     pub fn openDirectory(self: *PathCompletion, dir_path: []const u8, initial_query: []const u8) !void {
         const prefix = try boundedQueryPrefix(initial_query, self.query_buf.len);
-        if (dir_path.len > 0) _ = try directory.DirectoryPath.parse(dir_path);
-        const trimmed = std.mem.trimRight(u8, dir_path, "\\/");
-        const effective = if (trimmed.len == 0 and dir_path.len > 0) dir_path else if (trimmed.len == 2 and trimmed[1] == ':') dir_path[0..3] else trimmed;
+        if (!isUsablePathText(initial_query)) return error.InvalidPathQuery;
+        const root_len = if (dir_path.len > 0) try directoryRootLength(dir_path) else 0;
+        var end = dir_path.len;
+        while (end > root_len and isSeparator(dir_path[end - 1])) : (end -= 1) {}
+        const effective = dir_path[0..end];
         var next = PathCompletion.init(self.allocator);
         errdefer next.deinit();
         next.directory = try self.allocator.dupe(u8, effective);
+        if (try wsl_paths.networkDistribution(effective)) |distro| {
+            const linux = try wsl_paths.linuxDirectoryFromNetworkAlloc(self.allocator, effective, distro);
+            defer self.allocator.free(linux);
+            next.display_directory = try std.fmt.allocPrint(self.allocator, "{s}:{s}", .{ distro.bytes, linux });
+        }
         next.recursive = self.recursive;
         next.scan_revision = self.scan_revision;
         next.index = switch (self.index) {
@@ -104,8 +145,10 @@ pub const PathCompletion = struct {
 
     pub fn navigateParent(self: *PathCompletion) !bool {
         if (self.directory.len == 0) return false;
-        const parent = std.fs.path.dirname(self.directory) orelse return false;
-        if (std.mem.eql(u8, parent, self.directory)) return false;
+        const root_len = try directoryRootLength(self.directory);
+        if (self.directory.len <= root_len) return false;
+        const separator = std.mem.lastIndexOfAny(u8, self.directory, "\\/") orelse return false;
+        const parent = self.directory[0..@max(root_len, separator)];
         try self.openDirectory(parent, self.query());
         return true;
     }
@@ -133,31 +176,37 @@ pub const PathCompletion = struct {
 
     /// Appends complete UTF-8 codepoints within the byte limit; malformed input leaves the query unchanged.
     pub fn appendQuery(self: *PathCompletion, text: []const u8) !void {
-        const prefix = try boundedQueryPrefix(text, self.query_buf.len - self.query_len);
-        for (text) |c| {
-            if (c < 0x20 or c == 0x7f) return;
-        }
-        if (prefix.len == 0) return;
-        @memcpy(self.query_buf[self.query_len .. self.query_len + prefix.len], prefix);
-        self.query_len += prefix.len;
-
-        const current_q = self.query();
+        if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
+        if (!isUsablePathText(text) or text.len == 0) return;
+        const total = std.math.add(usize, self.query_len, text.len) catch return error.InvalidTextInput;
+        if (total > directory.DirectoryPath.max_bytes + self.query_buf.len) return error.InvalidTextInput;
+        var short_buf: [128]u8 = undefined;
+        const current_q = if (total <= short_buf.len) short_buf[0..total] else try self.allocator.alloc(u8, total);
+        defer if (total > short_buf.len) self.allocator.free(current_q);
+        @memcpy(current_q[0..self.query_len], self.query());
+        @memcpy(current_q[self.query_len..], text);
         if (std.mem.lastIndexOfAny(u8, current_q, "/\\")) |sep| {
+            // Keep the first backslash long enough to type a UNC prefix. A lone
+            // forward slash still opens the drive/distribution root immediately.
+            if (current_q.len == 1 and current_q[0] == '\\') {
+                try self.setQuery(current_q);
+                return;
+            }
             const directory_prefix = current_q[0 .. sep + 1];
             const remainder = current_q[sep + 1 ..];
             if (self.resolveSubdirectoryAlloc(directory_prefix)) |resolved| {
                 defer self.allocator.free(resolved);
                 var rem_buf: [128]u8 = undefined;
-                const rem_len = remainder.len;
-                @memcpy(rem_buf[0..rem_len], remainder);
+                const rem_len = (try boundedQueryPrefix(remainder, rem_buf.len)).len;
+                @memcpy(rem_buf[0..rem_len], remainder[0..rem_len]);
                 try self.openDirectory(resolved, rem_buf[0..rem_len]);
                 return;
-            } else |_| {}
+            } else |err| {
+                if (err == error.OutOfMemory) return err;
+            }
         }
 
-        self.selected_index = 0;
-        self.first_visible = 0;
-        try self.refreshMatches();
+        try self.setQuery(try boundedQueryPrefix(current_q, self.query_buf.len));
     }
 
     pub fn backspaceQuery(self: *PathCompletion) !bool {
@@ -166,19 +215,28 @@ pub const PathCompletion = struct {
         }
         var i = self.query_len - 1;
         while (i > 0 and (self.query_buf[i] & 0xC0) == 0x80) : (i -= 1) {}
-        self.query_len = i;
-        self.selected_index = 0;
-        self.first_visible = 0;
-        try self.refreshMatches();
+        try self.setQuery(self.query_buf[0..i]);
         return true;
     }
 
     pub fn clearQuery(self: *PathCompletion) !void {
         if (self.query_len == 0) return;
-        self.query_len = 0;
-        self.selected_index = 0;
-        self.first_visible = 0;
+        try self.setQuery("");
+    }
+
+    fn setQuery(self: *PathCompletion, text: []const u8) !void {
+        const previous_buf = self.query_buf;
+        const previous_len = self.query_len;
+        errdefer {
+            self.query_buf = previous_buf;
+            self.query_len = previous_len;
+        }
+        std.mem.copyForwards(u8, &self.query_buf, text);
+        self.query_len = text.len;
         try self.refreshMatches();
+        self.selected_index = 0;
+        self.hovered_index = null;
+        self.first_visible = 0;
     }
 
     pub fn moveSelection(self: *PathCompletion, delta: isize, visible_rows: usize) void {
@@ -189,8 +247,9 @@ pub const PathCompletion = struct {
         }
         const max_idx: isize = @intCast(self.matches.items.len - 1);
         const cur: isize = @intCast(self.selected_index);
-        const next: usize = @intCast(std.math.clamp(cur + delta, 0, max_idx));
+        const next: usize = @intCast(std.math.clamp(cur +| delta, 0, max_idx));
         self.selected_index = next;
+        self.hovered_index = null;
         self.ensureVisible(visible_rows);
     }
 
@@ -209,14 +268,26 @@ pub const PathCompletion = struct {
     }
 
     fn resolveSubdirectoryAlloc(self: *const PathCompletion, prefix: []const u8) ![]u8 {
-        var normalized_buf: [512]u8 = undefined;
-        if (prefix.len > normalized_buf.len) return error.NameTooLong;
-        for (prefix, 0..) |c, idx| {
-            normalized_buf[idx] = if (c == '/') '\\' else c;
-        }
-        const norm = normalized_buf[0..prefix.len];
-        const candidate = try std.fs.path.resolve(self.allocator, &.{ self.directory, norm });
+        if (prefix.len > directory.DirectoryPath.max_bytes) return error.NameTooLong;
+        const norm = try self.allocator.dupe(u8, prefix);
+        defer self.allocator.free(norm);
+        std.mem.replaceScalar(u8, norm, '/', '\\');
+        // resolveWindows treats incomplete UNC prefixes as relative paths.
+        if (std.mem.startsWith(u8, norm, "\\\\")) _ = try directoryRootLength(norm);
+        const candidate = if (try wsl_paths.networkDistribution(self.directory)) |distro| blk: {
+            if (std.mem.startsWith(u8, norm, "\\\\") or (norm.len >= 3 and std.ascii.isAlphabetic(norm[0]) and norm[1] == ':' and isSeparator(norm[2]))) break :blk try self.allocator.dupe(u8, norm);
+            // Resolve in the Linux domain before encoding Windows-reserved names.
+            // Preserve link/.. semantics instead of normalizing them on Windows.
+            std.mem.replaceScalar(u8, norm, '\\', '/');
+            if (norm.len > 0 and norm[0] == '/') break :blk try wsl_paths.networkDirectoryFromLinuxAlloc(self.allocator, distro, try wsl_paths.LinuxDirectory.parse(norm));
+            const current = try wsl_paths.linuxDirectoryFromNetworkAlloc(self.allocator, self.directory, distro);
+            defer self.allocator.free(current);
+            const linux = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ std.mem.trimRight(u8, current, "/"), norm });
+            defer self.allocator.free(linux);
+            break :blk try wsl_paths.networkDirectoryFromLinuxAlloc(self.allocator, distro, try wsl_paths.LinuxDirectory.parse(linux));
+        } else try std.fs.path.resolveWindows(self.allocator, &.{ self.directory, norm });
         errdefer self.allocator.free(candidate);
+        _ = try directoryRootLength(candidate);
         if (self.index == .synchronous) {
             var dir = try std.fs.openDirAbsolute(candidate, .{});
             dir.close();
@@ -228,6 +299,7 @@ pub const PathCompletion = struct {
         self.clearEntries();
         self.scan_error = false;
         self.is_truncated = false;
+        self.has_skipped_entries = false;
         if (self.directory.len == 0) return;
         try self.checkScanRevision();
 
@@ -237,40 +309,34 @@ pub const PathCompletion = struct {
         };
         defer dir.close();
 
-        if (self.recursive) {
-            var walker = try dir.walk(self.allocator);
-            defer walker.deinit();
-            while (true) {
-                try self.checkScanRevision();
-                const entry = walker.next() catch |err| {
-                    if (err == error.OutOfMemory) return err;
-                    self.scan_error = true;
-                    self.clearEntries();
-                    break;
-                } orelse break;
-                if (!try self.appendIndexedEntry(entry.path, entry.kind == .directory)) break;
-                if (self.entries.items.len >= max_entries) {
-                    self.is_truncated = true;
-                    break;
-                }
-            }
-            return;
-        }
-        var it = dir.iterate();
+        var walker = try @import("path_walker.zig").Walker.init(self.allocator, dir);
+        defer walker.deinit();
+        walker.recursive = self.recursive;
+        try self.scanWalker(&walker);
+    }
+
+    fn scanWalker(self: *PathCompletion, walker: anytype) !void {
+        var attempts: usize = 0;
         while (true) {
             try self.checkScanRevision();
-            const next_entry = it.next() catch {
-                self.scan_error = true;
-                self.clearEntries();
-                break;
-            };
-            const item = next_entry orelse break;
-            if (item.name.len == 0) continue;
-            if (!try self.appendIndexedEntry(item.name, item.kind == .directory)) break;
-            if (self.entries.items.len >= max_entries) {
+            // Bound work even when every child is unreadable or has an unusable name.
+            if (attempts == max_entries * 2) {
                 self.is_truncated = true;
                 break;
             }
+            attempts += 1;
+            const entry = walker.next() catch |err| {
+                if (err == error.OutOfMemory) return err;
+                // Walker advances past failed children. WSL trees often contain folders
+                // Windows cannot open; one such folder must not discard the whole index.
+                if (walker.stack.items.len == 0) {
+                    self.scan_error = true;
+                    break;
+                }
+                self.has_skipped_entries = true;
+                continue;
+            } orelse break;
+            if (!try self.appendIndexedEntry(entry.path, entry.kind == .directory)) break;
         }
     }
 
@@ -280,20 +346,33 @@ pub const PathCompletion = struct {
         }
     }
     fn appendIndexedEntry(self: *PathCompletion, name: []const u8, is_directory: bool) !bool {
-        if (!std.unicode.utf8ValidateSlice(name)) {
-            self.scan_error = true;
-            self.clearEntries();
+        const is_wsl = (wsl_paths.networkDistribution(self.directory) catch null) != null;
+        if (!isUsablePathText(name) or (is_wsl and !wsl_paths.networkNameIsUsable(name))) {
+            self.has_skipped_entries = true;
+            return true;
+        }
+        if (self.entries.items.len >= max_entries or name.len > max_index_bytes - self.indexed_name_bytes) {
+            self.is_truncated = true;
             return false;
         }
-        if (name.len > max_index_bytes - self.indexed_name_bytes) {
+        const display = if (is_wsl and wsl_paths.networkNameNeedsDecoding(name)) try wsl_paths.linuxPathFromNetworkSuffixAlloc(self.allocator, name) else null;
+        errdefer if (display) |text| self.allocator.free(text);
+        const display_bytes = if (display) |text| text.len else 0;
+        if (display_bytes > max_index_bytes - self.indexed_name_bytes - name.len) {
+            if (display) |text| self.allocator.free(text);
             self.is_truncated = true;
             return false;
         }
         const owned = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(owned);
-        try self.entries.append(self.allocator, .{ .name = owned, .is_directory = is_directory });
-        self.indexed_name_bytes += name.len;
+        try self.entries.append(self.allocator, .{ .name = owned, .display_name = display, .is_directory = is_directory });
+        self.indexed_name_bytes += name.len + display_bytes;
         return true;
+    }
+
+    pub fn failDeferredIndex(self: *PathCompletion) void {
+        if (self.index == .deferred) self.index.deferred.loading = false;
+        self.scan_error = true;
     }
 
     /// Adopts a completed index transactionally while retaining text typed during background scanning.
@@ -302,6 +381,7 @@ pub const PathCompletion = struct {
             .synchronous => return error.NotDeferredPathIndex,
             .deferred => |value| value,
         };
+        if (!std.mem.eql(u8, self.directory, result.directory)) return error.MismatchedPathIndex;
         @memcpy(result.query_buf[0..self.query_len], self.query());
         result.query_len = self.query_len;
         try result.refreshMatches();
@@ -322,7 +402,7 @@ pub const PathCompletion = struct {
 
         const q = self.query();
         for (self.entries.items, 0..) |entry, idx| {
-            const score = scorePath(entry.name, entry.is_directory, q) orelse continue;
+            const score = scorePath(entry.displayName(), entry.is_directory, q) orelse continue;
             const candidate = Match{ .entry_index = idx, .score = score };
             if (best.count() < max_matches) {
                 try best.add(candidate);
@@ -345,6 +425,30 @@ pub const PathCompletion = struct {
     }
 };
 
+fn isSeparator(c: u8) bool {
+    return c == '\\' or c == '/';
+}
+
+/// UNC shares (including WSL distributions) are navigation roots, not ordinary folders.
+fn directoryRootLength(path: []const u8) !usize {
+    _ = try directory.DirectoryPath.parse(path);
+    if (path[1] == ':') return 3;
+    const server_end = std.mem.indexOfScalarPos(u8, path, 2, '\\') orelse return error.InvalidDirectoryPath;
+    if (server_end == 2 or server_end + 1 == path.len) return error.InvalidDirectoryPath;
+    const share_end = std.mem.indexOfAnyPos(u8, path, server_end + 1, "\\/") orelse path.len;
+    if (share_end == server_end + 1) return error.InvalidDirectoryPath;
+    return share_end;
+}
+
+fn isUsablePathText(text: []const u8) bool {
+    if (!std.unicode.utf8ValidateSlice(text)) return false;
+    var scalars = std.unicode.Utf8View.initUnchecked(text).iterator();
+    while (scalars.nextCodepoint()) |scalar| {
+        if (scalar < 0x20 or (scalar >= 0x7f and scalar <= 0x9f)) return false;
+    }
+    return true;
+}
+
 fn boundedQueryPrefix(text: []const u8, capacity: usize) ![]const u8 {
     if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
     var len = @min(text.len, capacity);
@@ -359,8 +463,8 @@ const MatchRanking = struct {
 
     fn worstFirst(self: MatchRanking, a: Match, b: Match) std.math.Order {
         if (a.score != b.score) return std.math.order(a.score, b.score);
-        const na = self.entries[a.entry_index].name;
-        const nb = self.entries[b.entry_index].name;
+        const na = self.entries[a.entry_index].displayName();
+        const nb = self.entries[b.entry_index].displayName();
         const folded = std.ascii.orderIgnoreCase(nb, na);
         if (folded != .eq) return folded;
         const exact = std.mem.order(u8, nb, na);
@@ -495,14 +599,13 @@ pub fn formatPathAlloc(
     shell_kind: ShellQuoteKind,
     raw: bool,
 ) ![]u8 {
-    for (full_path) |c| {
-        if (c < 0x20 or c == 0x7f) return error.ControlCharacterInPath;
-    }
+    if (!std.unicode.utf8ValidateSlice(full_path)) return error.InvalidUtf8;
+    if (!isUsablePathText(full_path)) return error.ControlCharacterInPath;
 
     var converted = try allocator.dupe(u8, full_path);
     defer allocator.free(converted);
 
-    if (shell_kind == .wsl) {
+    if (shell_kind == .wsl or shell_kind == .wsl_nu or shell_kind == .wsl_pwsh) {
         if (wsl_paths.networkDistribution(full_path) catch null) |distro| {
             const linux_path = try wsl_paths.linuxDirectoryFromNetworkAlloc(allocator, full_path, distro);
             allocator.free(converted);
@@ -538,6 +641,11 @@ pub fn formatPathAlloc(
         converted = replacement;
     }
 
+    // cmd expands environment/delayed variables even inside double quotes.
+    // No path-only quoting works in both expansion modes; reject rather than
+    // silently inserting a different path. Explicit raw insertion stays available.
+    if (!raw and shell_kind == .cmd and std.mem.indexOfAny(u8, converted, "%!") != null) return error.UnquotableCmdPath;
+
     if (raw or isSafeUnquotedPath(converted)) {
         return try allocator.dupe(u8, converted);
     }
@@ -547,7 +655,7 @@ pub fn formatPathAlloc(
 
     switch (shell_kind) {
         .literal => try out.appendSlice(allocator, converted),
-        .pwsh => {
+        .pwsh, .wsl_pwsh => {
             try out.append(allocator, '\'');
             for (converted) |ch| {
                 if (ch == '\'') {
@@ -558,7 +666,7 @@ pub fn formatPathAlloc(
             }
             try out.append(allocator, '\'');
         },
-        .nu => {
+        .nu, .wsl_nu => {
             try out.append(allocator, '"');
             for (converted) |ch| {
                 if (ch == '\\' or ch == '"') {
@@ -602,11 +710,36 @@ fn checkWslNetworkPathFormattingAllocations(allocator: std.mem.Allocator) !void 
     allocator.free(formatted);
 }
 fn checkPathFormattingAllocations(allocator: std.mem.Allocator) !void {
-    for ([_]ShellQuoteKind{ .gitbash, .wsl, .pwsh, .literal }) |kind| {
+    for ([_]ShellQuoteKind{ .gitbash, .wsl, .wsl_nu, .wsl_pwsh, .pwsh, .literal }) |kind| {
         const formatted = try formatPathAlloc(allocator, "C:\\A Folder\\future.txt", kind, false);
         allocator.free(formatted);
     }
 }
+test "WSL shell dialects convert Linux paths independently of shell quoting" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectEqual(ShellQuoteKind.wsl_nu, ShellQuoteKind.forWslShell("/usr/bin/nu"));
+    try std.testing.expectEqual(ShellQuoteKind.wsl_pwsh, ShellQuoteKind.forWslShell("pwsh"));
+    try std.testing.expectEqual(ShellQuoteKind.wsl, ShellQuoteKind.forWslShell("bash"));
+    for ([_]struct { shell: ShellQuoteKind, expected: []const u8 }{
+        .{ .shell = .wsl_nu, .expected = "\"/tmp/a 'quote\\\"\"" },
+        .{ .shell = .wsl_pwsh, .expected = "'/tmp/a ''quote\"'" },
+        .{ .shell = .wsl, .expected = "'/tmp/a '\"'\"'quote\"'" },
+    }) |fixture| {
+        const formatted = try formatPathAlloc(allocator, "\\\\wsl.localhost\\NixOS\\tmp\\a 'quote\xef\x80\xa2", fixture.shell, false);
+        defer allocator.free(formatted);
+        try std.testing.expectEqualStrings(fixture.expected, formatted);
+    }
+}
+
+test "cmd variable expansion cannot silently change inserted filenames" {
+    for ([_][]const u8{ "C:\\file%TEMP%.txt", "C:\\file!TEMP!.txt" }) |path| {
+        try std.testing.expectError(error.UnquotableCmdPath, formatPathAlloc(std.testing.allocator, path, .cmd, false));
+        const raw = try formatPathAlloc(std.testing.allocator, path, .cmd, true);
+        defer std.testing.allocator.free(raw);
+        try std.testing.expectEqualStrings(path, raw);
+    }
+}
+
 test "index budget and stale revisions stop scanning without replacing current state" {
     var model = PathCompletion.init(std.testing.allocator);
     defer model.deinit();
@@ -631,6 +764,330 @@ fn isSafeUnquotedPath(path: []const u8) bool {
         }
     }
     return true;
+}
+
+test "recursive path indexing skips unreadable children and retains readable siblings" {
+    const Walker = struct {
+        step: usize = 0,
+        failure: anyerror = error.AccessDenied,
+        stack: struct { items: []const u8 = &.{1} } = .{},
+
+        fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
+            defer self.step += 1;
+            return switch (self.step) {
+                0 => .{ .path = "before.txt", .kind = .file },
+                1 => self.failure,
+                2 => .{ .path = "after.txt", .kind = .file },
+                else => null,
+            };
+        }
+    };
+    for ([_]anyerror{ error.AccessDenied, error.FileNotFound, error.Unexpected }) |failure| {
+        var completion = PathCompletion.init(std.testing.allocator);
+        defer completion.deinit();
+        var walker = Walker{ .failure = failure };
+        try completion.scanWalker(&walker);
+        try completion.refreshMatches();
+        try std.testing.expect(!completion.scan_error);
+        try std.testing.expect(completion.has_skipped_entries);
+        try std.testing.expect(!completion.is_truncated);
+        try std.testing.expectEqual(@as(usize, 2), completion.matches.items.len);
+        try std.testing.expectEqualStrings("before.txt", completion.entries.items[0].name);
+        try std.testing.expectEqualStrings("after.txt", completion.entries.items[1].name);
+    }
+
+    var completion = PathCompletion.init(std.testing.allocator);
+    defer completion.deinit();
+    var root_failure = Walker{ .step = 1, .stack = .{ .items = &.{} } };
+    try completion.scanWalker(&root_failure);
+    try std.testing.expect(completion.scan_error);
+    try std.testing.expectEqual(@as(usize, 0), completion.entries.items.len);
+    try std.testing.expect(try completion.appendIndexedEntry("read-before-root-error.txt", false));
+    root_failure.step = 1;
+    try completion.scanWalker(&root_failure);
+    try std.testing.expectEqual(@as(usize, 1), completion.entries.items.len);
+
+    var allocation_failure = Walker{ .step = 1, .failure = error.OutOfMemory };
+    try std.testing.expectError(error.OutOfMemory, completion.scanWalker(&allocation_failure));
+}
+
+test "path roots stop parent navigation at drives, shares and WSL distributions" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    for ([_][]const u8{ "C:\\", "C:/", "\\\\server\\share", "\\\\wsl.localhost\\NixOS", "\\\\wsl$\\Ubuntu" }) |root| {
+        try model.openDirectory(root, "keep");
+        try std.testing.expect(!try model.navigateParent());
+        const child = try std.fmt.allocPrint(std.testing.allocator, "{s}\\child\\", .{root});
+        defer std.testing.allocator.free(child);
+        try model.openDirectory(child, "keep");
+        try std.testing.expect(try model.navigateParent());
+        try std.testing.expectEqualStrings(std.mem.trimRight(u8, root, "\\/"), std.mem.trimRight(u8, model.directory, "\\/"));
+        try std.testing.expectEqualStrings("keep", model.query());
+        try std.testing.expect(!try model.navigateParent());
+    }
+    for ([_][]const u8{ "\\\\server\\", "\\\\server\\\\child", "\\\\\\share" }) |invalid| {
+        try std.testing.expectError(error.InvalidDirectoryPath, model.openDirectory(invalid, "replace"));
+        try std.testing.expectEqualStrings("keep", model.query());
+    }
+}
+
+test "WSL typed paths stay in their distribution and preserve symlink parent semantics" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    const root = "\\\\wsl.localhost\\NixOS";
+    for ([_]struct { input: []const u8, expected: []const u8, query: []const u8 }{
+        .{ .input = "/tmp/after", .expected = root ++ "\\tmp", .query = "after" },
+        .{ .input = "/", .expected = root, .query = "" },
+        .{ .input = "child/file", .expected = root ++ "\\home\\user\\child", .query = "file" },
+        .{ .input = "link/../file", .expected = root ++ "\\home\\user\\link\\..", .query = "file" },
+        .{ .input = "a:dir/question?/file", .expected = root ++ "\\home\\user\\a\xef\x80\xbadir\\question\xef\x80\xbf", .query = "file" },
+        .{ .input = "C:\\work\\file", .expected = "C:\\work", .query = "file" },
+        .{ .input = "\\\\wsl$\\Ubuntu\\home\\file", .expected = "\\\\wsl$\\Ubuntu\\home", .query = "file" },
+    }) |fixture| {
+        try model.openDirectory(root ++ "\\home\\user", "");
+        try model.appendQuery(fixture.input);
+        try std.testing.expectEqualStrings(fixture.expected, model.directory);
+        try std.testing.expectEqualStrings(fixture.query, model.query());
+    }
+}
+
+test "Windows typed paths resolve relative, rooted, absolute and parent directories" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    for ([_]struct { input: []const u8, expected: []const u8 }{
+        .{ .input = "child/file", .expected = "C:\\work\\child" },
+        .{ .input = "../file", .expected = "C:\\" },
+        .{ .input = "/tmp/file", .expected = "C:\\tmp" },
+        .{ .input = "D:/other/file", .expected = "D:\\other" },
+        .{ .input = "\\\\server\\share\\file", .expected = "\\\\server\\share" },
+    }) |fixture| {
+        try model.openDirectory("C:\\work", "");
+        try model.appendQuery(fixture.input);
+        try std.testing.expectEqualStrings(fixture.expected, model.directory);
+        try std.testing.expectEqualStrings("file", model.query());
+    }
+}
+
+test "UNC paths can be typed character by character as well as pasted" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    for ([_][]const u8{ "C:\\work", "\\\\wsl.localhost\\NixOS\\home" }) |start| {
+        try model.openDirectory(start, "");
+        const input = "\\\\server\\share\\file";
+        for (0..input.len) |i| try model.appendQuery(input[i .. i + 1]);
+        try std.testing.expectEqualStrings("\\\\server\\share", model.directory);
+        try std.testing.expectEqualStrings("file", model.query());
+    }
+}
+
+test "unusable filenames do not poison readable results and index flags reset on navigation" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    try std.testing.expect(try model.appendIndexedEntry("before.txt", false));
+    for ([_][]const u8{ "bad\xff", "bad\nname", "bad\x00name", "bad\xc2\x85name" }) |name| {
+        try std.testing.expect(try model.appendIndexedEntry(name, false));
+    }
+    try std.testing.expect(try model.appendIndexedEntry("Żółć 😀.txt", false));
+    try model.refreshMatches();
+    try std.testing.expectEqual(@as(usize, 2), model.matches.items.len);
+    try std.testing.expect(model.has_skipped_entries);
+    try std.testing.expect(!model.scan_error);
+    model.is_truncated = true;
+    model.index = .{ .deferred = .{} };
+    try model.openDirectory("C:\\fresh", "");
+    try std.testing.expect(!model.has_skipped_entries and !model.is_truncated and !model.scan_error);
+}
+
+test "WSL UNC escaped controls and backslashes are skipped while reserved printable names are decoded" {
+    const allocator = std.testing.allocator;
+    var model = PathCompletion.init(allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    try model.openDirectory("\\\\wsl.localhost\\NixOS\\tmp", "");
+    for ([_][]const u8{ "bad\xef\x80\x8aname", "bad\xef\x81\x9cname" }) |name| {
+        try std.testing.expect(try model.appendIndexedEntry(name, false));
+    }
+    try std.testing.expect(model.has_skipped_entries);
+    try std.testing.expectEqual(@as(usize, 0), model.entries.items.len);
+    const formatted = try formatPathAlloc(allocator, "\\\\wsl.localhost\\NixOS\\tmp\\question\xef\x80\xbf star\xef\x80\xaa", .wsl, false);
+    defer allocator.free(formatted);
+    try std.testing.expectEqualStrings("'/tmp/question? star*'", formatted);
+}
+
+test "WSL display names are searchable Linux paths while insertion retains filesystem spelling" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkWslDisplayAllocations, .{});
+}
+
+fn checkWslDisplayAllocations(allocator: std.mem.Allocator) !void {
+    var model = PathCompletion.init(allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    try model.openDirectory("\\\\wsl.localhost\\NixOS\\tmp\\colon\xef\x80\xba", "");
+    try std.testing.expectEqualStrings("NixOS:/tmp/colon:", model.directoryLabel());
+    const encoded = "folder\\question\xef\x80\xbf.txt";
+    try std.testing.expect(try model.appendIndexedEntry(encoded, false));
+    try std.testing.expectEqualStrings("folder/question?.txt", model.entries.items[0].displayName());
+    try model.setQuery("?");
+    try std.testing.expectEqual(@as(usize, 1), model.matches.items.len);
+    const selected = (try model.selectedFullPathAlloc(allocator)).?;
+    defer allocator.free(selected);
+    try std.testing.expect(std.mem.endsWith(u8, selected, encoded));
+    const formatted = try formatPathAlloc(allocator, selected, .wsl, false);
+    defer allocator.free(formatted);
+    try std.testing.expectEqualStrings("'/tmp/colon:/folder/question?.txt'", formatted);
+}
+
+test "index entry limit reports truncation only when a further entry is omitted" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    for (0..max_entries) |_| try std.testing.expect(try model.appendIndexedEntry("x", false));
+    try std.testing.expect(!model.is_truncated);
+    try std.testing.expect(!try model.appendIndexedEntry("overflow", false));
+    try std.testing.expect(model.is_truncated);
+    try std.testing.expectEqual(max_entries, model.entries.items.len);
+    try std.testing.expect(!model.has_skipped_entries);
+    model.clearEntries();
+    model.is_truncated = false;
+    model.indexed_name_bytes = max_index_bytes - 2;
+    try std.testing.expect(try model.appendIndexedEntry("ż", false));
+    try std.testing.expect(!model.is_truncated);
+    try std.testing.expect(!try model.appendIndexedEntry("x", false));
+    try std.testing.expect(model.is_truncated);
+}
+
+test "unreadable trees have bounded scan work and remain cancellation aware" {
+    const Walker = struct {
+        calls: usize = 0,
+        stack: struct { items: []const u8 = &.{1} } = .{},
+        fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
+            self.calls += 1;
+            return error.AccessDenied;
+        }
+    };
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    var walker = Walker{};
+    try model.scanWalker(&walker);
+    try std.testing.expectEqual(max_entries * 2, walker.calls);
+    try std.testing.expect(model.has_skipped_entries and model.is_truncated);
+    var latest = std.atomic.Value(u64).init(2);
+    model.scan_revision = .{ .latest = &latest, .expected = 1 };
+    try std.testing.expectError(error.StalePathIndex, model.scanWalker(&walker));
+    try std.testing.expectEqual(max_entries * 2, walker.calls);
+}
+
+test "failed query edits preserve text, selection and matches and successful edits clear hover" {
+    const allocator = std.testing.allocator;
+    var model = PathCompletion.init(allocator);
+    defer model.deinit();
+    try std.testing.expect(try model.appendIndexedEntry("file", false));
+    try model.setQuery("zz");
+    model.hovered_index = 7;
+    model.first_visible = 7;
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    model.allocator = failing.allocator();
+    defer model.allocator = allocator;
+    try std.testing.expectError(error.OutOfMemory, model.clearQuery());
+    try std.testing.expectEqualStrings("zz", model.query());
+    try std.testing.expectEqual(@as(?usize, 7), model.hovered_index);
+    try std.testing.expectEqual(@as(usize, 7), model.first_visible);
+    try std.testing.expectEqual(@as(usize, 0), model.matches.items.len);
+    model.allocator = allocator;
+    try model.clearQuery();
+    try std.testing.expectEqual(@as(?usize, null), model.hovered_index);
+    model.hovered_index = 0;
+    model.moveSelection(std.math.maxInt(isize), 8);
+    try std.testing.expectEqual(@as(usize, 0), model.selected_index);
+    model.moveSelection(std.math.minInt(isize), 8);
+    try std.testing.expectEqual(@as(usize, 0), model.selected_index);
+    try std.testing.expectEqual(@as(?usize, null), model.hovered_index);
+}
+
+test "WSL home fallback uses its distribution and reported paths remain unchanged" {
+    const allocator = std.testing.allocator;
+    const context: directory.DirectoryContext = .{ .wsl = try wsl_paths.WslDistribution.parse("NixOS") };
+    const home = try initialDirectoryAlloc(allocator, .{ .bytes = "C:\\Users\\WindowsUser", .shell_home = true }, context);
+    defer allocator.free(home);
+    try std.testing.expectEqualStrings("\\\\wsl.localhost\\NixOS\\", home);
+    const reported = try initialDirectoryAlloc(allocator, .{ .bytes = "\\\\wsl$\\NixOS\\home\\linux-user" }, context);
+    defer allocator.free(reported);
+    try std.testing.expectEqualStrings("\\\\wsl$\\NixOS\\home\\linux-user", reported);
+}
+
+test "deferred failures stop loading and mismatched results cannot replace the current folder" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    try model.openDirectory("C:\\current", "keep");
+    var result = PathCompletion.init(std.testing.allocator);
+    defer result.deinit();
+    result.index = .{ .deferred = .{} };
+    try result.openDirectory("C:\\stale", "");
+    try std.testing.expectError(error.MismatchedPathIndex, model.applyDeferredIndex(&result));
+    try std.testing.expectEqualStrings("keep", model.query());
+    model.failDeferredIndex();
+    try std.testing.expect(!model.index.deferred.loading);
+    try std.testing.expect(model.scan_error);
+}
+
+test "long pasted directory prefixes and full queries can still navigate" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    try text.appendSlice(std.testing.allocator, "C:\\");
+    for (0..80) |_| try text.appendSlice(std.testing.allocator, "folder\\");
+    const directory_end = text.items.len - 1;
+    try text.appendSlice(std.testing.allocator, "Żółć.txt");
+    try model.openDirectory("C:\\old", "");
+    try model.appendQuery(text.items);
+    try std.testing.expectEqualStrings(text.items[0..directory_end], model.directory);
+    try std.testing.expectEqualStrings("Żółć.txt", model.query());
+    const full_query = [_]u8{'a'} ** 128;
+    try model.openDirectory("C:\\old", &full_query);
+    try model.appendQuery("/");
+    try std.testing.expect(std.mem.endsWith(u8, model.directory, &full_query));
+    try std.testing.expectEqualStrings("", model.query());
+}
+
+test "path query navigation rolls back all allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkPathQueryNavigation, .{});
+}
+
+fn checkPathQueryNavigation(allocator: std.mem.Allocator) !void {
+    var model = PathCompletion.init(allocator);
+    defer model.deinit();
+    model.index = .{ .deferred = .{} };
+    try model.openDirectory("C:\\original", "keep");
+    const revision = model.index.deferred.revision;
+    var long_text: [600]u8 = @splat('a');
+    long_text[590] = '/';
+    model.appendQuery(&long_text) catch |err| {
+        try std.testing.expectEqualStrings("C:\\original", model.directory);
+        try std.testing.expectEqualStrings("keep", model.query());
+        try std.testing.expectEqual(revision, model.index.deferred.revision);
+        return err;
+    };
+    try std.testing.expectEqualStrings("aaaaaaaaa", model.query());
+}
+
+test "unsafe query and path text cannot enter results or shell input" {
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    try model.openDirectory("", "keep");
+    for ([_][]const u8{ "\n", "\x00", "\x7f", "\xc2\x85" }) |text| {
+        try model.appendQuery(text);
+        try std.testing.expectEqualStrings("keep", model.query());
+        try std.testing.expectError(error.InvalidPathQuery, model.openDirectory("", text));
+        try std.testing.expectEqualStrings("keep", model.query());
+        try std.testing.expectError(error.ControlCharacterInPath, formatPathAlloc(std.testing.allocator, text, .wsl, false));
+    }
+    try std.testing.expectError(error.InvalidUtf8, formatPathAlloc(std.testing.allocator, "\xff", .pwsh, false));
 }
 
 test "path directory replacement rolls back every allocation failure" {
