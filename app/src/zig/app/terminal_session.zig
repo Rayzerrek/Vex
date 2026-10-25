@@ -426,10 +426,28 @@ test "profile shells are name-independent and startup options do not imply live 
 fn resolveForegroundProcessTitle(proc_name: ?[]const u8, proc_cmd: ?[]const u8) ?[]const u8 {
     const raw_exe = proc_name orelse return null;
     if (proc_cmd) |cmd| {
-        if (command_line.parseCommandLineApp(cmd)) |app| return app;
+        if (command_line.parseCommandLineIdentity(cmd)) |app| {
+            return if (app.is_local_script) command_line.commandExecutable(cmd) else app.name;
+        }
     }
     const name = command_line.executableStem(raw_exe);
     return if (name.len > 0) name else null;
+}
+
+test "foreground captions retain package managers and local script runtimes" {
+    const cases = [_][2][]const u8{
+        .{ "npm run build", "npm" },
+        .{ "pnpm test", "pnpm" },
+        .{ "yarn lint", "yarn" },
+        .{ "bun run backend.ts", "bun" },
+        .{ "python server.py", "python" },
+        .{ "uv run server.py", "uv" },
+        .{ "uv run uvicorn backend:app", "uvicorn" },
+        .{ "npx claude", "claude" },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqualStrings(case[1], resolveForegroundProcessTitle(command_line.commandExecutable(case[0]), case[0]).?);
+    }
 }
 
 test "copy feedback progress advances and clears on duration or scroll change" {

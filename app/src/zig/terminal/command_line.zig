@@ -28,6 +28,9 @@ const hosts = [_]Host{
     .{ .name = "yarn", .mode = .subcommand },
     .{ .name = "uv", .mode = .subcommand },
     .{ .name = "pipx", .mode = .subcommand },
+    .{ .name = "poetry", .mode = .subcommand },
+    .{ .name = "pdm", .mode = .subcommand },
+    .{ .name = "corepack", .mode = .subcommand },
 };
 
 /// True only for launchers whose argument syntax this module can decode, regardless of target name.
@@ -76,6 +79,7 @@ pub fn parseCommandLineIdentity(raw: []const u8) ?CommandIdentity {
             .is_local_script = std.mem.eql(u8, name, executableStem(first.token)) and isScriptPath(first.token),
         };
         var rest = first.rest;
+        var executes_tool = false;
         while (rest.len > 0) {
             // cmd /s /c wraps the entire quoted command in one extra quote pair.
             if (mode == .shell and std.mem.startsWith(u8, rest, "\"\"")) {
@@ -104,11 +108,12 @@ pub fn parseCommandLineIdentity(raw: []const u8) ?CommandIdentity {
             }
             if (mode == .subcommand and (equals(arg.token, "exec") or equals(arg.token, "dlx") or equals(arg.token, "x") or equals(arg.token, "tool"))) {
                 rest = arg.rest;
+                executes_tool = true;
                 continue;
             }
             if (mode == .subcommand and equals(arg.token, "run")) {
-                // npm scripts are arbitrary labels, not executable identities.
-                if (equals(name, "npm") or equals(name, "pnpm") or equals(name, "yarn")) return .{ .name = name };
+                // Package scripts are arbitrary labels, not executable identities.
+                if (isNodePackageManager(name) and !(equals(name, "bun") and isScriptPath(nextToken(arg.rest).token))) return .{ .name = name };
                 rest = arg.rest;
                 continue;
             }
@@ -123,6 +128,8 @@ pub fn parseCommandLineIdentity(raw: []const u8) ?CommandIdentity {
                 rest = arg.rest;
                 continue;
             }
+            if (mode == .subcommand and !executes_tool and isNodePackageManager(name) and
+                !(equals(name, "bun") and isScriptPath(arg.token))) return .{ .name = name };
             break;
         }
         if (rest.len == 0) return .{ .name = name };
@@ -192,6 +199,13 @@ pub fn isPythonExecutable(raw: []const u8) bool {
     return count > 0 and count <= 2;
 }
 
+fn isNodePackageManager(name: []const u8) bool {
+    for ([_][]const u8{ "npm", "pnpm", "yarn", "bun" }) |manager| {
+        if (equals(name, manager)) return true;
+    }
+    return false;
+}
+
 fn isScriptPath(path: []const u8) bool {
     var parts = std.mem.tokenizeAny(u8, path, "/\\");
     while (parts.next()) |part| {
@@ -212,7 +226,9 @@ fn equals(a: []const u8, b: []const u8) bool {
     return std.ascii.eqlIgnoreCase(a, b);
 }
 fn takesValue(mode: Mode, value: []const u8) bool {
-    return (mode == .package and (equals(value, "-p") or equals(value, "--package"))) or
+    return (mode == .subcommand and (equals(value, "--filter") or equals(value, "-F") or equals(value, "--dir") or
+        equals(value, "-C") or equals(value, "--cwd") or equals(value, "--prefix") or equals(value, "--workspace") or equals(value, "-w"))) or
+        (mode == .package and (equals(value, "-p") or equals(value, "--package"))) or
         (mode == .python and (equals(value, "-X") or equals(value, "-W")));
 }
 fn isFlag(mode: Mode, value: []const u8) bool {

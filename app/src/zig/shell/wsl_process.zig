@@ -135,14 +135,18 @@ test "WSL local scripts retain runtime icons while installed tools keep their id
     const cases = [_]struct { row: []const u8, glyph: app_icon.GlyphId }{
         .{ .row = "200 100 200 200 python3.13 /usr/bin/python3.13 server.py", .glyph = .python },
         .{ .row = "200 100 200 200 MainThread node server.js", .glyph = .nodedotjs },
-        .{ .row = "200 100 200 200 bun bun run server.ts", .glyph = .bun },
+        .{ .row = "200 100 200 200 bun bun run server.ts", .glyph = .none },
+        .{ .row = "200 100 200 200 uv uv run uvicorn backend:app", .glyph = .python },
+        .{ .row = "200 100 200 200 node pnpm run build", .glyph = .none },
         .{ .row = "200 100 200 200 node node /npm/node_modules/@anthropic-ai/claude-code/cli.js", .glyph = .claudecode },
     };
     for (cases) |case| {
         const snapshot = try std.mem.concat(std.testing.allocator, u8, &.{ "100\n100 1 100 200 bash bash\n", case.row, "\n" });
         defer std.testing.allocator.free(snapshot);
         const process = parseSnapshot(snapshot) orelse return error.MissingProcess;
-        try std.testing.expectEqual(case.glyph, app_icon.resolve(process.name, process.command, null, null).glyph);
+        const icon = app_icon.resolve(process.name, process.command, null, null);
+        try std.testing.expectEqual(case.glyph, icon.glyph);
+        try std.testing.expect(!icon.is_shell);
     }
 }
 

@@ -342,6 +342,7 @@ pub fn resolveDirect(raw_name: []const u8) ?AppIcon {
     if (clean.len == 0) return null;
 
     if (isShellName(clean)) return AppIcon.terminal_shell;
+    if (packageRuntimeIcon(clean)) |icon| return icon;
     var canonical = if (command_identity.isPythonExecutable(clean)) "python" else clean;
     for (aliases) |entry| {
         if (std.ascii.eqlIgnoreCase(clean, entry.alias)) {
@@ -353,6 +354,22 @@ pub fn resolveDirect(raw_name: []const u8) ?AppIcon {
         if (std.ascii.eqlIgnoreCase(canonical, entry.slug)) {
             return AppIcon.glyphIcon(entry.id, entry.rgb, entry.is_shell);
         }
+    }
+    return null;
+}
+
+/// Runtime fallbacks apply only to known launchers and web tools, never arbitrary executable names.
+fn packageRuntimeIcon(name: []const u8) ?AppIcon {
+    for ([_][]const u8{ "npm", "pnpm", "yarn", "bun", "npx", "pnpx", "bunx", "corepack", "vite", "next", "nextjs", "nuxt", "astro", "vue-cli-service", "react-scripts" }) |manager| {
+        if (std.ascii.eqlIgnoreCase(name, manager)) {
+            // The terminal glyph does not make a running task an idle shell.
+            var icon = AppIcon.terminal_shell;
+            icon.is_shell = false;
+            return icon;
+        }
+    }
+    for ([_][]const u8{ "uv", "uvx", "pip", "pip3", "pipx", "poetry", "pdm" }) |manager| {
+        if (std.ascii.eqlIgnoreCase(name, manager)) return AppIcon.glyphIcon(.python, 0x3776AB, false);
     }
     return null;
 }
@@ -385,9 +402,11 @@ pub fn fromCommandLine(command_line: []const u8, shim_name: []const u8) ?AppIcon
                         if (!runtime.is_shell) return runtime;
                     }
                 }
+                if (packageRuntimeIcon(clean_shim)) |runtime| return runtime;
                 return fromProcess(app);
             }
         }
+        if (packageRuntimeIcon(app)) |runtime| return runtime;
     }
 
     return null;
@@ -426,11 +445,15 @@ pub fn resolve(
     if (process_name) |proc_raw| {
         const proc_name = std.mem.trim(u8, proc_raw, whitespace);
         if (proc_name.len > 0) {
-            const is_shim = isShimHost(proc_name);
+            // WSL already supplies the decoded app name; retain the launcher for runtime fallbacks.
+            const launcher = if (command_line) |cmd| command_identity.commandExecutable(cmd) else proc_name;
+            const shim_name = if (isShimHost(launcher)) launcher else proc_name;
+            const is_shim = isShimHost(shim_name);
             if (is_shim) {
                 if (command_line) |cmd| {
-                    if (fromCommandLine(cmd, proc_name)) |shim_icon| return shim_icon;
+                    if (fromCommandLine(cmd, shim_name)) |shim_icon| return shim_icon;
                 }
+                if (packageRuntimeIcon(shim_name)) |runtime| return runtime;
                 if (osc_title) |title| {
                     if (fromTitle(title)) |shim_title_icon| return shim_title_icon;
                 }
@@ -612,6 +635,30 @@ test "app icon resolution handles shim command lines, OSC titles, and unknown pr
     try std.testing.expect(idle_shell.is_shell);
 }
 
+test "package commands use terminal icons without becoming idle shells" {
+    for ([_][]const u8{
+        "npm run dev",           "npm start",                "pnpm dev",                                 "pnpm run dev:web",                                           "yarn serve",                                               "bun run dev",                        "bun start",
+        "pnpm --filter web dev", "npm --prefix web run dev", "yarn --cwd web start",                     "cmd /d /s /c npm run dev",                                   "node C:\\npm\\node_modules\\npm\\bin\\npm-cli.js run dev", "node node_modules/vite/bin/vite.js", "npx vite dev",
+        "pnpm exec next dev",    "bunx astro dev",           "node node_modules/next/dist/bin/next dev", "node node_modules/react-scripts/bin/react-scripts.js start",
+    }) |command| {
+        const icon = resolve(command_identity.commandExecutable(command), command, "nvim", null);
+        errdefer std.debug.print("dev server command: {s}\n", .{command});
+        try std.testing.expectEqual(Kind.shell, icon.kind);
+        try std.testing.expect(!icon.is_shell);
+    }
+    for ([_][]const u8{ "npm install", "npm run build", "pnpm test", "yarn lint", "bun run server.ts", "npx next build", "corepack pnpm run build", "pnpx custom-tool" }) |command| {
+        const icon = resolve(command_identity.commandExecutable(command), command, "nvim", null);
+        try std.testing.expectEqual(Kind.shell, icon.kind);
+        try std.testing.expect(!icon.is_shell);
+    }
+    for ([_][]const u8{ "uv run server.py", "uv run uvicorn backend:app", "uvx custom-tool", "poetry run python server.py", "pdm run backend", "pipx run custom-tool" }) |command| {
+        try std.testing.expectEqual(GlyphId.python, resolve(command_identity.commandExecutable(command), command, "nvim", null).glyph);
+    }
+    try std.testing.expectEqual(GlyphId.python, resolve("uvicorn", "uv run uvicorn backend:app", null, null).glyph);
+    try std.testing.expectEqual(GlyphId.claudecode, resolve("npx", "npx claude", null, null).glyph);
+    try std.testing.expectEqual(GlyphId.neovim, resolve("npm", "npm run dev", null, "nvim").glyph);
+}
+
 test "runtime icons survive local scripts and versioned Python executables" {
     const cases = [_]struct { process: []const u8, command: []const u8, glyph: GlyphId }{
         .{ .process = "python3", .command = "python3 kitty-live-check.py --pause", .glyph = .python },
@@ -620,7 +667,6 @@ test "runtime icons survive local scripts and versioned Python executables" {
         .{ .process = "python.exe", .command = "python.exe -m pytest tests/", .glyph = .python },
         .{ .process = "node.exe", .command = "node.exe \"C:\\My Project\\server.js\"", .glyph = .nodedotjs },
         .{ .process = "nodejs", .command = "nodejs --enable-source-maps server.mjs", .glyph = .nodedotjs },
-        .{ .process = "bun", .command = "bun run server.ts", .glyph = .bun },
         .{ .process = "tsx", .command = "tsx server.ts", .glyph = .typescript },
     };
     for (cases) |case| {

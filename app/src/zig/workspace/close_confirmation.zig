@@ -139,7 +139,7 @@ pub const ExitReview = struct {
         const confirmation = evaluatePane(snapshot, .pane) orelse return;
         var row: ExitProcessRow = .{ .icon = confirmation.icon };
         const name = confirmation.programSlice();
-        setFormatted(&row.name, &row.name_len, "{s}", .{if (std.mem.eql(u8, name, "A program")) "Unverified session" else name});
+        setFormatted(&row.name, &row.name_len, "{s}", .{if (std.mem.eql(u8, name, "A program")) "Running command" else name});
         const risk = if (confirmation.reason == .dirty_buffer) " · Unsaved changes" else "";
         if (tab_title.len > 0) {
             setFormatted(&row.detail, &row.detail_len, "Tab {d}: {s} · Pane {d}{s}", .{ tab_index + 1, tab_title, pane_index + 1, risk });
@@ -167,6 +167,27 @@ fn checkExitReviewAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(app_icon.GlyphId.codex, review.rows.items[0].icon.glyph);
 }
 
+test "package manager close and exit messages retain their names and runtime icons" {
+    var review: ExitReview = .{};
+    defer review.deinit(std.testing.allocator);
+    for ([_][]const u8{ "npm", "pnpm", "yarn", "bun", "uv", "poetry" }) |name| {
+        const icon = app_icon.fromProcess(name);
+        const snapshot: PaneCloseSnapshot = .{
+            .is_running = true,
+            .has_foreground_process = true,
+            .active_process_title = name,
+            .icon = icon,
+        };
+        const confirmation = evaluatePane(snapshot, .pane).?;
+        try std.testing.expectEqualStrings(name, confirmation.programSlice());
+        try std.testing.expect(icon.eql(confirmation.icon));
+        try review.includePane(std.testing.allocator, snapshot, 0, 0, "Development");
+        const row = &review.rows.items[review.rows.items.len - 1];
+        try std.testing.expectEqualStrings(name, row.nameSlice());
+        try std.testing.expect(icon.eql(row.icon));
+    }
+}
+
 test "exit review includes every protected pane without a 64-item cap and survives allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkExitReviewAllocation, .{});
 }
@@ -182,7 +203,7 @@ test "exit rows own names and locations, preserve UTF-8 and distinguish dirty or
     try review.includePane(std.testing.allocator, .{ .is_running = true, .foreground_is_transport = true }, 1, 0, "");
     try std.testing.expectEqual(@as(usize, 1), review.rows.items.len);
     try review.includePane(std.testing.allocator, .{ .is_running = true, .foreground_is_transport = true, .status_active = true }, 1, 0, "");
-    try std.testing.expectEqualStrings("Unverified session", review.rows.items[1].nameSlice());
+    try std.testing.expectEqualStrings("Running command", review.rows.items[1].nameSlice());
     try review.includePane(std.testing.allocator, .{ .is_running = false, .title = "file*", .has_foreground_process = true }, 1, 1, "Exited");
     try std.testing.expectEqual(@as(usize, 2), review.rows.items.len);
     var unicode: [256]u8 = undefined;
