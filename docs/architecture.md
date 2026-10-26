@@ -46,7 +46,13 @@ ignored. The startup delay still avoids spawning probes for short-lived WSL tabs
 These are scheduling intervals, not guaranteed end-to-end detection latencies.
 
 Dirty snapshots read every row to compensate for Ghostty scroll dirty-state
-under-reporting. Cursor drawing and workspace transitions reuse cached geometry.
+under-reporting. Within one snapshot, rows reported as unstyled share decoded
+non-grapheme cells; styled rows retain page-local cell and style-ID caches.
+Style IDs never cross rows or snapshots. Background colors still come from the
+public API per decoded cell because equal style IDs can carry different content
+backgrounds; inverse and faint colors are applied only after that lookup.
+The shared cache is discarded between snapshots, including palette changes.
+Cursor drawing and workspace transitions reuse cached geometry.
 
 ## Dependencies and output
 

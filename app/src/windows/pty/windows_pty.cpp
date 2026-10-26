@@ -1,6 +1,7 @@
 #include "windows_platform.h"
 #include "windows_conpty.h"
 #include "conpty_graphics_reply.h"
+#include "pty_input_queue.h"
 #include "windows_wsl_probe.h"
 #include <windows.h>
 #include <tlhelp32.h>
@@ -20,10 +21,8 @@ struct VexPty {
     VexConptyApi conpty;
     WslProcessProbe* wslProbe;
     CRITICAL_SECTION inputLock;
-    // A full clipboard paste must not starve protocol replies and kill an otherwise healthy pane.
-    static constexpr size_t replyReserve = 64 * 1024;
-    uint8_t inputQueue[1024 * 1024 + 12 + replyReserve];
-    size_t inputHead, inputLength;
+    // Retain the reply quota without committing a maximum-size paste buffer per idle pane.
+    PtyInputQueue inputQueue;
     uint8_t outputBuffer[65536];
     DWORD outputLength;
     DWORD testCloseDelayMs;
@@ -106,12 +105,7 @@ static DWORD WINAPI writePtyInput(void* context) {
     for (;;) {
         if (InterlockedCompareExchange(&session->stopping, 0, 0)) return 0;
         EnterCriticalSection(&session->inputLock);
-        size_t length = session->inputLength < sizeof(block) ? session->inputLength : sizeof(block);
-        size_t first = length < sizeof(session->inputQueue) - session->inputHead ? length : sizeof(session->inputQueue) - session->inputHead;
-        memcpy(block, session->inputQueue + session->inputHead, first);
-        memcpy(block + first, session->inputQueue, length - first);
-        session->inputHead = (session->inputHead + length) % sizeof(session->inputQueue);
-        session->inputLength -= length;
+        const size_t length = session->inputQueue.take(block, sizeof(block));
         LeaveCriticalSection(&session->inputLock);
         if (!length) { WaitForSingleObject(session->inputReady, INFINITE); continue; }
         DWORD written;
@@ -282,6 +276,7 @@ static void destroyDetachedPty(VexPty* session) {
     if (session->exitWatcher) WaitForSingleObject(session->exitWatcher, INFINITE);
     const HANDLE handles[] = { session->input, session->output, session->process, session->reader, session->writer, session->exitWatcher, session->outputConsumed, session->inputReady };
     for (HANDLE handle : handles) if (handle) CloseHandle(handle);
+    session->inputQueue.release();
     DeleteCriticalSection(&session->inputLock);
     session->conpty.unload();
     free(session);
@@ -376,18 +371,11 @@ static int queuePtyInput(VexPty* session, const uint8_t* bytes, size_t length, b
     if (InterlockedCompareExchange(&session->stopping, 0, 0)) return ERROR_BROKEN_PIPE;
     if (!length) return ERROR_SUCCESS;
     EnterCriticalSection(&session->inputLock);
-    const size_t limit = sizeof(session->inputQueue) - (response ? 0 : VexPty::replyReserve);
-    bool fits = session->inputLength <= limit && length <= limit - session->inputLength;
-    if (fits) {
-        size_t tail = (session->inputHead + session->inputLength) % sizeof(session->inputQueue);
-        size_t first = length < sizeof(session->inputQueue) - tail ? length : sizeof(session->inputQueue) - tail;
-        memcpy(session->inputQueue + tail, bytes, first);
-        memcpy(session->inputQueue, bytes + first, length - first);
-        session->inputLength += length;
-    }
+    const auto result = session->inputQueue.append(bytes, length, response);
     LeaveCriticalSection(&session->inputLock);
-    if (fits) SetEvent(session->inputReady);
-    return fits ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_QUOTA;
+    if (result == PtyInputQueue::Result::ok) SetEvent(session->inputReady);
+    return result == PtyInputQueue::Result::ok ? ERROR_SUCCESS :
+        result == PtyInputQueue::Result::quota ? ERROR_NOT_ENOUGH_QUOTA : ERROR_NOT_ENOUGH_MEMORY;
 }
 
 extern "C" int vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length) {

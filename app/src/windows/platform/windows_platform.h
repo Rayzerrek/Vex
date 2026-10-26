@@ -154,7 +154,7 @@ size_t vex_pty_pending_closures(void);
 uint32_t vex_pty_forced_closures(void);
 /* Only called behind the window adapter's VEX_NATIVE_SELFTEST gate. */
 bool vex_pty_test_delay_close(uint32_t token);
-enum { VEX_PTY_INPUT_FULL = 1816 }; /* ERROR_NOT_ENOUGH_QUOTA */
+enum { VEX_PTY_INPUT_FULL = 1816, VEX_PTY_OUT_OF_MEMORY = 8 }; /* ERROR_NOT_ENOUGH_QUOTA / ERROR_NOT_ENOUGH_MEMORY */
 /* Atomic enqueue: ERROR_NOT_ENOUGH_QUOTA leaves the queue unchanged. */
 int vex_pty_write(VexPty* session, const uint8_t* bytes, size_t length);
 void vex_pty_note_process_input(VexPty* session);

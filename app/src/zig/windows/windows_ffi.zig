@@ -185,6 +185,7 @@ pub const PtyOwner = struct {
         if (bytes.len == 0) return;
         const result = c.vex_pty_write(self.handle, bytes.ptr, bytes.len);
         if (result == c.VEX_PTY_INPUT_FULL) return error.PtyInputFull;
+        if (result == c.VEX_PTY_OUT_OF_MEMORY) return error.OutOfMemory;
         if (result != 0) return error.PtyWriteFailed;
     }
     /// Resize the process before publishing new emulator geometry.
@@ -229,7 +230,10 @@ pub const PtyOwner = struct {
     }
     fn writeReply(context: *anyopaque, bytes: []const u8) !void {
         const handle: *c.VexPty = @ptrCast(@alignCast(context));
-        if (bytes.len > 0 and c.vex_pty_write_response(handle, bytes.ptr, bytes.len) != 0) return error.PtyReplyWriteFailed;
+        if (bytes.len == 0) return;
+        const result = c.vex_pty_write_response(handle, bytes.ptr, bytes.len);
+        if (result == c.VEX_PTY_OUT_OF_MEMORY) return error.OutOfMemory;
+        if (result != 0) return error.PtyReplyWriteFailed;
     }
 };
 
@@ -512,12 +516,21 @@ test "clipboard lock contention is reported instead of acknowledging a lost copy
     lock.ready.wait();
     if (!lock.acquired) return error.SkipZigTest;
     try std.testing.expectError(error.ClipboardWriteFailed, writeClipboardText("keep this tab name"));
+    try std.testing.expect(lastClipboardWriteError() != 0);
+}
+
+var last_clipboard_write_error: c_int = 0;
+
+/// Diagnostics only; copy failures retain their selection and are never retried silently.
+pub fn lastClipboardWriteError() c_int {
+    return last_clipboard_write_error;
 }
 
 /// Publishes validated UTF-8 text; callers retain their source text when the clipboard is busy or fails.
 pub fn writeClipboardText(text: []const u8) !void {
     if (text.len == 0 or std.mem.indexOfScalar(u8, text, 0) != null or !std.unicode.utf8ValidateSlice(text)) return error.InvalidClipboardText;
-    if (c.vex_clipboard_write(text.ptr, text.len) != 0) return error.ClipboardWriteFailed;
+    last_clipboard_write_error = c.vex_clipboard_write(text.ptr, text.len);
+    if (last_clipboard_write_error != 0) return error.ClipboardWriteFailed;
 }
 /// Reads CF_UNICODETEXT from the system clipboard and routes it through the active session paste handler.
 /// Shared earliest-deadline tick: metadata bursts and copy feedback must not postpone each other.
@@ -612,6 +625,19 @@ pub const TabEdit = struct {
     cursor: u8,
     select_all: bool,
 };
+
+test "PTY input queue grows lazily, preserves FIFO on wrap and OOM, and reserves protocol reply quota" {
+    const allocator = std.testing.allocator;
+    const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(executable_directory);
+    const fixture = try std.fs.path.join(allocator, &.{ executable_directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "pty-input-queue" }, .max_output_bytes = 4096 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    if (output.term != .Exited or output.term.Exited != 0) std.debug.print("{s}", .{output.stderr});
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
 
 test "tab rename reuses DirectWrite layout across repaints and invalidates changed text and fonts" {
     const allocator = std.testing.allocator;

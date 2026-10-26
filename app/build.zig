@@ -114,6 +114,7 @@ pub fn build(b: *std.Build) void {
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/ui_renderer.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_renderer.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/wsl_probe_schedule.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/pty_input_queue.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_conpty.cpp"), .flags = native_flags });
     fixture_module.linkSystemLibrary("kernel32", .{});
     fixture_module.linkSystemLibrary("user32", .{});

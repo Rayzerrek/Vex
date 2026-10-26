@@ -850,6 +850,9 @@ pub const Terminal = struct {
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND, &background);
         var iterator: c.GhosttyRenderStateRowIterator = self.row_iterator;
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, @ptrCast(&iterator));
+        // Unstyled, non-grapheme cells have no page-local style/grapheme references.
+        // Share only these across rows, and discard the cache before the next snapshot.
+        var plain_cache: [64]?CachedRenderCell = @splat(null);
         var row: usize = 0;
         while (self.api.render_state_row_iterator_next(self.row_iterator)) : (row += 1) {
             if (row >= rows) return error.InvalidTerminalRowCount;
@@ -858,19 +861,32 @@ pub const Terminal = struct {
                 .start_x = 0,
                 .end_x = 0,
             };
-            const selection_result = self.api.render_state_row_get(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION, &row_selection);
-            const has_row_selection = if (selection_result == c.GHOSTTY_NO_VALUE) false else blk: {
-                try check(selection_result);
+            var cells: c.GhosttyRenderStateRowCells = self.row_cells;
+            var raw_row: c.GhosttyRow = undefined;
+            const fields = [_]c.GhosttyRenderStateRowData{
+                c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
+            };
+            var values = [_]?*anyopaque{ &raw_row, @ptrCast(&cells), &row_selection };
+            var written: usize = 0;
+            // Optional selection is last: NO_VALUE must not hide an unread row or cell iterator.
+            const result = self.api.render_state_row_get_multi(self.row_iterator, fields.len, &fields, &values, &written);
+            const has_row_selection = if (result == c.GHOSTTY_NO_VALUE and written == 2) false else blk: {
+                try check(result);
+                if (written != fields.len) return error.InvalidTerminalRowData;
                 break :blk true;
             };
-            var cells: c.GhosttyRenderStateRowCells = self.row_cells;
-            try check(self.api.render_state_row_get(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, @ptrCast(&cells)));
-            // Raw cells are page-local: reuse only within this row and this snapshot.
-            var cell_cache: [64]?CachedRenderCell = @splat(null);
+            var styled = true;
+            try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_STYLED, &styled));
+            // Styled cells remain page-local, even when the opaque raw values match.
+            var cell_cache: [64]?CachedRenderCell = if (styled) @splat(null) else undefined;
+            const cache = if (styled) &cell_cache else &plain_cache;
+            var style_cache: StyleCache = if (styled) @splat(null) else undefined;
             var column: usize = 0;
             while (self.api.render_state_row_cells_next(self.row_cells)) : (column += 1) {
                 if (column >= columns) return error.InvalidTerminalColumnCount;
-                var cell = try self.readCachedCell(foreground, background, &cell_cache);
+                var cell = try self.readCachedCell(foreground, background, styled, cache, if (styled) &style_cache else null);
                 cell.selected = has_row_selection and column >= row_selection.start_x and column <= row_selection.end_x;
                 self.frame.cells.appendAssumeCapacity(cell);
             }
@@ -929,22 +945,24 @@ pub const Terminal = struct {
         return cursor;
     }
     const CachedRenderCell = struct { raw: c.GhosttyCell, cell: TerminalCell };
+    const CachedStyle = struct { id: u16, style: TextStyle, inverse: bool, faint: bool };
+    const StyleCache = [32]?CachedStyle;
 
-    fn readCachedCell(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *[64]?CachedRenderCell) !TerminalCell {
+    fn readCachedCell(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, row_styled: bool, cache: *[64]?CachedRenderCell, style_cache: ?*StyleCache) !TerminalCell {
         var raw: c.GhosttyCell = undefined;
         try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
         const slot = &cache[std.hash.int(raw) % cache.len];
         if (slot.*) |cached| {
             if (cached.raw == raw) return cached.cell;
         }
-        const cell = try self.readCell(raw, default_fg, default_bg);
+        const cell = try self.readCell(raw, default_fg, default_bg, row_styled, style_cache);
         var tag: c.GhosttyCellContentTag = undefined;
         try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_CONTENT_TAG, &tag));
         // Grapheme extras live outside the opaque raw value and may differ for equal raw cells.
         if (tag != c.GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME) slot.* = .{ .raw = raw, .cell = cell };
         return cell;
     }
-    fn readCell(self: *Terminal, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TerminalCell {
+    fn readCell(self: *Terminal, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, row_styled: bool, style_cache: ?*StyleCache) !TerminalCell {
         var wide: c.GhosttyCellWide = undefined;
         try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_WIDE, &wide));
         const width: CellWidth = switch (wide) {
@@ -954,7 +972,10 @@ pub const Terminal = struct {
             3 => .head,
             else => return error.InvalidTerminalCellWidth,
         };
-        const style = try self.readStyle(default_fg, default_bg);
+        const style = if (style_cache) |cache|
+            try self.readCachedStyle(raw, default_fg, default_bg, cache)
+        else
+            try self.readCellStyle(default_fg, default_bg, row_styled);
         var scratch: [128]u8 = undefined;
         var text: c.GhosttyBuffer = .{ .ptr = &scratch, .cap = scratch.len, .len = 0 };
         const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text);
@@ -976,6 +997,51 @@ pub const Terminal = struct {
         if (bytes.len > max_frame_text_bytes - start) return error.TerminalFrameTextLimit;
         try self.frame.utf8.appendSlice(self.allocator, bytes);
         return .{ .width = width, .style = style, .text_start = start, .text_length = bytes.len };
+    }
+    fn readCachedStyle(self: *Terminal, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *StyleCache) !TextStyle {
+        var id: u16 = 0;
+        try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_STYLE_ID, &id));
+        const slot = &cache[id % cache.len];
+        if (slot.* == null or slot.*.?.id != id) {
+            var foreground = default_fg;
+            const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &foreground);
+            if (result == c.GHOSTTY_INVALID_VALUE) foreground = default_fg else try check(result);
+            var style = std.mem.zeroes(c.GhosttyStyle);
+            style.size = @sizeOf(c.GhosttyStyle);
+            try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style));
+            slot.* = .{
+                .id = id,
+                .style = .{ .foreground = packedRgb(foreground), .background = 0, .bold = style.bold, .italic = style.italic, .underline = style.underline != 0, .strikethrough = style.strikethrough, .invisible = style.invisible },
+                .inverse = style.inverse,
+                .faint = style.faint,
+            };
+        }
+        const cached = slot.*.?;
+        var foreground = colorRgb(cached.style.foreground);
+        // Content backgrounds can differ for equal style IDs. Resolve them per cell,
+        // and apply inverse/faint only afterwards; the cache never crosses a row.
+        var background = default_bg;
+        const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
+        if (result == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(result);
+        if (cached.inverse) std.mem.swap(c.GhosttyColorRgb, &foreground, &background);
+        if (cached.faint) {
+            foreground.r = @intCast((@as(u16, foreground.r) + background.r) / 2);
+            foreground.g = @intCast((@as(u16, foreground.g) + background.g) / 2);
+            foreground.b = @intCast((@as(u16, foreground.b) + background.b) / 2);
+        }
+        var style = cached.style;
+        style.foreground = packedRgb(foreground);
+        style.background = packedRgb(background);
+        return style;
+    }
+    fn readCellStyle(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, row_styled: bool) !TextStyle {
+        if (row_styled) return self.readStyle(default_fg, default_bg);
+        // Erased cells can carry a background in their content even without a style.
+        // Only foreground and decorations are implied by the public unstyled flag.
+        var background = default_bg;
+        const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
+        if (result == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(result);
+        return .{ .foreground = packedRgb(default_fg), .background = packedRgb(background) };
     }
     fn readStyle(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TextStyle {
         var foreground = default_fg;
@@ -1212,7 +1278,7 @@ fn isWhitespaceOrEmptyCell(frame: *const TerminalFrame, row: u16, col: u16) bool
     return std.mem.trim(u8, bytes, " \t\r\n\x0b\x0c").len == 0;
 }
 
-test "row-local cell cache matches uncached public API decoding across graphemes, styles and snapshots" {
+test "cell caches match full public API decoding across pages, graphemes, colors and snapshots" {
     const api = try binding.Api.load();
     var terminal = try Terminal.init(std.testing.allocator, &api);
     defer terminal.deinit();
@@ -1234,7 +1300,8 @@ test "row-local cell cache matches uncached public API decoding across graphemes
                     var raw: c.GhosttyCell = undefined;
                     try check(owner.api.render_state_row_cells_get(owner.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
                     const cached = frame.cells.items[index];
-                    const uncached = try owner.readCell(raw, foreground, background);
+                    // Force the original full-style decoder as an independent oracle.
+                    const uncached = try owner.readCell(raw, foreground, background, true, null);
                     try std.testing.expectEqual(cached.width, uncached.width);
                     try std.testing.expectEqualDeep(cached.style, uncached.style);
                     try std.testing.expectEqualStrings(frame.cellText(cached), frame.cellText(uncached));
@@ -1243,6 +1310,18 @@ test "row-local cell cache matches uncached public API decoding across graphemes
             try std.testing.expectEqual(frame.cells.items.len, index);
         }
     };
+    try Compare.snapshot(&terminal);
+    try terminal.feedOutput("plain text ż界\r\n\x1b[48;2;1;2;3m\x1b[2J\x1b[0m");
+    try Compare.snapshot(&terminal);
+    try terminal.feedOutput("\x1bc");
+    for (0..80) |_| try terminal.feedOutput("plain AAAA é ë é 界界 👩‍💻\r\n");
+    try Compare.snapshot(&terminal);
+    terminal.scroll(-5);
+    try Compare.snapshot(&terminal);
+    terminal.scrollToBottom();
+    try terminal.feedOutput("\x1b]10;rgb:12/34/56\x1b\\\x1b]11;rgb:65/43/21\x1b\\");
+    try Compare.snapshot(&terminal);
+    try terminal.feedOutput("\x1bc");
     for (0..80) |row| {
         try terminal.feedOutput(if (row % 2 == 0)
             "\x1b[31;1mAAAA é ë é 界界 👩‍💻\x1b[0m\x1b[44m\x1b[K\x1b[0m\r\n"
@@ -1253,6 +1332,13 @@ test "row-local cell cache matches uncached public API decoding across graphemes
     try terminal.feedOutput("\x1b[H\x1b[35mBBBB\x1b[0m\x1b]4;1;rgb:00/ff/00\x1b\\");
     try Compare.snapshot(&terminal);
     try terminal.resize(60, 30, 540, 510);
+    try Compare.snapshot(&terminal);
+    var sequence: [128]u8 = undefined;
+    for (0..96) |index| {
+        try terminal.feedOutput(try std.fmt.bufPrint(&sequence, "\x1b[38;2;{d};{d};180;48;2;1;2;{d}m{c}", .{ index, 255 - index, index, @as(u8, @intCast('A' + index % 26)) }));
+    }
+    try Compare.snapshot(&terminal);
+    try terminal.feedOutput("\x1b[H\x1b[2;7mforeground/background\x1b[27m\x1b[K\x1b[0m");
     try Compare.snapshot(&terminal);
 }
 

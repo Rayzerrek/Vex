@@ -69,10 +69,12 @@ test "Kitty snapshots reuse pixels, replace same-sized images, isolate screens a
     const pixels = frame.graphics.images.items[0].rgba.ptr;
     try terminal.feedOutput("text-only-update");
     _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.images.items.len);
     try std.testing.expectEqual(generation, frame.graphics.images.items[0].generation);
     try std.testing.expectEqual(pixels, frame.graphics.images.items[0].rgba.ptr);
     try terminal.feedOutput("\x1b_Ga=t,f=24,s=2,v=1,i=42;AAAA////\x1b\\");
     _ = try terminal.readFrame();
+    try std.testing.expectEqual(@as(usize, 1), frame.graphics.images.items.len);
     try std.testing.expect(frame.graphics.images.items[0].generation != generation);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255, 255, 255, 255, 255 }, frame.graphics.images.items[0].rgba);
     try terminal.feedOutput("\x1b[?1049h");

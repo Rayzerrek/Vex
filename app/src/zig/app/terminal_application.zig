@@ -1496,9 +1496,13 @@ test "copy clears selection and rendered highlights while pointer copies preserv
     }) |shortcut| {
         try session.terminal.setKeyboardSelection(0, 0, 4, 0);
         try std.testing.expect((try session.terminal.readFrame()).cells.items[0].selected);
-        try std.testing.expect(app.onKey(shortcut.key, shortcut.modifiers));
+        const accepted = app.onKey(shortcut.key, shortcut.modifiers);
+        if (!accepted) std.debug.print("copy shortcut rejected: key={d} modifiers={d} Win32={d}\n", .{ shortcut.key, shortcut.modifiers, platform.lastClipboardWriteError() });
+        try std.testing.expect(accepted);
         try std.testing.expect(app.health == .running);
-        try std.testing.expect(!try session.terminal.hasSelection());
+        const cleared = !try session.terminal.hasSelection();
+        if (!cleared) std.debug.print("copy retained selection: key={d} modifiers={d} Win32={d}\n", .{ shortcut.key, shortcut.modifiers, platform.lastClipboardWriteError() });
+        try std.testing.expect(cleared);
         for ((try session.terminal.readFrame()).cells.items) |cell| try std.testing.expect(!cell.selected);
     }
 
@@ -1510,7 +1514,11 @@ test "copy clears selection and rendered highlights while pointer copies preserv
     for (2..4) |click_count| {
         try std.testing.expectEqual(@as(u8, @intCast(click_count)), try session.terminal.selectionPress(1, 0, 12, 8));
         try session.terminal.selectionRelease(1, 0);
-        try std.testing.expect(try session.copyAndClearSelection(app.allocator, app.cursorNowMs(), false));
+        const copied = session.copyAndClearSelection(app.allocator, app.cursorNowMs(), false) catch |err| {
+            std.debug.print("pointer copy failed: Win32={d}\n", .{platform.lastClipboardWriteError()});
+            return err;
+        };
+        try std.testing.expect(copied);
         try std.testing.expect(!try session.terminal.hasSelection());
         for ((try session.terminal.readFrame()).cells.items) |cell| try std.testing.expect(!cell.selected);
     }
