@@ -15,7 +15,7 @@ pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18, settings = 19, update_restart = 20 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18, settings = 19, update_restart = 20, focus_left = 21, focus_right = 22, focus_up = 23, focus_down = 24, next_pane = 25, previous_pane = 26, toggle_focus_mode = 27 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -244,10 +244,20 @@ pub fn drainPtyClosures() void {
 
 /// Exact implemented workspace chords; plain Ctrl keys remain terminal input except Ctrl+Tab and font zoom.
 pub fn workspaceShortcut(key: u32, modifiers: u32) ?WorkspaceAction {
+    if (modifiers == 4) return switch (key) {
+        0x25 => .focus_left,
+        0x27 => .focus_right,
+        0x26 => .focus_up,
+        0x28 => .focus_down,
+        else => null,
+    };
     if (modifiers == 3) return switch (key) {
+        0xDB => .previous_pane,
+        0xDD => .next_pane,
         'T' => .new_tab,
         'R' => .split_right,
         'D' => .split_down,
+        'E' => .toggle_focus_mode,
         'W' => .close_active,
         'P' => .command_palette,
         'M' => .theme_picker,
@@ -1332,6 +1342,9 @@ test "workspace shortcuts match implemented chords without stealing terminal Ctr
     try std.testing.expectEqual(@as(?WorkspaceAction, .new_tab), workspaceShortcut('T', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .split_right), workspaceShortcut('R', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .split_down), workspaceShortcut('D', 3));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .toggle_focus_mode), workspaceShortcut('E', 3));
+    for ([_]u32{ 0, 1, 2, 4, 5, 6, 7 }) |modifiers|
+        try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut('E', modifiers));
     try std.testing.expectEqual(@as(?WorkspaceAction, .close_active), workspaceShortcut('W', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .command_palette), workspaceShortcut('P', 3));
     try std.testing.expectEqual(@as(?WorkspaceAction, .theme_picker), workspaceShortcut('M', 3));
@@ -1346,6 +1359,19 @@ test "workspace shortcuts match implemented chords without stealing terminal Ctr
     try std.testing.expectEqual(@as(?WorkspaceAction, .zoom_reset), workspaceShortcut('0', 2));
     for ([_]u32{ 'T', 'R', 'D', 'W', 'C', 'S', 'P', 'M', 'F', 'U' }) |key| try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, 2));
     try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut('T', 7));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .previous_pane), workspaceShortcut(0xDB, 3));
+    try std.testing.expectEqual(@as(?WorkspaceAction, .next_pane), workspaceShortcut(0xDD, 3));
+    const arrows = [_]u32{ 0x25, 0x27, 0x26, 0x28 };
+    const actions = [_]WorkspaceAction{ .focus_left, .focus_right, .focus_up, .focus_down };
+    for (arrows, actions) |key, action| {
+        try std.testing.expectEqual(@as(?WorkspaceAction, action), workspaceShortcut(key, 4));
+        for ([_]u32{ 0, 1, 2, 3, 5, 6, 7 }) |modifiers|
+            try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, modifiers));
+    }
+    for ([_]u32{ 0xDB, 0xDD }) |key| {
+        for ([_]u32{ 0, 1, 2, 4, 5, 6, 7 }) |modifiers|
+            try std.testing.expectEqual(@as(?WorkspaceAction, null), workspaceShortcut(key, modifiers));
+    }
 }
 
 test "window geometry rejects NaN/zero metrics and clamps tiny/large terminal viewports" {

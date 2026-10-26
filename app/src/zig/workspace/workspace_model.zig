@@ -163,6 +163,15 @@ pub const WorkspaceModel = struct {
     pub fn closeActiveSplit(self: *WorkspaceModel) ?panes.PaneId {
         return self.closePaneSplit(self.activeTab().active_pane);
     }
+    /// Resolve against the full tree even while zoomed; changing focus preserves zoom.
+    pub fn navigatePane(self: *WorkspaceModel, bounds: panes.PaneRect, direction: @import("pane_navigation.zig").Direction) !bool {
+        const tab = self.activeTab();
+        var placements: std.ArrayList(panes.PanePlacement) = .empty;
+        defer placements.deinit(self.allocator);
+        try tab.tree.layout(self.allocator, &placements, bounds);
+        const target = @import("pane_navigation.zig").target(placements.items, tab.active_pane, direction) orelse return false;
+        return self.focusPane(target);
+    }
     /// Focus changes only after hit testing an actual leaf of the selected tab.
     pub fn focusPane(self: *WorkspaceModel, id: panes.PaneId) bool {
         const tab = self.activeTab();
@@ -171,6 +180,22 @@ pub const WorkspaceModel = struct {
         return true;
     }
 };
+
+test "keyboard pane navigation stays in the selected tab and preserves zoom" {
+    var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+    defer model.deinit();
+    try model.newTab(@enumFromInt(2));
+    try model.splitActivePane(@enumFromInt(3), .right);
+    model.activeTab().is_focus_mode = true;
+    const bounds: panes.PaneRect = .{ .x = 0, .y = 0, .width = 1000, .height = 600 };
+    try std.testing.expect(try model.navigatePane(bounds, .left));
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(2)), model.activeTab().active_pane);
+    try std.testing.expect(model.activeTab().is_focus_mode);
+    try std.testing.expect(!(try model.navigatePane(bounds, .left)));
+    try std.testing.expect(try model.navigatePane(bounds, .previous));
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(3)), model.activeTab().active_pane);
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(1)), model.tabs.items[0].active_pane);
+}
 
 test "process exit closes any tab with the same selection fallback and ignores duplicate tokens" {
     for (0..3) |closing| for (0..3) |selected| {

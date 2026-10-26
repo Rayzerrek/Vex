@@ -12,6 +12,11 @@ Download from [Releases](https://github.com/Rayzerrek/Vex/releases):
   `Vex.exe`. Keep the included DLLs and `OpenConsole.exe` beside it.
 
 Open the command palette with **Ctrl+Shift+P**, or preferences with **Ctrl+,**.
+Use **Alt+Arrow keys** to focus a pane in that direction (no wrapping at outer edges).
+Use **Ctrl+Shift+]** / **Ctrl+Shift+[** to cycle forward/backward through panes
+in layout order, wrapping at either end. Both work while a pane is zoomed.
+Press **Ctrl+Shift+E** to expand the active pane to the full workspace; press it
+again to restore the split layout. Other panes keep running while hidden.
 Detailed user guides live on the [website](web/README.md).
 
 Upgrading from WPF? Read the [native migration notes](docs/releases/2.0.0.md).

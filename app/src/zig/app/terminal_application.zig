@@ -1031,11 +1031,7 @@ pub const TerminalApplication = struct {
             .split_down => try self.applyAction(.split_down, 0),
             .split_down_with_shell => self.openShellPicker(.split_down),
             .change_default_shell => self.openShellPicker(.set_default),
-            .toggle_focus_mode => {
-                if (self.model) |*model| {
-                    if (model.toggleFocusMode()) try self.updateLayout() else platform.invalidateWindow();
-                }
-            },
+            .toggle_focus_mode => try self.applyAction(.toggle_focus_mode, 0),
             .rename_active_tab => {
                 if (self.model) |*model| {
                     self.beginTabRename(model.selected_tab);
@@ -1044,6 +1040,12 @@ pub const TerminalApplication = struct {
             .zoom_in => try self.adjustFontZoom(1.0),
             .zoom_out => try self.adjustFontZoom(-1.0),
             .zoom_reset => try self.adjustFontZoom(0.0),
+            .focus_left => try self.applyAction(.focus_left, 0),
+            .focus_right => try self.applyAction(.focus_right, 0),
+            .focus_up => try self.applyAction(.focus_up, 0),
+            .focus_down => try self.applyAction(.focus_down, 0),
+            .next_pane => try self.applyAction(.next_pane, 0),
+            .previous_pane => try self.applyAction(.previous_pane, 0),
             .next_tab => try self.applyAction(.next_tab, 0),
             .previous_tab => try self.applyAction(.previous_tab, 0),
             .close_active => try self.requestCloseActive(),
@@ -1262,6 +1264,22 @@ pub const TerminalApplication = struct {
                 const session = try self.addSession(active.directory.current());
                 errdefer self.removeSession(session.id);
                 try model.splitActivePane(session.id, if (action == .split_right) .right else .down);
+            },
+            .toggle_focus_mode => {
+                if (!model.toggleFocusMode()) return;
+            },
+            .focus_left, .focus_right, .focus_up, .focus_down, .next_pane, .previous_pane => {
+                const metrics = self.metrics orelse return;
+                const direction: @import("../workspace/pane_navigation.zig").Direction = switch (action) {
+                    .focus_left => .left,
+                    .focus_right => .right,
+                    .focus_up => .up,
+                    .focus_down => .down,
+                    .next_pane => .next,
+                    .previous_pane => .previous,
+                    else => unreachable,
+                };
+                if (!try model.navigatePane(windowContentBounds(metrics), direction)) return;
             },
             .next_tab => {
                 model.cycleTab(true);
@@ -1549,6 +1567,31 @@ test "typing, encoded keys and paste reveal live input but viewport navigation a
     session.terminal.scrollToTop();
     try session.writeUserInput("");
     try std.testing.expectEqual(@as(u64, 0), (try session.terminal.scrollbar()).offset);
+    try std.testing.expect(app.health == .running);
+}
+
+test "Ctrl Shift E toggles active pane zoom and restores the split layout" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    const second = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    try app.model.?.splitActivePane(second.id, .right);
+    app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
+    try app.updateLayout();
+    try std.testing.expectEqual(@as(usize, 2), app.placements.items.len);
+    const original = app.placements.items[1].bounds;
+    try std.testing.expect(app.onKey('E', 3));
+    try std.testing.expect(app.model.?.activeTab().is_focus_mode);
+    try std.testing.expectEqual(@as(usize, 1), app.placements.items.len);
+    try std.testing.expectEqual(second.id, app.placements.items[0].id);
+    try std.testing.expect(app.placements.items[0].bounds.width > original.width);
+    try std.testing.expectEqual(@as(usize, 2), app.sessions.items.len);
+    try std.testing.expect(app.onKey('E', 3));
+    try std.testing.expect(!app.model.?.activeTab().is_focus_mode);
+    try std.testing.expectEqual(@as(usize, 2), app.placements.items.len);
+    try std.testing.expectEqualDeep(original, app.placements.items[1].bounds);
+    try std.testing.expectEqual(second.id, app.model.?.activeTab().active_pane);
     try std.testing.expect(app.health == .running);
 }
 
