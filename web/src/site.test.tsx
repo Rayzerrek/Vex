@@ -100,7 +100,7 @@ describe("documentation", () => {
 
 describe("routing and static rendering", () => {
   it("prerenders every route without browser globals", async () => {
-    expect(staticPages).toHaveLength(docsPages.length + 3);
+    expect(staticPages).toHaveLength(docsPages.length + 2);
     for (const page of staticPages) {
       const html = await render(page.path);
       expect(html).toContain('id="main-content"');
@@ -110,7 +110,8 @@ describe("routing and static rendering", () => {
 
   it("maps legacy bookmarks to canonical routes", () => {
     expect(resolveRoute("/").path).toBe(homePath);
-    expect(resolveRoute("/docs").path).toBe(docsPath);
+    expect(resolveRoute("/docs").path).toBe(guidePath("getting-started"));
+    expect(resolveRoute(docsPath).path).toBe(guidePath("getting-started"));
     for (const path of legacyPaths) {
       const canonical = resolveRoute(path);
       expect(resolveRoute(`${canonical.path}/`)).toEqual(canonical);

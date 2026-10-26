@@ -8,7 +8,7 @@ import {
   type RouterHistory
 } from "@tanstack/react-router";
 import { RouteLayout } from "./components/site-layout";
-import { guidePaths, legacyPaths, resolveRoute } from "./routes";
+import { docsPath, guidePaths, legacyPaths, resolveRoute } from "./routes";
 
 export function createSiteRouter(history?: RouterHistory) {
   const root = createRootRoute({
@@ -37,30 +37,44 @@ export function createSiteRouter(history?: RouterHistory) {
     () => import("./pages/docs"),
     "DocsRoute"
   );
-  const guides = ["/", ...Object.values(guidePaths)].map((path) =>
+  const guides = Object.values(guidePaths).map((path) =>
     createRoute({
       getParentRoute: () => docs,
       path,
       component: docsComponent
     })
   );
-  const aliases = legacyPaths.map((path) =>
-    createRoute({
-      getParentRoute: () => root,
-      path,
-      beforeLoad: ({ location }) => {
-        throw redirect({
-          to: resolveRoute(path).path,
-          hash: location.hash,
-          search: location.search,
-          replace: true
-        });
-      }
-    })
-  );
+  const docsIndex = createRoute({
+    getParentRoute: () => docs,
+    path: "/",
+    beforeLoad: ({ location }) => {
+      throw redirect({
+        to: resolveRoute(docsPath).path,
+        hash: location.hash,
+        search: location.search,
+        replace: true
+      });
+    }
+  });
+  const aliases = legacyPaths
+    .filter((path) => path !== docsPath)
+    .map((path) =>
+      createRoute({
+        getParentRoute: () => root,
+        path,
+        beforeLoad: ({ location }) => {
+          throw redirect({
+            to: resolveRoute(path).path,
+            hash: location.hash,
+            search: location.search,
+            replace: true
+          });
+        }
+      })
+    );
   return createRouter({
     routeTree: root.addChildren([
-      vex.addChildren([home, docs.addChildren(guides)]),
+      vex.addChildren([home, docs.addChildren([docsIndex, ...guides])]),
       ...aliases
     ]),
     history,

@@ -1,7 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { docsPath, homePath, repository } from "../routes";
 import { Brand } from "./brand";
-import { ThemeToggle } from "./theme-toggle";
 
 export function SiteHeader() {
   return (
@@ -24,7 +23,6 @@ export function SiteHeader() {
           <a className="hidden sm:block" href={repository}>
             GitHub
           </a>
-          <ThemeToggle />
           <Link to={homePath} hash="download">
             Download
           </Link>

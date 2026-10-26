@@ -3,7 +3,7 @@ import { renderToString } from "react-dom/server";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { createSiteRouter } from "./router";
 import { docsPages } from "./features/docs/content";
-import { docsPath, guidePath, homePath, resolveRoute } from "./routes";
+import { guidePath, homePath, resolveRoute } from "./routes";
 export { legacyPaths, resolveRoute } from "./routes";
 
 export const staticPages = [
@@ -12,11 +12,6 @@ export const staticPages = [
     title: "Vex — Room for the real work.",
     description:
       "A native terminal workspace for Windows. Your shells, tabs, and split panes, without the extra layers."
-  },
-  {
-    path: docsPath,
-    title: "Installation — Vex Docs",
-    description: docsPages[0].description
   },
   ...docsPages.map((page) => ({
     path: guidePath(page.slug),

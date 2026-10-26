@@ -12,29 +12,13 @@ const guides = [
   "program-status"
 ];
 
-test("home, theme persistence and client-side guide navigation", async ({
-  page
-}) => {
+test("home and client-side guide navigation", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(homePath);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Room forthe real work."
   );
-  const dark = await page
-    .locator("html")
-    .evaluate((element) => element.classList.contains("dark"));
-  await page
-    .getByRole("button", {
-      name: dark ? "Switch to light theme" : "Switch to dark theme"
-    })
-    .click();
-  await page.reload();
-  expect(
-    await page
-      .locator("html")
-      .evaluate((element) => element.classList.contains("dark"))
-  ).toBe(!dark);
   // A document request here would mean the router is not handling the link.
   let documents = 0;
   page.on("request", (request) => {
@@ -44,7 +28,7 @@ test("home, theme persistence and client-side guide navigation", async ({
     .getByRole("navigation", { name: "Main navigation", exact: true })
     .getByRole("link", { name: "Docs", exact: true })
     .click();
-  await expect(page).toHaveURL(new RegExp(`${docsPath}$`));
+  await expect(page).toHaveURL(new RegExp(`${guidePath("getting-started")}$`));
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Installation"
   );
@@ -64,6 +48,17 @@ test("home, theme persistence and client-side guide navigation", async ({
   );
   expect(documents).toBe(0);
   expect(errors).toEqual([]);
+});
+
+test("website follows system color scheme", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto(homePath);
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+  await expect(
+    page.getByRole("button", { name: /switch to .* theme/i })
+  ).toHaveCount(0);
 });
 
 test("search finds sections, empty results and Escape", async ({ page }) => {
@@ -90,6 +85,12 @@ test("search finds sections, empty results and Escape", async ({ page }) => {
 });
 
 test("legacy bookmarks redirect with query and hash", async ({ page }) => {
+  await page.goto(`${docsPath}?source=bookmark#build-from-source`);
+  await expect(page).toHaveURL(
+    new RegExp(
+      `${guidePath("getting-started")}\\?source=bookmark#build-from-source$`
+    )
+  );
   await page.goto("/docs/configuration?source=bookmark#reload");
   await expect(page).toHaveURL(
     new RegExp(`${guidePath("configuration")}\\?source=bookmark#reload$`)
@@ -139,6 +140,24 @@ test("code examples copy exact text and confirm", async ({ page, context }) => {
   await block.getByRole("button", { name: "Copy Lua code" }).click();
   await expect(block.getByRole("button")).toContainText("Copied");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code);
+});
+
+test("the final workspace sections remain navigable at the end of the page", async ({
+  page
+}, testInfo) => {
+  test.skip(testInfo.project.name === "mobile", "Desktop reading rail.");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(guidePath("workspace"));
+  const toc = page.getByRole("navigation", { name: "On this page" });
+  for (const id of ["closing", "persistence"]) {
+    await toc.locator(`a[href="#${id}"]`).click();
+    await expect(page).toHaveURL(new RegExp(`#${id}$`));
+    await expect(toc.locator(`a[href="#${id}"]`)).toHaveAttribute(
+      "aria-current",
+      "location"
+    );
+    await expect(page.locator(`#${id}`)).toBeInViewport();
+  }
 });
 
 test("active table of contents follows reading position", async ({

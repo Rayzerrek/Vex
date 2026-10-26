@@ -674,7 +674,7 @@ const pages: PageContent[] = [
               loop running, and opening the overview leaves PTY sizes unchanged.
             </p>
             <p>
-              The website’s light and dark switch controls only this website. It
+              The website follows your system’s light or dark appearance. This
               does not change the theme in your installed Vex application.
             </p>
           </>

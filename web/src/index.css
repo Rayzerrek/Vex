@@ -38,15 +38,17 @@
     font-synthesis: none;
     -webkit-font-smoothing: antialiased;
   }
-  .dark {
-    --paper: #181a18;
-    --surface: #212421;
-    --ink: #eceeeb;
-    --muted: #a9afa6;
-    --line: #eceeeb26;
-    --wash: #eceeeb0d;
-    --accent: #beb0f2;
-    color-scheme: dark;
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #181a18;
+      --surface: #212421;
+      --ink: #eceeeb;
+      --muted: #a9afa6;
+      --line: #eceeeb26;
+      --wash: #eceeeb0d;
+      --accent: #beb0f2;
+      color-scheme: dark;
+    }
   }
   * {
     scrollbar-width: thin;
@@ -110,7 +112,7 @@
   .text-link {
     @apply inline-flex items-center gap-2 text-nav text-ink underline decoration-soft/50 underline-offset-4 hover:decoration-ink;
   }
-  .docs-shell .header-inner {
+  .header-inner {
     @apply max-w-7xl;
   }
   .docs-layout {
@@ -357,8 +359,7 @@
   }
 }
 
-html:not([data-js])
-  :is(.copy-button, .docs-search, .theme-toggle, .docs-mobile-bar button) {
+html:not([data-js]) :is(.copy-button, .docs-search, .docs-mobile-bar button) {
   display: none;
 }
 @media (width < 48rem) {
@@ -367,6 +368,9 @@ html:not([data-js])
   }
 }
 @media (prefers-reduced-motion: no-preference) {
+  html:has(.docs-layout) {
+    scroll-behavior: smooth;
+  }
   html:not([data-input="keyboard"]) .page-enter {
     transition:
       opacity 240ms ease,

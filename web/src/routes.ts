@@ -22,7 +22,11 @@ export function resolveRoute(path: string) {
   if (normalized === "/" || normalized === homePath)
     return { kind: "home", path: homePath } as const;
   if (normalized === docsPath || normalized === "/docs")
-    return { kind: "docs", path: docsPath, slug: "getting-started" } as const;
+    return {
+      kind: "docs",
+      path: guidePath("getting-started"),
+      slug: "getting-started"
+    } as const;
   for (const [slug, segment] of Object.entries(guidePaths)) {
     if (
       normalized === `${docsPath}/${segment}` ||
@@ -36,5 +40,6 @@ export function resolveRoute(path: string) {
 export const legacyPaths = [
   "/",
   "/docs",
+  docsPath,
   ...Object.keys(guidePaths).map((slug) => `/docs/${slug}`)
 ];
