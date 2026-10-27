@@ -408,7 +408,11 @@ const TestFeedOwner = struct {
     progress_reports: usize = 0,
     report_output_len: usize = 0,
     reset_output_len: usize = 0,
+    writes: usize = 0,
+    fail_at_write: ?usize = null,
     pub fn writeTerminalOutput(self: *@This(), bytes: []const u8) !void {
+        if (self.fail_at_write == self.writes) return error.InjectedWriteFailure;
+        self.writes += 1;
         try self.output.appendSlice(std.testing.allocator, bytes);
     }
     pub fn onProgramStatusOsc(self: *@This(), _: []const u8) !void {
@@ -516,4 +520,19 @@ test "ordinary plus, dollar, unknown +q capabilities and oversized +q runs fail 
     var filter: TerminalFeedFilter = .{};
     try filter.feedTerminalOutput(&owner, oversized);
     try std.testing.expectEqualStrings(oversized, owner.output.items);
+}
+
+test "full output batches propagate write failures before later status and reset callbacks" {
+    const text = "x" ** (3 * 8192 + 17);
+    const bytes = "\x1b[32m" ++ text ++ "\x1b]7501;state=working\x07tail\x1bc";
+    for (0..5) |fail_at| {
+        var owner: TestFeedOwner = .{ .fail_at_write = fail_at };
+        defer owner.output.deinit(std.testing.allocator);
+        var filter: TerminalFeedFilter = .{};
+        try std.testing.expectError(error.InjectedWriteFailure, filter.feedTerminalOutput(&owner, bytes));
+        const written = @min(fail_at * 8192, "\x1b[32m".len + text.len);
+        try std.testing.expectEqualStrings(bytes[0..written], owner.output.items);
+        try std.testing.expectEqual(@as(usize, if (fail_at == 4) 1 else 0), owner.reports);
+        try std.testing.expectEqual(@as(usize, 0), owner.resets);
+    }
 }

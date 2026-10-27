@@ -78,33 +78,45 @@ fn isValidBody(matched: []const u8, prefix_len: usize) bool {
 /// Strips trailing punctuation from a URL match while preserving balanced parentheses/brackets.
 pub fn trimLinkEnd(text: []const u8, start: usize, initial_end: usize) usize {
     var end = initial_end;
+    var counted = false;
+    var opens: [3]usize = @splat(0);
+    var closes: [3]usize = @splat(0);
     while (end > start) {
         const ch = text[end - 1];
         if (ch == '.' or ch == ',' or ch == ';' or ch == ':' or ch == '!' or ch == '?' or ch == '\'' or ch == '"') {
             end -= 1;
             continue;
         }
-        const open: u8 = switch (ch) {
-            ')' => '(',
-            ']' => '[',
-            '}' => '{',
-            else => 0,
+        const bracket: usize = switch (ch) {
+            ')' => 0,
+            ']' => 1,
+            '}' => 2,
+            else => break,
         };
-        if (open != 0 and countScalar(text[start .. end - 1], open) < countScalar(text[start..end], ch)) {
+        if (!counted) {
+            // Count once: a long suffix of unmatched closers must not rescan
+            // the whole URL for every byte removed.
+            for (text[start..end]) |byte| {
+                switch (byte) {
+                    '(' => opens[0] += 1,
+                    '[' => opens[1] += 1,
+                    '{' => opens[2] += 1,
+                    ')' => closes[0] += 1,
+                    ']' => closes[1] += 1,
+                    '}' => closes[2] += 1,
+                    else => {},
+                }
+            }
+            counted = true;
+        }
+        if (opens[bracket] < closes[bracket]) {
+            closes[bracket] -= 1;
             end -= 1;
             continue;
         }
         break;
     }
     return end;
-}
-
-fn countScalar(slice: []const u8, needle: u8) usize {
-    var total: usize = 0;
-    for (slice) |b| {
-        if (b == needle) total += 1;
-    }
-    return total;
 }
 
 /// Normalizes a matched URL into `out_buf` (prepending `https://` for `www.` links).
@@ -198,4 +210,41 @@ test "findUrlSpans detects http, https, file, and www links while trimming punct
 
     var norm_buf: [256]u8 = undefined;
     try std.testing.expectEqualStrings("https://www.github.com/ziglang/zig", normalizeUrl(line2[spans[0].start..spans[0].end], &norm_buf).?);
+}
+
+test "URL trimming preserves scalar behavior across mixed brackets and punctuation" {
+    const Reference = struct {
+        fn trim(text: []const u8, start: usize, initial_end: usize) usize {
+            var end = initial_end;
+            while (end > start) {
+                const ch = text[end - 1];
+                if (std.mem.indexOfScalar(u8, ".,;:!?'\"", ch) != null) {
+                    end -= 1;
+                    continue;
+                }
+                const open: u8 = switch (ch) {
+                    ')' => '(',
+                    ']' => '[',
+                    '}' => '{',
+                    else => break,
+                };
+                if (std.mem.count(u8, text[start .. end - 1], &.{open}) >= std.mem.count(u8, text[start..end], &.{ch})) break;
+                end -= 1;
+            }
+            return end;
+        }
+    };
+    var prng = std.Random.DefaultPrng.init(0);
+    const alphabet = "()[]{}.,;:!?'\"abc";
+    var text: [128]u8 = undefined;
+    for (0..500) |_| {
+        for (&text) |*byte| byte.* = alphabet[prng.random().uintLessThan(usize, alphabet.len)];
+        for (0..text.len + 1) |end| {
+            const start = end / 3;
+            try std.testing.expectEqual(Reference.trim(&text, start, end), trimLinkEnd(&text, start, end));
+        }
+    }
+    var long: [4096]u8 = @splat(')');
+    @memcpy(long[0..4], "url(");
+    try std.testing.expectEqual(@as(usize, 5), trimLinkEnd(&long, 0, long.len));
 }

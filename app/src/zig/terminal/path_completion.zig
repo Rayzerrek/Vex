@@ -136,6 +136,7 @@ pub const PathCompletion = struct {
     /// Replaces the path picker atomically; inputs may borrow the current directory or query.
     /// Empty paths clear indexing; unavailable directories produce an explicit scan-error view.
     pub fn openDirectory(self: *PathCompletion, dir_path: []const u8, initial_query: []const u8) !void {
+        try self.checkScanRevision();
         const prefix = try boundedQueryPrefix(initial_query, self.query_buf.len);
         if (!isUsablePathText(initial_query)) return error.InvalidPathQuery;
         const root_len = if (dir_path.len > 0) try directoryRootLength(dir_path) else 0;
@@ -161,7 +162,9 @@ pub const PathCompletion = struct {
         @memcpy(next.query_buf[0..prefix.len], prefix);
         next.query_len = prefix.len;
         if (next.index == .synchronous) try next.scanCurrentDirectory();
+        try next.checkScanRevision();
         try next.refreshMatches();
+        try next.checkScanRevision();
 
         self.deinit();
         self.* = next;
@@ -237,7 +240,7 @@ pub const PathCompletion = struct {
                 try self.openDirectory(resolved, rem_buf[0..rem_len]);
                 return;
             } else |err| {
-                if (err == error.OutOfMemory) return err;
+                if (err == error.OutOfMemory or err == error.StalePathIndex) return err;
             }
         }
 
@@ -344,15 +347,35 @@ pub const PathCompletion = struct {
         };
         defer dir.close();
 
-        var walker = try @import("path_walker.zig").Walker.init(self.allocator, dir);
+        const path_walker = @import("path_walker.zig");
+        if (self.is_wsl and self.recursive) {
+            // Stream WSL directories so index limits and cancellation bound scanning.
+            var walker = path_walker.ParallelWalker.init(self.allocator, dir);
+            defer walker.deinit();
+            self.configureWalkerCancellation(&walker);
+            if (self.display_directory) |label| {
+                if (std.mem.endsWith(u8, label, ":/")) walker.skip_root_names = path_walker.Walker.wsl_root_skip_names;
+            }
+            try self.scanWalker(&walker);
+            return;
+        }
+        var walker = path_walker.Walker.init(self.allocator, dir);
         defer walker.deinit();
+        self.configureWalkerCancellation(&walker);
         walker.recursive = self.recursive;
         walker.probe_symlink_directories = !(self.is_wsl and self.recursive);
         if (self.is_wsl and self.display_directory != null) {
             const label = self.display_directory.?;
-            if (std.mem.endsWith(u8, label, ":/")) walker.skip_root_names = @import("path_walker.zig").Walker.wsl_root_skip_names;
+            if (std.mem.endsWith(u8, label, ":/")) walker.skip_root_names = path_walker.Walker.wsl_root_skip_names;
         }
         try self.scanWalker(&walker);
+    }
+
+    fn configureWalkerCancellation(self: *const PathCompletion, walker: anytype) void {
+        if (self.scan_revision) |revision| {
+            walker.cancel_latest = revision.latest;
+            walker.cancel_expected = revision.expected;
+        }
     }
 
     fn scanWalker(self: *PathCompletion, walker: anytype) !void {
@@ -365,23 +388,27 @@ pub const PathCompletion = struct {
                 break;
             }
             attempts += 1;
-            const entry = walker.next() catch |err| {
-                if (err == error.OutOfMemory) return err;
+            const entry_or_null = walker.next() catch |err| {
+                try self.checkScanRevision();
+                if (err == error.OutOfMemory or err == error.StalePathIndex) return err;
                 // Walker advances past failed children. WSL trees often contain folders
                 // Windows cannot open; one such folder must not discard the whole index.
-                if (walker.stack.items.len == 0) {
+                if (walker.root_failed) {
                     self.scan_error = true;
                     break;
                 }
                 self.has_skipped_entries = true;
                 continue;
-            } orelse break;
+            };
+            try self.checkScanRevision();
+            const entry = entry_or_null orelse break;
             const previous_len = self.entries.items.len;
             if (!try self.appendIndexedEntry(entry.path, entry.kind == .directory)) break;
             if (self.entries.items.len > previous_len) self.entries.items[previous_len].is_symbolic_link = entry.kind == .sym_link;
             if (self.snapshot) |*hook| {
                 if (self.entries.items.len >= hook.next_at) {
-                    hook.next_at = self.entries.items.len + hook.every;
+                    // Geometric ramp-up: the first rows show almost immediately, while clone cost stays amortized.
+                    hook.next_at = self.entries.items.len + @min(hook.every, self.entries.items.len);
                     hook.publish(hook.context, self);
                 }
             }
@@ -510,7 +537,7 @@ pub const PathCompletion = struct {
             for (self.candidates.items) |entry_idx| {
                 const idx: usize = entry_idx;
                 const entry = self.entries.items[idx];
-                const score = scorePathNormalized(entry.displayName(), entry.is_directory, folded_q) orelse continue;
+                const score = scorePathImpl(entry.displayName(), entry.is_directory, folded_q, true) orelse continue;
                 self.candidates.items[write] = entry_idx;
                 write += 1;
                 const candidate = Match{ .entry_index = idx, .score = score };
@@ -534,7 +561,7 @@ pub const PathCompletion = struct {
             if (record_candidates) self.candidates.clearRetainingCapacity();
 
             for (self.entries.items, 0..) |entry, idx| {
-                const score = scorePathNormalized(entry.displayName(), entry.is_directory, folded_q) orelse continue;
+                const score = scorePathImpl(entry.displayName(), entry.is_directory, folded_q, true) orelse continue;
                 if (record_candidates) self.candidates.appendAssumeCapacity(@intCast(idx));
                 const candidate = Match{ .entry_index = idx, .score = score };
                 if (best.count() < max_matches) {
@@ -630,10 +657,6 @@ const fold_table = blk: {
     break :blk table;
 };
 
-fn normalizeQueryChar(c: u8) u8 {
-    return fold_table[c];
-}
-
 fn normalizeQuerySlice(query: []const u8, buf: *[128]u8) []const u8 {
     const len = @min(query.len, buf.len);
     for (query[0..len], 0..) |c, i| buf[i] = fold_table[c];
@@ -643,41 +666,12 @@ fn normalizeQuerySlice(query: []const u8, buf: *[128]u8) []const u8 {
 pub fn scorePath(relative_path: []const u8, is_directory: bool, query: []const u8) ?i32 {
     if (query.len <= 128) {
         var folded_buf: [128]u8 = undefined;
-        return scorePathNormalized(relative_path, is_directory, normalizeQuerySlice(query, &folded_buf));
+        return scorePathImpl(relative_path, is_directory, normalizeQuerySlice(query, &folded_buf), true);
     }
-    return scorePathSlow(relative_path, is_directory, query);
+    return scorePathImpl(relative_path, is_directory, query, false);
 }
 
-fn scorePathNormalized(relative_path: []const u8, is_directory: bool, folded_query: []const u8) ?i32 {
-    var filename_offset: usize = 0;
-    if (std.mem.lastIndexOfAny(u8, relative_path, "\\/")) |sep| {
-        filename_offset = sep + 1;
-    }
-    if (folded_query.len == 0) {
-        if (filename_offset != 0) return null;
-        return if (is_directory) 100 else 0;
-    }
-
-    const name_score = scoreSubsequenceNormalized(relative_path, folded_query, filename_offset);
-    var best: i32 = if (name_score) |ns|
-        ns + 80
-    else if (filename_offset > 0)
-        (scoreSubsequenceNormalized(relative_path, folded_query, 0) orelse return null)
-    else
-        return null;
-
-    const filename = relative_path[filename_offset..];
-    if (startsWithFolded(filename, folded_query)) {
-        best += 160;
-        if (filename.len == folded_query.len) {
-            best += 320;
-        }
-    }
-    if (is_directory) best += 10;
-    return best;
-}
-
-fn scorePathSlow(relative_path: []const u8, is_directory: bool, query: []const u8) ?i32 {
+fn scorePathImpl(relative_path: []const u8, is_directory: bool, query: []const u8, comptime folded: bool) ?i32 {
     var filename_offset: usize = 0;
     if (std.mem.lastIndexOfAny(u8, relative_path, "\\/")) |sep| {
         filename_offset = sep + 1;
@@ -687,16 +681,20 @@ fn scorePathSlow(relative_path: []const u8, is_directory: bool, query: []const u
         return if (is_directory) 100 else 0;
     }
 
-    const name_score = scoreSubsequence(relative_path, query, filename_offset);
+    // Longer non-matches otherwise spend time searching word-boundary alternatives.
+    // A failed subsequence cannot score in either the filename or the full path.
+    if (query.len >= 7 and !hasSubsequence(relative_path, query, 0, folded)) return null;
+
+    const name_score = scoreSubsequence(relative_path, query, filename_offset, folded);
     var best: i32 = if (name_score) |ns|
         ns + 80
     else if (filename_offset > 0)
-        (scoreSubsequence(relative_path, query, 0) orelse return null)
+        (scoreSubsequence(relative_path, query, 0, folded) orelse return null)
     else
         return null;
 
     const filename = relative_path[filename_offset..];
-    if (startsWithNormalized(filename, query)) {
+    if (startsWithQuery(filename, query, folded)) {
         best += 160;
         if (filename.len == query.len) {
             best += 320;
@@ -706,94 +704,32 @@ fn scorePathSlow(relative_path: []const u8, is_directory: bool, query: []const u
     return best;
 }
 
-fn startsWithFolded(haystack: []const u8, folded_query: []const u8) bool {
-    if (haystack.len < folded_query.len) return false;
-    for (folded_query, 0..) |qc, i| {
-        if (fold_table[haystack[i]] != qc) return false;
-    }
-    return true;
+/// The picker folds once per query; public callers may pass arbitrarily long
+/// raw queries. Specialize the same scorer so both paths retain identical ranking.
+fn queryChar(byte: u8, comptime folded: bool) u8 {
+    return if (folded) byte else fold_table[byte];
 }
 
-fn startsWithNormalized(haystack: []const u8, query: []const u8) bool {
+fn startsWithQuery(haystack: []const u8, query: []const u8, comptime folded: bool) bool {
     if (haystack.len < query.len) return false;
     for (query, 0..) |qc, i| {
-        if (normalizeQueryChar(haystack[i]) != normalizeQueryChar(qc)) return false;
+        if (fold_table[haystack[i]] != queryChar(qc, folded)) return false;
     }
     return true;
 }
 
-fn scoreSubsequenceNormalized(path: []const u8, folded_query: []const u8, start: usize) ?i32 {
-    if (path.len - start < folded_query.len) return null;
-    var previous: i32 = -2;
-    var score: i32 = 0;
-    var offset: usize = start;
-
-    for (folded_query, 0..) |qc, q_idx| {
-        var found_index: ?usize = null;
-        var idx = offset;
-        while (idx < path.len) : (idx += 1) {
-            if (fold_table[path[idx]] == qc) {
-                found_index = idx;
-                break;
-            }
-        }
-        var i = found_index orelse return null;
-        const is_contiguous = previous >= 0 and @as(i32, @intCast(i)) == previous + 1;
-        if (!is_contiguous and !isWordStart(path, i, start)) {
-            var scan = i + 1;
-            const remaining = folded_query[q_idx + 1 ..];
-            while (scan + remaining.len < path.len) : (scan += 1) {
-                if (fold_table[path[scan]] == qc and
-                    isWordStart(path, scan, start) and
-                    hasSubsequenceFolded(path, remaining, scan + 1))
-                {
-                    i = scan;
-                    break;
-                }
-            }
-        }
-        const i_i32: i32 = @intCast(i);
-        score += 20;
-        if (i_i32 == previous + 1) score += 24;
-        if (i == start or isBoundaryChar(path[i - 1])) score += 32;
-        if (i > 0 and std.ascii.isLower(path[i - 1]) and std.ascii.isUpper(path[i])) score += 28;
-        if (previous >= 0) {
-            score -= @min(@as(i32, 12), i_i32 - previous - 1);
-        }
-        previous = i_i32;
-        offset = i + 1;
-    }
-    const tail_penalty: i32 = @intCast((path.len - start) / 4);
-    return @max(@as(i32, 0), score - tail_penalty);
-}
-
-fn hasSubsequenceFolded(path: []const u8, folded_query: []const u8, start: usize) bool {
-    var offset = start;
-    for (folded_query) |qc| {
-        var found: ?usize = null;
-        var idx = offset;
-        while (idx < path.len) : (idx += 1) {
-            if (fold_table[path[idx]] == qc) {
-                found = idx;
-                break;
-            }
-        }
-        offset = (found orelse return false) + 1;
-    }
-    return true;
-}
-
-fn scoreSubsequence(path: []const u8, query: []const u8, start: usize) ?i32 {
+fn scoreSubsequence(path: []const u8, query: []const u8, start: usize, comptime folded: bool) ?i32 {
+    if (path.len - start < query.len) return null;
     var previous: i32 = -2;
     var score: i32 = 0;
     var offset: usize = start;
 
     for (query, 0..) |raw_qc, q_idx| {
-        const qc = normalizeQueryChar(raw_qc);
+        const qc = queryChar(raw_qc, folded);
         var found_index: ?usize = null;
         var idx = offset;
         while (idx < path.len) : (idx += 1) {
-            if (normalizeQueryChar(path[idx]) == qc) {
+            if (fold_table[path[idx]] == qc) {
                 found_index = idx;
                 break;
             }
@@ -802,10 +738,11 @@ fn scoreSubsequence(path: []const u8, query: []const u8, start: usize) ?i32 {
         const is_contiguous = previous >= 0 and @as(i32, @intCast(i)) == previous + 1;
         if (!is_contiguous and !isWordStart(path, i, start)) {
             var scan = i + 1;
-            while (scan < path.len) : (scan += 1) {
-                if (normalizeQueryChar(path[scan]) == qc and
+            const remaining = query[q_idx + 1 ..];
+            while (scan + remaining.len < path.len) : (scan += 1) {
+                if (fold_table[path[scan]] == qc and
                     isWordStart(path, scan, start) and
-                    hasSubsequence(path, query[q_idx + 1 ..], scan + 1))
+                    hasSubsequence(path, remaining, scan + 1, folded))
                 {
                     i = scan;
                     break;
@@ -827,14 +764,14 @@ fn scoreSubsequence(path: []const u8, query: []const u8, start: usize) ?i32 {
     return @max(@as(i32, 0), score - tail_penalty);
 }
 
-fn hasSubsequence(path: []const u8, query: []const u8, start: usize) bool {
+fn hasSubsequence(path: []const u8, query: []const u8, start: usize, comptime folded: bool) bool {
     var offset = start;
     for (query) |raw_qc| {
-        const qc = normalizeQueryChar(raw_qc);
+        const qc = queryChar(raw_qc, folded);
         var found: ?usize = null;
         var idx = offset;
         while (idx < path.len) : (idx += 1) {
-            if (normalizeQueryChar(path[idx]) == qc) {
+            if (fold_table[path[idx]] == qc) {
                 found = idx;
                 break;
             }
@@ -855,6 +792,82 @@ fn isBoundaryChar(c: u8) bool {
         '\\', '/', '-', '_', '.', ' ' => true,
         else => false,
     };
+}
+
+test "path matching agrees with the original scorer and ranking" {
+    const Reference = struct {
+        fn score(path: []const u8, is_dir: bool, query: []const u8) ?i32 {
+            const start = if (std.mem.lastIndexOfAny(u8, path, "\\/")) |sep| sep + 1 else 0;
+            if (query.len == 0) return if (start != 0) null else if (is_dir) 100 else 0;
+            // The unoptimized scoring flow uses the raw-query specialization.
+            const name_score = scoreSubsequence(path, query, start, false);
+            var best: i32 = if (name_score) |ns| ns + 80 else if (start > 0)
+                (scoreSubsequence(path, query, 0, false) orelse return null)
+            else
+                return null;
+            const filename = path[start..];
+            if (startsWithQuery(filename, query, false)) {
+                best += 160;
+                if (filename.len == query.len) best += 320;
+            }
+            if (is_dir) best += 10;
+            return best;
+        }
+    };
+    const allocator = std.testing.allocator;
+    var random_state = std.Random.DefaultPrng.init(0x4f6e_6550_6174_6821);
+    const random = random_state.random();
+    const alphabet = "aAbBzZ09-_. /\\xyz\xc3\xa9";
+    var model = PathCompletion.init(allocator);
+    defer model.deinit();
+    for (0..512) |i| {
+        const len = random.intRangeAtMost(usize, 0, 60);
+        const name = try allocator.alloc(u8, len);
+        errdefer allocator.free(name);
+        for (name) |*c| c.* = alphabet[random.uintLessThan(usize, alphabet.len)];
+        try model.entries.append(allocator, .{ .name = name, .is_directory = i % 3 == 0 });
+    }
+    for (0..100) |i| {
+        const name = try std.fmt.allocPrint(allocator, "dir-{d}/Integration_test-{d}.zig", .{ i % 8, i });
+        errdefer allocator.free(name);
+        try model.entries.append(allocator, .{ .name = name, .is_directory = i % 4 == 0 });
+    }
+    var long_path: [150]u8 = @splat('a');
+    long_path[0] = 'A';
+    const long_query = [_]u8{'a'} ** 129;
+    try std.testing.expectEqual(Reference.score(&long_path, false, &long_query), scorePath(&long_path, false, &long_query));
+    long_path[80] = 'z';
+    try std.testing.expectEqual(Reference.score(&long_path, true, &long_query), scorePath(&long_path, true, &long_query));
+    var query_buf: [140]u8 = undefined;
+    for (0..250) |iteration| {
+        const fixed = [_][]const u8{ "", "i", "integra", "integration", "integration_test", "dir/integra", "INTEGRATION", "zzzzzzz" };
+        const len: usize = if (iteration < fixed.len) fixed[iteration].len else if (iteration == fixed.len) 129 else random.intRangeAtMost(usize, 1, 12);
+        if (iteration < fixed.len) {
+            @memcpy(query_buf[0..len], fixed[iteration]);
+        } else {
+            for (query_buf[0..len]) |*c| c.* = alphabet[random.uintLessThan(usize, alphabet.len)];
+        }
+        const query = query_buf[0..len];
+        var expected: std.ArrayList(Match) = .empty;
+        defer expected.deinit(allocator);
+        for (model.entries.items, 0..) |entry, idx| {
+            const reference = Reference.score(entry.displayName(), entry.is_directory, query);
+            try std.testing.expectEqual(reference, scorePath(entry.displayName(), entry.is_directory, query));
+            if (reference) |score| try expected.append(allocator, .{ .entry_index = idx, .score = score });
+        }
+        if (len > model.query_buf.len) continue;
+        @memcpy(model.query_buf[0..len], query);
+        model.query_len = len;
+        try model.refreshMatches();
+        const ranking = MatchRanking{ .entries = model.entries.items };
+        std.mem.sort(Match, expected.items, ranking, MatchRanking.bestFirst);
+        const count = @min(max_matches, expected.items.len);
+        try std.testing.expectEqual(count, model.matches.items.len);
+        for (expected.items[0..count], model.matches.items) |want, got| {
+            try std.testing.expectEqual(want.entry_index, got.entry_index);
+            try std.testing.expectEqual(want.score, got.score);
+        }
+    }
 }
 
 pub fn formatPathAlloc(
@@ -1034,7 +1047,7 @@ test "recursive path indexing skips unreadable children and retains readable sib
     const Walker = struct {
         step: usize = 0,
         failure: anyerror = error.AccessDenied,
-        stack: struct { items: []const u8 = &.{1} } = .{},
+        root_failed: bool = false,
 
         fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
             defer self.step += 1;
@@ -1062,7 +1075,7 @@ test "recursive path indexing skips unreadable children and retains readable sib
 
     var completion = PathCompletion.init(std.testing.allocator);
     defer completion.deinit();
-    var root_failure = Walker{ .step = 1, .stack = .{ .items = &.{} } };
+    var root_failure = Walker{ .step = 1, .root_failed = true };
     try completion.scanWalker(&root_failure);
     try std.testing.expect(completion.scan_error);
     try std.testing.expectEqual(@as(usize, 0), completion.entries.items.len);
@@ -1226,7 +1239,7 @@ test "index entry limit reports truncation only when a further entry is omitted"
 test "unreadable trees have bounded scan work and remain cancellation aware" {
     const Walker = struct {
         calls: usize = 0,
-        stack: struct { items: []const u8 = &.{1} } = .{},
+        root_failed: bool = false,
         fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
             self.calls += 1;
             return error.AccessDenied;
@@ -1577,6 +1590,25 @@ test "scorePath ranks exact, prefix, contiguous, camelCase, and directories abov
     try std.testing.expect(camel > non_boundary);
 }
 
+test "path scoring preserves normalization and queries beyond the picker limit" {
+    const path = "src/Terminal/My_File.zig";
+    for ([_][]const u8{ "", "SRC", "my_file", "MyF", "src\\terminal/", "missing" }) |q| {
+        var buf: [128]u8 = undefined;
+        const normalized = normalizeQuerySlice(q, &buf);
+        for ([_]bool{ false, true }) |is_directory| {
+            try std.testing.expectEqual(
+                scorePathImpl(path, is_directory, q, false),
+                scorePathImpl(path, is_directory, normalized, true),
+            );
+        }
+    }
+    const long_path = [_]u8{'A'} ** 129;
+    const long_query = [_]u8{'a'} ** 129;
+    try std.testing.expectEqual(@as(?i32, 6212), scorePath(&long_path, false, &long_query));
+    try std.testing.expectEqual(@as(?i32, 6222), scorePath(&long_path, true, &long_query));
+    try std.testing.expectEqual(@as(?i32, null), scorePath(long_path[0..128], false, &long_query));
+}
+
 test "formatPathAlloc quotes per shell dialect and rejects control characters" {
     const allocator = std.testing.allocator;
 
@@ -1653,10 +1685,58 @@ test "partial and final indexes preserve the selected path across reordered matc
     }
 }
 
+test "scan cancellation after walker returns discards entries and errors" {
+    const Walker = struct {
+        latest: *std.atomic.Value(u64),
+        mode: enum { entry, end, failed },
+        root_failed: bool = false,
+        fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
+            self.latest.store(2, .release);
+            return switch (self.mode) {
+                .entry => .{ .path = "stale", .kind = .file },
+                .end => null,
+                .failed => error.AccessDenied,
+            };
+        }
+    };
+    var latest = std.atomic.Value(u64).init(1);
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.scan_revision = .{ .latest = &latest, .expected = 1 };
+    for ([_]@TypeOf(@as(Walker, undefined).mode){ .entry, .end, .failed }) |mode| {
+        latest.store(1, .release);
+        var walker = Walker{ .latest = &latest, .mode = mode };
+        try std.testing.expectError(error.StalePathIndex, model.scanWalker(&walker));
+        try std.testing.expectEqual(@as(usize, 0), model.entries.items.len);
+        try std.testing.expect(!model.has_skipped_entries);
+    }
+}
+
+test "ordinary walker cancellation is wired and propagated" {
+    const Walker = @import("path_walker.zig").Walker;
+    var fixture = std.testing.tmpDir(.{ .iterate = true });
+    defer fixture.cleanup();
+    var latest = std.atomic.Value(u64).init(1);
+    var model = PathCompletion.init(std.testing.allocator);
+    defer model.deinit();
+    model.scan_revision = .{ .latest = &latest, .expected = 1 };
+    var walker = Walker.init(std.testing.allocator, fixture.dir);
+    defer walker.deinit();
+    model.configureWalkerCancellation(&walker);
+    try std.testing.expect(walker.cancel_latest == &latest);
+    try std.testing.expectEqual(@as(u64, 1), walker.cancel_expected);
+    latest.store(2, .release);
+    // Isolate propagation of the walker's own cancellation from the outer check.
+    model.scan_revision = null;
+    try std.testing.expectError(error.StalePathIndex, model.scanWalker(&walker));
+    try std.testing.expect(!model.has_skipped_entries);
+    try std.testing.expect(!model.scan_error);
+}
+
 test "index snapshots preserve unresolved symbolic link metadata" {
     const Walker = struct {
         step: usize = 0,
-        stack: struct { items: []const u8 = &.{1} } = .{},
+        root_failed: bool = false,
 
         fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
             defer self.step += 1;

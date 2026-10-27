@@ -891,8 +891,7 @@ pub const TerminalApplication = struct {
         defer self.allocator.free(dir);
         if (self.path_completion.index == .synchronous) self.path_completion.index = .{ .deferred = .{} };
         self.path_completion.recursive = true;
-        // Folder contents may have changed since the previous session.
-        self.path_index_cache.clear();
+        // A cached index is shown instantly and refreshed in the background, so stale rows are short-lived.
         try self.path_completion.openDirectory(dir, "");
         try self.syncPathIndex();
         self.overlay = .{ .path_completion = .{ .pane_id = pane_id, .anchor = anchor } };
@@ -904,25 +903,24 @@ pub const TerminalApplication = struct {
             .deferred => |value| value,
         };
         if (state.loading and state.revision != self.path_index_revision) {
+            var seeded = false;
             if (self.path_index_cache.cloneFor(self.path_completion.directory) catch null) |cached| {
                 var hit = cached;
                 defer hit.deinit();
-                self.path_index_revision = state.revision;
-                if (self.path_index) |running| running.supersede(state.revision);
-                self.path_completion.applyDeferredIndex(&hit) catch |err| {
+                self.path_completion.applyPartialIndex(&hit) catch |err| {
                     self.path_completion.failDeferredIndex();
                     if (self.overlay == .path_completion) platform.invalidateWindow();
                     return err;
                 };
+                seeded = true;
                 if (self.overlay == .path_completion) platform.invalidateWindow();
-                return;
             }
             const index = self.path_index orelse blk: {
                 const created = try PathIndex.create(self.allocator);
                 self.path_index = created;
                 break :blk created;
             };
-            try index.request(self.path_completion.directory, state.revision);
+            try index.request(self.path_completion.directory, state.revision, !seeded);
             self.path_index_revision = state.revision;
         }
         const index = self.path_index orelse return;

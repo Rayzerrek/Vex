@@ -20,8 +20,9 @@ pub const TextStyle = struct {
     strikethrough: bool = false,
     invisible: bool = false,
 };
-/// Text offsets borrow the owning frame's UTF-8 buffer, valid until the next dirty snapshot.
-pub const TerminalCell = struct { width: CellWidth, style: TextStyle, text_start: usize, text_length: usize, selected: bool = false };
+/// Snapshot text is capped at 64 MiB; bounded offsets avoid pointer-sized fields in every cell.
+/// Text borrows the owning frame's UTF-8 buffer until the next dirty snapshot.
+pub const TerminalCell = struct { width: CellWidth, style: TextStyle, text_start: u32, text_length: u32, selected: bool = false };
 /// Cursor position is in viewport cells when in_viewport is true, even if drawing is disabled.
 pub const TerminalCursor = struct {
     column: u16 = 0,
@@ -223,7 +224,7 @@ pub const Terminal = struct {
             .program_status = .{ .allocator = allocator },
             .status_clock = try std.time.Timer.start(),
         };
-        try owner.applyDefaultPalette();
+        try owner.configureDefaults();
         return owner;
     }
     /// Consumes this owner after all output callbacks have stopped; no worker owns these handles.
@@ -853,7 +854,7 @@ pub const Terminal = struct {
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, @ptrCast(&iterator));
         // Unstyled, non-grapheme cells have no page-local style/grapheme references.
         // Share only these across rows, and discard the cache before the next snapshot.
-        var plain_cache: [64]?CachedRenderCell = @splat(null);
+        var plain_cache: CellCache = @splat(null);
         var row: usize = 0;
         while (self.api.render_state_row_iterator_next(self.row_iterator)) : (row += 1) {
             if (row >= rows) return error.InvalidTerminalRowCount;
@@ -881,13 +882,13 @@ pub const Terminal = struct {
             var styled = true;
             try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_STYLED, &styled));
             // Styled cells remain page-local, even when the opaque raw values match.
-            var cell_cache: [64]?CachedRenderCell = if (styled) @splat(null) else undefined;
+            var cell_cache: CellCache = if (styled) @splat(null) else undefined;
             const cache = if (styled) &cell_cache else &plain_cache;
             var style_cache: StyleCache = if (styled) @splat(null) else undefined;
             var column: usize = 0;
             while (self.api.render_state_row_cells_next(self.row_cells)) : (column += 1) {
                 if (column >= columns) return error.InvalidTerminalColumnCount;
-                var cell = try self.readCachedCell(foreground, background, styled, cache, if (styled) &style_cache else null);
+                var cell = try self.readCachedCell(foreground, background, cache, if (styled) &style_cache else null);
                 cell.selected = has_row_selection and column >= row_selection.start_x and column <= row_selection.end_x;
                 self.frame.cells.appendAssumeCapacity(cell);
             }
@@ -946,25 +947,28 @@ pub const Terminal = struct {
         }
         return cursor;
     }
+    const cell_cache_bits = 6;
+    const CellCache = [1 << cell_cache_bits]?CachedRenderCell;
     const CachedRenderCell = struct { raw: c.GhosttyCell, cell: TerminalCell };
     const CachedStyle = struct { id: u16, style: TextStyle, inverse: bool, faint: bool };
     const StyleCache = [32]?CachedStyle;
 
-    fn readCachedCell(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, row_styled: bool, cache: *[64]?CachedRenderCell, style_cache: ?*StyleCache) !TerminalCell {
+    fn readCachedCell(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *CellCache, style_cache: ?*StyleCache) !TerminalCell {
         var raw: c.GhosttyCell = undefined;
         try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
-        const slot = &cache[std.hash.int(raw) % cache.len];
+        // This direct-mapped cache needs only a slot, not full avalanche hashing.
+        const slot = &cache[(raw *% 0x9e3779b97f4a7c15) >> (@bitSizeOf(c.GhosttyCell) - cell_cache_bits)];
         if (slot.*) |cached| {
             if (cached.raw == raw) return cached.cell;
         }
-        const cell = try self.readCell(raw, default_fg, default_bg, row_styled, style_cache);
+        const cell = try self.readCell(raw, default_fg, default_bg, style_cache);
         var tag: c.GhosttyCellContentTag = undefined;
         try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_CONTENT_TAG, &tag));
         // Grapheme extras live outside the opaque raw value and may differ for equal raw cells.
         if (tag != c.GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME) slot.* = .{ .raw = raw, .cell = cell };
         return cell;
     }
-    fn readCell(self: *Terminal, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, row_styled: bool, style_cache: ?*StyleCache) !TerminalCell {
+    fn readCell(self: *Terminal, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, style_cache: ?*StyleCache) !TerminalCell {
         var wide: c.GhosttyCellWide = undefined;
         try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_WIDE, &wide));
         const width: CellWidth = switch (wide) {
@@ -977,7 +981,7 @@ pub const Terminal = struct {
         const style = if (style_cache) |cache|
             try self.readCachedStyle(raw, default_fg, default_bg, cache)
         else
-            try self.readCellStyle(default_fg, default_bg, row_styled);
+            try self.readUnstyledCellStyle(default_fg, default_bg);
         var scratch: [128]u8 = undefined;
         var text: c.GhosttyBuffer = .{ .ptr = &scratch, .cap = scratch.len, .len = 0 };
         const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text);
@@ -998,7 +1002,7 @@ pub const Terminal = struct {
         const start = self.frame.utf8.items.len;
         if (bytes.len > max_frame_text_bytes - start) return error.TerminalFrameTextLimit;
         try self.frame.utf8.appendSlice(self.allocator, bytes);
-        return .{ .width = width, .style = style, .text_start = start, .text_length = bytes.len };
+        return .{ .width = width, .style = style, .text_start = @intCast(start), .text_length = @intCast(bytes.len) };
     }
     fn readCachedStyle(self: *Terminal, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *StyleCache) !TextStyle {
         var id: u16 = 0;
@@ -1036,32 +1040,13 @@ pub const Terminal = struct {
         style.background = packedRgb(background);
         return style;
     }
-    fn readCellStyle(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, row_styled: bool) !TextStyle {
-        if (row_styled) return self.readStyle(default_fg, default_bg);
+    fn readUnstyledCellStyle(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TextStyle {
         // Erased cells can carry a background in their content even without a style.
         // Only foreground and decorations are implied by the public unstyled flag.
         var background = default_bg;
         const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
         if (result == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(result);
         return .{ .foreground = packedRgb(default_fg), .background = packedRgb(background) };
-    }
-    fn readStyle(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TextStyle {
-        var foreground = default_fg;
-        var background = default_bg;
-        const fg = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &foreground);
-        if (fg == c.GHOSTTY_INVALID_VALUE) foreground = default_fg else try check(fg);
-        const bg = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
-        if (bg == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(bg);
-        var style = std.mem.zeroes(c.GhosttyStyle);
-        style.size = @sizeOf(c.GhosttyStyle);
-        try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style));
-        if (style.inverse) std.mem.swap(c.GhosttyColorRgb, &foreground, &background);
-        if (style.faint) {
-            foreground.r = @intCast((@as(u16, foreground.r) + background.r) / 2);
-            foreground.g = @intCast((@as(u16, foreground.g) + background.g) / 2);
-            foreground.b = @intCast((@as(u16, foreground.b) + background.b) / 2);
-        }
-        return .{ .foreground = packedRgb(foreground), .background = packedRgb(background), .bold = style.bold, .italic = style.italic, .underline = style.underline != 0, .strikethrough = style.strikethrough, .invisible = style.invisible };
     }
     pub fn applyPalette(self: *Terminal, foreground_rgb: u32, background_rgb: u32, cursor_rgb: u32, ansi: *const [16]u32) !void {
         const foreground = colorRgb(foreground_rgb);
@@ -1091,7 +1076,7 @@ pub const Terminal = struct {
         try check(self.api.render_state_set(self.render_state, c.GHOSTTY_RENDER_STATE_OPTION_DIRTY, &dirty));
         self.frame_valid = false;
     }
-    fn applyDefaultPalette(self: *Terminal) !void {
+    fn configureDefaults(self: *Terminal) !void {
         const behaviors: c.GhosttySelectionGestureBehaviors = .{
             .single_click = c.GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL,
             .double_click = c.GHOSTTY_SELECTION_GESTURE_BEHAVIOR_WORD,
@@ -1286,6 +1271,24 @@ test "cell caches match full public API decoding across pages, graphemes, colors
     defer terminal.deinit();
     try terminal.resize(100, 70, 900, 1190);
     const Compare = struct {
+        fn readStyle(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TextStyle {
+            var foreground = default_fg;
+            var background = default_bg;
+            const fg = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &foreground);
+            if (fg == c.GHOSTTY_INVALID_VALUE) foreground = default_fg else try check(fg);
+            const bg = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
+            if (bg == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(bg);
+            var style = std.mem.zeroes(c.GhosttyStyle);
+            style.size = @sizeOf(c.GhosttyStyle);
+            try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style));
+            if (style.inverse) std.mem.swap(c.GhosttyColorRgb, &foreground, &background);
+            if (style.faint) {
+                foreground.r = @intCast((@as(u16, foreground.r) + background.r) / 2);
+                foreground.g = @intCast((@as(u16, foreground.g) + background.g) / 2);
+                foreground.b = @intCast((@as(u16, foreground.b) + background.b) / 2);
+            }
+            return .{ .foreground = packedRgb(foreground), .background = packedRgb(background), .bold = style.bold, .italic = style.italic, .underline = style.underline != 0, .strikethrough = style.strikethrough, .invisible = style.invisible };
+        }
         fn snapshot(owner: *Terminal) !void {
             const frame = try owner.readFrame();
             var foreground: c.GhosttyColorRgb = undefined;
@@ -1303,7 +1306,8 @@ test "cell caches match full public API decoding across pages, graphemes, colors
                     try check(owner.api.render_state_row_cells_get(owner.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
                     const cached = frame.cells.items[index];
                     // Force the original full-style decoder as an independent oracle.
-                    const uncached = try owner.readCell(raw, foreground, background, true, null);
+                    var uncached = try owner.readCell(raw, foreground, background, null);
+                    uncached.style = try readStyle(owner, foreground, background);
                     try std.testing.expectEqual(cached.width, uncached.width);
                     try std.testing.expectEqualDeep(cached.style, uncached.style);
                     try std.testing.expectEqualStrings(frame.cellText(cached), frame.cellText(uncached));
