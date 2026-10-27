@@ -248,7 +248,6 @@ pub const TerminalApplication = struct {
             if (session.scrollbar_visibility.nextDelayMs(now, self.scrollbarActive(placement.id))) |sd|
                 delay = if (delay) |d| @min(d, sd) else sd;
         }
-        if (self.layout_motion.previous.items.len > 0) delay = if (delay) |d| @min(d, 16) else 16;
         try platform.scheduleCursorWake(delay);
     }
     pub fn resetCursorOnInput(self: *TerminalApplication) !void {
@@ -270,8 +269,7 @@ pub const TerminalApplication = struct {
     pub fn onCursorWake(self: *TerminalApplication) void {
         if (self.health == .failed) return;
         const now = self.cursorNowMs();
-        var repaint = self.layout_motion.previous.items.len > 0;
-        if (!platform.animationsEnabled() or !self.layout_motion.active(now)) self.layout_motion.clear();
+        var repaint = false;
         if (self.cursorBlinkEligible()) {
             if (self.cursor_blink.advance(now)) repaint = true;
         } else {
@@ -467,11 +465,35 @@ pub const TerminalApplication = struct {
         defer self.allocator.free(home);
         var path = try directory.DirectoryPath.parse(home);
         path.shell_home = launch_ptr.backend == .wsl;
-        return self.addSessionWithKind(path, kind);
+        return self.addSessionWithLaunch(path, launch_ptr);
+    }
+    /// Ordinary splits keep the tab's original launch, even after its first pane is gone.
+    pub fn addSplitSession(self: *TerminalApplication, target: *const TerminalSession) !*TerminalSession {
+        const slot = if (self.model) |*model| model.activeTab().shell_launch_id else null;
+        const launch = if (slot) |id| (if (id == 0) &self.launch else self.shell_launches.items[id - 1]) else target.shell_launch;
+        return self.addSessionWithLaunch(target.directory.current(), launch);
+    }
+    pub fn rememberTabShell(self: *TerminalApplication, session: *const TerminalSession) void {
+        const tab = self.model.?.activeTab();
+        if (session.shell_launch == &self.launch) {
+            tab.shell_launch_id = 0;
+            return;
+        }
+        for (self.shell_launches.items, 0..) |launch, index| {
+            if (session.shell_launch == launch) {
+                tab.shell_launch_id = index + 1;
+                return;
+            }
+        }
+        unreachable; // Every live session borrows a startup or cached launch.
     }
     fn addSessionWithKind(self: *TerminalApplication, path: directory.DirectoryPath, kind: shell.ShellKind) !*TerminalSession {
         platform.resetPtyLaunchError();
         const launch_ptr = terminal_shells.resolveShellLaunch(self, kind) catch |err| return if (err == error.OutOfMemory) err else error.ShellStartFailed;
+        return self.addSessionWithLaunch(path, launch_ptr);
+    }
+    fn addSessionWithLaunch(self: *TerminalApplication, path: directory.DirectoryPath, launch_ptr: *const shell.ShellLaunch) !*TerminalSession {
+        platform.resetPtyLaunchError();
         // Reserving first prevents an allocation failure from stranding a live process.
         try self.sessions.ensureUnusedCapacity(self.allocator, 1);
         const token = self.next_token;
@@ -509,6 +531,13 @@ pub const TerminalApplication = struct {
         const first = try self.addHomeSessionWithKind(self.default_shell_kind);
         errdefer self.removeSession(first.id);
         self.model = try workspace.WorkspaceModel.init(self.allocator, first.id);
+        self.rememberTabShell(first);
+    }
+    pub fn toggleFocusMode(self: *TerminalApplication) !void {
+        const model = if (self.model) |*model| model else return;
+        if (model.activeTab().tree.paneCount() <= 1) return;
+        try self.layout_motion.captureFocus(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled());
+        if (model.toggleFocusMode()) try self.updateLayout();
     }
     pub fn updateLayout(self: *TerminalApplication) !void {
         const model = if (self.model) |*model| model else return;
@@ -1005,9 +1034,7 @@ pub const TerminalApplication = struct {
                 const session = try self.addHomeSessionWithKind(kind);
                 errdefer self.removeSession(session.id);
                 try model.newTab(session.id);
-                for (self.sessions.items) |s| {
-                    if (model.activeTab().tree.containsPane(s.id)) s.needs_attention = false;
-                }
+                self.rememberTabShell(session);
                 try self.updateLayout();
             },
             .split_right, .split_down => {
@@ -1264,15 +1291,17 @@ pub const TerminalApplication = struct {
                 const session = try self.addHomeSessionWithKind(self.default_shell_kind);
                 errdefer self.removeSession(session.id);
                 try model.newTab(session.id);
+                self.rememberTabShell(session);
             },
             .split_right, .split_down => {
                 const active = self.activeSession() orelse return error.MissingPaneSession;
-                const session = try self.addSession(active.directory.current());
+                const session = try self.addSplitSession(active);
                 errdefer self.removeSession(session.id);
                 try model.splitActivePane(session.id, if (action == .split_right) .right else .down);
             },
             .toggle_focus_mode => {
-                if (!model.toggleFocusMode()) return;
+                try self.toggleFocusMode();
+                return;
             },
             .focus_left, .focus_right, .focus_up, .focus_down, .next_pane, .previous_pane => {
                 const metrics = self.metrics orelse return;
@@ -1439,6 +1468,72 @@ fn recoveryTestApplication(config_path: []const u8) !TerminalApplication {
         .path_completion = path_completion.PathCompletion.init(allocator),
         .cursor_clock = try std.time.Timer.start(),
     };
+}
+
+test "ordinary splits retain the tab launch across overrides, original pane removal and tab switches" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    try app.initializeWorkspace();
+    const default_launch = app.activeSession().?.shell_launch;
+    try app.executeShellPickerChoice(.new_tab, .powershell);
+    const original = app.activeSession().?;
+    const original_id = original.id;
+    const tab_launch = original.shell_launch;
+    try std.testing.expectEqual(shell.ShellKind.powershell, tab_launch.kind);
+    try std.testing.expectEqual(shell.ShellKind.cmd, app.default_shell_kind);
+    try std.testing.expectEqual(@as(?usize, 1), app.model.?.activeTab().shell_launch_id);
+
+    try app.applyAction(.split_right, 0);
+    try std.testing.expect(app.activeSession().?.shell_launch == tab_launch);
+    // An explicit override does not change the tab's default for later splits.
+    try app.executeShellPickerChoice(.split_down, .cmd);
+    const override = app.activeSession().?;
+    try std.testing.expect(override.shell_launch == default_launch);
+    app.metrics = .{ .width = 1600, .height = 1000, .cell_width = 8, .cell_height = 16, .scale = 1 };
+    try app.updateLayout();
+    const override_handle = override.pty.handle;
+    const header = app.findPlacement(override.id).?.bounds;
+    app.onClick(header.x + header.width - 54, header.y + 12);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expectEqual(@as(usize, 5), app.sessions.items.len);
+    try std.testing.expect(app.activeSession().?.shell_launch == tab_launch);
+    try std.testing.expectEqual(override_handle, override.pty.handle);
+    try std.testing.expect(app.model.?.focusPane(override.id));
+    try app.applyAction(.split_down, 0);
+    try std.testing.expect(app.activeSession().?.shell_launch == tab_launch);
+
+    try std.testing.expectEqual(original_id, app.model.?.closePaneSplit(original_id).?);
+    app.removeSession(original_id);
+    try app.applyAction(.split_right, 0);
+    try std.testing.expect(app.activeSession().?.shell_launch == tab_launch);
+    try std.testing.expect(app.model.?.selectTab(0));
+    try app.applyAction(.split_down, 0);
+    try std.testing.expect(app.activeSession().?.shell_launch == default_launch);
+    try std.testing.expect(app.model.?.selectTab(1));
+    try app.applyAction(.split_down, 0);
+    try std.testing.expect(app.activeSession().?.shell_launch == tab_launch);
+    try std.testing.expectEqual(@as(usize, 1), app.shell_launches.items.len);
+}
+
+test "installed PowerShell 7 launches in a new tab and its inherited splits" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const launch = try terminal_shells.resolveShellLaunch(&app, .pwsh);
+    if (launch.kind != .pwsh) return error.SkipZigTest;
+    try app.initializeWorkspace();
+    app.executeShellPickerChoice(.new_tab, .pwsh) catch |err| {
+        std.debug.print("PowerShell 7 tab launch failed: {s}, Win32={d}, program={s}\n", .{ @errorName(err), platform.lastPtyLaunchError(), launch.program });
+        return err;
+    };
+    const original = app.activeSession().?;
+    try std.testing.expect(original.shell_launch == launch);
+    app.applyAction(.split_right, 0) catch |err| {
+        std.debug.print("PowerShell 7 split failed: {s}, Win32={d}, program={s}, directory={s}\n", .{ @errorName(err), platform.lastPtyLaunchError(), launch.program, original.directory.current().bytes });
+        return err;
+    };
+    try std.testing.expect(app.activeSession().?.shell_launch == launch);
+    try app.applyAction(.split_down, 0);
+    try std.testing.expect(app.activeSession().?.shell_launch == launch);
 }
 
 test "OSC identities bypass process polling in visible and hidden panes and late metadata is harmless" {
@@ -1618,6 +1713,7 @@ test "pane drag crosses tabs, cancellation restores selection and detaching reta
     try std.testing.expectEqual(first.id, app.model.?.activeTab().active_pane);
     try std.testing.expectEqual(@as(usize, 3), app.sessions.items.len);
     try std.testing.expectEqual(handle, first.pty.handle);
+    try std.testing.expectEqual(@as(?usize, 0), app.model.?.activeTab().shell_launch_id);
 }
 
 test "tab drag merges the entire split group without replacing its terminals" {
@@ -1664,7 +1760,15 @@ test "Ctrl Shift E toggles active pane zoom and restores the split layout" {
     try std.testing.expectEqual(second.id, app.placements.items[0].id);
     try std.testing.expect(app.placements.items[0].bounds.width > original.width);
     try std.testing.expectEqual(@as(usize, 2), app.sessions.items.len);
+    if (platform.animationsEnabled()) {
+        try std.testing.expectEqual(@as(usize, 1), app.layout_motion.previous.items.len);
+        try std.testing.expectEqualDeep(original, app.layout_motion.previous.items[0].bounds);
+        try std.testing.expectEqual(@as(u64, 250), app.layout_motion.transition_ms);
+    } else try std.testing.expectEqual(@as(usize, 0), app.layout_motion.previous.items.len);
+    // Model completion without sleeping: the next command captures the settled zoomed pane.
+    app.layout_motion.clear();
     try std.testing.expect(app.onKey('E', 3));
+    try std.testing.expectEqual(if (platform.animationsEnabled()) @as(usize, 2) else 0, app.layout_motion.previous.items.len);
     try std.testing.expect(!app.model.?.activeTab().is_focus_mode);
     try std.testing.expectEqual(@as(usize, 2), app.placements.items.len);
     try std.testing.expectEqualDeep(original, app.placements.items[1].bounds);

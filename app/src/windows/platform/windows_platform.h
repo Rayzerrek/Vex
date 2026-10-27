@@ -42,6 +42,7 @@ typedef struct {
     const uint16_t* directory; size_t directory_length;
     const uint16_t* environment; size_t environment_length;
     bool declared_shell;
+    bool app_execution_alias;
     const uint16_t* wsl_probe_command; size_t wsl_probe_command_length;
 } VexPtyLaunch;
 /* Pointer event/cursor values are shared with the checked Zig adapter. */
@@ -105,6 +106,8 @@ typedef struct {
 int vex_window_run(VexWindowCallbacks callbacks);
 void vex_startup_begin(void);
 void vex_window_invalidate(void);
+/* Paint-only continuation, paced to the monitor; stops when paint no longer requests it. */
+void vex_window_request_animation_frame(void);
 void vex_window_defer_synchronized(void);
 void vex_window_close(void);
 /* Startup declines new sessions while this install is being replaced; no MSI/network IO. */

@@ -148,16 +148,19 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!SetInformationJobObject(session->job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) return GetLastError();
     SIZE_T attributeSize = 0;
-    InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeSize);
+    const DWORD attributeCount = launch.app_execution_alias ? 1 : 2;
+    InitializeProcThreadAttributeList(nullptr, attributeCount, 0, &attributeSize);
     auto attributes = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(HeapAlloc(GetProcessHeap(), 0, attributeSize));
     if (!attributes) return ERROR_OUTOFMEMORY;
-    if (!InitializeProcThreadAttributeList(attributes, 2, 0, &attributeSize)) {
+    if (!InitializeProcThreadAttributeList(attributes, attributeCount, 0, &attributeSize)) {
         DWORD error = GetLastError(); HeapFree(GetProcessHeap(), 0, attributes); return error;
     }
     DWORD error = ERROR_SUCCESS;
-    // Atomic job assignment avoids leaving a launcher suspended during DLL initialization.
+    // Normal executables use atomic job assignment without suspended loader initialization.
+    // Store activation reuses a package job: assigning our job before activation makes a
+    // second instance fail with access denied. Assign after activation, before resuming.
     if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, session->console, sizeof(session->console), nullptr, nullptr) ||
-        !UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &session->job, sizeof(session->job), nullptr, nullptr)) error = GetLastError();
+        (!launch.app_execution_alias && !UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &session->job, sizeof(session->job), nullptr, nullptr))) error = GetLastError();
     else {
         STARTUPINFOEXW startup = {};
         startup.StartupInfo.cb = sizeof(startup);
@@ -165,11 +168,17 @@ static DWORD startPty(VexPty* session, uint16_t columns, uint16_t rows, VexPtyLa
         startup.lpAttributeList = attributes;
         PROCESS_INFORMATION process = {};
         if (!CreateProcessW(reinterpret_cast<const wchar_t*>(launch.program), reinterpret_cast<wchar_t*>(launch.command), nullptr, nullptr, FALSE,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | (launch.app_execution_alias ? CREATE_SUSPENDED : 0),
             const_cast<uint16_t*>(launch.environment), reinterpret_cast<const wchar_t*>(launch.directory), &startup.StartupInfo, &process)) error = GetLastError();
         else {
             session->process = process.hProcess;
-            if (session->declaredShell) {
+            if (launch.app_execution_alias) {
+                if (!AssignProcessToJobObject(session->job, process.hProcess)) error = GetLastError();
+                else if (ResumeThread(process.hThread) == static_cast<DWORD>(-1)) error = GetLastError();
+                // An assignment failure must not strand an unowned suspended process.
+                if (error) TerminateProcess(process.hProcess, error);
+            }
+            if (!error && session->declaredShell) {
                 HANDLE image = CreateFileW(reinterpret_cast<const wchar_t*>(launch.program), FILE_READ_ATTRIBUTES,
                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
                 BY_HANDLE_FILE_INFORMATION info = {};

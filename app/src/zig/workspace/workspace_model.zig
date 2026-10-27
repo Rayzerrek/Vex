@@ -8,6 +8,9 @@ pub const WorkspaceTab = struct {
     id: TabId,
     tree: panes.PaneTree,
     active_pane: panes.PaneId,
+    /// Application-owned immutable launch slot (0 = startup, n + 1 = cached launch n).
+    /// Survives closing or moving the original pane without coupling the model to process launch code.
+    shell_launch_id: ?usize = null,
     is_focus_mode: bool = false,
     custom_title: [64]u8 = undefined,
     custom_title_len: u8 = 0,

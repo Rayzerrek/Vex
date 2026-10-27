@@ -169,7 +169,7 @@ pub const PtyOwner = struct {
         const probe = if (probe_bytes) |text| try std.unicode.utf8ToUtf16LeAllocZ(allocator, text) else null;
         defer if (probe) |owned| allocator.free(owned);
         var pointer: ?*c.VexPty = null;
-        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.isDeclaredShell(), .wsl_probe_command = if (probe) |value| value.ptr else null, .wsl_probe_command_length = if (probe) |value| value.len else 0 };
+        const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.isDeclaredShell(), .app_execution_alias = launch.app_execution_alias, .wsl_probe_command = if (probe) |value| value.ptr else null, .wsl_probe_command_length = if (probe) |value| value.len else 0 };
         const result = c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer);
         last_pty_launch_error = @bitCast(result);
         if (result != 0) return error.PtyLaunchFailed;
@@ -571,6 +571,10 @@ pub fn updateStartupAllowed() bool {
 /// Coalesces presentation requests without a repeating idle timer.
 pub fn invalidateWindow() void {
     c.vex_window_invalidate();
+}
+/// Request continuation during paint without a coarse Win32 animation timer.
+pub fn requestAnimationFrame() void {
+    c.vex_window_request_animation_frame();
 }
 /// Extends the pending frame deadline up to 100ms while a DEC 2026 synchronized output block is open.
 pub fn deferSynchronizedInvalidation() void {

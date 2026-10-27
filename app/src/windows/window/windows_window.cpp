@@ -44,6 +44,7 @@ enum class FrameSchedule { none, posted, synchronized, output };
 static FrameSchedule frameSchedule = FrameSchedule::none;
 static bool firstOutput, firstFrame, startupCloaked;
 static bool cursorWakeArmed;
+static bool workspaceAnimationPending;
 static ULONGLONG frameDeadline;
 static int platformError;
 static LARGE_INTEGER startupCounter, counterFrequency;
@@ -230,6 +231,8 @@ static void renderScheduledFrame() {
     frameSchedule = FrameSchedule::none;
     InvalidateRect(window, nullptr, FALSE); UpdateWindow(window);
 }
+// Called during paint; the next frame uses the same monitor-paced scheduler as chrome.
+extern "C" void vex_window_request_animation_frame() { workspaceAnimationPending = true; }
 extern "C" void vex_window_invalidate() {
     if (!IsWindow(window)) return;
     ULONGLONG now = GetTickCount64();
@@ -484,6 +487,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
             frameRequestCounter.QuadPart = 0;
         }
     }
+    workspaceAnimationPending = false;
     renderScene(1000.0 * sceneBegin.QuadPart / counterFrequency.QuadPart);
     if (measureFrameTiming) {
         LARGE_INTEGER sceneEnd; QueryPerformanceCounter(&sceneEnd);
@@ -494,7 +498,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     rendererRecoveryAttempts = 0;
     // Preparation and a blocking Present already consume the interval; do not add another full period afterward.
     nextOutputFrame = sceneBegin.QuadPart + outputFrameTicks;
-    if ((windowChromeAnimationPending() || windowChromeEffectsPending() || terminalNotificationAnimationPending() || windowsUpdateAnimationPending()) &&
+    if ((workspaceAnimationPending || windowChromeAnimationPending() || windowChromeEffectsPending() || terminalNotificationAnimationPending() || windowsUpdateAnimationPending()) &&
         frameSchedule != FrameSchedule::synchronized) invalidateOutputFrame();
     if (SUCCEEDED(result) && !firstFrame) {
         firstFrame = true;

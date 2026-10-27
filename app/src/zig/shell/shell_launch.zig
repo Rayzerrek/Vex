@@ -143,6 +143,7 @@ pub const ShellLaunch = struct {
     program: []const u8,
     command_line: []const u8,
     environment: []const u16,
+    app_execution_alias: bool = false,
     display_name: ?[]const u8 = null,
     profile_program: ?[]const u8 = null,
     profile_arguments: ?[]const u8 = null,
@@ -170,6 +171,7 @@ pub const ShellLaunch = struct {
             },
         };
         errdefer allocator.free(program);
+        const app_execution_alias = try shellIsAppExecutionAlias(program);
         const raw_arguments = switch (request) {
             .custom => |custom| custom.arguments,
             .builtin, .wsl => "",
@@ -198,7 +200,7 @@ pub const ShellLaunch = struct {
         const block = try std.process.createWindowsEnvBlock(allocator, environment);
         errdefer allocator.free(block);
         if (block.len > 1024 * 1024) return error.ShellEnvironmentTooLarge;
-        return .{ .allocator = allocator, .kind = resolved_kind, .program = program, .command_line = command_line, .environment = block, .backend = backend };
+        return .{ .allocator = allocator, .kind = resolved_kind, .program = program, .command_line = command_line, .environment = block, .app_execution_alias = app_execution_alias, .backend = backend };
     }
     /// Releases all launch storage after the last session has closed.
     pub fn deinit(self: *ShellLaunch) void {
@@ -336,19 +338,24 @@ fn shellFileExists(path: []const u8) !bool {
         };
         if ((attributes & (windows.FILE_ATTRIBUTE_DIRECTORY | windows.FILE_ATTRIBUTE_DEVICE)) != 0) return false;
         if ((attributes & windows.FILE_ATTRIBUTE_REPARSE_POINT) == 0) return true;
-        const wide = try windows.sliceToPrefixedFileW(null, path);
-        var data: windows.WIN32_FIND_DATAW = undefined;
-        const handle = windows.kernel32.FindFirstFileW(wide.span().ptr, &data);
-        if (handle != windows.INVALID_HANDLE_VALUE) {
-            defer _ = windows.kernel32.FindClose(handle);
-            if (isAppExecutionAlias(data.dwFileAttributes, data.dwReserved0)) return true;
-        }
+        if (try shellIsAppExecutionAlias(path)) return true;
     }
     const info = std.fs.cwd().statFile(path) catch |err| switch (err) {
         error.FileNotFound, error.NotDir, error.BadPathName => return false,
         else => return err,
     };
     return info.kind == .file;
+}
+/// Resolve the activation policy once per cached launch, never during rendering or splitting.
+fn shellIsAppExecutionAlias(path: []const u8) !bool {
+    if (@import("builtin").os.tag != .windows) return false;
+    const windows = std.os.windows;
+    const wide = try windows.sliceToPrefixedFileW(null, path);
+    var data: windows.WIN32_FIND_DATAW = undefined;
+    const handle = windows.kernel32.FindFirstFileW(wide.span().ptr, &data);
+    if (handle == windows.INVALID_HANDLE_VALUE) return false;
+    defer _ = windows.kernel32.FindClose(handle);
+    return isAppExecutionAlias(data.dwFileAttributes, data.dwReserved0);
 }
 fn isAppExecutionAlias(attributes: u32, tag: u32) bool {
     const reparse_point = 0x400;

@@ -2,12 +2,15 @@ const std = @import("std");
 const panes = @import("pane_tree.zig");
 
 /// Paint-only layout interpolation. The PTY is resized once to its final grid, never once per frame.
-/// Timing matches native ChromeMotion; stable IDs prevent a removed pane animating a replacement.
+/// Default timing matches native ChromeMotion; focus has a longer spatial transition.
+/// Stable IDs prevent a removed pane animating a replacement.
 pub const LayoutMotion = struct {
     previous: std.ArrayList(panes.PanePlacement) = .empty,
     scratch: std.ArrayList(panes.PanePlacement) = .empty,
     started_ms: u64 = 0,
+    transition_ms: u64 = duration_ms,
     pub const duration_ms = 160;
+    pub const focus_duration_ms = 250;
 
     pub fn deinit(self: *LayoutMotion, allocator: std.mem.Allocator) void {
         self.previous.deinit(allocator);
@@ -17,7 +20,7 @@ pub const LayoutMotion = struct {
         self.previous.clearRetainingCapacity();
     }
     pub fn active(self: *const LayoutMotion, now: u64) bool {
-        return self.previous.items.len > 0 and now -| self.started_ms < duration_ms;
+        return self.previous.items.len > 0 and now -| self.started_ms < self.transition_ms;
     }
     pub fn capture(self: *LayoutMotion, allocator: std.mem.Allocator, placements: []const panes.PanePlacement, now: u64, enabled: bool) !void {
         if (!enabled) {
@@ -32,6 +35,11 @@ pub const LayoutMotion = struct {
         }
         std.mem.swap(std.ArrayList(panes.PanePlacement), &self.previous, &self.scratch);
         self.started_ms = now;
+        self.transition_ms = duration_ms;
+    }
+    pub fn captureFocus(self: *LayoutMotion, allocator: std.mem.Allocator, placements: []const panes.PanePlacement, now: u64, enabled: bool) !void {
+        try self.capture(allocator, placements, now, enabled);
+        self.transition_ms = focus_duration_ms;
     }
     /// Resolve IDs once at a layout change, not once per pane on every animation frame.
     /// This visual-only cache must never make an otherwise successful workspace edit fail.
@@ -62,7 +70,7 @@ pub const LayoutMotion = struct {
         if (!enabled or !self.active(now) or index >= self.previous.items.len) return placement.bounds;
         const old = self.previous.items[index];
         if (old.id != placement.id) return placement.bounds;
-        const remaining = 1 - @as(f32, @floatFromInt(now -| self.started_ms)) / duration_ms;
+        const remaining = 1 - @as(f32, @floatFromInt(now -| self.started_ms)) / @as(f32, @floatFromInt(self.transition_ms));
         const weight = remaining * remaining * remaining;
         const final = placement.bounds;
         return .{
@@ -91,6 +99,33 @@ test "layout motion aligns reordered IDs once and retargets without warm allocat
     try std.testing.expectEqualDeep(middle, motion.bounds(final[0], 0, 180, true));
     try std.testing.expectEqual(@as(usize, 0), failing.allocations);
     try std.testing.expectEqualDeep(final[0].bounds, motion.bounds(final[0], 1, 180, true));
+}
+
+test "focus expands the selected pane and reverses from its painted bounds" {
+    var motion: LayoutMotion = .{};
+    defer motion.deinit(std.testing.allocator);
+    const left: panes.PanePlacement = .{ .id = @enumFromInt(1), .bounds = .{ .x = 0, .y = 44, .width = 497, .height = 600 } };
+    const right: panes.PanePlacement = .{ .id = @enumFromInt(2), .bounds = .{ .x = 503, .y = 44, .width = 497, .height = 600 } };
+    const zoomed: panes.PanePlacement = .{ .id = right.id, .bounds = .{ .x = 0, .y = 44, .width = 1000, .height = 600 } };
+    try motion.captureFocus(std.testing.allocator, &.{ left, right }, 100, true);
+    motion.alignToLayout(std.testing.allocator, &.{zoomed});
+    try std.testing.expectEqualDeep(right.bounds, motion.bounds(zoomed, 0, 100, true));
+    const middle = motion.bounds(zoomed, 0, 180, true);
+    try std.testing.expect(middle.x < right.bounds.x and middle.x > zoomed.bounds.x);
+    try std.testing.expect(middle.width > right.bounds.width and middle.width < zoomed.bounds.width);
+    try motion.captureFocus(std.testing.allocator, &.{zoomed}, 180, true);
+    motion.alignToLayout(std.testing.allocator, &.{ left, right });
+    try std.testing.expectEqualDeep(left.bounds, motion.bounds(left, 0, 180, true));
+    try std.testing.expectEqualDeep(middle, motion.bounds(right, 1, 180, true));
+    try std.testing.expectEqual(@as(u64, 250), motion.transition_ms);
+    var previous_width = middle.width;
+    for (1..32) |step| {
+        const width = motion.bounds(right, 1, 180 + step * 8, true).width;
+        try std.testing.expect(width <= previous_width and width >= right.bounds.width);
+        previous_width = width;
+    }
+    try std.testing.expectEqualDeep(right.bounds, motion.bounds(right, 1, 430, true));
+    try std.testing.expect(!motion.active(430));
 }
 
 test "unchanged and reduced-motion layouts schedule no frames or allocations" {

@@ -44,6 +44,8 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     var saw_active_pane = false;
     const paint_now = self.cursorNowMs();
     const motion_enabled = platform.animationsEnabled();
+    if (!motion_enabled or !self.layout_motion.active(paint_now)) self.layout_motion.clear();
+    if (self.layout_motion.active(paint_now)) platform.requestAnimationFrame();
     for (self.placements.items, 0..) |final_placement, placement_index| {
         const placement: panes.PanePlacement = .{ .id = final_placement.id, .bounds = self.layout_motion.bounds(final_placement, placement_index, paint_now, motion_enabled) };
         if (self.overlay == .tab_peek) break;

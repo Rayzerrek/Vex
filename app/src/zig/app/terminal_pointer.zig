@@ -203,11 +203,11 @@ fn handleClick(self: *Application, x: f32, y: f32) !void {
                 .focus_toggle => {
                     _ = model.focusPane(placement.id);
                     try self.clearOtherSelections(placement.id);
-                    if (model.toggleFocusMode()) try self.updateLayout() else platform.invalidateWindow();
+                    try self.toggleFocusMode();
                 },
                 .split_right, .split_down => {
                     const target_session = self.findSession(placement.id) orelse return error.MissingPaneSession;
-                    const session = try self.addSession(target_session.directory.current());
+                    const session = try self.addSplitSession(target_session);
                     errdefer self.removeSession(session.id);
                     try model.splitPane(placement.id, session.id, if (header_action == .split_right) .right else .down);
                     try self.updateLayout();
@@ -306,7 +306,7 @@ pub fn cancelPointerDrag(self: *Application) !bool {
 
 pub fn onPointer(self: *Application, event: platform.PointerEvent, x: f32, y: f32, modifiers: u32) platform.PointerResponse {
     if (self.health == .failed) return .normal;
-    if (event == .begin) self.layout_motion.clear();
+    // Preserve a focus transition until the click can retarget its painted bounds.
     if (event == .begin) self.resetCursorOnInput() catch |err| {
         self.fail(err);
         return .normal;
@@ -500,7 +500,11 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                             } else if (point.y >= 0 and point.y < tab_strip.TabStripLayout.height and point.x >= tab_strip.TabStripLayout.left and point.x < layout.plusLeft() + 36 and (try layout.hitTab(point)) == null and model.tabs.items.len < workspace.WorkspaceModel.max_tabs) {
                                 const token = self.next_token;
                                 self.next_token = try std.math.add(u32, token, 1);
-                                if (try model.detachPane(pdrag.pane_id, @enumFromInt(token))) try self.updateLayout();
+                                if (try model.detachPane(pdrag.pane_id, @enumFromInt(token))) {
+                                    const session = self.findSession(pdrag.pane_id) orelse return error.MissingPaneSession;
+                                    self.rememberTabShell(session);
+                                    try self.updateLayout();
+                                }
                             } else {
                                 if (model.tabIndex(pdrag.origin_tab)) |index| {
                                     _ = model.selectTab(index);
