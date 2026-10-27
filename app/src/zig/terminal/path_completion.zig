@@ -344,7 +344,7 @@ pub const PathCompletion = struct {
         };
         defer dir.close();
 
-        var walker = try @import("path_walker.zig").Walker.init(self.allocator, dir);
+        var walker = @import("path_walker.zig").Walker.init(self.allocator, dir);
         defer walker.deinit();
         walker.recursive = self.recursive;
         walker.probe_symlink_directories = !(self.is_wsl and self.recursive);
@@ -369,7 +369,7 @@ pub const PathCompletion = struct {
                 if (err == error.OutOfMemory) return err;
                 // Walker advances past failed children. WSL trees often contain folders
                 // Windows cannot open; one such folder must not discard the whole index.
-                if (walker.stack.items.len == 0) {
+                if (walker.root_failed) {
                     self.scan_error = true;
                     break;
                 }
@@ -1034,7 +1034,7 @@ test "recursive path indexing skips unreadable children and retains readable sib
     const Walker = struct {
         step: usize = 0,
         failure: anyerror = error.AccessDenied,
-        stack: struct { items: []const u8 = &.{1} } = .{},
+        root_failed: bool = false,
 
         fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
             defer self.step += 1;
@@ -1062,7 +1062,7 @@ test "recursive path indexing skips unreadable children and retains readable sib
 
     var completion = PathCompletion.init(std.testing.allocator);
     defer completion.deinit();
-    var root_failure = Walker{ .step = 1, .stack = .{ .items = &.{} } };
+    var root_failure = Walker{ .step = 1, .root_failed = true };
     try completion.scanWalker(&root_failure);
     try std.testing.expect(completion.scan_error);
     try std.testing.expectEqual(@as(usize, 0), completion.entries.items.len);
@@ -1226,7 +1226,7 @@ test "index entry limit reports truncation only when a further entry is omitted"
 test "unreadable trees have bounded scan work and remain cancellation aware" {
     const Walker = struct {
         calls: usize = 0,
-        stack: struct { items: []const u8 = &.{1} } = .{},
+        root_failed: bool = false,
         fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
             self.calls += 1;
             return error.AccessDenied;
@@ -1656,7 +1656,7 @@ test "partial and final indexes preserve the selected path across reordered matc
 test "index snapshots preserve unresolved symbolic link metadata" {
     const Walker = struct {
         step: usize = 0,
-        stack: struct { items: []const u8 = &.{1} } = .{},
+        root_failed: bool = false,
 
         fn next(self: *@This()) !?struct { path: []const u8, kind: std.fs.Dir.Entry.Kind } {
             defer self.step += 1;

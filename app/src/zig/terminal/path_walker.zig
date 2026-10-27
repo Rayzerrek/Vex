@@ -7,10 +7,11 @@ const std = @import("std");
 pub const Walker = struct {
     allocator: std.mem.Allocator,
     root: std.fs.Dir,
-    /// stack[0] is the borrowed root iterator; stack[1], when present, is the
-    /// directory being listed. An empty stack means the root itself failed.
-    stack: std.ArrayList(Frame) = .empty,
+    /// Breadth-first traversal needs only one live iterator. Root is borrowed;
+    /// after it finishes, each queued child owns its handle until consumed.
+    iterator: ?std.fs.Dir.Iterator,
     root_done: bool = false,
+    root_failed: bool = false,
     /// Current directory relative to root, and the buffer backing returned entries.
     dir_path: std.ArrayList(u8) = .empty,
     entry_path: std.ArrayList(u8) = .empty,
@@ -30,21 +31,17 @@ pub const Walker = struct {
     pub const default_skip_names: []const []const u8 = &.{ ".git", "node_modules", ".cache", ".venv", "__pycache__", ".zig-cache", "zig-cache" };
     pub const wsl_root_skip_names: []const []const u8 = &.{ "mnt", "proc", "sys", "dev", "run", "snap", "lost+found" };
 
-    const Frame = struct { iter: std.fs.Dir.Iterator };
     pub const Entry = struct { path: []const u8, kind: std.fs.Dir.Entry.Kind };
 
     /// Borrows the root handle; only descendant handles belong to the walker.
-    pub fn init(allocator: std.mem.Allocator, root: std.fs.Dir) !Walker {
-        var self = Walker{ .allocator = allocator, .root = root };
-        try self.stack.append(allocator, .{ .iter = root.iterate() });
-        return self;
+    pub fn init(allocator: std.mem.Allocator, root: std.fs.Dir) Walker {
+        return .{ .allocator = allocator, .root = root, .iterator = root.iterate() };
     }
 
     pub fn deinit(self: *Walker) void {
-        if (self.stack.items.len > 1) {
-            for (self.stack.items[1..]) |*frame| frame.iter.dir.close();
+        if (self.root_done) {
+            if (self.iterator) |*iter| iter.dir.close();
         }
-        self.stack.deinit(self.allocator);
         self.dir_path.deinit(self.allocator);
         self.entry_path.deinit(self.allocator);
         self.queue.deinit(self.allocator);
@@ -77,7 +74,7 @@ pub const Walker = struct {
         // directories. Inspect the no-follow handle before traversing them.
         const info = try child.stat();
         if (info.kind == .directory) {
-            try self.stack.append(self.allocator, .{ .iter = child.iterate() });
+            self.iterator = child.iterate();
             adopted = true;
         }
         return true;
@@ -86,25 +83,21 @@ pub const Walker = struct {
     /// A failed child is already consumed, so callers may resume with next().
     /// Returned path storage remains valid only until the next call.
     pub fn next(self: *Walker) !?Entry {
-        while (self.stack.items.len > 0) {
-            const in_child = self.stack.items.len > 1;
-            if (!in_child and self.root_done) {
+        while (!self.root_failed) {
+            if (self.iterator == null) {
                 if (!try self.openNextQueued()) return null;
                 continue;
             }
-            const top = &self.stack.items[self.stack.items.len - 1];
-            const entry = top.iter.next() catch |err| {
-                var failed = self.stack.pop().?;
-                if (in_child) failed.iter.dir.close();
+            const in_child = self.root_done;
+            const iter = &self.iterator.?;
+            const entry = iter.next() catch |err| {
+                if (in_child) iter.dir.close() else self.root_failed = true;
+                self.iterator = null;
                 return err;
             };
             const item = entry orelse {
-                if (in_child) {
-                    var finished = self.stack.pop().?;
-                    finished.iter.dir.close();
-                } else {
-                    self.root_done = true;
-                }
+                if (in_child) iter.dir.close() else self.root_done = true;
+                self.iterator = null;
                 continue;
             };
             self.entry_path.clearRetainingCapacity();
@@ -121,7 +114,7 @@ pub const Walker = struct {
                 }
             } else if (kind == .sym_link and self.probe_symlink_directories) {
                 // Detect directory links for Tab/Open without traversing them.
-                if (top.iter.dir.openDir(item.name, .{})) |target| {
+                if (iter.dir.openDir(item.name, .{})) |target| {
                     var owned = target;
                     owned.close();
                     kind = .directory;
@@ -143,7 +136,7 @@ test "directory walker yields directory links without recursing into cycles" {
         error.AccessDenied => return error.SkipZigTest,
         else => return err,
     };
-    var walker = try Walker.init(std.testing.allocator, fixture.dir);
+    var walker = Walker.init(std.testing.allocator, fixture.dir);
     defer walker.deinit();
     var count: usize = 0;
     var found_link = false;
@@ -169,7 +162,7 @@ test "walker lists but does not descend into skipped directories" {
     try fixture.dir.makeDir("mnt");
     try fixture.dir.makeDir("mnt/c");
     try fixture.dir.makeDir("src");
-    var walker = try Walker.init(std.testing.allocator, fixture.dir);
+    var walker = Walker.init(std.testing.allocator, fixture.dir);
     defer walker.deinit();
     walker.skip_root_names = Walker.wsl_root_skip_names;
     var seen_src = false;
@@ -190,7 +183,7 @@ test "walker yields shallow entries before deeper ones" {
     deep.close();
     const shallow = try fixture.dir.createFile("z-shallow.txt", .{});
     shallow.close();
-    var walker = try Walker.init(std.testing.allocator, fixture.dir);
+    var walker = Walker.init(std.testing.allocator, fixture.dir);
     defer walker.deinit();
     var shallow_index: ?usize = null;
     var deep_index: ?usize = null;
@@ -200,4 +193,44 @@ test "walker yields shallow entries before deeper ones" {
         if (std.mem.endsWith(u8, entry.path, "deep.txt")) deep_index = index;
     }
     try std.testing.expect(shallow_index.? < deep_index.?);
+}
+
+test "empty walker needs no allocation and leaves the borrowed root open" {
+    var fixture = std.testing.tmpDir(.{ .iterate = true });
+    defer fixture.cleanup();
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var walker = Walker.init(failing.allocator(), fixture.dir);
+    try std.testing.expectEqual(@as(?Walker.Entry, null), try walker.next());
+    walker.deinit();
+    try std.testing.expectEqual(@as(usize, 0), failing.allocations);
+    _ = try fixture.dir.stat();
+}
+
+test "walker resumes after a queued directory disappears" {
+    var fixture = std.testing.tmpDir(.{ .iterate = true });
+    defer fixture.cleanup();
+    try fixture.dir.makeDir("removed");
+    try fixture.dir.makeDir("retained");
+    const file = try fixture.dir.createFile("retained/file.txt", .{});
+    file.close();
+    var walker = Walker.init(std.testing.allocator, fixture.dir);
+    defer walker.deinit();
+    for (0..2) |_| {
+        const entry = (try walker.next()).?;
+        try std.testing.expectEqual(std.fs.Dir.Entry.Kind.directory, entry.kind);
+    }
+    try fixture.dir.deleteDir("removed");
+    var saw_failure = false;
+    var saw_file = false;
+    while (true) {
+        const entry = walker.next() catch |err| {
+            try std.testing.expectEqual(error.FileNotFound, err);
+            try std.testing.expect(!walker.root_failed);
+            try std.testing.expect(!saw_failure);
+            saw_failure = true;
+            continue;
+        } orelse break;
+        saw_file = saw_file or std.mem.endsWith(u8, entry.path, "file.txt");
+    }
+    try std.testing.expect(saw_failure and saw_file);
 }
