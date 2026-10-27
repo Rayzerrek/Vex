@@ -344,13 +344,28 @@ pub const PathCompletion = struct {
         };
         defer dir.close();
 
-        var walker = @import("path_walker.zig").Walker.init(self.allocator, dir);
+        const path_walker = @import("path_walker.zig");
+        if (self.is_wsl and self.recursive) {
+            // 9P round trips dominate; read directories concurrently.
+            var walker = path_walker.ParallelWalker.init(self.allocator, dir);
+            defer walker.deinit();
+            if (self.scan_revision) |revision| {
+                walker.cancel_latest = revision.latest;
+                walker.cancel_expected = revision.expected;
+            }
+            if (self.display_directory) |label| {
+                if (std.mem.endsWith(u8, label, ":/")) walker.skip_root_names = path_walker.Walker.wsl_root_skip_names;
+            }
+            try self.scanWalker(&walker);
+            return;
+        }
+        var walker = path_walker.Walker.init(self.allocator, dir);
         defer walker.deinit();
         walker.recursive = self.recursive;
         walker.probe_symlink_directories = !(self.is_wsl and self.recursive);
         if (self.is_wsl and self.display_directory != null) {
             const label = self.display_directory.?;
-            if (std.mem.endsWith(u8, label, ":/")) walker.skip_root_names = @import("path_walker.zig").Walker.wsl_root_skip_names;
+            if (std.mem.endsWith(u8, label, ":/")) walker.skip_root_names = path_walker.Walker.wsl_root_skip_names;
         }
         try self.scanWalker(&walker);
     }
@@ -381,7 +396,8 @@ pub const PathCompletion = struct {
             if (self.entries.items.len > previous_len) self.entries.items[previous_len].is_symbolic_link = entry.kind == .sym_link;
             if (self.snapshot) |*hook| {
                 if (self.entries.items.len >= hook.next_at) {
-                    hook.next_at = self.entries.items.len + hook.every;
+                    // Geometric ramp-up: the first rows show almost immediately, while clone cost stays amortized.
+                    hook.next_at = self.entries.items.len + @min(hook.every, self.entries.items.len);
                     hook.publish(hook.context, self);
                 }
             }

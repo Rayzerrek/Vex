@@ -13,7 +13,9 @@ pub const PathIndex = struct {
     latest_revision: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
     /// Worker-thread only: revision of the scan currently publishing snapshots.
     scanning_revision: u64 = 0,
-    const Request = struct { revision: u64, directory: []u8 };
+    /// Worker-thread only: a scan refreshing a cached index must not replace it with a smaller prefix.
+    scanning_partials: bool = true,
+    const Request = struct { revision: u64, directory: []u8, partials: bool };
     pub const Result = struct {
         revision: u64,
         outcome: union(enum) { index: paths.PathCompletion, failure: anyerror },
@@ -45,11 +47,11 @@ pub const PathIndex = struct {
         self.allocator.destroy(self);
     }
     /// Coalesces navigation to one latest request; failed allocation leaves the previous request intact.
-    pub fn request(self: *PathIndex, directory: []const u8, revision: u64) !void {
+    pub fn request(self: *PathIndex, directory: []const u8, revision: u64, partials: bool) !void {
         const owned = try self.allocator.dupe(u8, directory);
         self.mutex.lock();
         const previous = self.pending;
-        self.pending = .{ .directory = owned, .revision = revision };
+        self.pending = .{ .directory = owned, .revision = revision, .partials = partials };
         self.latest_revision.store(revision, .release);
         self.wake.signal();
         self.mutex.unlock();
@@ -61,6 +63,7 @@ pub const PathIndex = struct {
     }
     fn publishPartial(context: *anyopaque, model: *paths.PathCompletion) void {
         const self: *PathIndex = @ptrCast(@alignCast(context));
+        if (!self.scanning_partials) return;
         const copy = model.cloneIndexAlloc() catch return;
         var result = Result{ .revision = self.scanning_revision, .outcome = .{ .index = copy }, .partial = true };
         self.mutex.lock();
@@ -100,7 +103,8 @@ pub const PathIndex = struct {
             model.recursive = true;
             model.scan_revision = .{ .latest = &self.latest_revision, .expected = request_value.revision };
             self.scanning_revision = request_value.revision;
-            model.snapshot = .{ .context = self, .publish = publishPartial, .every = 2048, .next_at = 2048 };
+            self.scanning_partials = request_value.partials;
+            model.snapshot = .{ .context = self, .publish = publishPartial, .every = 2048, .next_at = 128 };
             const outcome: Result = if (model.openDirectory(request_value.directory, "")) blk: {
                 model.scan_revision = null;
                 model.snapshot = null;
@@ -180,8 +184,8 @@ test "background path index publishes only owned revisioned results and preserve
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkRecursiveIndexAllocations, .{directory});
     const worker = try PathIndex.create(std.testing.allocator);
     defer worker.destroy();
-    try worker.request(directory, 1);
-    try worker.request(directory, 2);
+    try worker.request(directory, 1, true);
+    try worker.request(directory, 2, true);
     var model = paths.PathCompletion.init(std.testing.allocator);
     defer model.deinit();
     model.index = .{ .deferred = .{} };
