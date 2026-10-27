@@ -458,11 +458,6 @@ pub fn resolve(
                     if (fromTitle(title)) |shim_title_icon| return shim_title_icon;
                 }
             }
-            if (resolveDirect(proc_name)) |known| {
-                if (!known.is_shell) return known;
-            }
-            if (!is_shim) return fromProcess(proc_name);
-            if (resolveDirect(proc_name)) |known_shim| return known_shim;
             return fromProcess(proc_name);
         }
     }
