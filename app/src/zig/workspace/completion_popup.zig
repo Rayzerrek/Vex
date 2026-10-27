@@ -30,16 +30,18 @@ pub fn compute(viewport: Rect, pane: Rect, cell_width: f32, cell_height: f32, an
         const cursor_x = pane.x + 6 + @as(f32, @floatFromInt(cell.column)) * cell_width;
         cursor_top = pane.y + 30 + @as(f32, @floatFromInt(cell.row)) * cell_height;
         const cursor_bottom = cursor_top + cell_height;
-        if (cursor_x >= left and cursor_x <= right and cursor_top >= top and cursor_bottom <= bottom) {
-            x = std.math.clamp(cursor_x, left, right - width);
-            const below_space = bottom - cursor_bottom - 4;
-            const above_space = cursor_top - top - 4;
-            above = below_space < desired_height and above_space > below_space;
-            available = if (above) above_space else below_space;
-            // Very small panes cannot fit a picker beside the input; do not cover the caret.
-            if (available < minimum_height) return null;
-            y = cursor_bottom + 4;
-        }
+        // The popup's safety margin can clip the last grid row by a few pixels;
+        // that does not make the terminal cursor invalid or justify centering.
+        if (cursor_x < pane.x + 6 or cursor_x > pane.x + pane.width - 6 or
+            cursor_top < pane.y + 30 or cursor_top >= pane.y + pane.height - 6) return null;
+        x = std.math.clamp(cursor_x, left, right - width);
+        const below_space = bottom - cursor_bottom - 4;
+        const above_space = cursor_top - top - 4;
+        above = below_space < desired_height and above_space > below_space;
+        available = if (above) above_space else below_space;
+        // Very small panes cannot fit a picker beside the input; do not cover the caret.
+        if (available < minimum_height) return null;
+        y = cursor_bottom + 4;
     }
     const rows: usize = @intFromFloat(@floor((@min(available, desired_height) - list_top - footer) / row_height));
     const height = list_top + @as(f32, @floatFromInt(rows)) * row_height + footer;
@@ -60,7 +62,15 @@ test "completion anchors to a TUI input in an offset pane, below or above withou
     try std.testing.expect(above.bounds.x + above.bounds.width <= test_pane.x + test_pane.width - 6);
 }
 
-test "hidden cursor uses a pane-local picker, not a fabricated top-left input" {
+test "last grid row anchors above even when it crosses the popup safety margin" {
+    const viewport: Rect = .{ .x = 0, .y = 0, .width = 800, .height = 596 };
+    const pane: Rect = .{ .x = 0, .y = 0, .width = 800, .height = 596 };
+    const popup = compute(viewport, pane, 8, 16, .{ .column = 4, .row = 34 }).?;
+    try std.testing.expectEqual(@as(f32, 38), popup.bounds.x);
+    try std.testing.expect(popup.bounds.y + popup.bounds.height <= 574 - 4);
+}
+
+test "unavailable cursor uses a pane-local picker, not a fabricated top-left input" {
     const popup = compute(screen, test_pane, 8, 18, null).?;
     try std.testing.expectEqual(@as(f32, 490), popup.bounds.x);
     try std.testing.expectEqual(@as(f32, 230), popup.bounds.y);

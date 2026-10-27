@@ -603,6 +603,28 @@ test "default cursor is bar, DECSCUSR updates and resets shape, and encodeKey st
     try std.testing.expectEqualStrings("\x1b[1;2A", (try terminal.encodeKey(0x26, 1, &encoded)).?);
 }
 
+test "hidden TUI cursor retains its viewport position on both screens" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(80, 24, 8, 16);
+    for ([_][]const u8{ "", "\x1b[?1049h" }) |screen| {
+        try terminal.feedOutput(screen);
+        try terminal.feedOutput("\x1b[8;13H\x1b[?25l");
+        const cursor = (try terminal.readFrame()).cursor;
+        try std.testing.expect(!cursor.visible);
+        try std.testing.expect(cursor.in_viewport);
+        try std.testing.expectEqual(@as(u16, 12), cursor.column);
+        try std.testing.expectEqual(@as(u16, 7), cursor.row);
+        const popup = @import("../workspace/completion_popup.zig");
+        const bounds = @import("../workspace/pane_tree.zig").PaneRect{ .x = 0, .y = 0, .width = 800, .height = 596 };
+        const layout = popup.compute(bounds, bounds, 8, 16, if (cursor.in_viewport) .{ .column = cursor.caretColumn(), .row = cursor.row } else null).?;
+        try std.testing.expectEqual(@as(f32, 102), layout.bounds.x);
+        try std.testing.expectEqual(@as(f32, 162), layout.bounds.y);
+        try terminal.feedOutput("\x1b[?25h");
+    }
+}
+
 test "cursor blink flag follows DECSCUSR, DEC 12 and visibility independently in the real DLL" {
     const api = try binding.Api.load();
     var terminal = try Terminal.init(std.testing.allocator, &api);

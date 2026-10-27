@@ -3,6 +3,8 @@
 Windows x64; Zig **0.15.2** (see `.zig-version`) and Python **3.11+**.
 Builds default to ReleaseSafe; Debug is supported. ReleaseFast/ReleaseSmall
 are rejected because runtime safety is required.
+Windows system libraries are linked directly from Zig's target toolchain;
+`pkg-config` is not required or searched for, including during WSL cross-builds.
 
 ## Build and run
 

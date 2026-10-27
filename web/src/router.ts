@@ -28,6 +28,14 @@ export function createSiteRouter(history?: RouterHistory) {
     path: "/",
     component: lazyRouteComponent(() => import("./pages/home"), "Home")
   });
+  const introDemo = createRoute({
+    getParentRoute: () => vex,
+    path: "intro-demo",
+    component: lazyRouteComponent(
+      () => import("./pages/intro-demo"),
+      "IntroDemo"
+    )
+  });
   const docs = createRoute({
     getParentRoute: () => vex,
     path: "docs",
@@ -74,7 +82,11 @@ export function createSiteRouter(history?: RouterHistory) {
     );
   return createRouter({
     routeTree: root.addChildren([
-      vex.addChildren([home, docs.addChildren([docsIndex, ...guides])]),
+      vex.addChildren([
+        home,
+        introDemo,
+        docs.addChildren([docsIndex, ...guides])
+      ]),
       ...aliases
     ]),
     history,

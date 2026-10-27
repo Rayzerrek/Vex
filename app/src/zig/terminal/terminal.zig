@@ -22,10 +22,11 @@ pub const TextStyle = struct {
 };
 /// Text offsets borrow the owning frame's UTF-8 buffer, valid until the next dirty snapshot.
 pub const TerminalCell = struct { width: CellWidth, style: TextStyle, text_start: usize, text_length: usize, selected: bool = false };
-/// Cursor position is in viewport cells; hidden cursors have no drawable position.
+/// Cursor position is in viewport cells when in_viewport is true, even if drawing is disabled.
 pub const TerminalCursor = struct {
     column: u16 = 0,
     row: u16 = 0,
+    in_viewport: bool = false,
     visible: bool = false,
     blinking: bool = false,
     wide_tail: bool = false,
@@ -936,6 +937,7 @@ pub const Terminal = struct {
             3 => .hollow,
             else => return error.InvalidTerminalCursorShape,
         };
+        cursor.in_viewport = in_viewport;
         cursor.visible = cursor.visible and in_viewport;
         if (in_viewport) {
             try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, &cursor.column);

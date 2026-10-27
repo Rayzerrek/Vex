@@ -63,6 +63,7 @@ pub const TerminalApplication = struct {
     preview_placements: std.ArrayList(panes.PanePlacement) = .empty,
     metrics: ?platform.WindowMetrics = null,
     pointer_drag: pointer.PointerDrag = .none,
+    layout_motion: @import("../workspace/layout_motion.zig").LayoutMotion = .{},
     editing_tab: ?keyboard.TabRename = null,
     overlay: overlays.OverlayState = .none,
     exit_review: close_confirmation.ExitReview = .{},
@@ -181,6 +182,7 @@ pub const TerminalApplication = struct {
         self.exit_review.deinit(self.allocator);
         if (self.model) |*model| model.deinit();
         self.placements.deinit(self.allocator);
+        self.layout_motion.deinit(self.allocator);
         self.preview_placements.deinit(self.allocator);
         if (self.path_index) |index| index.destroy();
         self.path_index_cache.clear();
@@ -246,6 +248,7 @@ pub const TerminalApplication = struct {
             if (session.scrollbar_visibility.nextDelayMs(now, self.scrollbarActive(placement.id))) |sd|
                 delay = if (delay) |d| @min(d, sd) else sd;
         }
+        if (self.layout_motion.previous.items.len > 0) delay = if (delay) |d| @min(d, 16) else 16;
         try platform.scheduleCursorWake(delay);
     }
     pub fn resetCursorOnInput(self: *TerminalApplication) !void {
@@ -267,7 +270,8 @@ pub const TerminalApplication = struct {
     pub fn onCursorWake(self: *TerminalApplication) void {
         if (self.health == .failed) return;
         const now = self.cursorNowMs();
-        var repaint = false;
+        var repaint = self.layout_motion.previous.items.len > 0;
+        if (!platform.animationsEnabled() or !self.layout_motion.active(now)) self.layout_motion.clear();
         if (self.cursorBlinkEligible()) {
             if (self.cursor_blink.advance(now)) repaint = true;
         } else {
@@ -521,6 +525,7 @@ pub const TerminalApplication = struct {
             tab.is_focus_mode = false;
             try tab.tree.layout(self.allocator, &self.placements, bounds);
         }
+        self.layout_motion.alignToLayout(self.allocator, self.placements.items);
         const now = std.time.milliTimestamp();
         for (self.sessions.items) |session| {
             if (session.process_probe.noteVisibility(now, self.findPlacement(session.id) != null))
@@ -543,6 +548,7 @@ pub const TerminalApplication = struct {
         platform.invalidateWindow();
     }
     pub fn onResize(self: *TerminalApplication, metrics: platform.WindowMetrics) void {
+        self.layout_motion.clear();
         if (self.health == .failed) return;
         _ = pointer.cancelPointerDrag(self) catch |err| {
             self.fail(err);
@@ -844,7 +850,7 @@ pub const TerminalApplication = struct {
         const session = self.findSession(pane_id) orelse return;
         if (session.state != .running) return;
         const frame = try session.terminal.readFrame();
-        const anchor: ?completion_popup.Anchor = if (frame.cursor.visible and frame.cursor.column < frame.columns and frame.cursor.row < frame.rows)
+        const anchor: ?completion_popup.Anchor = if (frame.cursor.in_viewport and frame.cursor.column < frame.columns and frame.cursor.row < frame.rows)
             .{ .column = frame.cursor.caretColumn(), .row = frame.cursor.row }
         else
             null;
@@ -1568,6 +1574,77 @@ test "typing, encoded keys and paste reveal live input but viewport navigation a
     try session.writeUserInput("");
     try std.testing.expectEqual(@as(u64, 0), (try session.terminal.scrollbar()).offset);
     try std.testing.expect(app.health == .running);
+}
+
+test "pane drag crosses tabs, cancellation restores selection and detaching retains the live session" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    const second = try app.addSession(app.startup_directory);
+    const third = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    try app.model.?.splitActivePane(second.id, .right);
+    try app.model.?.newTab(third.id);
+    _ = app.model.?.selectTab(0);
+    app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
+    try app.updateLayout();
+    const source = app.placements.items[0].bounds;
+    _ = app.onPointer(.begin, source.x + 40, source.y + 12, 0);
+    _ = app.onPointer(.move, 250, 20, 0);
+    try std.testing.expectEqual(@as(usize, 1), app.model.?.selected_tab);
+    _ = app.onPointer(.cancel, 250, 20, 0);
+    try std.testing.expectEqual(@as(usize, 0), app.model.?.selected_tab);
+    try std.testing.expectEqual(@as(usize, 2), app.model.?.tabs.items[0].tree.paneCount());
+    try first.terminal.feedOutput("pane transfer sentinel");
+    const handle = first.pty.handle;
+    _ = app.onPointer(.begin, source.x + 40, source.y + 12, 0);
+    _ = app.onPointer(.move, 250, 20, 0);
+    _ = app.onPointer(.move, 1090, 350, 0);
+    _ = app.onPointer(.end, 1090, 350, 0);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expectEqual(@as(usize, 3), app.sessions.items.len);
+    try std.testing.expectEqual(first.id, app.model.?.activeTab().active_pane);
+    try std.testing.expect(app.model.?.activeTab().tree.containsPane(third.id));
+    try std.testing.expect(!app.model.?.tabs.items[0].tree.containsPane(first.id));
+    try std.testing.expectEqual(handle, first.pty.handle);
+    try std.testing.expect(try first.terminal.containsViewportText("pane transfer sentinel"));
+    const moved = app.findPlacement(first.id).?.bounds;
+    _ = app.onPointer(.begin, moved.x + 40, moved.y + 12, 0);
+    const layout = try tab_strip.TabStripLayout.init(1120, app.model.?.tabs.items.len);
+    _ = app.onPointer(.move, layout.plusLeft() + 10, 20, 0);
+    _ = app.onPointer(.end, layout.plusLeft() + 10, 20, 0);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expectEqual(@as(usize, 3), app.model.?.tabs.items.len);
+    try std.testing.expectEqual(first.id, app.model.?.activeTab().active_pane);
+    try std.testing.expectEqual(@as(usize, 3), app.sessions.items.len);
+    try std.testing.expectEqual(handle, first.pty.handle);
+}
+
+test "tab drag merges the entire split group without replacing its terminals" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    const second = try app.addSession(app.startup_directory);
+    const third = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    try app.model.?.splitActivePane(second.id, .down);
+    try app.model.?.newTab(third.id);
+    _ = app.model.?.selectTab(0);
+    app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
+    try app.updateLayout();
+    _ = app.onPointer(.begin, 60, 20, 0);
+    _ = app.onPointer(.move, 250, 20, 0);
+    _ = app.onPointer(.move, 1090, 350, 0);
+    _ = app.onPointer(.end, 1090, 350, 0);
+    try std.testing.expect(app.health == .running);
+    try std.testing.expect(app.pointer_drag == .none);
+    try std.testing.expectEqual(@as(usize, 1), app.model.?.tabs.items.len);
+    try std.testing.expectEqual(@as(usize, 3), app.model.?.activeTab().tree.paneCount());
+    try std.testing.expectEqual(@as(usize, 3), app.sessions.items.len);
+    try std.testing.expectEqual(second.id, app.model.?.activeTab().active_pane);
+    try std.testing.expect(app.findSession(first.id).? == first);
+    try std.testing.expect(app.findSession(second.id).? == second);
+    try std.testing.expect(app.findSession(third.id).? == third);
 }
 
 test "Ctrl Shift E toggles active pane zoom and restores the split layout" {

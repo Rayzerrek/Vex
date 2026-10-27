@@ -4,4 +4,5 @@ test {
     _ = @import("terminal/terminal_feed.zig");
     _ = @import("workspace/pane_navigation.zig");
     _ = @import("workspace/workspace_model.zig");
+    _ = @import("workspace/layout_motion.zig");
 }

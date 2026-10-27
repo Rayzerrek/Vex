@@ -96,6 +96,60 @@ pub const WorkspaceModel = struct {
         if (self.selected_tab == source) self.selected_tab = target else if (source < self.selected_tab and self.selected_tab <= target) self.selected_tab -= 1 else if (target <= self.selected_tab and self.selected_tab < source) self.selected_tab += 1;
         return true;
     }
+    pub fn paneTabIndex(self: *const WorkspaceModel, id: panes.PaneId) ?usize {
+        for (self.tabs.items, 0..) |tab, index| if (tab.tree.containsPane(id)) return index;
+        return null;
+    }
+    /// Both trees remain untouched until the destination's allocations succeed. Sessions never move.
+    pub fn movePane(self: *WorkspaceModel, source: panes.PaneId, target: panes.PaneId, zone: panes.DropZone, divider: panes.DividerId) !bool {
+        if (source == target or zone == .none) return false;
+        const from = self.paneTabIndex(source) orelse return false;
+        const to = self.paneTabIndex(target) orelse return false;
+        if (from == to) {
+            if (!try self.tabs.items[to].tree.movePane(source, target, zone)) return false;
+        } else {
+            try self.tabs.items[to].tree.insertPane(target, source, if (zone == .left or zone == .right) .right else .down, zone == .left or zone == .top, divider);
+            // No fallible operation may follow publication into the destination tree.
+            if (self.tabs.items[from].tree.paneCount() == 1) {
+                var removed = self.tabs.orderedRemove(from);
+                removed.tree.deinit();
+            } else {
+                _ = self.closePaneInTab(from, source);
+            }
+        }
+        self.selected_tab = self.paneTabIndex(source).?;
+        self.activeTab().active_pane = source;
+        self.activeTab().is_focus_mode = false;
+        return true;
+    }
+    /// Drops the entire tab group, preserving its nested splits and all live sessions.
+    pub fn mergeTab(self: *WorkspaceModel, id: TabId, target: panes.PaneId, zone: panes.DropZone, divider: panes.DividerId) !bool {
+        const from = self.tabIndex(id) orelse return false;
+        const to = self.paneTabIndex(target) orelse return false;
+        if (from == to or zone == .none) return false;
+        const active = self.tabs.items[from].active_pane;
+        try self.tabs.items[to].tree.insertTree(target, &self.tabs.items[from].tree, zone, divider);
+        // The destination now owns the source root; removing the tab must not destroy it.
+        _ = self.tabs.orderedRemove(from);
+        self.selected_tab = self.paneTabIndex(active).?;
+        self.activeTab().active_pane = active;
+        self.activeTab().is_focus_mode = false;
+        return true;
+    }
+    /// Detaches a split into a new tab without relaunching its PTY or changing its pane token.
+    pub fn detachPane(self: *WorkspaceModel, source: panes.PaneId, id: TabId) !bool {
+        const from = self.paneTabIndex(source) orelse return false;
+        if (self.tabs.items[from].tree.paneCount() == 1) return false;
+        if (self.tabs.items.len >= max_tabs) return error.TabLimitReached;
+        if (self.tabIndex(id) != null) return error.DuplicatePaneId;
+        var tree = try panes.PaneTree.init(self.allocator, source);
+        errdefer tree.deinit();
+        try self.tabs.ensureUnusedCapacity(self.allocator, 1);
+        _ = self.closePaneInTab(from, source);
+        self.tabs.appendAssumeCapacity(.{ .id = id, .tree = tree, .active_pane = source });
+        self.selected_tab = self.tabs.items.len - 1;
+        return true;
+    }
     /// Ctrl+Tab and Ctrl+Shift+Tab wrap, without signed modulo arithmetic.
     pub fn cycleTab(self: *WorkspaceModel, forward: bool) void {
         self.selected_tab = if (forward) (self.selected_tab + 1) % self.tabs.items.len else if (self.selected_tab == 0) self.tabs.items.len - 1 else self.selected_tab - 1;
@@ -121,9 +175,12 @@ pub const WorkspaceModel = struct {
     }
     /// Splits a specific leaf in the active tab, unzooming and focusing the fresh pane.
     pub fn splitPane(self: *WorkspaceModel, target: panes.PaneId, id: panes.PaneId, axis: panes.SplitAxis) !void {
+        return self.splitPaneOrdered(target, id, axis, false);
+    }
+    pub fn splitPaneOrdered(self: *WorkspaceModel, target: panes.PaneId, id: panes.PaneId, axis: panes.SplitAxis, before: bool) !void {
         for (self.tabs.items) |existing| if (existing.tree.containsPane(id)) return error.DuplicatePaneId;
         const tab = self.activeTab();
-        try tab.tree.splitPane(target, id, axis);
+        try tab.tree.splitPaneOrdered(target, id, axis, before);
         tab.active_pane = id;
         tab.is_focus_mode = false;
     }
@@ -180,6 +237,71 @@ pub const WorkspaceModel = struct {
         return true;
     }
 };
+
+test "pane transfers preserve ownership and focus in every direction and tab order" {
+    for ([_]panes.DropZone{ .left, .right, .top, .bottom }) |zone| {
+        for ([_]bool{ false, true }) |reverse| {
+            var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+            defer model.deinit();
+            try model.splitActivePane(@enumFromInt(2), .right);
+            try model.newTab(@enumFromInt(3));
+            const source: panes.PaneId = @enumFromInt(@as(u32, if (reverse) 3 else 2));
+            const target: panes.PaneId = @enumFromInt(@as(u32, if (reverse) 2 else 3));
+            try std.testing.expect(try model.movePane(source, target, zone, @enumFromInt(10)));
+            try std.testing.expectEqual(source, model.activeTab().active_pane);
+            try std.testing.expect(model.activeTab().tree.containsPane(target));
+            try std.testing.expectEqual(@as(usize, if (reverse) 1 else 2), model.tabs.items.len);
+            var total: usize = 0;
+            for (model.tabs.items) |tab| total += tab.tree.paneCount();
+            try std.testing.expectEqual(@as(usize, 3), total);
+            try std.testing.expect(!try model.movePane(source, source, zone, @enumFromInt(11)));
+        }
+    }
+}
+
+test "pane transfer allocation failures leave both tab trees and focus untouched" {
+    for (0..2) |fail_index| {
+        var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+        defer model.deinit();
+        try model.newTab(@enumFromInt(2));
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        model.tabs.items[1].tree.allocator = failing.allocator();
+        const result = model.movePane(@enumFromInt(1), @enumFromInt(2), .left, @enumFromInt(3));
+        model.tabs.items[1].tree.allocator = std.testing.allocator;
+        try std.testing.expectError(error.OutOfMemory, result);
+        try std.testing.expectEqual(@as(usize, 2), model.tabs.items.len);
+        try std.testing.expectEqual(@as(usize, 1), model.selected_tab);
+        try std.testing.expectEqual(@as(usize, 1), model.tabs.items[0].tree.paneCount());
+        try std.testing.expectEqual(@as(usize, 1), model.tabs.items[1].tree.paneCount());
+    }
+}
+
+test "detach and merge round trip preserves nested groups and never duplicates pane owners" {
+    var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));
+    defer model.deinit();
+    try model.splitActivePane(@enumFromInt(2), .right);
+    try std.testing.expect(try model.detachPane(@enumFromInt(2), @enumFromInt(10)));
+    try model.splitActivePane(@enumFromInt(3), .down);
+    try std.testing.expect(try model.mergeTab(@enumFromInt(10), @enumFromInt(1), .left, @enumFromInt(11)));
+    try std.testing.expectEqual(@as(usize, 1), model.tabs.items.len);
+    try std.testing.expectEqual(@as(usize, 3), model.activeTab().tree.paneCount());
+    try std.testing.expectEqual(@as(panes.PaneId, @enumFromInt(3)), model.activeTab().active_pane);
+    try std.testing.expect(!try model.detachPane(@enumFromInt(99), @enumFromInt(12)));
+    try std.testing.expect(!try model.mergeTab(model.activeTab().id, @enumFromInt(1), .right, @enumFromInt(13)));
+}
+
+test "detach rolls back every allocation failure" {
+    const Scenario = struct {
+        fn run(allocator: std.mem.Allocator) !void {
+            var model = try WorkspaceModel.init(allocator, @enumFromInt(1));
+            defer model.deinit();
+            try model.splitActivePane(@enumFromInt(2), .right);
+            _ = try model.detachPane(@enumFromInt(2), @enumFromInt(10));
+            _ = try model.mergeTab(@enumFromInt(10), @enumFromInt(1), .bottom, @enumFromInt(11));
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Scenario.run, .{});
+}
 
 test "keyboard pane navigation stays in the selected tab and preserves zoom" {
     var model = try WorkspaceModel.init(std.testing.allocator, @enumFromInt(1));

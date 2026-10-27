@@ -63,7 +63,8 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/renderer/ui_renderer.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/renderer/app_icon_renderer.cpp"), .flags = native_flags });
     module.link_libc = true;
-    for ([_][]const u8{ "user32", "kernel32", "gdi32", "d2d1", "dwrite", "d3d12", "dxgi", "dwmapi", "ole32", "windowscodecs", "uuid", "advapi32", "userenv", "shell32", "comctl32", "gdiplus", "uxtheme", "winhttp", "bcrypt", "msi" }) |lib| module.linkSystemLibrary(lib, .{});
+    // Win32 import libraries come from the target toolchain, never host pkg-config.
+    for ([_][]const u8{ "user32", "kernel32", "gdi32", "d2d1", "dwrite", "d3d12", "dxgi", "dwmapi", "ole32", "windowscodecs", "uuid", "advapi32", "userenv", "shell32", "comctl32", "gdiplus", "uxtheme", "winhttp", "bcrypt", "msi" }) |lib| module.linkSystemLibrary(lib, .{ .use_pkg_config = .no });
     const exe = b.addExecutable(.{ .name = "vex-native", .root_module = module });
     exe.subsystem = .Windows;
     const dll = b.addInstallFileWithDir(b.path("vendor/libghostty/ghostty-vt.dll"), .bin, "ghostty-vt.dll");
@@ -77,7 +78,7 @@ pub fn build(b: *std.Build) void {
     updater_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_installer.cpp"), .flags = native_flags });
     updater_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_package.cpp"), .flags = native_flags });
     updater_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_install_guard.cpp"), .flags = native_flags });
-    for ([_][]const u8{ "kernel32", "user32", "shell32", "advapi32", "bcrypt", "msi" }) |lib| updater_module.linkSystemLibrary(lib, .{});
+    for ([_][]const u8{ "kernel32", "user32", "shell32", "advapi32", "bcrypt", "msi" }) |lib| updater_module.linkSystemLibrary(lib, .{ .use_pkg_config = .no });
     const updater = b.addExecutable(.{ .name = "vex-update", .root_module = updater_module });
     updater.subsystem = .Windows;
     b.installArtifact(updater);
@@ -116,10 +117,10 @@ pub fn build(b: *std.Build) void {
     fixture_module.addCSourceFile(.{ .file = b.path("tests/wsl_probe_schedule.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/pty_input_queue.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/pty/windows_conpty.cpp"), .flags = native_flags });
-    fixture_module.linkSystemLibrary("kernel32", .{});
-    fixture_module.linkSystemLibrary("user32", .{});
-    fixture_module.linkSystemLibrary("dwrite", .{});
-    for ([_][]const u8{ "shell32", "advapi32", "bcrypt", "msi", "winhttp", "ws2_32", "d2d1", "d3d12", "dxgi", "ole32", "windowscodecs" }) |lib| fixture_module.linkSystemLibrary(lib, .{});
+    fixture_module.linkSystemLibrary("kernel32", .{ .use_pkg_config = .no });
+    fixture_module.linkSystemLibrary("user32", .{ .use_pkg_config = .no });
+    fixture_module.linkSystemLibrary("dwrite", .{ .use_pkg_config = .no });
+    for ([_][]const u8{ "shell32", "advapi32", "bcrypt", "msi", "winhttp", "ws2_32", "d2d1", "d3d12", "dxgi", "ole32", "windowscodecs" }) |lib| fixture_module.linkSystemLibrary(lib, .{ .use_pkg_config = .no });
     const fixture = b.addExecutable(.{ .name = "vex-conpty-fixture", .root_module = fixture_module });
     const install_fixture = b.addInstallArtifact(fixture, .{});
     const test_build = b.step("test-build", "Compile native tests without running Windows tools");

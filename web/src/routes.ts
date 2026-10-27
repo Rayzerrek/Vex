@@ -1,5 +1,6 @@
 export const repository = "https://github.com/Rayzerrek/Vex";
 export const homePath = "/vex";
+export const introDemoPath = "/vex/intro-demo";
 export const docsPath = "/vex/docs";
 
 export const guidePaths: Record<string, string> = {
@@ -21,6 +22,8 @@ export function resolveRoute(path: string) {
   const normalized = path.replace(/\/+$/, "") || "/";
   if (normalized === "/" || normalized === homePath)
     return { kind: "home", path: homePath } as const;
+  if (normalized === introDemoPath)
+    return { kind: "home", path: introDemoPath } as const;
   if (normalized === docsPath || normalized === "/docs")
     return {
       kind: "docs",

@@ -44,30 +44,30 @@ pub const PaneRect = struct {
     pub fn isHeaderDragArea(self: PaneRect, can_focus: bool, x: f32, y: f32) bool {
         return self.contains(x, y) and self.height >= 28 and y < self.y + 28 and self.hitHeaderAction(can_focus, x, y) == null;
     }
-    /// Maps a point inside the pane to a non-corner 25% edge band, matching MainWindow.PaneDrag.GetDropZone.
+    /// Uses the nearest 25% edge band, including corners; the center remains a safe cancellation zone.
     pub fn dropZoneAt(self: PaneRect, x: f32, y: f32) DropZone {
         if (!self.contains(x, y) or self.width <= 0 or self.height <= 0) return .none;
         const rx = (x - self.x) / self.width;
         const ry = (y - self.y) / self.height;
         const edge: f32 = 0.25;
-        if (rx < edge and ry >= edge and ry <= 1.0 - edge) return .left;
-        if (rx > 1.0 - edge and ry >= edge and ry <= 1.0 - edge) return .right;
-        if (ry < edge and rx >= edge and rx <= 1.0 - edge) return .top;
-        if (ry > 1.0 - edge and rx >= edge and rx <= 1.0 - edge) return .bottom;
+        const horizontal = @min(rx, 1 - rx);
+        const vertical = @min(ry, 1 - ry);
+        if (horizontal < edge and horizontal <= vertical) return if (rx < 0.5) .left else .right;
+        if (vertical < edge) return if (ry < 0.5) .top else .bottom;
         return .none;
     }
-    /// Computes the 42% inset split preview overlay rectangle for an active drop zone.
+    /// Inset preview of the actual 50/50 layout, using the same divider geometry as committed splits.
     pub fn splitPreviewRect(self: PaneRect, zone: DropZone) ?PaneRect {
-        const fraction: f32 = 0.42;
-        const inset: f32 = 4.0;
-        if (self.width <= inset * 2 or self.height <= inset * 2) return null;
-        return switch (zone) {
-            .none => null,
-            .left => .{ .x = self.x + inset, .y = self.y + inset, .width = @max(0, self.width * fraction - inset), .height = @max(0, self.height - inset * 2) },
-            .right => .{ .x = self.x + self.width * (1.0 - fraction), .y = self.y + inset, .width = @max(0, self.width * fraction - inset), .height = @max(0, self.height - inset * 2) },
-            .top => .{ .x = self.x + inset, .y = self.y + inset, .width = @max(0, self.width - inset * 2), .height = @max(0, self.height * fraction - inset) },
-            .bottom => .{ .x = self.x + inset, .y = self.y + self.height * (1.0 - fraction), .width = @max(0, self.width - inset * 2), .height = @max(0, self.height * fraction - inset) },
-        };
+        if (zone == .none) return null;
+        const geometry = splitGeometry(self, if (zone == .left or zone == .right) .right else .down, 0.5);
+        var rect = if (zone == .left or zone == .top) geometry.first else geometry.second;
+        const inset: f32 = 4;
+        if (rect.width <= inset * 2 or rect.height <= inset * 2) return null;
+        rect.x += inset;
+        rect.y += inset;
+        rect.width -= inset * 2;
+        rect.height -= inset * 2;
+        return rect;
     }
 };
 /// Layout result holds a stable identity rather than a pointer into a mutable tree.
@@ -117,15 +117,60 @@ pub const PaneTree = struct {
     }
     /// Splitting is transactional even if either child allocation fails.
     pub fn splitPane(self: *PaneTree, target: PaneId, fresh: PaneId, axis: SplitAxis) !void {
+        return self.splitPaneOrdered(target, fresh, axis, false);
+    }
+    /// Places the new leaf before or after the target without changing session ownership.
+    pub fn splitPaneOrdered(self: *PaneTree, target: PaneId, fresh: PaneId, axis: SplitAxis, before: bool) !void {
+        return self.insertPane(target, fresh, axis, before, @enumFromInt(@intFromEnum(fresh)));
+    }
+    /// Transfers use a fresh divider token: a moved leaf can still name a divider in its old tree.
+    pub fn insertPane(self: *PaneTree, target: PaneId, fresh: PaneId, axis: SplitAxis, before: bool, divider: DividerId) !void {
         if (findLeaf(self.root, fresh, 0) != null) return error.DuplicatePaneId;
+        if (findDividerNode(self.root, divider) != null) return error.DuplicateDividerId;
         const found = findLeaf(self.root, target, 0) orelse return error.PaneNotFound;
         if (found.depth >= max_depth) return error.PaneDepthLimit;
         const first = try self.allocator.create(PaneNode);
         errdefer self.allocator.destroy(first);
         const second = try self.allocator.create(PaneNode);
-        first.* = found.node.*;
-        second.* = .{ .leaf = fresh };
-        found.node.* = .{ .split = .{ .id = @enumFromInt(@intFromEnum(fresh)), .axis = axis, .ratio = 0.5, .first = first, .second = second } };
+        first.* = if (before) .{ .leaf = fresh } else found.node.*;
+        second.* = if (before) found.node.* else .{ .leaf = fresh };
+        found.node.* = .{ .split = .{ .id = divider, .axis = axis, .ratio = 0.5, .first = first, .second = second } };
+    }
+    /// Consumes the other tree on success; one allocation is prepared before either owner changes.
+    pub fn insertTree(self: *PaneTree, target: PaneId, other: *PaneTree, zone: DropZone, divider: DividerId) !void {
+        const found = findLeaf(self.root, target, 0) orelse return error.PaneNotFound;
+        if (zone == .none) return error.InvalidDropZone;
+        if (found.depth + 1 + nodeDepth(other.root) > max_depth) return error.PaneDepthLimit;
+        if (findDividerNode(self.root, divider) != null or findDividerNode(other.root, divider) != null) return error.DuplicateDividerId;
+        const sibling = try self.allocator.create(PaneNode);
+        sibling.* = found.node.*;
+        const before = zone == .left or zone == .top;
+        found.node.* = .{ .split = .{
+            .id = divider,
+            .axis = if (zone == .left or zone == .right) .right else .down,
+            .ratio = 0.5,
+            .first = if (before) other.root else sibling,
+            .second = if (before) sibling else other.root,
+        } };
+    }
+    /// Moves a leaf beside another leaf while retaining its session and divider identity.
+    pub fn movePane(self: *PaneTree, source: PaneId, target: PaneId, zone: DropZone) !bool {
+        if (source == target or zone == .none) return false;
+        if (!self.containsPane(source) or !self.containsPane(target)) return false;
+        const divider = parentDivider(self.root, source) orelse return false;
+        const found = findLeaf(self.root, target, 0).?;
+        if (found.depth >= max_depth) return error.PaneDepthLimit;
+        const first = try self.allocator.create(PaneNode);
+        errdefer self.allocator.destroy(first);
+        const second = try self.allocator.create(PaneNode);
+        const removed = removeLeaf(self.allocator, self.root, source);
+        std.debug.assert(removed);
+        const destination = findLeaf(self.root, target, 0).?.node;
+        const before = zone == .left or zone == .top;
+        first.* = if (before) .{ .leaf = source } else destination.*;
+        second.* = if (before) destination.* else .{ .leaf = source };
+        destination.* = .{ .split = .{ .id = divider, .axis = if (zone == .left or zone == .right) .right else .down, .ratio = 0.5, .first = first, .second = second } };
+        return true;
     }
     /// Preserves the final leaf; removing a split promotes its surviving sibling.
     pub fn closePane(self: *PaneTree, id: PaneId) bool {
@@ -170,6 +215,12 @@ fn destroyNode(allocator: std.mem.Allocator, node: *PaneNode) void {
     }
     allocator.destroy(node);
 }
+fn nodeDepth(node: *const PaneNode) usize {
+    return switch (node.*) {
+        .leaf => 0,
+        .split => |split| 1 + @max(nodeDepth(split.first), nodeDepth(split.second)),
+    };
+}
 fn countLeaves(node: *const PaneNode) usize {
     return switch (node.*) {
         .leaf => 1,
@@ -181,6 +232,12 @@ fn findLeaf(node: *PaneNode, id: PaneId, depth: usize) ?FoundLeaf {
     return switch (node.*) {
         .leaf => |leaf| if (leaf == id) .{ .node = node, .depth = depth } else null,
         .split => |split| findLeaf(split.first, id, depth + 1) orelse findLeaf(split.second, id, depth + 1),
+    };
+}
+fn parentDivider(node: *const PaneNode, id: PaneId) ?DividerId {
+    return switch (node.*) {
+        .leaf => null,
+        .split => |split| if ((split.first.* == .leaf and split.first.leaf == id) or (split.second.* == .leaf and split.second.leaf == id)) split.id else parentDivider(split.first, id) orelse parentDivider(split.second, id),
     };
 }
 fn removeLeaf(allocator: std.mem.Allocator, node: *PaneNode, id: PaneId) bool {
@@ -325,7 +382,58 @@ test "pane header action hit testing aligns with right-anchored button slots and
     try std.testing.expectEqual(@as(?PaneHeaderAction, null), narrow.hitHeaderAction(true, 165, 14));
 }
 
-test "pane header drag area, edge drop zones, and split preview geometry match WPF PaneDrag" {
+test "moving a pane preserves all leaf and divider identities" {
+    var tree = try PaneTree.init(std.testing.allocator, @enumFromInt(1));
+    defer tree.deinit();
+    try tree.splitPane(@enumFromInt(1), @enumFromInt(2), .right);
+    try tree.splitPane(@enumFromInt(2), @enumFromInt(3), .down);
+    try std.testing.expect(try tree.movePane(@enumFromInt(1), @enumFromInt(3), .bottom));
+    try std.testing.expectEqual(@as(usize, 3), tree.paneCount());
+    try std.testing.expect(tree.containsPane(@enumFromInt(1)) and tree.containsPane(@enumFromInt(2)) and tree.containsPane(@enumFromInt(3)));
+    const bounds: PaneRect = .{ .x = 0, .y = 0, .width = 800, .height = 600 };
+    try std.testing.expect((try tree.dividerPlacement(bounds, @enumFromInt(2))) != null);
+    try std.testing.expect((try tree.dividerPlacement(bounds, @enumFromInt(3))) != null);
+    var placements: std.ArrayList(PanePlacement) = .empty;
+    defer placements.deinit(std.testing.allocator);
+    try tree.layout(std.testing.allocator, &placements, bounds);
+    try std.testing.expectEqual(@as(PaneId, @enumFromInt(3)), placements.items[1].id);
+    try std.testing.expectEqual(@as(PaneId, @enumFromInt(1)), placements.items[2].id);
+}
+
+test "pane moves reject invalid targets and roll back on allocation failure" {
+    for (0..2) |fail_index| {
+        var tree = try PaneTree.init(std.testing.allocator, @enumFromInt(1));
+        defer tree.deinit();
+        try tree.splitPane(@enumFromInt(1), @enumFromInt(2), .right);
+        try tree.splitPane(@enumFromInt(2), @enumFromInt(3), .down);
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        tree.allocator = failing.allocator();
+        try std.testing.expectError(error.OutOfMemory, tree.movePane(@enumFromInt(1), @enumFromInt(3), .top));
+        tree.allocator = std.testing.allocator;
+        try std.testing.expectEqual(@as(usize, 3), tree.paneCount());
+        try std.testing.expect(tree.containsPane(@enumFromInt(1)) and tree.containsPane(@enumFromInt(2)) and tree.containsPane(@enumFromInt(3)));
+        try std.testing.expect(!try tree.movePane(@enumFromInt(1), @enumFromInt(1), .top));
+        try std.testing.expect(!try tree.movePane(@enumFromInt(1), @enumFromInt(9), .top));
+        try std.testing.expect(!try tree.movePane(@enumFromInt(1), @enumFromInt(2), .none));
+    }
+}
+
+test "ordered splits put the fresh pane on the requested side" {
+    for ([_]SplitAxis{ .right, .down }) |axis| {
+        for ([_]bool{ false, true }) |before| {
+            var tree = try PaneTree.init(std.testing.allocator, @enumFromInt(1));
+            defer tree.deinit();
+            try tree.splitPaneOrdered(@enumFromInt(1), @enumFromInt(2), axis, before);
+            var placements: std.ArrayList(PanePlacement) = .empty;
+            defer placements.deinit(std.testing.allocator);
+            try tree.layout(std.testing.allocator, &placements, .{ .x = 0, .y = 0, .width = 800, .height = 600 });
+            try std.testing.expectEqual(@as(PaneId, @enumFromInt(@as(u32, if (before) 2 else 1))), placements.items[0].id);
+            try std.testing.expectEqual(@as(PaneId, @enumFromInt(@as(u32, if (before) 1 else 2))), placements.items[1].id);
+        }
+    }
+}
+
+test "pane drag targets include corners and previews match committed split geometry" {
     const bounds: PaneRect = .{ .x = 100, .y = 50, .width = 400, .height = 300 };
     try std.testing.expect(bounds.isHeaderDragArea(true, 150, 60));
     try std.testing.expect(!bounds.isHeaderDragArea(true, 485, 60));
@@ -336,12 +444,12 @@ test "pane header drag area, edge drop zones, and split preview geometry match W
     try std.testing.expectEqual(DropZone.top, bounds.dropZoneAt(300, 70));
     try std.testing.expectEqual(DropZone.bottom, bounds.dropZoneAt(300, 330));
     try std.testing.expectEqual(DropZone.none, bounds.dropZoneAt(300, 200));
-    try std.testing.expectEqual(DropZone.none, bounds.dropZoneAt(110, 60)); // top-left corner excluded
+    try std.testing.expectEqual(DropZone.left, bounds.dropZoneAt(110, 60)); // nearest edge wins corners
 
     const right_preview = bounds.splitPreviewRect(.right).?;
-    try std.testing.expectApproxEqAbs(@as(f32, 332.0), right_preview.x, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 307.0), right_preview.x, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 54.0), right_preview.y, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 164.0), right_preview.width, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 189.0), right_preview.width, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 292.0), right_preview.height, 0.01);
     try std.testing.expectEqual(@as(?PaneRect, null), bounds.splitPreviewRect(.none));
 }

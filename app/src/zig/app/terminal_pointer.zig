@@ -8,6 +8,7 @@ const TerminalSession = @import("terminal_session.zig").TerminalSession;
 const DividerDrag = @import("../workspace/divider_drag.zig").DividerDrag;
 const TabDrag = @import("../workspace/tab_drag.zig").TabDrag;
 const tab_strip = @import("../workspace/tab_strip.zig");
+const workspace = @import("../workspace/workspace_model.zig");
 const url_detector = @import("../terminal/url_detector.zig");
 const overlays = @import("terminal_overlays.zig");
 
@@ -43,11 +44,51 @@ const PaneDrag = struct {
     pane_id: panes.PaneId,
     start_x: f32,
     start_y: f32,
+    origin_tab: workspace.TabId,
+    point: tab_strip.TabPointer,
     dragging: bool = false,
+    target: ?panes.PaneId = null,
     zone: panes.DropZone = .none,
 };
 
 pub const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, pane: PaneDrag, selection: SelectionDrag, mouse: MouseDrag, scrollbar: ScrollbarDrag };
+
+pub const PaneDrop = struct { target: ?panes.PaneId = null, zone: panes.DropZone = .none };
+
+pub fn paneDropAt(self: *Application, source: panes.PaneId, x: f32, y: f32) PaneDrop {
+    const model = if (self.model) |*model| model else return .{};
+    if (model.paneTabIndex(source) == null) return .{};
+    if (self.metrics) |metrics| {
+        const layout = tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len) catch return .{};
+        if (layout.hitTab(.{ .x = x, .y = y }) catch null) |hit| {
+            const target = model.tabs.items[hit.index].active_pane;
+            if (hit.part == .body and target != source and hit.index == model.selected_tab) return .{ .target = target, .zone = .right };
+        }
+    }
+    for (self.placements.items) |placement| {
+        if (placement.id == source) continue;
+        const zone = placement.bounds.dropZoneAt(x, y);
+        if (zone != .none) return .{ .target = placement.id, .zone = zone };
+    }
+    return .{};
+}
+
+pub fn tabDropAt(self: *Application, id: workspace.TabId, source: panes.PaneId, x: f32, y: f32) PaneDrop {
+    const model = if (self.model) |*model| model else return .{};
+    const from = model.tabIndex(id) orelse return .{};
+    // All placements belong to the selected tab. A group cannot be dropped into itself;
+    // avoid walking either pane tree on every pointer event/frame in that common case.
+    if (from == model.selected_tab) return .{};
+    return paneDropAt(self, source, x, y);
+}
+
+fn hoverDragTab(self: *Application, layout: tab_strip.TabStripLayout, point: tab_strip.TabPointer) !void {
+    const model = if (self.model) |*model| model else return;
+    const hit = try layout.hitTab(point) orelse return;
+    if (hit.part != .body or hit.index == model.selected_tab) return;
+    _ = model.selectTab(hit.index);
+    try self.updateLayout();
+}
 
 pub fn onScroll(self: *Application, delta: i32, x: f32, y: f32, modifiers: u32) void {
     if (self.health == .failed or delta == 0) return;
@@ -244,7 +285,18 @@ pub fn cancelPointerDrag(self: *Application) !bool {
         },
         .divider => |*drag| try drag.cancel(&model.activeTab().tree),
     };
+    const origin = switch (self.pointer_drag) {
+        .pane => |drag| drag.origin_tab,
+        .tab => |drag| drag.tabId(),
+        else => null,
+    };
     self.pointer_drag = .none;
+    if (origin) |id| if (model.tabIndex(id)) |index| {
+        if (model.selected_tab != index) {
+            _ = model.selectTab(index);
+            try self.updateLayout();
+        }
+    };
     self.reported_mouse_pane = null;
     self.reported_mouse_buttons = 0;
     try platform.cancelPointerCapture();
@@ -254,6 +306,7 @@ pub fn cancelPointerDrag(self: *Application) !bool {
 
 pub fn onPointer(self: *Application, event: platform.PointerEvent, x: f32, y: f32, modifiers: u32) platform.PointerResponse {
     if (self.health == .failed) return .normal;
+    if (event == .begin) self.layout_motion.clear();
     if (event == .begin) self.resetCursorOnInput() catch |err| {
         self.fail(err);
         return .normal;
@@ -323,6 +376,8 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                                 .pane_id = placement.id,
                                 .start_x = x,
                                 .start_y = y,
+                                .origin_tab = model.activeTab().id,
+                                .point = point,
                             } };
                             platform.invalidateWindow();
                             break;
@@ -396,31 +451,65 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                 .none => try updateHoverState(self, can_focus, x, y, modifiers),
                 .divider => |*drag| if (try drag.move(&model.activeTab().tree, bounds, x, y)) try self.updateLayout(),
                 .tab => |*drag| {
-                    if (event == .end) {
-                        _ = try drag.finish(model, layout, point);
+                    if (event != .end) {
+                        if (try drag.move(model, layout, point)) platform.invalidateWindow();
+                        if (drag.* == .dragging) try hoverDragTab(self, layout, point);
+                    } else if (drag.* == .dragging and y >= tab_strip.TabStripLayout.height) {
+                        const index = model.tabIndex(drag.tabId().?) orelse return .normal;
+                        const source = model.tabs.items[index].active_pane;
+                        const drop = tabDropAt(self, drag.tabId().?, source, x, y);
+                        if (drop.target) |target| {
+                            const token = self.next_token;
+                            self.next_token = try std.math.add(u32, token, 1);
+                            try self.layout_motion.capture(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled());
+                            if (try model.mergeTab(drag.tabId().?, target, drop.zone, @enumFromInt(token))) try self.updateLayout();
+                        } else {
+                            _ = model.selectTab(index);
+                            try self.updateLayout();
+                        }
                         platform.invalidateWindow();
-                    } else if (try drag.move(model, layout, point)) platform.invalidateWindow();
+                    } else {
+                        const origin = drag.tabId();
+                        _ = try drag.finish(model, layout, point);
+                        if (origin) |id| if (model.tabIndex(id)) |index| {
+                            _ = model.selectTab(index);
+                            try self.updateLayout();
+                        };
+                        platform.invalidateWindow();
+                    }
                 },
                 .pane => |*pdrag| {
                     if (!pdrag.dragging and (@abs(x - pdrag.start_x) + @abs(y - pdrag.start_y)) >= 8.0) {
                         pdrag.dragging = true;
                     }
                     if (pdrag.dragging) {
-                        const next_zone: panes.DropZone = if (self.findPlacement(pdrag.pane_id)) |pl| pl.bounds.dropZoneAt(x, y) else .none;
+                        const point_moved = pdrag.point.x != point.x or pdrag.point.y != point.y;
+                        pdrag.point = point;
+                        if (event != .end) try hoverDragTab(self, layout, point);
+                        const drop = paneDropAt(self, pdrag.pane_id, x, y);
+                        const target = drop.target;
+                        const next_zone = drop.zone;
                         if (event == .end) {
                             const zone = next_zone;
                             pdrag.zone = .none;
-                            if (zone != .none) {
-                                const target_session = self.findSession(pdrag.pane_id) orelse return error.MissingPaneSession;
-                                const session = try self.addSession(target_session.directory.current());
-                                errdefer self.removeSession(session.id);
-                                const axis: panes.SplitAxis = if (zone == .left or zone == .right) .right else .down;
-                                try model.splitPane(pdrag.pane_id, session.id, axis);
-                                try self.updateLayout();
+                            if (zone != .none and target != null) {
+                                const token = self.next_token;
+                                self.next_token = try std.math.add(u32, token, 1);
+                                try self.layout_motion.capture(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled());
+                                if (try model.movePane(pdrag.pane_id, target.?, zone, @enumFromInt(token))) try self.updateLayout();
+                            } else if (point.y >= 0 and point.y < tab_strip.TabStripLayout.height and point.x >= tab_strip.TabStripLayout.left and point.x < layout.plusLeft() + 36 and (try layout.hitTab(point)) == null and model.tabs.items.len < workspace.WorkspaceModel.max_tabs) {
+                                const token = self.next_token;
+                                self.next_token = try std.math.add(u32, token, 1);
+                                if (try model.detachPane(pdrag.pane_id, @enumFromInt(token))) try self.updateLayout();
                             } else {
+                                if (model.tabIndex(pdrag.origin_tab)) |index| {
+                                    _ = model.selectTab(index);
+                                    try self.updateLayout();
+                                }
                                 platform.invalidateWindow();
                             }
-                        } else if (pdrag.zone != next_zone) {
+                        } else if (point_moved or pdrag.zone != next_zone or pdrag.target != target) {
+                            pdrag.target = target;
                             pdrag.zone = next_zone;
                             platform.invalidateWindow();
                         }

@@ -100,7 +100,7 @@ describe("documentation", () => {
 
 describe("routing and static rendering", () => {
   it("prerenders every route without browser globals", async () => {
-    expect(staticPages).toHaveLength(docsPages.length + 2);
+    expect(staticPages).toHaveLength(docsPages.length + 3);
     for (const page of staticPages) {
       const html = await render(page.path);
       expect(html).toContain('id="main-content"');

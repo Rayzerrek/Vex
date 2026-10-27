@@ -1,5 +1,100 @@
 @import "tailwindcss";
 
+/* The intro is a self-contained preview; the page remains usable without JS. */
+.intro-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  background: #171329;
+  animation: intro-exit 2s cubic-bezier(0.77, 0, 0.175, 1) 2.1s forwards;
+}
+
+.intro-glow {
+  position: absolute;
+  width: min(80vw, 700px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, #56447b 0%, #302544 38%, transparent 70%);
+  opacity: 0.7;
+  animation: intro-glow 2.8s cubic-bezier(0.77, 0, 0.175, 1) both;
+}
+
+.intro-mark {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  color: #e5ddf5;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 1.6rem;
+  font-weight: 500;
+  letter-spacing: -0.06em;
+  animation: intro-arrive 1.2s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.intro-mark img {
+  width: min(45vw, 260px);
+  height: auto;
+}
+
+.intro-replay {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 30;
+  padding: 0.65rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.875rem;
+}
+
+@keyframes intro-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes intro-glow {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+}
+
+@keyframes intro-exit {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intro-screen {
+    animation-duration: 200ms;
+    animation-delay: 0s;
+  }
+  .intro-glow,
+  .intro-mark {
+    animation: none;
+  }
+}
+
 @theme {
   --font-sans: "IBM Plex Sans", sans-serif;
   --font-mono: "IBM Plex Mono", monospace;

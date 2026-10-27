@@ -767,11 +767,14 @@ extern "C" void vex_draw_tab_preview_card(VexPaneRect bounds, const uint8_t* tit
 }
 extern "C" void vex_draw_tab_drag(VexPaneRect bounds, uint32_t source, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, bool valid_target) {
     tooltipsEnabled = false;
-    if (source >= tabStripCount || !isfinite(bounds.x) || !isfinite(bounds.y) || bounds.width <= 0 || bounds.height <= 0) return;
-    const float sourceX = tabStripLeft + source * (tabWidthDip + 4);
-    const auto placeholder = D2D1::RoundedRect(D2D1::RectF(sourceX, 5, sourceX + tabWidthDip, 39), 10, 10);
-    brush->SetColor(rgb(chromePalette.titlebar_bg, 0.84f)); target->FillRoundedRectangle(placeholder, brush);
-    brush->SetColor(rgb(chromePalette.border, 0.6f)); target->DrawRoundedRectangle(placeholder, brush, 1);
+    if (!isfinite(bounds.x) || !isfinite(bounds.y) || bounds.width <= 0 || bounds.height <= 0) return;
+    // Pane ghosts share tab chrome, but have no source slot in the strip.
+    if (source < tabStripCount) {
+        const float sourceX = tabStripLeft + source * (tabWidthDip + 4);
+        const auto placeholder = D2D1::RoundedRect(D2D1::RectF(sourceX, 5, sourceX + tabWidthDip, 39), 10, 10);
+        brush->SetColor(rgb(chromePalette.titlebar_bg, 0.84f)); target->FillRoundedRectangle(placeholder, brush);
+        brush->SetColor(rgb(chromePalette.border, 0.6f)); target->DrawRoundedRectangle(placeholder, brush, 1);
+    }
     const float x = bounds.x, y = bounds.y, w = bounds.width, h = bounds.height;
     brush->SetColor(rgb(0, chromePalette.is_dark ? 0.28f : 0.12f));
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 2, y + 2, x + w + 2, y + h + 5), 12, 12), brush);
@@ -793,20 +796,27 @@ extern "C" void vex_draw_tab_drag(VexPaneRect bounds, uint32_t source, const uin
     }
 }
 extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
-    if (!target || !brush || bounds.width <= 0.0f || bounds.height <= 0.0f) return;
-    splitPreviewSeenThisFrame = true;
-    const bool animate = chromeMotionEnabled && splitPreviewSeenLastFrame;
-    if (!splitPreviewSeenLastFrame) {
+    if (!target || !brush || !isfinite(bounds.x) || !isfinite(bounds.y) || !isfinite(bounds.width) || !isfinite(bounds.height)) return;
+    const bool visible = bounds.width > 0.0f && bounds.height > 0.0f;
+    const bool continuing = splitPreviewSeenLastFrame || splitPreviewAlphaMotion.sample(chromeTimeMs) > 0.0f;
+    splitPreviewSeenThisFrame = visible;
+    if (visible) tooltipsEnabled = false;
+    const bool animate = chromeMotionEnabled && continuing;
+    if (visible && !continuing) {
         splitPreviewAlphaMotion = {};
         splitPreviewAlphaMotion.update(0.0f, chromeTimeMs, false);
     }
-    const float alpha = splitPreviewAlphaMotion.update(1.0f, chromeTimeMs, chromeMotionEnabled);
-    const float rx = splitPreviewRectMotion[0].update(bounds.x, chromeTimeMs, animate);
-    const float ry = splitPreviewRectMotion[1].update(bounds.y, chromeTimeMs, animate);
-    const float rw = splitPreviewRectMotion[2].update(bounds.width, chromeTimeMs, animate);
-    const float rh = splitPreviewRectMotion[3].update(bounds.height, chromeTimeMs, animate);
+    const float alpha = splitPreviewAlphaMotion.update(visible ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled);
     chromeEffectsPending |= splitPreviewAlphaMotion.pending(chromeTimeMs);
-    for (int i = 0; i < 4; ++i) chromeEffectsPending |= splitPreviewRectMotion[i].pending(chromeTimeMs);
+    // The workspace calls this with an empty target to finish an exit. Once hidden,
+    // submit neither invisible geometry nor rectangle-animation wakes on idle frames.
+    if (!visible && alpha <= 0.0f) return;
+    const float rx = visible ? splitPreviewRectMotion[0].update(bounds.x, chromeTimeMs, animate) : splitPreviewRectMotion[0].sample(chromeTimeMs);
+    const float ry = visible ? splitPreviewRectMotion[1].update(bounds.y, chromeTimeMs, animate) : splitPreviewRectMotion[1].sample(chromeTimeMs);
+    const float rw = visible ? splitPreviewRectMotion[2].update(bounds.width, chromeTimeMs, animate) : splitPreviewRectMotion[2].sample(chromeTimeMs);
+    const float rh = visible ? splitPreviewRectMotion[3].update(bounds.height, chromeTimeMs, animate) : splitPreviewRectMotion[3].sample(chromeTimeMs);
+    if (visible) for (int i = 0; i < 4; ++i) chromeEffectsPending |= splitPreviewRectMotion[i].pending(chromeTimeMs);
+    if (alpha <= 0.0f) return;
 
     const D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(rx, ry, rx + rw, ry + rh), 6.0f, 6.0f);
     brush->SetColor(D2D1::ColorF(chromePalette.accent, 0.18f * alpha));

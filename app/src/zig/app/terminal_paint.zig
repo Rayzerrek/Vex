@@ -5,6 +5,8 @@ const status_presentation = @import("../terminal/status_presentation.zig");
 const tab_strip = @import("../workspace/tab_strip.zig");
 const cursor_blink = @import("../workspace/cursor_blink.zig");
 const overlays = @import("terminal_overlays.zig");
+const pointer = @import("terminal_pointer.zig");
+const panes = @import("../workspace/pane_tree.zig");
 
 pub fn paintWorkspace(self: *TerminalApplication) !void {
     const model = if (self.model) |*model| model else return;
@@ -40,7 +42,10 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     const active_tab = model.activeTab();
     const can_focus = active_tab.tree.paneCount() > 1;
     var saw_active_pane = false;
-    for (self.placements.items) |placement| {
+    const paint_now = self.cursorNowMs();
+    const motion_enabled = platform.animationsEnabled();
+    for (self.placements.items, 0..) |final_placement, placement_index| {
+        const placement: panes.PanePlacement = .{ .id = final_placement.id, .bounds = self.layout_motion.bounds(final_placement, placement_index, paint_now, motion_enabled) };
         if (self.overlay == .tab_peek) break;
         if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
         const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
@@ -82,12 +87,39 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
             if (opacity > 0) platform.drawScrollbar(placement.bounds, sb, sb_active, opacity);
         }
     }
-    if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging and self.pointer_drag.pane.zone != .none) {
-        if (self.findPlacement(self.pointer_drag.pane.pane_id)) |placement| {
-            if (placement.bounds.splitPreviewRect(self.pointer_drag.pane.zone)) |preview| {
-                platform.drawSplitPreview(preview);
-            }
+    var preview_bounds: panes.PaneRect = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
+    const drop: pointer.PaneDrop = blk: {
+        if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging) {
+            const drag = self.pointer_drag.pane;
+            break :blk pointer.paneDropAt(self, drag.pane_id, drag.point.x, drag.point.y);
         }
+        if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) {
+            const drag = self.pointer_drag.tab.dragging;
+            const index = model.tabIndex(drag.id) orelse break :blk .{};
+            break :blk pointer.tabDropAt(self, drag.id, model.tabs.items[index].active_pane, drag.point.x, drag.point.y);
+        }
+        break :blk .{};
+    };
+    if (drop.target) |target| {
+        if (self.findPlacement(target)) |placement| {
+            if (placement.bounds.splitPreviewRect(drop.zone)) |preview| preview_bounds = preview;
+        }
+    }
+    // An empty target lets the native chrome finish its interruptible fade-out.
+    platform.drawSplitPreview(preview_bounds);
+    if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging) {
+        const drag = self.pointer_drag.pane;
+        const session = self.findSession(drag.pane_id) orelse return;
+        const metrics = self.metrics orelse return;
+        const width = @min(200, @max(40, metrics.width - 8));
+        const ghost: panes.PaneRect = .{
+            .x = @max(4, @min(drag.point.x - 24, metrics.width - width - 4)),
+            .y = @max(3, @min(drag.point.y - 14, metrics.height - 38)),
+            .width = width,
+            .height = 34,
+        };
+        const icons = [_]app_icon.AppIcon{session.icon};
+        platform.drawTabDrag(ghost, model.tabs.items.len, session.displayTitle(), &icons, drop.target != null);
     }
     if (!saw_active_pane) self.cursor_blink.synchronize(null, self.cursorNowMs());
     try self.syncAnimationWake();
@@ -108,7 +140,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
                 count = 1;
             }
             const summary = try self.tabProgramStatus(tab.tree.root);
-            platform.drawTabDrag(bounds, index, tab.customTitle() orelse status_presentation.statusTitle(summary.summary, session.displayTitle()), icons[0..count], drag.dragging.destination != null);
+            platform.drawTabDrag(bounds, index, tab.customTitle() orelse status_presentation.statusTitle(summary.summary, session.displayTitle()), icons[0..count], drag.dragging.destination != null or drop.target != null);
         }
     }
 }
