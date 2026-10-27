@@ -59,11 +59,18 @@ pub const PathIndex = struct {
     }
     /// Aborts a scan whose answer came from elsewhere (e.g. the recent-index cache).
     pub fn supersede(self: *PathIndex, revision: u64) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         self.latest_revision.store(revision, .release);
     }
     fn publishPartial(context: *anyopaque, model: *paths.PathCompletion) void {
         const self: *PathIndex = @ptrCast(@alignCast(context));
         if (!self.scanning_partials) return;
+        self.mutex.lock();
+        const skip = self.stopping or self.latest_revision.load(.acquire) != self.scanning_revision or
+            (if (self.result) |queued| queued.revision == self.scanning_revision else false);
+        self.mutex.unlock();
+        if (skip) return;
         const copy = model.cloneIndexAlloc() catch return;
         var result = Result{ .revision = self.scanning_revision, .outcome = .{ .index = copy }, .partial = true };
         self.mutex.lock();
@@ -114,18 +121,21 @@ pub const PathIndex = struct {
                 break :blk .{ .revision = request_value.revision, .outcome = .{ .failure = err } };
             };
             self.allocator.free(request_value.directory);
-            var completed = outcome;
-            self.mutex.lock();
-            if (self.stopping or self.latest_revision.load(.acquire) != completed.revision) {
-                self.mutex.unlock();
-                completed.deinit();
-                continue;
-            }
-            var previous = self.result;
-            self.result = completed;
-            self.mutex.unlock();
-            if (previous) |*result| result.deinit();
+            self.publishFinal(outcome);
         }
+    }
+    fn publishFinal(self: *PathIndex, outcome: Result) void {
+        var completed = outcome;
+        self.mutex.lock();
+        if (self.stopping or self.latest_revision.load(.acquire) != completed.revision) {
+            self.mutex.unlock();
+            completed.deinit();
+            return;
+        }
+        var previous = self.result;
+        self.result = completed;
+        self.mutex.unlock();
+        if (previous) |*result| result.deinit();
     }
 };
 
@@ -209,6 +219,39 @@ test "background path index publishes only owned revisioned results and preserve
         std.Thread.sleep(10 * std.time.ns_per_ms);
     }
     return error.PathIndexTimeout;
+}
+
+test "partial publication skips occupied current revision but replaces stale slot" {
+    var worker = PathIndex{ .allocator = std.testing.allocator };
+    worker.scanning_revision = 2;
+    worker.latest_revision.store(2, .release);
+    worker.result = .{ .revision = 2, .outcome = .{ .failure = error.TestQueued }, .partial = true };
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var model = paths.PathCompletion.init(failing.allocator());
+    defer model.deinit();
+    PathIndex.publishPartial(&worker, &model);
+    try std.testing.expectEqual(@as(usize, 0), failing.alloc_index);
+    try std.testing.expectEqual(@as(u64, 2), worker.result.?.revision);
+
+    model.allocator = std.testing.allocator;
+    worker.result.?.revision = 1;
+    PathIndex.publishPartial(&worker, &model);
+    var fresh = worker.takeResult().?;
+    defer fresh.deinit();
+    try std.testing.expectEqual(@as(u64, 2), fresh.revision);
+    try std.testing.expect(fresh.partial);
+    try std.testing.expect(fresh.outcome == .index);
+}
+
+test "final index replaces an unread partial" {
+    var worker = PathIndex{ .allocator = std.testing.allocator };
+    worker.latest_revision.store(1, .release);
+    worker.result = .{ .revision = 1, .outcome = .{ .index = paths.PathCompletion.init(std.testing.allocator) }, .partial = true };
+    worker.publishFinal(.{ .revision = 1, .outcome = .{ .index = paths.PathCompletion.init(std.testing.allocator) } });
+    var result = worker.takeResult().?;
+    defer result.deinit();
+    try std.testing.expect(!result.partial);
+    try std.testing.expect(result.outcome == .index);
 }
 
 fn checkRecursiveIndexAllocations(allocator: std.mem.Allocator, directory: []const u8) !void {
