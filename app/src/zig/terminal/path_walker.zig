@@ -18,6 +18,8 @@ pub const Walker = struct {
     /// NUL-separated relative directories awaiting a visit; consumed from queue_head.
     queue: std.ArrayList(u8) = .empty,
     queue_head: usize = 0,
+    cancel_latest: ?*const std.atomic.Value(u64) = null,
+    cancel_expected: u64 = 0,
     recursive: bool = true,
     /// WSL callers can defer link probing until Open instead of adding a 9P
     /// round-trip for every link during recursive indexing.
@@ -84,6 +86,9 @@ pub const Walker = struct {
     /// Returned path storage remains valid only until the next call.
     pub fn next(self: *Walker) !?Entry {
         while (!self.root_failed) {
+            if (self.cancel_latest) |latest| {
+                if (latest.load(.acquire) != self.cancel_expected) return error.StalePathIndex;
+            }
             if (self.iterator == null) {
                 if (!try self.openNextQueued()) return null;
                 continue;
@@ -235,205 +240,39 @@ test "walker resumes after a queued directory disappears" {
     try std.testing.expect(saw_failure and saw_file);
 }
 
-/// Same breadth-first order and interface as `Walker`, but reads directories in
-/// parallel chunks. Over the WSL 9P share every directory read is a round trip,
-/// so overlapping them is the only way to hide that latency. Entries are still
-/// yielded in queue order, which keeps truncation deterministic.
+/// Streaming WSL traversal. Reading whole directories in parallel batches bypasses
+/// the indexer's limits and delays cancellation on large directories. Retain this
+/// interface while using one iterator so each next() does bounded speculative work.
 pub const ParallelWalker = struct {
     pub const Entry = Walker.Entry;
-    const chunk_dirs = 32;
-    const max_threads = 8;
-
-    const DirEntry = struct { name: []const u8, kind: std.fs.Dir.Entry.Kind };
-    /// Filled by exactly one worker; the arena owns names and the entry list.
-    const DirResult = struct {
-        arena: std.heap.ArenaAllocator,
-        entries: []DirEntry = &.{},
-        err: ?anyerror = null,
-    };
-
-    allocator: std.mem.Allocator,
-    root: std.fs.Dir,
+    walker: Walker,
     root_failed: bool = false,
     probe_symlink_directories: bool = false,
     skip_names: []const []const u8 = Walker.default_skip_names,
     skip_root_names: []const []const u8 = &.{},
-    /// Lets an abandoned scan stop between directories instead of finishing the chunk.
     cancel_latest: ?*const std.atomic.Value(u64) = null,
     cancel_expected: u64 = 0,
 
-    /// Owned relative directory paths; the root is the empty path.
-    queue: std.ArrayList([]u8) = .empty,
-    queue_head: usize = 0,
-    started: bool = false,
-    chunk_paths: std.ArrayList([]u8) = .empty,
-    results: []DirResult = &.{},
-    chunk_dir: usize = 0,
-    chunk_entry: usize = 0,
-    entry_path: std.ArrayList(u8) = .empty,
-    cursor: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
-
     pub fn init(allocator: std.mem.Allocator, root: std.fs.Dir) ParallelWalker {
-        return .{ .allocator = allocator, .root = root };
+        return .{ .walker = Walker.init(allocator, root) };
     }
 
     pub fn deinit(self: *ParallelWalker) void {
-        self.freeChunk();
-        for (self.queue.items[self.queue_head..]) |path| self.allocator.free(path);
-        self.queue.deinit(self.allocator);
-        self.chunk_paths.deinit(self.allocator);
-        self.entry_path.deinit(self.allocator);
+        self.walker.deinit();
     }
 
-    fn shouldSkip(self: *const ParallelWalker, name: []const u8, at_root: bool) bool {
-        for (self.skip_names) |skip| if (std.mem.eql(u8, name, skip)) return true;
-        if (at_root) for (self.skip_root_names) |skip| if (std.mem.eql(u8, name, skip)) return true;
-        return false;
-    }
-
-    fn freeChunk(self: *ParallelWalker) void {
-        for (self.results) |*result| result.arena.deinit();
-        if (self.results.len > 0) self.allocator.free(self.results);
-        self.results = &.{};
-        for (self.chunk_paths.items) |path| self.allocator.free(path);
-        self.chunk_paths.clearRetainingCapacity();
-        self.chunk_dir = 0;
-        self.chunk_entry = 0;
-    }
-
-    fn isCancelled(self: *const ParallelWalker) bool {
-        const latest = self.cancel_latest orelse return false;
-        return latest.load(.acquire) != self.cancel_expected;
-    }
-
-    fn scanDirectory(self: *ParallelWalker, relative: []const u8, result: *DirResult) void {
-        const arena = result.arena.allocator();
-        var opened: ?std.fs.Dir = null;
-        defer if (opened) |*child| child.close();
-        var dir = self.root;
-        if (relative.len > 0) {
-            // no_follow: a link is listed by the parent but never entered.
-            opened = self.root.openDir(relative, .{ .iterate = true, .no_follow = true }) catch |err| {
-                result.err = err;
-                return;
-            };
-            dir = opened.?;
-            const info = dir.stat() catch |err| {
-                result.err = err;
-                return;
-            };
-            if (info.kind != .directory) return;
-        }
-        var list: std.ArrayList(DirEntry) = .empty;
-        var iterator = dir.iterate();
-        while (true) {
-            const maybe = iterator.next() catch |err| {
-                result.err = err;
-                break;
-            };
-            const item = maybe orelse break;
-            var kind = item.kind;
-            if (kind == .sym_link and self.probe_symlink_directories) {
-                if (dir.openDir(item.name, .{})) |target| {
-                    var owned = target;
-                    owned.close();
-                    kind = .directory;
-                } else |_| {}
-            }
-            const name = arena.dupe(u8, item.name) catch {
-                result.err = error.OutOfMemory;
-                break;
-            };
-            list.append(arena, .{ .name = name, .kind = kind }) catch {
-                result.err = error.OutOfMemory;
-                break;
-            };
-        }
-        result.entries = list.items;
-    }
-
-    fn worker(self: *ParallelWalker) void {
-        while (true) {
-            const index = self.cursor.fetchAdd(1, .monotonic);
-            if (index >= self.results.len) return;
-            if (self.isCancelled()) {
-                self.results[index].err = error.StalePathIndex;
-                continue;
-            }
-            self.scanDirectory(self.chunk_paths.items[index], &self.results[index]);
-        }
-    }
-
-    /// Returns false when no directories remain.
-    fn startChunk(self: *ParallelWalker) !bool {
-        if (!self.started) {
-            self.started = true;
-            const root_path = try self.allocator.alloc(u8, 0);
-            errdefer self.allocator.free(root_path);
-            try self.queue.append(self.allocator, root_path);
-        }
-        if (self.queue_head >= self.queue.items.len) {
-            self.queue.clearRetainingCapacity();
-            self.queue_head = 0;
-            return false;
-        }
-        // The root alone first: its listing is the earliest visible result.
-        const count = if (self.chunk_paths.items.len == 0 and self.queue_head == 0) 1 else @min(chunk_dirs, self.queue.items.len - self.queue_head);
-        try self.chunk_paths.appendSlice(self.allocator, self.queue.items[self.queue_head .. self.queue_head + count]);
-        self.queue_head += count;
-        errdefer self.freeChunk();
-        self.results = try self.allocator.alloc(DirResult, count);
-        for (self.results) |*result| result.* = .{ .arena = std.heap.ArenaAllocator.init(self.allocator) };
-        self.cursor.store(0, .monotonic);
-
-        var threads: [max_threads - 1]std.Thread = undefined;
-        var spawned: usize = 0;
-        const wanted = @min(count, max_threads) - 1;
-        while (spawned < wanted) : (spawned += 1) {
-            threads[spawned] = std.Thread.spawn(.{}, worker, .{self}) catch break;
-        }
-        self.worker();
-        for (threads[0..spawned]) |thread| thread.join();
-        return true;
-    }
-
-    /// A failed child is already consumed, so callers may resume with next().
-    /// Returned path storage remains valid only until the next call.
     pub fn next(self: *ParallelWalker) !?Entry {
-        while (!self.root_failed) {
-            if (self.chunk_dir >= self.results.len) {
-                self.freeChunk();
-                if (!try self.startChunk()) return null;
-                continue;
-            }
-            const result = &self.results[self.chunk_dir];
-            const relative = self.chunk_paths.items[self.chunk_dir];
-            if (self.chunk_entry >= result.entries.len) {
-                const failure = result.err;
-                self.chunk_dir += 1;
-                self.chunk_entry = 0;
-                if (failure) |err| {
-                    if (relative.len == 0 and err != error.OutOfMemory) self.root_failed = true;
-                    return err;
-                }
-                continue;
-            }
-            const item = result.entries[self.chunk_entry];
-            self.chunk_entry += 1;
-            self.entry_path.clearRetainingCapacity();
-            if (relative.len > 0) {
-                try self.entry_path.appendSlice(self.allocator, relative);
-                try self.entry_path.append(self.allocator, std.fs.path.sep);
-            }
-            try self.entry_path.appendSlice(self.allocator, item.name);
-            if (item.kind == .directory and !self.shouldSkip(item.name, relative.len == 0)) {
-                const path = try self.allocator.dupe(u8, self.entry_path.items);
-                errdefer self.allocator.free(path);
-                try self.queue.append(self.allocator, path);
-            }
-            return .{ .path = self.entry_path.items, .kind = item.kind };
-        }
-        return null;
+        self.walker.probe_symlink_directories = self.probe_symlink_directories;
+        self.walker.skip_names = self.skip_names;
+        self.walker.skip_root_names = self.skip_root_names;
+        self.walker.cancel_latest = self.cancel_latest;
+        self.walker.cancel_expected = self.cancel_expected;
+        const entry = self.walker.next() catch |err| {
+            self.root_failed = self.walker.root_failed;
+            return err;
+        };
+        self.root_failed = self.walker.root_failed;
+        return entry;
     }
 };
 
@@ -551,4 +390,39 @@ test "parallel walker does not descend into directory links" {
         try std.testing.expect(count <= 3);
     }
     try std.testing.expectEqual(@as(usize, 3), count);
+}
+
+test "streaming walker stops immediately on cancellation" {
+    var fixture = std.testing.tmpDir(.{ .iterate = true });
+    defer fixture.cleanup();
+    for (0..128) |i| {
+        var name: [32]u8 = undefined;
+        (try fixture.dir.createFile(try std.fmt.bufPrint(&name, "file-{d}", .{i}), .{})).close();
+    }
+    var revision = std.atomic.Value(u64).init(1);
+    var walker = ParallelWalker.init(std.testing.allocator, fixture.dir);
+    defer walker.deinit();
+    walker.cancel_latest = &revision;
+    walker.cancel_expected = 1;
+    _ = (try walker.next()).?;
+    revision.store(2, .release);
+    try std.testing.expectError(error.StalePathIndex, walker.next());
+    revision.store(1, .release);
+    try std.testing.expect((try walker.next()) != null);
+}
+
+test "streaming walker does not buffer a large directory" {
+    var fixture = std.testing.tmpDir(.{ .iterate = true });
+    defer fixture.cleanup();
+    for (0..256) |i| {
+        var name: [32]u8 = undefined;
+        (try fixture.dir.createFile(try std.fmt.bufPrint(&name, "file-{d}", .{i}), .{})).close();
+    }
+    var storage: [256]u8 = undefined;
+    var fixed = std.heap.FixedBufferAllocator.init(&storage);
+    var walker = ParallelWalker.init(fixed.allocator(), fixture.dir);
+    defer walker.deinit();
+    var count: usize = 0;
+    while (try walker.next()) |_| count += 1;
+    try std.testing.expectEqual(@as(usize, 256), count);
 }

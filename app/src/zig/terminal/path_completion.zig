@@ -237,7 +237,7 @@ pub const PathCompletion = struct {
                 try self.openDirectory(resolved, rem_buf[0..rem_len]);
                 return;
             } else |err| {
-                if (err == error.OutOfMemory) return err;
+                if (err == error.OutOfMemory or err == error.StalePathIndex) return err;
             }
         }
 
@@ -346,7 +346,7 @@ pub const PathCompletion = struct {
 
         const path_walker = @import("path_walker.zig");
         if (self.is_wsl and self.recursive) {
-            // 9P round trips dominate; read directories concurrently.
+            // Stream WSL directories so index limits and cancellation bound scanning.
             var walker = path_walker.ParallelWalker.init(self.allocator, dir);
             defer walker.deinit();
             if (self.scan_revision) |revision| {
