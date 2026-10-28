@@ -62,6 +62,11 @@ void UiRenderer::FillRoundedRectangle(D2D1_ROUNDED_RECT rect, const UiBrush* bru
     record(batches.drawRounded(rect.rect.left, rect.rect.top, rect.rect.right, rect.rect.bottom, r, 0, colorRgb(brush->color), colorAlpha(brush->color)));
 }
 
+void UiRenderer::FillRoundedGradient(D2D1_ROUNDED_RECT rect, D2D1_COLOR_F top, D2D1_COLOR_F bottom) {
+    record(batches.drawRoundedGradient(rect.rect.left, rect.rect.top, rect.rect.right, rect.rect.bottom,
+        fminf(rect.radiusX, rect.radiusY), colorRgb(top), colorRgb(bottom), colorAlpha(top)));
+}
+
 void UiRenderer::DrawRoundedRectangle(D2D1_ROUNDED_RECT rect, const UiBrush* brush, float stroke) {
     record(batches.drawRounded(rect.rect.left, rect.rect.top, rect.rect.right, rect.rect.bottom, fminf(rect.radiusX, rect.radiusY), stroke, colorRgb(brush->color), colorAlpha(brush->color)));
 }

@@ -48,6 +48,12 @@ pub const TerminalFrame = struct {
     graphics: kitty.Snapshot = .{},
     cell_width_px: u32 = 9,
     cell_height_px: u32 = 17,
+    pub fn deinit(self: *TerminalFrame, allocator: std.mem.Allocator) void {
+        self.cells.deinit(allocator);
+        self.utf8.deinit(allocator);
+        self.graphics.deinit(allocator);
+        self.* = .{};
+    }
     /// Bounds-checked UTF-8 text for one parsed cell, never a null-terminated C string.
     pub fn cellText(self: *const TerminalFrame, cell: TerminalCell) []const u8 {
         return self.utf8.items[cell.text_start..][0..cell.text_length];
@@ -244,13 +250,9 @@ pub const Terminal = struct {
         self.api.render_state_row_iterator_free(self.row_iterator);
         self.api.render_state_free(self.render_state);
         if (self.graphics_iterator != null) self.api.kitty_graphics_placement_iterator_free(self.graphics_iterator);
-        self.frame.graphics.deinit(self.allocator);
         self.api.terminal_free(self.handle);
-        self.frame.cells.deinit(self.allocator);
-        self.frame.utf8.deinit(self.allocator);
-        self.scroll_guard.cells.deinit(self.allocator);
-        self.scroll_guard.utf8.deinit(self.allocator);
-        self.scroll_guard.graphics.deinit(self.allocator);
+        self.frame.deinit(self.allocator);
+        self.scroll_guard.deinit(self.allocator);
         self.grapheme.deinit(self.allocator);
         self.search_row.deinit(self.allocator);
         self.program_status.deinit();

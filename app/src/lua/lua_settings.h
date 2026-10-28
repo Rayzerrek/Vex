@@ -7,6 +7,7 @@ typedef struct VexLuaSettings {
     char appearance[16];
     char font_family[128];
     char default_shell[32];
+    char ui_density[16];
     int font_size;
     bool cursor_blink;
     bool copy_on_select;

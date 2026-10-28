@@ -45,6 +45,38 @@ int testRendererStartup() {
             }
         }
     }
+    // Read back the actual material shader, including its square and rounded
+    // variants. A compile-only check misses channel packing and edge coverage.
+    if (!failure) {
+        if (FAILED(renderer.beginFrame())) failure = 22;
+        else {
+            const auto size = renderer.ui.GetSize();
+            renderer.ui.Clear(D2D1::ColorF(0x000000));
+            renderer.ui.FillRoundedGradient(D2D1::RoundedRect(D2D1::RectF(0, 0, size.width / 2, size.height), 0, 0),
+                D2D1::ColorF(0x204060), D2D1::ColorF(0x80a0c0));
+            renderer.ui.FillRoundedGradient(D2D1::RoundedRect(D2D1::RectF(size.width / 2, 0, size.width, size.height), 4, 4),
+                D2D1::ColorF(0x204060), D2D1::ColorF(0x80a0c0));
+            if (FAILED(renderer.endFrame(pixels, 32 * 4))) failure = 23;
+            else {
+                // WindowsRenderer exposes bottom-up BGRA for the window BMP path.
+                const auto pixel = [&](unsigned x, unsigned y, unsigned channel) { return pixels[((15 - y) * 32 + x) * 4 + channel]; };
+                for (unsigned y = 1; y < 15; ++y) {
+                    for (unsigned channel = 0; channel < 3; ++channel) {
+                        if (pixel(8, y, channel) <= pixel(8, y - 1, channel) ||
+                            pixel(8, y, channel) != pixel(24, y, channel)) failure = 24;
+                    }
+                }
+                const int blueDelta = pixel(8, 8, 0) - pixel(8, 8, 2), greenDelta = pixel(8, 8, 1) - pixel(8, 8, 2);
+                if (pixel(8, 0, 2) < 32 || pixel(8, 0, 2) > 42 || pixel(8, 15, 2) < 118 || pixel(8, 15, 2) > 128 ||
+                    blueDelta < 63 || blueDelta > 65 || greenDelta < 31 || greenDelta > 33 ||
+                    pixel(16, 0, 0) || pixel(31, 0, 0) || pixel(24, 8, 3) != 255) {
+                    fprintf(stderr, "material pixels: top R=%u, bottom R=%u, B-R=%d, G-R=%d, corners=%u/%u, alpha=%u\n",
+                        pixel(8, 0, 2), pixel(8, 15, 2), blueDelta, greenDelta, pixel(16, 0, 0), pixel(31, 0, 0), pixel(24, 8, 3));
+                    failure = 25;
+                }
+            }
+        }
+    }
     if (FAILED(renderer.shutdown()) && !failure) failure = 18;
     // Recovery still supports synchronous initialization without an earlier warmup request.
     if (!failure && FAILED(renderer.initialize(window, factory.Get(), true))) failure = 19;

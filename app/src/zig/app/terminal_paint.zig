@@ -1,3 +1,4 @@
+const std = @import("std");
 const TerminalApplication = @import("terminal_application.zig").TerminalApplication;
 const platform = @import("../windows/windows_ffi.zig");
 const app_icon = @import("../terminal/app_icon.zig");
@@ -37,19 +38,27 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     }
     if (self.pointer_drag == .tab) {
         const metrics = self.metrics orelse return;
-        if (try self.pointer_drag.tab.markerX(model, try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len))) |x| try platform.drawTabInsertionMarker(x);
+        if (try self.pointer_drag.tab.markerX(model, try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density))) |x| try platform.drawTabInsertionMarker(x);
     }
     const active_tab = model.activeTab();
     const can_focus = active_tab.tree.paneCount() > 1;
     var saw_active_pane = false;
     const paint_now = self.cursorNowMs();
     const motion_enabled = platform.animationsEnabled();
+    self.layout_motion.notePaint(paint_now);
     if (!motion_enabled or !self.layout_motion.active(paint_now)) self.layout_motion.clear();
     if (self.layout_motion.active(paint_now)) platform.requestAnimationFrame();
+    if (!self.layout_motion.active(paint_now) or
+        (self.closing_panes.items.len > 0 and self.closing_panes.items[0].tab_id != active_tab.id)) self.clearClosingPanes();
+    if (self.overlay != .tab_peek) for (self.closing_panes.items) |*closing| {
+        platform.beginPane(closing.placement.bounds, closing.placement.id, false, false, true, false, null, closing.title, closing.icon, closing.summary, self.status_pulse.phaseIndex(), false);
+        defer platform.endPane();
+        try platform.drawTerminalFrame(closing.placement.id, &closing.frame, false, false, null, active_theme);
+    };
     for (self.placements.items, 0..) |final_placement, placement_index| {
         const placement: panes.PanePlacement = .{ .id = final_placement.id, .bounds = self.layout_motion.bounds(final_placement, placement_index, paint_now, motion_enabled) };
         if (self.overlay == .tab_peek) break;
-        if (placement.bounds.width < 14 or placement.bounds.height < 38) continue;
+        if (placement.bounds.width < 14 or placement.bounds.height < self.settings.ui_density.metrics().verticalInset() + 2) continue;
         const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
         const focused = active_tab.active_pane == placement.id and self.overlay == .none and self.editing_tab == null;
         const hovered = self.hovered_pane == placement.id and self.overlay == .none;
@@ -75,7 +84,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none and fraction == 0 and !session.smooth_scroll.pending(paint_now)) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
         {
             const summary = session.terminal.program_status.programStatus();
-            platform.beginPane(placement.bounds, placement.id, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex());
+            platform.beginPane(placement.bounds, placement.id, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex(), !std.meta.eql(placement.bounds, final_placement.bounds));
             defer platform.endPane();
             if (fraction > 0) platform.setTerminalScrollOffset(-fraction, false, frame.rows);
             try platform.drawTerminalFrame(placement.id, frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
@@ -89,7 +98,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
                 platform.drawCopyFeedback(placement.bounds, metrics.cell_width, metrics.cell_height, session.copy_feedback.spans.items, copy_progress);
             }
         }
-        var geometry = platform.ScrollbarGeometry.compute(placement.bounds, scrollbar);
+        var geometry = platform.ScrollbarGeometry.computeWithDensity(placement.bounds, scrollbar, self.settings.ui_density);
         if (geometry) |*sb| {
             sb.thumb_y += sb.travel * fraction / @as(f32, @floatFromInt(@max(1, sb.scrollable)));
             if (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id) {
@@ -118,7 +127,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     };
     if (drop.target) |target| {
         if (self.findPlacement(target)) |placement| {
-            if (placement.bounds.splitPreviewRect(drop.zone)) |preview| preview_bounds = preview;
+            if (placement.bounds.splitPreviewRectWithDensity(drop.zone, self.settings.ui_density)) |preview| preview_bounds = preview;
         }
     }
     // An empty target lets the native chrome finish its interruptible fade-out.
@@ -140,7 +149,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         const index = model.tabIndex(drag.tabId().?) orelse return;
         const tab = &model.tabs.items[index];
         const session = self.findSession(tab.active_pane) orelse return;
-        const layout = try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len);
+        const layout = try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density);
         if (drag.ghostBounds(layout, metrics.width, metrics.height)) |bounds| {
             var icons: [8]app_icon.AppIcon = undefined;
             var count: usize = 0;

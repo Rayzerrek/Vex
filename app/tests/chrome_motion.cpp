@@ -3,6 +3,29 @@
 #include "overlay_scrollbar.h"
 #include "dialog_motion.h"
 #include "pixel_scroll.h"
+#include "selection_input.h"
+
+constexpr bool keyboardSelectionOwnsStationaryHover() {
+    SelectionInput input;
+    if (!input.hover(12, 18)) return false;
+    input.fromKeyboard();
+    for (int i = 0; i < 20; ++i) if (input.hover(12, 18)) return false;
+    if (!input.hover(13, 18)) return false;
+    input.fromKeyboard();
+    input.press(13, 18);
+    if (input.keyboard) return false;
+    SelectionInput unseen;
+    unseen.fromKeyboard();
+    return !unseen.hover(12, 18) && unseen.hover(12, 19);
+}
+static_assert(keyboardSelectionOwnsStationaryHover());
+static_assert(themeGridNeighbor(0, 6, 2, 0, 1) == 1);
+static_assert(themeGridNeighbor(1, 6, 2, 0, 1) == 1);
+static_assert(themeGridNeighbor(1, 6, 2, 1, 0) == 3);
+static_assert(themeGridNeighbor(3, 6, 2, 1, 0) == 5);
+static_assert(themeGridNeighbor(5, 6, 2, 0, -1) == 4);
+static_assert(themeGridNeighbor(4, 6, 2, -1, 0) == 2);
+static_assert(themeGridNeighbor(3, 5, 2, 1, 0) == 4);
 
 constexpr bool chromeMotionSettlesWithoutOvershoot() {
     ChromeMotion motion;

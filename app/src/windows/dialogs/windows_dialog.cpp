@@ -1,4 +1,5 @@
 #include "dialog_internal.h"
+#include "selection_input.h"
 #include "ui_renderer.h"
 #include <commctrl.h>
 #include <gdiplus.h>
@@ -126,27 +127,45 @@ bool createDialogBackdrop() {
         klass.lpszClassName, L"", WS_POPUP, 0, 0, 1, 1, host.owner, nullptr, klass.hInstance, nullptr);
     return host.backdrop && SetLayeredWindowAttributes(host.backdrop, 0, 1, LWA_ALPHA);
 }
-bool navigateCommandList(WPARAM key) {
-    if (host.model.kind != 2 || GetKeyState(VK_CONTROL) < 0 || GetKeyState(VK_MENU) < 0) return false;
-    HWND list = GetDlgItem(host.window, listId);
-    if (!list) return false;
-    LRESULT count = SendMessageW(list, LB_GETCOUNT, 0, 0);
-    if (key != VK_UP && key != VK_DOWN && key != VK_HOME && key != VK_END && key != VK_PRIOR && key != VK_NEXT) return false;
+bool navigateDialogList(HWND list, WPARAM key) {
+    const bool themes = host.model.kind == 1 || GetDlgCtrlID(list) == themeGridId;
+    if ((!themes && host.model.kind != 2) || GetKeyState(VK_CONTROL) < 0 || GetKeyState(VK_MENU) < 0 || !list) return false;
+    const bool horizontal = key == VK_LEFT || key == VK_RIGHT;
+    if (key != VK_UP && key != VK_DOWN && key != VK_HOME && key != VK_END && key != VK_PRIOR && key != VK_NEXT && !(themes && horizontal)) return false;
+    suspendListHover(list);
+    const int count = (int)SendMessageW(list, LB_GETCOUNT, 0, 0);
     if (count <= 0) return true;
-    LRESULT selected = SendMessageW(list, LB_GETCURSEL, 0, 0);
+    int selected = (int)SendMessageW(list, LB_GETCURSEL, 0, 0);
     if (selected < 0) selected = 0;
+    const int previous = selected;
     RECT viewport; GetClientRect(list, &viewport);
     const int rowHeight = (int)SendMessageW(list, LB_GETITEMHEIGHT, 0, 0);
-    const LRESULT pageRows = rowHeight > 0 ? (viewport.bottom / rowHeight > 0 ? viewport.bottom / rowHeight : 1) : 1;
-    if (key == VK_UP) selected = selected == 0 ? count - 1 : selected - 1;
-    else if (key == VK_DOWN) selected = selected + 1 == count ? 0 : selected + 1;
-    else if (key == VK_HOME) selected = 0;
+    const int pageRows = rowHeight > 0 && viewport.bottom >= rowHeight ? viewport.bottom / rowHeight : 1;
+    if (key == VK_HOME) selected = 0;
     else if (key == VK_END) selected = count - 1;
+    else if (themes) {
+        int dx = key == VK_LEFT ? -1 : key == VK_RIGHT ? 1 : 0;
+        if (key == VK_PRIOR || key == VK_NEXT) {
+            RECT item = {};
+            SendMessageW(list, LB_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&item));
+            const int width = item.right - item.left;
+            const int columns = width > 0 && viewport.right >= width ? viewport.right / width : 1;
+            dx = key == VK_PRIOR ? -columns : columns;
+        }
+        selected = themeGridNeighbor(selected, count, pageRows, dx, key == VK_UP ? -1 : key == VK_DOWN ? 1 : 0);
+    } else if (key == VK_UP) selected = selected == 0 ? count - 1 : selected - 1;
+    else if (key == VK_DOWN) selected = selected + 1 == count ? 0 : selected + 1;
     else if (key == VK_PRIOR) selected = selected > pageRows ? selected - pageRows : 0;
     else selected = selected + pageRows < count ? selected + pageRows : count - 1;
+    if (selected == previous) return true;
     SendMessageW(list, LB_SETCURSEL, selected, 0);
-    LRESULT value = SendMessageW(list, LB_GETITEMDATA, selected, 0);
-    if (value >= 0 && (uint64_t)value <= UINT32_MAX) notify(2, (uint32_t)value);
+    const LRESULT value = SendMessageW(list, LB_GETITEMDATA, selected, 0);
+    if (value >= 0 && (uint64_t)value <= UINT32_MAX) {
+        if (GetDlgCtrlID(list) == themeGridId) {
+            host.draft.theme = (uint32_t)value;
+            notify(4, 0, nullptr, 0, host.draft);
+        } else notify(2, (uint32_t)value);
+    }
     return true;
 }
 void setFontSizeInvalid(bool invalid) {
@@ -345,6 +364,14 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
             }
             return TRUE;
         }
+        if (LOWORD(wparam) == densityId && HIWORD(wparam) == CBN_SELCHANGE) {
+            uint32_t value;
+            if (comboSelection(densityId, value) && value <= 2 && value != host.draft.ui_density) {
+                host.draft.ui_density = value;
+                notify(4, 0, nullptr, 0, host.draft);
+            }
+            return TRUE;
+        }
         if (LOWORD(wparam) == shellId && HIWORD(wparam) == CBN_SELCHANGE) {
             uint32_t value;
             if (comboSelection(shellId, value) && value != host.draft.shell) {
@@ -495,7 +522,7 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
     case WM_CTLCOLORSTATIC: case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX: {
         HDC dc = reinterpret_cast<HDC>(wparam);
         const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
-        const bool muted = id == descriptionId || id == shellDetailId || id == customShellDetailId || id == fontDetailId || id == fontSizeDetailId || id == 213;
+        const bool muted = id == descriptionId || id == shellDetailId || id == customShellDetailId || id == fontDetailId || id == fontSizeDetailId || id == densityDetailId || id == 213;
         SetTextColor(dc, id == shellErrorId || (id == fontSizeDetailId && host.fontSizeInvalid) ? (host.model.palette.is_dark ? RGB(229, 164, 124) : RGB(155, 75, 40)) : color(muted ? host.model.palette.text_muted : host.model.palette.text_primary));
         const bool card = host.model.kind == 4 && (id == sizeId || id == shellId || id == fontId || id == fontLabelId || id == fontDetailId || id == fontSizeLabelId || id == fontSizeDetailId ||
         id == shellLabelId || id == shellDetailId || id == customShellLabelId || id == customShellDetailId);
@@ -638,7 +665,7 @@ void repositionTerminalDialogs() {
             SendMessageW(c.window, LB_SETITEMHEIGHT, 0, px(host.model.kind == 1 || id == themeGridId ? themeRowHeight() : listRowHeight()));
             if (host.model.kind == 1 || id == themeGridId) SendMessageW(c.window, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0);
         }
-        if (id == shellId || id == fontId) {
+        if (id == shellId || id == fontId || id == densityId) {
             SendMessageW(c.window, CB_SETITEMHEIGHT, (WPARAM)-1, px(30));
             SendMessageW(c.window, CB_SETITEMHEIGHT, 0, px(30));
         }
@@ -704,6 +731,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
         host.model = next;
         if (host.model.kind == 4) {
             host.draft = next.settings;
+            SendDlgItemMessageW(host.window, densityId, CB_SETCURSEL, host.draft.ui_density, 0);
             BOOL valid = FALSE;
             const UINT size = GetDlgItemInt(host.window, sizeId, &valid, FALSE);
             if (!valid || size != host.draft.font_size) {

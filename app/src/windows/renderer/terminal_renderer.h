@@ -22,6 +22,7 @@ public:
     HRESULT drawSolid(float left, float top, float right, float bottom, uint32_t color, uint8_t alpha = 255);
     HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha = 255, bool cellAligned = false);
     HRESULT drawRounded(float left, float top, float right, float bottom, float radius, float stroke, uint32_t color, uint8_t alpha);
+    HRESULT drawRoundedGradient(float left, float top, float right, float bottom, float radius, uint32_t topColor, uint32_t bottomColor, uint8_t alpha);
     HRESULT drawLine(float x1, float y1, float x2, float y2, float stroke, bool roundCaps, uint32_t color, uint8_t alpha);
     HRESULT drawEllipse(float cx, float cy, float rx, float ry, float stroke, uint32_t color, uint8_t alpha);
     HRESULT setClip(D3D12_RECT clip);

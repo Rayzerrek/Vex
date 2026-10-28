@@ -23,6 +23,9 @@ typedef struct {
     bool is_dark;
 } VexChromePalette;
 typedef struct {
+    float pane_header_height, pane_padding, workspace_padding, tab_inset, tab_max_width, pane_gap;
+} VexUiMetrics;
+typedef struct {
     const uint8_t* name; size_t name_length;
     bool is_directory, selected, hovered;
 } VexPathCompletionItem;
@@ -51,7 +54,7 @@ typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN =
 /* Owned dialog controls copy all request strings before returning to the caller. */
 typedef struct { const uint8_t* bytes; size_t length; } VexDialogText;
 typedef struct { uint32_t value; VexDialogText label, detail; uint32_t background, foreground, accent; uint32_t swatches[5]; VexAppIcon icon; } VexDialogItem;
-typedef struct { uint32_t theme, font_size, shell; bool cursor_blink, copy_on_select, confirm_close; uint8_t font_family[128]; } VexUserSettings;
+typedef struct { uint32_t theme, font_size, shell; bool cursor_blink, copy_on_select, confirm_close; uint8_t font_family[128]; uint32_t ui_density; } VexUserSettings;
 /* Kind: appearance=1, commands=2, settings=4, shell=5, close=6, custom_shell=7, close_popover=8. */
 typedef struct {
     uint32_t kind, selected;
@@ -122,6 +125,7 @@ bool vex_update_install(void);
 void vex_window_paste_clipboard(void);
 void vex_window_schedule_copy_check(uint32_t delay_ms);
 void vex_window_set_chrome_palette(VexChromePalette palette);
+void vex_window_set_ui_metrics(VexUiMetrics metrics);
 int vex_window_set_font_size(float font_size);
 int vex_window_set_font_preferences(const uint8_t* family, float font_size);
 float vex_window_font_size(void);
@@ -176,7 +180,7 @@ bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length
 void vex_pty_ack_output(uint32_t token);
 bool vex_pty_exists(uint32_t token);
 void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTabEdit edit, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention);
-void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status);
+void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status, bool moving);
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity);
 void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress);

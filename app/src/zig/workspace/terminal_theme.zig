@@ -38,34 +38,36 @@ pub const ChromePalette = struct {
         const fg = theme.foreground;
         const accent = theme.accent;
         if (theme.is_dark) {
-            const win_bg = darken(bg, 0.36);
+            // Keep the structural layer close to the terminal; crushed black
+            // gutters make tinted themes feel like unrelated floating panels.
+            const win_bg = darken(mix(bg, accent, 0.025), 0.18);
             return .{
                 .window_bg = win_bg,
-                .titlebar_bg = mix(win_bg, bg, 0.65),
-                .border = mix(bg, fg, 0.15),
+                .titlebar_bg = mix(bg, accent, 0.035),
+                .border = mix(bg, fg, 0.18),
                 .pane_bg = bg,
-                .pane_header_bg = darken(bg, 0.18),
-                .active_tab_bg = mix(bg, fg, 0.085),
-                .active_tab_border = mix(bg, accent, 0.55),
+                .pane_header_bg = mix(bg, accent, 0.045),
+                .active_tab_bg = mix(mix(bg, accent, 0.065), fg, 0.055),
+                .active_tab_border = mix(bg, accent, 0.62),
                 .inactive_tab_hover_bg = mix(bg, fg, 0.055),
                 .text_primary = fg,
-                .text_muted = mix(fg, bg, 0.44),
+                .text_muted = mix(fg, bg, 0.28),
                 .accent = accent,
                 .is_dark = true,
             };
         } else {
-            const win_bg = mix(bg, fg, 0.065);
+            const win_bg = mix(mix(bg, accent, 0.025), fg, 0.045);
             return .{
                 .window_bg = win_bg,
-                .titlebar_bg = mix(bg, fg, 0.035),
-                .border = mix(bg, fg, 0.15),
+                .titlebar_bg = mix(bg, accent, 0.035),
+                .border = mix(bg, fg, 0.18),
                 .pane_bg = bg,
-                .pane_header_bg = mix(bg, fg, 0.04),
-                .active_tab_bg = mix(bg, 0xFFFFFF, 0.65),
-                .active_tab_border = mix(bg, accent, 0.48),
-                .inactive_tab_hover_bg = mix(bg, fg, 0.075),
+                .pane_header_bg = mix(bg, accent, 0.045),
+                .active_tab_bg = mix(bg, 0xFFFFFF, 0.52),
+                .active_tab_border = mix(bg, accent, 0.62),
+                .inactive_tab_hover_bg = mix(bg, accent, 0.085),
                 .text_primary = darken(fg, 0.08),
-                .text_muted = mix(fg, bg, 0.40),
+                .text_muted = mix(fg, bg, 0.20),
                 .accent = accent,
                 .is_dark = false,
             };
@@ -97,170 +99,170 @@ pub const default_light_index: usize = 6;
 pub const themes = [_]TerminalTheme{
     .{
         .name = "Vex Obsidian",
-        .subtitle = "Carbon / violet",
+        .subtitle = "Smoked quartz / iris",
         .is_dark = true,
-        .background = 0x0D0F14,
-        .foreground = 0xE6E9F0,
-        .cursor = 0x8B7CFF,
-        .selection_background = 0x232838,
-        .accent = 0x8B7CFF,
+        .background = 0x17181F,
+        .foreground = 0xE3E1EB,
+        .cursor = 0xB1A4E3,
+        .selection_background = 0x343044,
+        .accent = 0xB1A4E3,
         .ansi = .{
-            0x151821, 0xFF6B81, 0x5CE0A0, 0xFFD166, 0x70A1FF, 0xB388FF, 0x48DBFB, 0xD8DEE9,
-            0x4C5468, 0xFF8797, 0x7BF0B8, 0xFFE08A, 0x91B8FF, 0xCBB2FF, 0x7CE8FF, 0xFFFFFF,
+            0x22232C, 0xE695A5, 0x9FC7A4, 0xDDC18D, 0x98B5DB, 0xB9A4DB, 0x8EC9CC, 0xD9D7E2,
+            0x858294, 0xF0ADBA, 0xB4D9B7, 0xEDD4A6, 0xB0C9EA, 0xCEBDEB, 0xA9DDDF, 0xF4F1F8,
         },
     },
     .{
         .name = "Vex Tidal",
-        .subtitle = "Midnight / sea glass",
+        .subtitle = "Deep petrol / sea glass",
         .is_dark = true,
-        .background = 0x101D28,
-        .foreground = 0xD9EBEF,
-        .cursor = 0x72D4CE,
-        .selection_background = 0x244552,
-        .accent = 0x72D4CE,
+        .background = 0x142126,
+        .foreground = 0xDCE9E7,
+        .cursor = 0x8ACCC4,
+        .selection_background = 0x2B464B,
+        .accent = 0x8ACCC4,
         .ansi = .{
-            0x162B38, 0xEF8891, 0x83CBA9, 0xE6C585, 0x82B9E8, 0xBAA6DC, 0x72D4CE, 0xD9EBEF,
-            0x617C8A, 0xFFA3AA, 0xA3E2BF, 0xF5DAA2, 0xA3D0F3, 0xD1BEEE, 0x9BEAE3, 0xF2FAFC,
+            0x203037, 0xDC9298, 0x96C7AF, 0xD8C291, 0x91B8D3, 0xBBA9D3, 0x8ACCC4, 0xDCE9E7,
+            0x78928F, 0xEEAAB0, 0xAFDDC5, 0xEBD6AA, 0xABCFE5, 0xD1BFE5, 0xA5E0D8, 0xF0F8F5,
         },
     },
     .{
         .name = "Vex Grove",
-        .subtitle = "Forest / jade",
+        .subtitle = "Evergreen / soft jade",
         .is_dark = true,
-        .background = 0x14211E,
-        .foreground = 0xDFE9DD,
-        .cursor = 0xA6D59B,
-        .selection_background = 0x304B3C,
-        .accent = 0xA6D59B,
+        .background = 0x19221F,
+        .foreground = 0xDFE7DE,
+        .cursor = 0xA8C9A2,
+        .selection_background = 0x34483B,
+        .accent = 0xA8C9A2,
         .ansi = .{
-            0x1C3028, 0xE78C84, 0xA6D59B, 0xDECB8B, 0x8CBACB, 0xC2A4CB, 0x79C6B6, 0xDFE9DD,
-            0x6B8374, 0xF7A49D, 0xC0E9B5, 0xF1DEA6, 0xA8D2E0, 0xDABEE0, 0x9CE0CF, 0xF3F8EF,
+            0x26342D, 0xDB9689, 0xA8C9A2, 0xD3C18F, 0x95B8C8, 0xC1A6C6, 0x8AC6B5, 0xDFE7DE,
+            0x80917F, 0xECAE9F, 0xBEDDB7, 0xE7D6A7, 0xAFCEDB, 0xD6BED9, 0xA4DACA, 0xF1F6EC,
         },
     },
     .{
         .name = "Vex Dusk",
-        .subtitle = "Plum / orchid",
+        .subtitle = "Aubergine / rose quartz",
         .is_dark = true,
-        .background = 0x241C29,
-        .foreground = 0xEEE1EC,
-        .cursor = 0xD5A4CB,
-        .selection_background = 0x4B354F,
-        .accent = 0xD5A4CB,
+        .background = 0x251F2B,
+        .foreground = 0xEAE0EA,
+        .cursor = 0xCBA8CE,
+        .selection_background = 0x49384F,
+        .accent = 0xCBA8CE,
         .ansi = .{
-            0x34273B, 0xEE91A5, 0xADCCA0, 0xE6C59B, 0xA4B6E7, 0xD5A4CB, 0x99CFCB, 0xEEE1EC,
-            0x8D738F, 0xFFABBB, 0xC6E3B9, 0xF7DDB6, 0xBDCEF7, 0xEDBFE1, 0xB7E5DF, 0xFFF5FC,
+            0x362B3D, 0xE39BB0, 0xB1C6A5, 0xDBC099, 0xA7B2D9, 0xCBA8CE, 0x9DC8C8, 0xEAE0EA,
+            0x99859D, 0xF1B3C3, 0xC8DBBD, 0xEED6B2, 0xBEC9EC, 0xE0C0E2, 0xB5DEDB, 0xF9EFF8,
         },
     },
     .{
         .name = "Vex Ember",
-        .subtitle = "Copper / graphite",
+        .subtitle = "Warm charcoal / burnished copper",
         .is_dark = true,
-        .background = 0x261C19,
-        .foreground = 0xF0E0D5,
-        .cursor = 0xE8AB83,
-        .selection_background = 0x50382E,
-        .accent = 0xE8AB83,
+        .background = 0x28211E,
+        .foreground = 0xEBDDD2,
+        .cursor = 0xD9AD8D,
+        .selection_background = 0x4E3C31,
+        .accent = 0xD9AD8D,
         .ansi = .{
-            0x382820, 0xE58E82, 0xB6CA98, 0xE4C181, 0x98BBCE, 0xC8A0BC, 0x8EC6B6, 0xF0E0D5,
-            0x94796A, 0xF6A79A, 0xCEE0AF, 0xF5DA9F, 0xB4D3E2, 0xE0BBD2, 0xABE0CF, 0xFFF4EA,
+            0x392E27, 0xDF9988, 0xB7C29B, 0xD9BA87, 0x9DB8C8, 0xC5A6BE, 0x95C2B2, 0xEBDDD2,
+            0x9B8776, 0xEFB1A1, 0xCDD7B4, 0xEBD0A0, 0xB7CFDC, 0xDCC0D4, 0xADD8C9, 0xF9EFE4,
         },
     },
     .{
         .name = "Vex Glacier",
-        .subtitle = "Slate / silver blue",
+        .subtitle = "Blue graphite / glacial silver",
         .is_dark = true,
-        .background = 0x1A202B,
-        .foreground = 0xE0E8F3,
-        .cursor = 0xA8C6EF,
-        .selection_background = 0x34445E,
-        .accent = 0xA8C6EF,
+        .background = 0x1D242E,
+        .foreground = 0xDEE6EF,
+        .cursor = 0xAAC2DE,
+        .selection_background = 0x35465B,
+        .accent = 0xAAC2DE,
         .ansi = .{
-            0x253144, 0xE99BA6, 0xA4CFB4, 0xE0C89D, 0xA8C6EF, 0xBDADE2, 0x91CDDA, 0xE0E8F3,
-            0x75869F, 0xFFB4BC, 0xBCE5CD, 0xF4DFB8, 0xC3DBFF, 0xD7C7F6, 0xAFE3ED, 0xF5F9FF,
+            0x2A3543, 0xDC9DA9, 0xA6C6B4, 0xD4C39F, 0xAAC2DE, 0xB7AED1, 0x96C5D1, 0xDEE6EF,
+            0x8595AA, 0xEDB4BE, 0xBDDCCB, 0xE8D8B7, 0xC1D7EE, 0xCDC4E5, 0xAFDBE5, 0xF1F6FC,
         },
     },
     .{
         .name = "Vex Alabaster",
-        .subtitle = "Paper / cobalt",
+        .subtitle = "Warm porcelain / ink blue",
         .is_dark = false,
-        .background = 0xFAF8F5,
-        .foreground = 0x1E2024,
-        .cursor = 0x3B5BDB,
-        .selection_background = 0xDCE4F5,
-        .accent = 0x3B5BDB,
+        .background = 0xF4F2EE,
+        .foreground = 0x30343B,
+        .cursor = 0x526B95,
+        .selection_background = 0xD9E1ED,
+        .accent = 0x526B95,
         .ansi = .{
-            0x1E2024, 0xC92A2A, 0x2B8A3E, 0xB45309, 0x3B5BDB, 0x862E9C, 0x0B7285, 0x6B7280,
-            0x868E96, 0xE03131, 0x2F9E44, 0xD97706, 0x4C6EF5, 0x9C36B5, 0x1098AD, 0x111315,
+            0x30343B, 0x973C47, 0x3A6748, 0x795A22, 0x4B6289, 0x764D79, 0x25636E, 0x626974,
+            0x7A7F88, 0xA34651, 0x427151, 0x82632A, 0x556D95, 0x825784, 0x2D6D79, 0x242A32,
         },
     },
     .{
         .name = "Vex Linen",
-        .subtitle = "Linen / ochre",
+        .subtitle = "Natural linen / toasted amber",
         .is_dark = false,
-        .background = 0xFFFCF0,
-        .foreground = 0x100F0F,
-        .cursor = 0x94632D,
-        .selection_background = 0xE6DDC9,
-        .accent = 0x94632D,
+        .background = 0xF6F0E5,
+        .foreground = 0x3F3932,
+        .cursor = 0x886130,
+        .selection_background = 0xE4D7C1,
+        .accent = 0x886130,
         .ansi = .{
-            0x302A24, 0xAE493C, 0x527334, 0x94632D, 0x386B99, 0x805B92, 0x34796F, 0x6F695F,
-            0x8C8375, 0xBB5345, 0x5B7C3A, 0x9C6B32, 0x4475A5, 0x8B659C, 0x3D8378, 0x29231E,
+            0x3F3932, 0x974234, 0x506732, 0x7D592C, 0x48627F, 0x725075, 0x366860, 0x706658,
+            0x8B8070, 0xA34C3E, 0x587239, 0x856333, 0x526D8B, 0x7D5B80, 0x3E7269, 0x302A24,
         },
     },
     .{
         .name = "Vex Mist",
-        .subtitle = "Mist / washed blue",
+        .subtitle = "Pearl grey / coastal blue",
         .is_dark = false,
-        .background = 0xEDF3F8,
-        .foreground = 0x343B58,
-        .cursor = 0x2E7DE9,
-        .selection_background = 0xC8D0E8,
-        .accent = 0x2E7DE9,
+        .background = 0xEDF2F5,
+        .foreground = 0x334250,
+        .cursor = 0x3C6F92,
+        .selection_background = 0xCFDFE9,
+        .accent = 0x3C6F92,
         .ansi = .{
-            0x2D4056, 0xB64A59, 0x43744E, 0x8E6826, 0x386DB4, 0x7D599E, 0x287B8B, 0x60758B,
-            0x798A9D, 0xC35563, 0x4C7E58, 0x98712C, 0x4278C1, 0x8863AA, 0x328695, 0x243348,
+            0x334250, 0x973E4D, 0x386751, 0x745D29, 0x376686, 0x6D5483, 0x286876, 0x5E7181,
+            0x7D8C99, 0xA24858, 0x41715A, 0x7D6630, 0x407090, 0x785E8D, 0x32737E, 0x293744,
         },
     },
     .{
         .name = "Vex Petal",
-        .subtitle = "Petal / mulberry",
+        .subtitle = "Blush porcelain / wild rose",
         .is_dark = false,
-        .background = 0xF8EFF3,
-        .foreground = 0x4C4F69,
-        .cursor = 0x92466D,
-        .selection_background = 0xE6CDDB,
-        .accent = 0x92466D,
+        .background = 0xF5EEF1,
+        .foreground = 0x4B3847,
+        .cursor = 0x8B4D70,
+        .selection_background = 0xE5D2DE,
+        .accent = 0x8B4D70,
         .ansi = .{
-            0x4F3849, 0xB3415C, 0x477750, 0x91662C, 0x496EA5, 0x92466D, 0x357C80, 0x826B7B,
-            0x967F8F, 0xBF4D68, 0x51825B, 0x9C7135, 0x5579B1, 0x9F527A, 0x40878A, 0x402D3B,
+            0x4B3847, 0x973852, 0x406749, 0x7B5928, 0x4A6288, 0x804767, 0x38656D, 0x7E6476,
+            0x94808E, 0xA2435C, 0x4A7152, 0x846330, 0x546C92, 0x8C5173, 0x416F76, 0x3C2C39,
         },
     },
     .{
         .name = "Vex Apricot",
-        .subtitle = "Peach / terracotta",
+        .subtitle = "Warm clay / terracotta ink",
         .is_dark = false,
-        .background = 0xFCF1E7,
-        .foreground = 0x575279,
-        .cursor = 0xD7827E,
-        .selection_background = 0xE6DDD3,
-        .accent = 0xA65A3A,
+        .background = 0xF8EFE6,
+        .foreground = 0x4D3B34,
+        .cursor = 0x9A5539,
+        .selection_background = 0xE9D5C5,
+        .accent = 0x9A5539,
         .ansi = .{
-            0x503D35, 0xB14A44, 0x547745, 0x986528, 0x3D7399, 0x925F87, 0x317E78, 0x887268,
-            0xA48C7E, 0xBE554F, 0x5E824F, 0xA16F31, 0x487EA5, 0x9D6A92, 0x3C8983, 0x42312A,
+            0x4D3B34, 0x953F37, 0x53683A, 0x7E5929, 0x446580, 0x7A516F, 0x336661, 0x7E685B,
+            0x998272, 0xA14A41, 0x5C7242, 0x886331, 0x4F708B, 0x855C7A, 0x3D716A, 0x3E2E28,
         },
     },
     .{
         .name = "Vex Sage",
-        .subtitle = "Sage / eucalyptus",
+        .subtitle = "Celadon / eucalyptus ink",
         .is_dark = false,
-        .background = 0xEEF4EC,
-        .foreground = 0x304638,
-        .cursor = 0x39735B,
-        .selection_background = 0xCDDFCE,
-        .accent = 0x39735B,
+        .background = 0xEFF3EB,
+        .foreground = 0x344538,
+        .cursor = 0x3E7159,
+        .selection_background = 0xD2E0CE,
+        .accent = 0x3E7159,
         .ansi = .{
-            0x304638, 0xAF4E51, 0x39735B, 0x8B6C2C, 0x426F97, 0x835C8E, 0x337E7A, 0x657C6C,
-            0x819887, 0xBB595C, 0x447E66, 0x957637, 0x4D7BA3, 0x8E679A, 0x3E8985, 0x253B2D,
+            0x344538, 0x934247, 0x396852, 0x725E28, 0x456481, 0x715579, 0x2E6667, 0x657461,
+            0x81907C, 0x9E4C51, 0x42725B, 0x7B6830, 0x4F6F8B, 0x7D5F84, 0x377170, 0x29392C,
         },
     },
 };
@@ -297,8 +299,45 @@ test "built-in themes partition into 6 dark and 6 light themes and derive chrome
     try std.testing.expect(!themes[default_light_index].is_dark);
     const vex_dark_chrome = themes[default_dark_index].chromePalette();
     try std.testing.expect(vex_dark_chrome.is_dark);
-    try std.testing.expectEqual(@as(u32, 0x0D0F14), vex_dark_chrome.pane_bg);
+    try std.testing.expectEqual(@as(u32, 0x17181F), vex_dark_chrome.pane_bg);
     const vex_light_chrome = themes[default_light_index].chromePalette();
     try std.testing.expect(!vex_light_chrome.is_dark);
-    try std.testing.expectEqual(@as(u32, 0xFAF8F5), vex_light_chrome.pane_bg);
+    try std.testing.expectEqual(@as(u32, 0xF4F2EE), vex_light_chrome.pane_bg);
+}
+
+fn luminance(rgb: u32) f64 {
+    var result: f64 = 0;
+    for ([_]u5{ 16, 8, 0 }, [_]f64{ 0.2126, 0.7152, 0.0722 }) |shift, weight| {
+        const value = @as(f64, @floatFromInt((rgb >> shift) & 255)) / 255;
+        result += weight * (if (value <= 0.04045) value / 12.92 else std.math.pow(f64, (value + 0.055) / 1.055, 2.4));
+    }
+    return result;
+}
+
+fn contrast(a: u32, b: u32) f64 {
+    const x = luminance(a);
+    const y = luminance(b);
+    return (@max(x, y) + 0.05) / (@min(x, y) + 0.05);
+}
+
+test "bespoke materials retain readable text in both appearances" {
+    for (themes) |theme| {
+        const chrome = theme.chromePalette();
+        try std.testing.expect(contrast(theme.foreground, theme.background) >= 7);
+        try std.testing.expect(contrast(theme.foreground, theme.selection_background) >= 4.5);
+        try std.testing.expect(contrast(theme.cursor, theme.background) >= 3);
+        for ([_]usize{ 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14 }) |index| {
+            try std.testing.expect(contrast(theme.ansi[index], theme.background) >= 4.5);
+        }
+        const surfaces = [_]u32{ chrome.titlebar_bg, chrome.pane_header_bg, chrome.active_tab_bg, chrome.inactive_tab_hover_bg };
+        for (surfaces) |base| {
+            // Include the brightest part of the material, not just its base.
+            const top = mix(base, 0xffffff, if (theme.is_dark) 0.045 else 0.42);
+            for ([_]u32{ base, top }) |surface| {
+                try std.testing.expect(contrast(chrome.text_primary, surface) >= 7);
+                try std.testing.expect(contrast(chrome.text_muted, surface) >= 4.5);
+                try std.testing.expect(contrast(chrome.accent, surface) >= 3);
+            }
+        }
+    }
 }

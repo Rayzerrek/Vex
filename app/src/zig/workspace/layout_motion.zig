@@ -7,10 +7,14 @@ const panes = @import("pane_tree.zig");
 pub const LayoutMotion = struct {
     previous: std.ArrayList(panes.PanePlacement) = .empty,
     scratch: std.ArrayList(panes.PanePlacement) = .empty,
+    opening: ?struct { id: panes.PaneId, axis: panes.SplitAxis, source: panes.PaneRect } = null,
     started_ms: u64 = 0,
+    painted_ms: ?u64 = null,
+    awaiting_paint: bool = false,
     transition_ms: u64 = duration_ms,
     pub const duration_ms = 160;
     pub const focus_duration_ms = 250;
+    pub const split_duration_ms = 200;
 
     pub fn deinit(self: *LayoutMotion, allocator: std.mem.Allocator) void {
         self.previous.deinit(allocator);
@@ -18,6 +22,15 @@ pub const LayoutMotion = struct {
     }
     pub fn clear(self: *LayoutMotion) void {
         self.previous.clearRetainingCapacity();
+        self.opening = null;
+        self.awaiting_paint = false;
+        self.painted_ms = null;
+    }
+    pub fn notePaint(self: *LayoutMotion, now: u64) void {
+        // Shell startup and the final ConPTY resize must not consume the reveal.
+        if (self.awaiting_paint) self.started_ms = now;
+        self.awaiting_paint = false;
+        self.painted_ms = now;
     }
     pub fn active(self: *const LayoutMotion, now: u64) bool {
         return self.previous.items.len > 0 and now -| self.started_ms < self.transition_ms;
@@ -31,11 +44,23 @@ pub const LayoutMotion = struct {
         try self.scratch.ensureTotalCapacity(allocator, placements.len);
         self.scratch.clearRetainingCapacity();
         for (placements, 0..) |placement, index| {
-            self.scratch.appendAssumeCapacity(.{ .id = placement.id, .bounds = self.bounds(placement, index, now, true) });
+            self.scratch.appendAssumeCapacity(.{ .id = placement.id, .bounds = self.bounds(placement, index, self.painted_ms orelse now, true) });
         }
         std.mem.swap(std.ArrayList(panes.PanePlacement), &self.previous, &self.scratch);
         self.started_ms = now;
+        self.awaiting_paint = true;
         self.transition_ms = duration_ms;
+        self.opening = null;
+    }
+    pub fn captureSplit(self: *LayoutMotion, allocator: std.mem.Allocator, placements: []const panes.PanePlacement, source: panes.PaneId, added: panes.PaneId, axis: panes.SplitAxis, now: u64, enabled: bool) !void {
+        try self.capture(allocator, placements, now, enabled);
+        if (!enabled) return;
+        for (self.previous.items) |old| {
+            if (old.id != source) continue;
+            self.opening = .{ .id = added, .axis = axis, .source = old.bounds };
+            self.transition_ms = split_duration_ms;
+            break;
+        }
     }
     pub fn captureFocus(self: *LayoutMotion, allocator: std.mem.Allocator, placements: []const panes.PanePlacement, now: u64, enabled: bool) !void {
         try self.capture(allocator, placements, now, enabled);
@@ -59,10 +84,27 @@ pub const LayoutMotion = struct {
                     break;
                 }
             }
+            if (self.opening) |opening| {
+                if (opening.id == placement.id) {
+                    // Reveal from the source's outer edge; text keeps its final grid and font size.
+                    bounds_before = opening.source;
+                    switch (opening.axis) {
+                        .right => {
+                            bounds_before.x += bounds_before.width;
+                            bounds_before.width = 0;
+                        },
+                        .down => {
+                            bounds_before.y += bounds_before.height;
+                            bounds_before.height = 0;
+                        },
+                    }
+                }
+            }
             changed = changed or !std.meta.eql(bounds_before, placement.bounds);
             self.scratch.appendAssumeCapacity(.{ .id = placement.id, .bounds = bounds_before });
         }
         std.mem.swap(std.ArrayList(panes.PanePlacement), &self.previous, &self.scratch);
+        self.opening = null;
         // No-op drops and transitions with only new/removed panes need no animation timer.
         if (!changed) self.clear();
     }
@@ -157,4 +199,44 @@ test "layout motion is bounded, identity-based and disabled by reduced motion" {
     try std.testing.expectEqualDeep(final.bounds, motion.bounds(other, 0, 100, true));
     motion.clear();
     try std.testing.expect(!motion.active(100));
+}
+
+test "both split axes reveal continuously from the source edge and close from the painted layout" {
+    for ([_]panes.SplitAxis{ .right, .down }) |axis| {
+        var motion: LayoutMotion = .{};
+        defer motion.deinit(std.testing.allocator);
+        var tree = try panes.PaneTree.init(std.testing.allocator, @enumFromInt(1));
+        defer tree.deinit();
+        const container: panes.PaneRect = .{ .x = 20, .y = 60, .width = 1000, .height = 600 };
+        const source: panes.PanePlacement = .{ .id = @enumFromInt(1), .bounds = container };
+        var final: std.ArrayList(panes.PanePlacement) = .empty;
+        defer final.deinit(std.testing.allocator);
+        try tree.splitPane(source.id, @enumFromInt(2), axis);
+        try tree.layout(std.testing.allocator, &final, container);
+        try motion.captureSplit(std.testing.allocator, &.{source}, source.id, @enumFromInt(2), axis, 100, true);
+        motion.alignToLayout(std.testing.allocator, final.items);
+        // Even slow process startup/resize leaves the full animation for presentation.
+        motion.notePaint(900);
+        try std.testing.expectEqualDeep(container, motion.bounds(final.items[0], 0, 900, true));
+        const edge = motion.bounds(final.items[1], 1, 900, true);
+        try std.testing.expectEqual(@as(f32, 0), if (axis == .right) edge.width else edge.height);
+        var previous_extent: f32 = 0;
+        for (1..201) |step| {
+            const first = motion.bounds(final.items[0], 0, 900 + step, true);
+            const added = motion.bounds(final.items[1], 1, 900 + step, true);
+            const extent = if (axis == .right) added.width else added.height;
+            try std.testing.expect(extent >= previous_extent);
+            try std.testing.expect(first.x + first.width <= added.x + 0.001 or first.y + first.height <= added.y + 0.001);
+            previous_extent = extent;
+        }
+        motion.notePaint(940);
+        const painted = motion.bounds(final.items[0], 0, 940, true);
+        // Retarget to the last displayed frame even if handling the next action was slow.
+        try motion.capture(std.testing.allocator, final.items, 980, true);
+        motion.alignToLayout(std.testing.allocator, &.{source});
+        motion.notePaint(1200);
+        try std.testing.expectEqualDeep(painted, motion.bounds(source, 0, 1200, true));
+        try std.testing.expectEqualDeep(container, motion.bounds(source, 0, 1360, true));
+        try std.testing.expect(!motion.active(1360));
+    }
 }

@@ -63,7 +63,7 @@ pub fn onProbe(self: *Application, query: u32) u64 {
             if (query == 117) return info.scrollable();
             if (query == 118) return info.len;
             const placement = self.findPlacement(session.id) orelse return 0;
-            const geometry = platform.ScrollbarGeometry.compute(placement.bounds, info) orelse return 0;
+            const geometry = platform.ScrollbarGeometry.computeWithDensity(placement.bounds, info, self.settings.ui_density) orelse return 0;
             const value = switch (query) {
                 119 => geometry.thumb_y,
                 120 => geometry.thumb_height,
@@ -148,7 +148,7 @@ pub fn onProbe(self: *Application, query: u32) u64 {
         47 => return model.selected_tab,
         48 => {
             const metrics = self.metrics orelse return 0;
-            const layout = tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len) catch return 0;
+            const layout = tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density) catch return 0;
             return @intFromFloat(@round(layout.tab_width * 1000));
         },
         49 => return if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) if (self.pointer_drag.tab.dragging.destination) |index| index + 1 else 0 else 0,

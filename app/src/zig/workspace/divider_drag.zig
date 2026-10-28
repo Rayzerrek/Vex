@@ -80,6 +80,21 @@ fn validateDividerPoint(x: f32, y: f32) !void {
 
 const test_bounds: panes.PaneRect = .{ .x = 10, .y = 20, .width = 1006, .height = 606 };
 
+test "joined compact separators drag without treating their hit slop as layout spacing" {
+    var tree = try panes.PaneTree.init(std.testing.allocator, @enumFromInt(1));
+    defer tree.deinit();
+    tree.ui_density = .compact;
+    try tree.splitPane(@enumFromInt(1), @enumFromInt(2), .right);
+    const bounds: panes.PaneRect = .{ .x = 0, .y = 44, .width = 1000, .height = 600 };
+    var drag: DividerDrag = .{};
+    try std.testing.expect(try drag.begin(&tree, bounds, 498, 100));
+    try std.testing.expect(!try drag.move(&tree, bounds, 498, 100));
+    try std.testing.expect(try drag.move(&tree, bounds, 598, 100));
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), (try tree.dividerPlacement(bounds, @enumFromInt(2))).?.ratio, 0.0001);
+    try std.testing.expect(try drag.cancel(&tree));
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), (try tree.dividerPlacement(bounds, @enumFromInt(2))).?.ratio, 0.0001);
+}
+
 test "divider hit testing matches nested leaf geometry and excludes pane and outer edges" {
     var tree = try panes.PaneTree.init(std.testing.allocator, @enumFromInt(1));
     defer tree.deinit();

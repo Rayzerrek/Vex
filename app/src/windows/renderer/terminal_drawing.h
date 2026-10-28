@@ -12,6 +12,7 @@ struct TerminalDrawingFrame {
     IDWriteTextFormat* fonts[4];
     float dpiScale, cellWidth, cellHeight;
     uint32_t paneBackground;
+    VexUiMetrics uiMetrics;
 };
 void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame);
-void beginTerminalPane(VexPaneRect bounds);
+void beginTerminalPane(VexPaneRect bounds, bool moving = false);

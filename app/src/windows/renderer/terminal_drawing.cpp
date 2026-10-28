@@ -12,6 +12,7 @@ ID2D1RenderTarget* glyphTarget;
 ID2D1SolidColorBrush* glyphBrush;
 float dpiScale, cellWidth, cellHeight, gridLeft, gridTop;
 uint32_t paneBackground;
+VexUiMetrics uiMetrics;
 uint32_t cellLayer = 0;
 float paneOriginX, paneOriginY;
 D3D12_RECT paneClip;
@@ -23,21 +24,25 @@ void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
     for (int i = 0; i < 4; ++i) terminalFonts[i] = frame.fonts[i];
     dpiScale = frame.dpiScale; cellWidth = frame.cellWidth; cellHeight = frame.cellHeight;
     paneBackground = frame.paneBackground;
+    uiMetrics = frame.uiMetrics;
 }
-void beginTerminalPane(VexPaneRect bounds) {
+void beginTerminalPane(VexPaneRect bounds, bool moving) {
     cellLayer = 0;
-    const float left = bounds.x + 6, top = bounds.y + 30;
+    const float left = bounds.x + uiMetrics.pane_padding, top = bounds.y + uiMetrics.pane_header_height + 2;
     // Keep cached glyph geometry local: moving a pane or drawing its drag preview
     // changes only the replay transform, rather than rebuilding every terminal cell.
     gridLeft = 0; gridTop = 0;
     const float scale = dpiScale;
     const D3D12_RECT clip = {
         (LONG)fmaxf(0, roundf(left * scale)), (LONG)fmaxf(0, roundf(top * scale)),
-        (LONG)fminf((float)renderer->width(), fmaxf(left, bounds.x + bounds.width - 18) * scale),
-        (LONG)fminf((float)renderer->height(), fmaxf(top, bounds.y + bounds.height - 6) * scale)
+        (LONG)fminf((float)renderer->width(), fmaxf(left, bounds.x + bounds.width - uiMetrics.pane_padding - 12) * scale),
+        (LONG)fminf((float)renderer->height(), fmaxf(top, bounds.y + bounds.height - uiMetrics.pane_padding) * scale)
     };
     paneClip = clip; scrollGuard = false;
-    paneOriginX = roundf(left * scale) / scale; paneOriginY = roundf(top * scale) / scale;
+    // Preserve fractional translation while moving; snapping each frame makes the
+    // easing tail visibly step by whole pixels. Settled panes still snap for crisp text.
+    paneOriginX = moving ? left : roundf(left * scale) / scale;
+    paneOriginY = moving ? top : roundf(top * scale) / scale;
     renderer->beginTerminalPass(clip);
     // Align the replay origin with the scissor so settled text stays crisp at mixed DPI.
     renderer->terminal.setPreviewTransform(1, paneOriginX, paneOriginY);

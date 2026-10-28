@@ -434,6 +434,17 @@ HRESULT TerminalRenderer::drawRounded(float left, float top, float right, float 
     return appendQuad(quad);
 }
 
+HRESULT TerminalRenderer::drawRoundedGradient(float left, float top, float right, float bottom, float radius, uint32_t topColor, uint32_t bottomColor, uint8_t alpha) {
+    if (!passOpen || !isfinite(left) || !isfinite(top) || !isfinite(right) || !isfinite(bottom) || !isfinite(radius) || radius < 0) return E_INVALIDARG;
+    if (right <= left || bottom <= top) return S_OK;
+    // RGB24 is exactly representable as a float. Reuse the unused fill parameters
+    // so materials share the existing instance layout, pipeline and draw batch.
+    Quad quad = { { left * scale - 1, top * scale - 1, right * scale + 1, bottom * scale + 1 },
+        { radius * scale, 0, (float)(bottomColor & 0xffffff), 0 },
+        ((UINT)alpha << 24) | ((topColor & 255) << 16) | (topColor & 0xff00) | ((topColor >> 16) & 255), 6 };
+    return appendQuad(quad);
+}
+
 HRESULT TerminalRenderer::drawLine(float x1, float y1, float x2, float y2, float stroke, bool roundCaps, uint32_t color, uint8_t alpha) {
     if (!passOpen || !isfinite(x1) || !isfinite(y1) || !isfinite(x2) || !isfinite(y2) || !isfinite(stroke) || stroke <= 0) return E_INVALIDARG;
     const float pad = stroke * scale * 0.5f + 1;

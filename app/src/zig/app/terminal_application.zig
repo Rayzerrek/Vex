@@ -33,6 +33,14 @@ const custom_profiles = @import("../shell/custom_profiles.zig");
 
 /// Owns stable sessions on the window thread; feature modules borrow this owner, never copy it.
 pub const TerminalApplication = struct {
+    pub const ClosingPane = struct {
+        placement: panes.PanePlacement,
+        tab_id: workspace.TabId,
+        frame: @import("../terminal/terminal.zig").TerminalFrame,
+        title: []u8,
+        icon: app_icon.AppIcon,
+        summary: status.ProgramStatusSummary,
+    };
     pub const onProbe = diagnostics.onProbe;
     pub const onDialogEvent = modals.onDialogEvent;
     pub const onKey = keyboard.onKey;
@@ -64,6 +72,7 @@ pub const TerminalApplication = struct {
     metrics: ?platform.WindowMetrics = null,
     pointer_drag: pointer.PointerDrag = .none,
     layout_motion: @import("../workspace/layout_motion.zig").LayoutMotion = .{},
+    closing_panes: std.ArrayList(ClosingPane) = .empty,
     editing_tab: ?keyboard.TabRename = null,
     overlay: overlays.OverlayState = .none,
     exit_review: close_confirmation.ExitReview = .{},
@@ -152,6 +161,7 @@ pub const TerminalApplication = struct {
         const default_kind = launch.kind;
         try platform.setShellName(launch.shellName());
         platform.setChromePalette(terminal_theme.themes[settings.theme_index].chromePalette());
+        platform.setUiDensity(settings.ui_density);
         try platform.setFontPreferences(&settings.font_family, @floatFromInt(settings.font_size));
         return .{
             .allocator = allocator,
@@ -183,6 +193,8 @@ pub const TerminalApplication = struct {
         if (self.model) |*model| model.deinit();
         self.placements.deinit(self.allocator);
         self.layout_motion.deinit(self.allocator);
+        self.clearClosingPanes();
+        self.closing_panes.deinit(self.allocator);
         self.preview_placements.deinit(self.allocator);
         if (self.path_index) |index| index.destroy();
         self.path_index_cache.clear();
@@ -311,7 +323,7 @@ pub const TerminalApplication = struct {
     }
     /// Captures runtime values without serializing any live session or launch command.
     pub fn currentPreferences(self: *TerminalApplication) preferences.UserSettings {
-        return .{ .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .copy_on_select = self.settings.copy_on_select, .confirm_close = self.settings.confirm_close, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
+        return .{ .ui_density = self.settings.ui_density, .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .copy_on_select = self.settings.copy_on_select, .confirm_close = self.settings.confirm_close, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
     }
     /// Writes GUI preferences only when changed; storage failure never closes running terminals.
     pub fn commitPreferences(self: *TerminalApplication, settings: preferences.UserSettings) !void {
@@ -375,7 +387,15 @@ pub const TerminalApplication = struct {
     }
     fn applyPreferences(self: *TerminalApplication, settings: preferences.UserSettings, kind: shell.ShellKind) !void {
         try platform.setFontPreferences(&settings.font_family, @floatFromInt(settings.font_size));
+        const density_changed = self.settings.ui_density != settings.ui_density;
+        if (density_changed) {
+            _ = try pointer.cancelPointerDrag(self);
+            self.layout_motion.clear();
+        }
         self.settings = settings;
+        platform.setUiDensity(settings.ui_density);
+        if (self.metrics) |*metrics| metrics.ui_density = settings.ui_density;
+        if (density_changed) try self.updateLayout();
         if (self.theme_index != settings.theme_index) try self.applyTheme(settings.theme_index);
         self.cursor_blink_enabled = settings.cursor_blink;
         self.cursor_blink.synchronize(null, self.cursorNowMs());
@@ -538,6 +558,47 @@ pub const TerminalApplication = struct {
         self.model = try workspace.WorkspaceModel.init(self.allocator, first.id);
         self.rememberTabShell(first);
     }
+    pub fn clearClosingPanes(self: *TerminalApplication) void {
+        for (self.closing_panes.items) |*pane| {
+            pane.frame.deinit(self.allocator);
+            self.allocator.free(pane.title);
+        }
+        self.closing_panes.clearRetainingCapacity();
+    }
+    fn capturePaneClose(self: *TerminalApplication, id: panes.PaneId) void {
+        if (self.findPlacement(id) == null) return;
+        // Visual allocation failure must never prevent closing a terminal.
+        self.layout_motion.capture(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled()) catch self.layout_motion.clear();
+    }
+    fn preserveClosingPane(self: *TerminalApplication, id: panes.PaneId) void {
+        if (!platform.animationsEnabled() or self.layout_motion.previous.items.len == 0) return;
+        const placement = self.findPlacement(id) orelse return;
+        var painted = placement;
+        for (self.placements.items, 0..) |candidate, index| {
+            if (candidate.id == id) painted.bounds = self.layout_motion.bounds(placement, index, self.layout_motion.started_ms, true);
+        }
+        // A split closed before its first visible frame has no image to retain.
+        if (painted.bounds.width < 14 or painted.bounds.height < self.settings.ui_density.metrics().verticalInset() + 2) return;
+        const session = self.findSession(id) orelse return;
+        self.closing_panes.ensureUnusedCapacity(self.allocator, 1) catch return;
+        const summary = session.terminal.program_status.programStatus();
+        const title = self.allocator.dupe(u8, status_presentation.statusTitle(summary, session.displayTitle())) catch return;
+        _ = session.terminal.readFrame() catch {
+            self.allocator.free(title);
+            return;
+        };
+        // Move the immutable frame out before destroying the session. The process closes immediately;
+        // surviving panes wipe over this snapshot without keeping a shell alive for an animation.
+        self.closing_panes.appendAssumeCapacity(.{
+            .placement = painted,
+            .tab_id = self.model.?.activeTab().id,
+            .frame = session.terminal.frame,
+            .title = title,
+            .icon = session.icon,
+            .summary = summary,
+        });
+        session.terminal.frame = .{};
+    }
     pub fn toggleFocusMode(self: *TerminalApplication) !void {
         const model = if (self.model) |*model| model else return;
         if (model.activeTab().tree.paneCount() <= 1) return;
@@ -547,7 +608,8 @@ pub const TerminalApplication = struct {
     pub fn updateLayout(self: *TerminalApplication) !void {
         const model = if (self.model) |*model| model else return;
         const metrics = self.metrics orelse return;
-        try platform.setTabStripLayout(try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len));
+        try platform.setTabStripLayout(try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density));
+        for (model.tabs.items) |*candidate| candidate.tree.ui_density = self.settings.ui_density;
         const tab = model.activeTab();
         const bounds = windowContentBounds(metrics);
         if (tab.is_focus_mode and tab.tree.paneCount() > 1) {
@@ -589,6 +651,7 @@ pub const TerminalApplication = struct {
             return;
         };
         self.metrics = metrics;
+        self.metrics.?.ui_density = self.settings.ui_density;
         if (self.model == null) self.initializeWorkspace() catch |err| {
             self.fail(err);
             return;
@@ -806,7 +869,9 @@ pub const TerminalApplication = struct {
             platform.invalidateWindow();
             return;
         }
+        self.capturePaneClose(pane_id);
         if (model.closePaneSplitAnywhere(pane_id)) |id| {
+            self.preserveClosingPane(id);
             self.removeSession(id);
             try self.updateLayout();
         }
@@ -849,7 +914,9 @@ pub const TerminalApplication = struct {
         const model = if (self.model) |*model| model else return;
         switch (target) {
             .pane => |pane_id| {
+                self.capturePaneClose(pane_id);
                 if (model.closePaneSplitAnywhere(pane_id)) |id| {
+                    self.preserveClosingPane(id);
                     self.removeSession(id);
                 } else {
                     for (model.tabs.items, 0..) |tab, index| {
@@ -1044,6 +1111,7 @@ pub const TerminalApplication = struct {
                 const active = self.activeSession() orelse return error.MissingPaneSession;
                 const session = try self.addSessionWithKind(active.directory.current(), kind);
                 errdefer self.removeSession(session.id);
+                try self.layout_motion.captureSplit(self.allocator, self.placements.items, active.id, session.id, if (mode == .split_right) .right else .down, self.cursorNowMs(), platform.animationsEnabled());
                 try model.splitActivePane(session.id, if (mode == .split_right) .right else .down);
                 try self.updateLayout();
             },
@@ -1055,6 +1123,15 @@ pub const TerminalApplication = struct {
             .open_path_completion => try self.openPathCompletion(),
             .open_theme_picker => self.openThemePicker(),
             .open_settings => try self.applyAction(.settings, 0),
+            .density_compact, .density_comfortable, .density_spacious => {
+                var settings = self.currentPreferences();
+                settings.ui_density = switch (id) {
+                    .density_compact => .compact,
+                    .density_spacious => .spacious,
+                    else => .comfortable,
+                };
+                try self.commitPreferences(settings);
+            },
             .reload_configuration => self.reloadUserConfiguration(),
             .check_for_updates => platform.c.vex_update_check(),
             .update_restart => self.requestUpdateRestart(),
@@ -1300,6 +1377,7 @@ pub const TerminalApplication = struct {
                 const active = self.activeSession() orelse return error.MissingPaneSession;
                 const session = try self.addSplitSession(active);
                 errdefer self.removeSession(session.id);
+                try self.layout_motion.captureSplit(self.allocator, self.placements.items, active.id, session.id, if (action == .split_right) .right else .down, self.cursorNowMs(), platform.animationsEnabled());
                 try model.splitActivePane(session.id, if (action == .split_right) .right else .down);
             },
             .toggle_focus_mode => {
@@ -1332,7 +1410,11 @@ pub const TerminalApplication = struct {
                 self.focusTabAttentionOrigin(model.selected_tab);
             },
             .close_active => {
-                if (model.closeActiveSplit()) |id| self.removeSession(id) else try self.closeTab(model.selected_tab);
+                self.capturePaneClose(model.activeTab().active_pane);
+                if (model.closeActiveSplit()) |id| {
+                    self.preserveClosingPane(id);
+                    self.removeSession(id);
+                } else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
             .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink, .shell_picker, .settings, .update_restart => unreachable,
@@ -1396,6 +1478,7 @@ pub const TerminalApplication = struct {
                 self.overlay = .none;
             }
         }
+        if (model.activeTab().tree.paneCount() > 1) self.capturePaneClose(id);
         switch (model.closeExitedPane(id)) {
             .stale => return error.MissingPaneSession,
             .retained_final => {
@@ -1413,6 +1496,7 @@ pub const TerminalApplication = struct {
                         try modals.presentTerminalModal(self);
                     }
                 }
+                if (action == .pane_closed) self.preserveClosingPane(id);
                 self.removeSession(id);
                 for (self.sessions.items) |remaining| {
                     if (model.activeTab().tree.containsPane(remaining.id)) remaining.needs_attention = false;
@@ -1425,7 +1509,8 @@ pub const TerminalApplication = struct {
 
 /// Keeps workspace layout below the custom title bar.
 pub fn windowContentBounds(metrics: platform.WindowMetrics) panes.PaneRect {
-    return .{ .x = 0, .y = 44, .width = @max(0, metrics.width), .height = @max(0, metrics.height - 44) };
+    const inset = metrics.ui_density.metrics().workspace_padding;
+    return .{ .x = inset, .y = 44 + inset, .width = @max(0, metrics.width - inset * 2), .height = @max(0, metrics.height - 44 - inset * 2) };
 }
 
 /// Retains the stable application/API owner until the window loop returns; teardown joins all session workers.
@@ -1786,6 +1871,29 @@ test "Ctrl Shift E toggles active pane zoom and restores the split layout" {
     try std.testing.expect(app.health == .running);
 }
 
+test "overview keyboard selection survives stationary pointer refresh and follows real movement" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const first = try app.addSession(app.startup_directory);
+    const second = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    try app.model.?.newTab(second.id);
+    app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
+    app.openTabPeek();
+    app.overlay.tab_peek.started_ms = 0;
+    const layout = @import("../workspace/tab_overview.zig").Layout.init(1120, 700, 2);
+    const card = layout.card(0);
+    const x = card.x + card.width / 2;
+    const y = card.y + card.height / 2;
+    _ = try overlays.handleOverlayPointer(&app, .hover, x, y);
+    try std.testing.expectEqual(@as(usize, 0), app.overlay.tab_peek.selected_index);
+    try std.testing.expect(app.onKey(0x27, 0));
+    for (0..20) |_| _ = try overlays.handleOverlayPointer(&app, .hover, x, y);
+    try std.testing.expectEqual(@as(usize, 1), app.overlay.tab_peek.selected_index);
+    _ = try overlays.handleOverlayPointer(&app, .hover, x + 1, y);
+    try std.testing.expectEqual(@as(usize, 0), app.overlay.tab_peek.selected_index);
+}
+
 test "overview accepts during its entrance and never swallows follow-up typing or paste" {
     var app = try recoveryTestApplication("unused-recovery-test.lua");
     defer app.deinit();
@@ -1980,6 +2088,39 @@ test "failed protocol reply quarantines its pane instead of terminating other se
     try std.testing.expect(second.pty.handle == null);
 }
 
+test "density commands resize live grids without replacing sessions or terminal fonts" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const root = try temp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ root, "init.lua" });
+    defer std.testing.allocator.free(path);
+    var app = try recoveryTestApplication(path);
+    defer app.deinit();
+    defer platform.setUiDensity(.comfortable);
+    app.onResize(.{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 });
+    try std.testing.expect(app.health == .running);
+    const session = app.activeSession().?;
+    const identity = session.id;
+    const initial = session.size.?;
+    const font = platform.fontSize();
+    try session.terminal.feedOutput("\r\ndensity sentinel\r\n");
+    try app.executeCommand(.density_compact);
+    try std.testing.expectEqual(preferences.UiDensity.compact, app.settings.ui_density);
+    try std.testing.expect(session.size.?.rows >= initial.rows);
+    try std.testing.expect(session.size.?.columns >= initial.columns);
+    try app.executeCommand(.density_spacious);
+    try std.testing.expect(session.size.?.rows < initial.rows);
+    try std.testing.expect(session.size.?.columns < initial.columns);
+    try std.testing.expectEqual(identity, app.activeSession().?.id);
+    try std.testing.expectEqual(@as(usize, 1), app.sessions.items.len);
+    try std.testing.expectEqual(font, platform.fontSize());
+    try std.testing.expect(try session.terminal.containsViewportText("density sentinel"));
+    try std.testing.expectEqual(preferences.UiDensity.spacious, (try preferences.loadUserSettings(app.allocator, path)).ui_density);
+    try app.executeCommand(.density_comfortable);
+    try std.testing.expectEqualDeep(initial, session.size.?);
+}
+
 test "GUI and Lua stay synchronized, malformed reloads and failed saves retain committed preferences" {
     var temp = std.testing.tmpDir(.{});
     defer temp.cleanup();
@@ -1992,6 +2133,7 @@ test "GUI and Lua stay synchronized, malformed reloads and failed saves retain c
     defer platform.setFontPreferences(&preferences.default_font, 14) catch {};
     var gui = app.settings;
     gui.font_size = 21;
+    gui.ui_density = .spacious;
     gui.cursor_blink = false;
     try app.commitPreferences(gui);
     try std.testing.expectEqualDeep(gui, try preferences.loadUserSettings(app.allocator, path));
@@ -1999,6 +2141,7 @@ test "GUI and Lua stay synchronized, malformed reloads and failed saves retain c
     app.reloadUserConfiguration();
     try std.testing.expectEqual(@as(u8, 19), app.settings.font_size);
     try std.testing.expectEqual(@as(f32, 19), platform.fontSize());
+    try std.testing.expectEqual(preferences.UiDensity.comfortable, app.settings.ui_density);
     const committed = app.settings;
     try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = "vex.config.font_size = " });
     app.reloadUserConfiguration();
@@ -2043,4 +2186,38 @@ test "tab rename edits displayed title with cursor navigation and clearing reset
     try std.testing.expectEqualStrings("", app.editing_tab.?.slice());
     try std.testing.expect(app.onKey(0x0D, 0));
     try std.testing.expectEqual(@as(?[]const u8, null), app.model.?.activeTab().customTitle());
+}
+
+test "split close releases the session immediately and owns its last visual frame until motion settles" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    app.settings.confirm_close = false;
+    const first = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, first.id);
+    app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
+    try app.updateLayout();
+    try app.applyAction(.split_right, 0);
+    const closing_id = app.model.?.activeTab().active_pane;
+    const closing = app.findSession(closing_id).?;
+    try closing.terminal.feedOutput("closing frame survives session destruction");
+    app.layout_motion.clear();
+    const old_bounds = app.findPlacement(first.id).?.bounds;
+    const frame = try closing.terminal.readFrame();
+    const old_cells = frame.cells.items.ptr;
+    try app.requestClosePane(closing_id);
+    try std.testing.expect(app.findSession(closing_id) == null);
+    try std.testing.expectEqual(@as(usize, 1), app.sessions.items.len);
+    try std.testing.expect(!app.model.?.activeTab().tree.containsPane(closing_id));
+    if (platform.animationsEnabled()) {
+        try std.testing.expectEqual(@as(usize, 1), app.closing_panes.items.len);
+        try std.testing.expectEqual(old_cells, app.closing_panes.items[0].frame.cells.items.ptr);
+        try std.testing.expectEqualDeep(old_bounds, app.layout_motion.previous.items[0].bounds);
+        try std.testing.expect(app.findPlacement(first.id).?.bounds.width > old_bounds.width);
+        // Clearing releases the moved buffers; app.deinit must also tolerate repeated clears.
+        app.clearClosingPanes();
+        app.clearClosingPanes();
+    } else {
+        try std.testing.expectEqual(@as(usize, 0), app.closing_panes.items.len);
+        try std.testing.expectEqual(@as(usize, 0), app.layout_motion.previous.items.len);
+    }
 }

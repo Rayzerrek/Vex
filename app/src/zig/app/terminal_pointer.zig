@@ -67,7 +67,7 @@ pub fn paneDetachAt(self: *Application, source: panes.PaneId, point: tab_strip.T
     if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) return null;
     const from = model.paneTabIndex(source) orelse return null;
     if (model.tabs.items[from].tree.paneCount() <= 1) return null;
-    const layout = tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len) catch return null;
+    const layout = tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density) catch return null;
     return drag_preview.detachTarget(layout, point, metrics.width);
 }
 
@@ -75,7 +75,7 @@ pub fn paneDropAt(self: *Application, source: panes.PaneId, x: f32, y: f32) Pane
     const model = if (self.model) |*model| model else return .{};
     if (model.paneTabIndex(source) == null) return .{};
     if (self.metrics) |metrics| {
-        const layout = tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len) catch return .{};
+        const layout = tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density) catch return .{};
         if (layout.hitTab(.{ .x = x, .y = y }) catch null) |hit| {
             const target = model.tabs.items[hit.index].active_pane;
             if (hit.part == .body and target != source and hit.index == model.selected_tab) return .{ .target = target, .zone = .right };
@@ -178,7 +178,7 @@ fn handleMouseButton(self: *Application, button: terminal.MouseButton, pressed: 
     if (pressed) {
         self.commitTabRename();
         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
-            if (placement.bounds.hitHeaderAction(can_focus, x, y) != null) return;
+            if (placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) != null) return;
             const vp = (try metrics.viewportPoint(placement.bounds, x, y, false)) orelse return;
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             _ = model.focusPane(placement.id);
@@ -219,7 +219,7 @@ fn handleClick(self: *Application, x: f32, y: f32) !void {
     const model = if (self.model) |*model| model else return;
     const can_focus = model.activeTab().tree.paneCount() > 1;
     for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
-        if (placement.bounds.hitHeaderAction(can_focus, x, y)) |header_action| {
+        if (placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density)) |header_action| {
             switch (header_action) {
                 .focus_toggle => {
                     _ = model.focusPane(placement.id);
@@ -252,11 +252,11 @@ fn updateHoverState(self: *Application, can_focus: bool, x: f32, y: f32, modifie
     if (self.pointer_drag == .none) {
         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
             next_pane = placement.id;
-            next_action = placement.bounds.hitHeaderAction(can_focus, x, y);
+            next_action = placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density);
             if (next_action == null) {
                 if (self.findSession(placement.id)) |session| {
                     if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
-                        if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
+                        if (platform.ScrollbarGeometry.computeWithDensity(placement.bounds, try session.terminal.scrollbar(), self.settings.ui_density)) |sb| {
                             if (sb.containsPoint(placement.bounds, x, y)) next_scrollbar = placement.id;
                         }
                     }
@@ -344,7 +344,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
     }
     const model = if (self.model) |*model| model else return .normal;
     const metrics = self.metrics orelse return .normal;
-    const layout = try tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len);
+    const layout = try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density);
     const point: tab_strip.TabPointer = .{ .x = x, .y = y };
     const bounds = application.windowContentBounds(metrics);
     const can_focus = model.activeTab().tree.paneCount() > 1;
@@ -389,8 +389,8 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                 }
                 if (self.pointer_drag == .none) {
                     for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
-                        if (placement.bounds.hitHeaderAction(can_focus, x, y) != null) break;
-                        if (placement.bounds.isHeaderDragArea(can_focus, x, y)) {
+                        if (placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) != null) break;
+                        if (placement.bounds.isHeaderDragAreaWithDensity(can_focus, x, y, self.settings.ui_density)) {
                             _ = model.focusPane(placement.id);
                             try self.clearOtherSelections(placement.id);
                             self.pointer_drag = .{ .pane = .{
@@ -406,7 +406,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                         }
                         const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
                         if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
-                            if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
+                            if (platform.ScrollbarGeometry.computeWithDensity(placement.bounds, try session.terminal.scrollbar(), self.settings.ui_density)) |sb| {
                                 if (sb.containsPoint(placement.bounds, x, y)) {
                                     session.scrollbar_visibility.reveal(self.cursorNowMs());
                                     _ = model.focusPane(placement.id);
@@ -586,7 +586,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                     sb_drag.pointer_y = y;
                     if (self.findPlacement(sb_drag.pane_id)) |placement| {
                         if (self.findSession(sb_drag.pane_id)) |session| {
-                            if (platform.ScrollbarGeometry.compute(placement.bounds, try session.terminal.scrollbar())) |sb| {
+                            if (platform.ScrollbarGeometry.computeWithDensity(placement.bounds, try session.terminal.scrollbar(), self.settings.ui_density)) |sb| {
                                 try session.terminal.scrollToRow(sb.targetOffsetForY(y, sb_drag.grab_offset));
                                 session.scrollbar_visibility.reveal(self.cursorNowMs());
                                 platform.invalidateWindow();

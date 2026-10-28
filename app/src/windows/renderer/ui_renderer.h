@@ -18,6 +18,8 @@ public:
     void Clear(D2D1_COLOR_F color);
     void FillRectangle(D2D1_RECT_F rect, const UiBrush* brush);
     void FillRoundedRectangle(D2D1_ROUNDED_RECT rect, const UiBrush* brush);
+    // Stops share top.a; only RGB is interpolated.
+    void FillRoundedGradient(D2D1_ROUNDED_RECT rect, D2D1_COLOR_F top, D2D1_COLOR_F bottom);
     void DrawRoundedRectangle(D2D1_ROUNDED_RECT rect, const UiBrush* brush, float stroke);
     void DrawLine(D2D1_POINT_2F from, D2D1_POINT_2F to, const UiBrush* brush, float stroke, bool roundCaps = false);
     void FillEllipse(D2D1_ELLIPSE ellipse, const UiBrush* brush);

@@ -26,6 +26,11 @@ Fragment terminalVertex(Instance input, uint vertex : SV_VertexID) {
     output.position = float4(pixel.x * 2 / viewportSize.x - 1, 1 - pixel.y * 2 / viewportSize.y, 0, 1);
     output.uv = lerp(input.uv.xy, input.uv.zw, corner);
     output.color = input.color;
+    if (input.kind == 6) {
+        const uint rgb = (uint)input.uv.z;
+        const float3 bottom = float3((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255) / 255.0;
+        output.color.rgb = lerp(input.color.rgb, bottom, corner.y);
+    }
     output.bounds = input.bounds;
     output.parameters = input.uv;
     output.kind = input.kind;
@@ -47,7 +52,7 @@ float4 terminalPixel(Fragment input) : SV_Target {
         const float2 center = (input.bounds.xy + input.bounds.zw) * 0.5;
         const float2 extent = (input.bounds.zw - input.bounds.xy) * 0.5;
         float distance;
-        if (input.kind == 1) {
+        if (input.kind == 1 || input.kind == 6) {
             const float stroke = input.parameters.y;
             const float2 halfSize = extent - 1 - stroke * 0.5;
             const float radius = min(input.parameters.x, min(halfSize.x, halfSize.y));

@@ -13,6 +13,7 @@ constexpr int sizeId = 111, blinkId = 112, shellId = 113, copyOnSelectId = 114, 
 constexpr int closeId = 125, firstPageId = 130;
 constexpr int fontSizeLabelId = 121, shellLabelId = 122, shellDetailId = 123, fontSizeDetailId = 126;
 constexpr int customShellLabelId = 140, customShellDetailId = 141, fontDetailId = 142;
+constexpr int densityLabelId = 143, densityDetailId = 144, densityId = 145;
 enum class SettingsPage { general, appearance, terminal, about };
 constexpr size_t itemLimit = 64, shellLimit = 64;
 struct DialogItem {
@@ -69,6 +70,8 @@ COLORREF surfaceColor();
 COLORREF fieldColor();
 COLORREF selectionColor();
 int listRowHeight();
+constexpr float preferredThemeGridWidth = 548, preferredThemeGridHeight = 350;
+float themeGridWidth();
 int themeRowHeight();
 int themeColumnWidth();
 int headingSize();
@@ -76,7 +79,7 @@ int headingSize();
 struct SettingsCard { float top; int rows; };
 struct SettingsGeometry {
     bool compact;
-    float left, right, rowHeight, gridTop, gridHeight, headerY[2];
+    float left, right, rowHeight, gridTop, gridHeight, densityY, headerY[2];
     SettingsCard cards[2];
     int cardCount;
     const wchar_t* headers[2];
@@ -92,7 +95,8 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw);
 void paintDialogSurface(HDC dc);
 void acceptDialog();
 void notify(uint32_t event, uint32_t value = 0, const uint8_t* text = nullptr, size_t length = 0, VexUserSettings settings = {});
-bool navigateCommandList(WPARAM key);
+bool navigateDialogList(HWND list, WPARAM key);
+void suspendListHover(HWND list);
 void fillCombo(HWND combo, const DialogItem* items, size_t count, uint32_t selected);
 void fillList(int id = listId);
 bool listSelection(uint32_t& value, int id = listId);

@@ -24,8 +24,11 @@ pub const TabStripLayout = struct {
 
     /// Allows two-line activity labels when space permits; compact slots still preserve close/drag hit regions.
     pub fn init(width: f32, count: usize) !TabStripLayout {
+        return initWithDensity(width, count, .comfortable);
+    }
+    pub fn initWithDensity(width: f32, count: usize, density: @import("ui_density.zig").UiDensity) !TabStripLayout {
         if (!std.math.isFinite(width) or width <= 0 or width > 65536 or count == 0 or count > workspace.WorkspaceModel.max_tabs) return error.InvalidTabStripLayout;
-        return .{ .count = count, .tab_width = @min(200, @max(24, (width - left - 120 - 42) / @as(f32, @floatFromInt(count)) - gap)) };
+        return .{ .count = count, .tab_width = @min(density.metrics().tab_max_width, @max(24, (width - left - 120 - 42) / @as(f32, @floatFromInt(count)) - gap)) };
     }
     /// Tab slots include their trailing gap for insertion, but gap clicks never select or close a tab.
     pub fn slotWidth(self: TabStripLayout) f32 {
@@ -62,6 +65,18 @@ pub const TabStripLayout = struct {
         return left + @as(f32, @floatFromInt(slot)) * self.slotWidth();
     }
 };
+
+test "density tab widths share drawing and drop slots and still fit narrow windows" {
+    for (std.enums.values(@import("ui_density.zig").UiDensity)) |value| {
+        const layout = try TabStripLayout.initWithDensity(1120, 2, value);
+        try std.testing.expectEqual(value.metrics().tab_max_width, layout.tab_width);
+        const close = (try layout.hitTab(.{ .x = TabStripLayout.left + layout.tab_width - 10, .y = 22 })).?;
+        try std.testing.expect(close.part == .close);
+        try std.testing.expectEqual(@as(?TabStripLayout.TabHit, null), try layout.hitTab(.{ .x = TabStripLayout.left + layout.tab_width + 1, .y = 22 }));
+        const narrow = try TabStripLayout.initWithDensity(640, 8, value);
+        try std.testing.expect(narrow.plusLeft() + 42 <= 640 - 120);
+    }
+}
 
 test "tab strip shares bounded geometry with body/close/gap and insertion hit testing" {
     const layout = try TabStripLayout.init(1120, 3);

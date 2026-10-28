@@ -1,4 +1,5 @@
 #include "notification_surface.h"
+#include "ui_material.h"
 #include <math.h>
 #include <wchar.h>
 
@@ -91,10 +92,7 @@ float NotificationSurface::draw(UiRenderer& target, UiBrush& brush, IDWriteFacto
     brush.SetColor(D2D1::ColorF(0x000000, alpha * (palette.is_dark ? 0.16f : 0.06f)));
     auto shadow = bounds; shadow.top += 2; shadow.bottom += 2;
     target.FillRoundedRectangle(D2D1::RoundedRect(shadow, radius, radius), &brush);
-    brush.SetColor(D2D1::ColorF(palette.pane_bg, alpha * 0.90f));
-    target.FillRoundedRectangle(D2D1::RoundedRect(bounds, radius, radius), &brush);
-    brush.SetColor(D2D1::ColorF(palette.border, alpha * 0.85f));
-    target.DrawRoundedRectangle(D2D1::RoundedRect(bounds, radius, radius), &brush, 1);
+    fillUiMaterial(target, brush, D2D1::RoundedRect(bounds, radius, radius), palette, palette.active_tab_bg, alpha);
     const auto icon = D2D1::Point2F(bounds.left + 20, bounds.top + 22);
     brush.SetColor(D2D1::ColorF(accent, alpha));
     target.DrawEllipse(D2D1::Ellipse(icon, 8, 8), &brush, 1.4f);

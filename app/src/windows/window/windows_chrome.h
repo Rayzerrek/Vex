@@ -15,6 +15,7 @@ struct WindowChromeFrame {
     IDWriteTextFormat* paneTitleFont;
     IDWriteTextFormat* tooltipFont;
     VexChromePalette palette;
+    VexUiMetrics uiMetrics;
     float tabWidth;
     uint32_t tabCount;
     int hoveredTab;

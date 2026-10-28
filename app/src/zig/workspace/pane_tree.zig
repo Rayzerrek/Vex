@@ -1,4 +1,5 @@
 const std = @import("std");
+const UiDensity = @import("ui_density.zig").UiDensity;
 
 /// Stable pane identity; IDs are never reused while native messages may be queued.
 pub const PaneId = enum(u32) { _ };
@@ -31,8 +32,13 @@ pub const PaneRect = struct {
     }
     /// Hit-tests the right-aligned 20x20 DIP header buttons when the pane is at least 180 DIPs wide.
     pub fn hitHeaderAction(self: PaneRect, can_focus: bool, x: f32, y: f32) ?PaneHeaderAction {
-        if (!self.contains(x, y) or self.width < 180 or self.height < 28) return null;
-        if (y < self.y + 4 or y >= self.y + 24) return null;
+        return self.hitHeaderActionWithDensity(can_focus, x, y, .comfortable);
+    }
+    pub fn hitHeaderActionWithDensity(self: PaneRect, can_focus: bool, x: f32, y: f32, density: @import("ui_density.zig").UiDensity) ?PaneHeaderAction {
+        const header = density.metrics().pane_header_height;
+        const offset = (header - 28) / 2;
+        if (!self.contains(x, y) or self.width < 180 or self.height < header) return null;
+        if (y < self.y + 4 + offset or y >= self.y + 24 + offset) return null;
         const right = self.x + self.width - 6;
         if (x >= right - 20 and x < right) return .close;
         if (x >= right - 42 and x < right - 22) return .split_down;
@@ -42,7 +48,11 @@ pub const PaneRect = struct {
     }
     /// True when the pointer is inside the 28 DIP pane title bar and not on a header action button.
     pub fn isHeaderDragArea(self: PaneRect, can_focus: bool, x: f32, y: f32) bool {
-        return self.contains(x, y) and self.height >= 28 and y < self.y + 28 and self.hitHeaderAction(can_focus, x, y) == null;
+        return self.isHeaderDragAreaWithDensity(can_focus, x, y, .comfortable);
+    }
+    pub fn isHeaderDragAreaWithDensity(self: PaneRect, can_focus: bool, x: f32, y: f32, density: @import("ui_density.zig").UiDensity) bool {
+        const header = density.metrics().pane_header_height;
+        return self.contains(x, y) and self.height >= header and y < self.y + header and self.hitHeaderActionWithDensity(can_focus, x, y, density) == null;
     }
     /// Uses the nearest 25% edge band, including corners; the center remains a safe cancellation zone.
     pub fn dropZoneAt(self: PaneRect, x: f32, y: f32) DropZone {
@@ -58,8 +68,11 @@ pub const PaneRect = struct {
     }
     /// Inset preview of the actual 50/50 layout, using the same divider geometry as committed splits.
     pub fn splitPreviewRect(self: PaneRect, zone: DropZone) ?PaneRect {
+        return self.splitPreviewRectWithDensity(zone, .comfortable);
+    }
+    pub fn splitPreviewRectWithDensity(self: PaneRect, zone: DropZone, density: UiDensity) ?PaneRect {
         if (zone == .none) return null;
-        const geometry = splitGeometry(self, if (zone == .left or zone == .right) .right else .down, 0.5);
+        const geometry = splitGeometry(self, if (zone == .left or zone == .right) .right else .down, 0.5, density.metrics().pane_gap);
         var rect = if (zone == .left or zone == .top) geometry.first else geometry.second;
         const inset: f32 = 4;
         if (rect.width <= inset * 2 or rect.height <= inset * 2) return null;
@@ -86,7 +99,7 @@ const PaneNode = union(enum) {
 pub const PaneTree = struct {
     allocator: std.mem.Allocator,
     root: *PaneNode,
-    const divider_width: f32 = 6;
+    ui_density: UiDensity = .comfortable,
     const max_depth = 64;
 
     /// Creates one leaf; a failed allocation publishes no partial tree.
@@ -180,12 +193,12 @@ pub const PaneTree = struct {
     pub fn dividerAtPoint(self: *const PaneTree, bounds: PaneRect, x: f32, y: f32) !?DividerPlacement {
         try bounds.validate();
         if (!std.math.isFinite(x) or !std.math.isFinite(y)) return error.InvalidDividerPoint;
-        return findDividerPlacement(self.root, bounds, .{ .point = .{ .x = x, .y = y } });
+        return findDividerPlacement(self.root, bounds, .{ .point = .{ .x = x, .y = y } }, self.ui_density.metrics().pane_gap);
     }
     /// Resolves a stable divider ID against current geometry; removed IDs never become node pointers.
     pub fn dividerPlacement(self: *const PaneTree, bounds: PaneRect, id: DividerId) !?DividerPlacement {
         try bounds.validate();
-        return findDividerPlacement(self.root, bounds, .{ .id = id });
+        return findDividerPlacement(self.root, bounds, .{ .id = id }, self.ui_density.metrics().pane_gap);
     }
     /// Changes one live divider without allocation; stale IDs return false, and ratios retain the 0.1..0.9 contract.
     pub fn setDividerRatio(self: *PaneTree, id: DividerId, ratio: f32) !bool {
@@ -201,7 +214,7 @@ pub const PaneTree = struct {
         try bounds.validate();
         try placements.ensureTotalCapacity(allocator, self.paneCount());
         placements.clearRetainingCapacity();
-        appendPlacement(self.root, placements, bounds);
+        appendPlacement(self.root, placements, bounds, self.ui_density.metrics().pane_gap);
     }
 };
 
@@ -253,13 +266,13 @@ fn removeLeaf(allocator: std.mem.Allocator, node: *PaneNode, id: PaneId) bool {
     }
 }
 const SplitGeometry = struct { first: PaneRect, second: PaneRect, divider: PaneRect };
-fn splitGeometry(bounds: PaneRect, axis: SplitAxis, ratio: f32) SplitGeometry {
+fn splitGeometry(bounds: PaneRect, axis: SplitAxis, ratio: f32, divider_width: f32) SplitGeometry {
     var first = bounds;
     var second = bounds;
     var divider = bounds;
     switch (axis) {
         .right => {
-            const gap = @min(PaneTree.divider_width, bounds.width);
+            const gap = @min(divider_width, bounds.width);
             const available = bounds.width - gap;
             first.width = available * ratio;
             divider.x += first.width;
@@ -268,7 +281,7 @@ fn splitGeometry(bounds: PaneRect, axis: SplitAxis, ratio: f32) SplitGeometry {
             second.width = available - first.width;
         },
         .down => {
-            const gap = @min(PaneTree.divider_width, bounds.height);
+            const gap = @min(divider_width, bounds.height);
             const available = bounds.height - gap;
             first.height = available * ratio;
             divider.y += first.height;
@@ -280,17 +293,29 @@ fn splitGeometry(bounds: PaneRect, axis: SplitAxis, ratio: f32) SplitGeometry {
     return .{ .first = first, .second = second, .divider = divider };
 }
 const DividerSearch = union(enum) { id: DividerId, point: struct { x: f32, y: f32 } };
-fn findDividerPlacement(node: *const PaneNode, bounds: PaneRect, search: DividerSearch) ?DividerPlacement {
+fn findDividerPlacement(node: *const PaneNode, bounds: PaneRect, search: DividerSearch, gap: f32) ?DividerPlacement {
     switch (node.*) {
         .leaf => return null,
         .split => |split| {
-            const geometry = splitGeometry(bounds, split.axis, split.ratio);
+            const geometry = splitGeometry(bounds, split.axis, split.ratio, gap);
+            // A joined split has no layout gutter, but keeps an accessible drag
+            // target on both sides of the shared separator.
+            var hit = geometry.divider;
+            if (gap == 0) {
+                if (split.axis == .right) {
+                    hit.x -= 3;
+                    hit.width = 6;
+                } else {
+                    hit.y -= 3;
+                    hit.height = 6;
+                }
+            }
             const matches = switch (search) {
                 .id => |id| split.id == id,
-                .point => |point| geometry.divider.contains(point.x, point.y),
+                .point => |point| bounds.contains(point.x, point.y) and hit.contains(point.x, point.y),
             };
             if (matches) return .{ .id = split.id, .axis = split.axis, .container = bounds, .handle = geometry.divider, .ratio = split.ratio };
-            return findDividerPlacement(split.first, geometry.first, search) orelse findDividerPlacement(split.second, geometry.second, search);
+            return findDividerPlacement(split.first, geometry.first, search, gap) orelse findDividerPlacement(split.second, geometry.second, search, gap);
         },
     }
 }
@@ -300,15 +325,38 @@ fn findDividerNode(node: *PaneNode, id: DividerId) ?*PaneSplit {
         .split => |*split| if (split.id == id) split else findDividerNode(split.first, id) orelse findDividerNode(split.second, id),
     };
 }
-fn appendPlacement(node: *const PaneNode, placements: *std.ArrayList(PanePlacement), bounds: PaneRect) void {
+fn appendPlacement(node: *const PaneNode, placements: *std.ArrayList(PanePlacement), bounds: PaneRect, gap: f32) void {
     switch (node.*) {
         .leaf => |id| placements.appendAssumeCapacity(.{ .id = id, .bounds = bounds }),
         .split => |split| {
-            const geometry = splitGeometry(bounds, split.axis, split.ratio);
-            appendPlacement(split.first, placements, geometry.first);
-            appendPlacement(split.second, placements, geometry.second);
+            const geometry = splitGeometry(bounds, split.axis, split.ratio, gap);
+            appendPlacement(split.first, placements, geometry.first, gap);
+            appendPlacement(split.second, placements, geometry.second, gap);
         },
     }
+}
+
+test "compact splits share edges without losing divider hit targets" {
+    var tree = try PaneTree.init(std.testing.allocator, @enumFromInt(1));
+    defer tree.deinit();
+    tree.ui_density = .compact;
+    try tree.splitPane(@enumFromInt(1), @enumFromInt(2), .right);
+    try tree.splitPane(@enumFromInt(2), @enumFromInt(3), .down);
+    var placements: std.ArrayList(PanePlacement) = .empty;
+    defer placements.deinit(std.testing.allocator);
+    const bounds: PaneRect = .{ .x = 0, .y = 44, .width = 1000, .height = 600 };
+    try tree.layout(std.testing.allocator, &placements, bounds);
+    const left = placements.items[0].bounds;
+    const top = placements.items[1].bounds;
+    const bottom = placements.items[2].bounds;
+    try std.testing.expectEqual(left.x + left.width, top.x);
+    try std.testing.expectEqual(top.y + top.height, bottom.y);
+    try std.testing.expectEqual(bounds.height, top.height + bottom.height);
+    try std.testing.expectEqual(@as(f32, 0), (try tree.dividerPlacement(bounds, @enumFromInt(2))).?.handle.width);
+    for ([_]f32{ 498, 500, 502 }) |x| {
+        try std.testing.expectEqual(@as(DividerId, @enumFromInt(2)), (try tree.dividerAtPoint(bounds, x, 100)).?.id);
+    }
+    try std.testing.expectEqual(@as(DividerId, @enumFromInt(3)), (try tree.dividerAtPoint(bounds, 750, 344)).?.id);
 }
 
 test "nested right/down layout and close promote the sibling without losing leaf IDs" {
@@ -368,6 +416,19 @@ test "duplicate IDs, invalid ratios/geometry and excessive depth fail without mu
     try std.testing.expectApproxEqAbs(@as(f32, 900), placements.items[0].bounds.width, 0.001);
     for (3..66) |value| try tree.splitPane(@enumFromInt(@as(u32, @intCast(value - 1))), @enumFromInt(@as(u32, @intCast(value))), .right);
     try std.testing.expectError(error.PaneDepthLimit, tree.splitPane(@enumFromInt(65), @enumFromInt(66), .right));
+}
+
+test "density header targets stay inside the visible header and clear of terminal input" {
+    const bounds: PaneRect = .{ .x = 0, .y = 44, .width = 500, .height = 400 };
+    for (std.enums.values(@import("ui_density.zig").UiDensity)) |value| {
+        const header = value.metrics().pane_header_height;
+        const center = bounds.y + header / 2;
+        try std.testing.expectEqual(@as(?PaneHeaderAction, .close), bounds.hitHeaderActionWithDensity(true, 484, center, value));
+        try std.testing.expect(bounds.isHeaderDragAreaWithDensity(true, 50, center, value));
+        try std.testing.expect(!bounds.isHeaderDragAreaWithDensity(true, 484, center, value));
+        try std.testing.expect(!bounds.isHeaderDragAreaWithDensity(true, 50, bounds.y + header, value));
+        try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderActionWithDensity(true, 484, bounds.y + header + 2, value));
+    }
 }
 
 test "pane header action hit testing aligns with right-anchored button slots and width guard" {

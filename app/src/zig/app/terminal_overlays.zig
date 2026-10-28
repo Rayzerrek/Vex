@@ -17,7 +17,7 @@ pub const OverlayState = union(enum) {
     none,
     theme_picker: struct { initial_theme_index: usize },
     command_palette: palette.CommandPalette,
-    tab_peek: struct { selected_index: usize = 0, started_ms: u64 = 0, hovered_close: ?CloseTarget = null },
+    tab_peek: struct { input: @import("../workspace/selection_input.zig").SelectionInput = .{}, selected_index: usize = 0, started_ms: u64 = 0, hovered_close: ?CloseTarget = null },
     path_completion: struct { pane_id: panes.PaneId, anchor: ?completion_popup.Anchor = null },
     close_confirm: struct { target: CloseTarget, confirmation: close_confirmation.CloseConfirmation, return_to_peek: ?usize = null },
     exit_confirm,
@@ -146,6 +146,7 @@ pub fn drawActiveOverlay(self: *Application) !void {
 /// Native dialogs own keyboard navigation; the inline path popup still routes terminal-window keys.
 pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
     if (self.overlay == .tab_peek) {
+        self.overlay.tab_peek.input.fromKeyboard();
         const model = if (self.model) |*model| model else return true;
         if (overview.closeShortcut(key, modifiers)) |shortcut| {
             const index = @min(self.overlay.tab_peek.selected_index, model.tabs.items.len - 1);
@@ -226,6 +227,8 @@ pub fn handleOverlayPointer(self: *Application, event: platform.PointerEvent, x:
         const model = if (self.model) |*model| model else return .normal;
         const metrics = self.metrics orelse return .normal;
         const layout = overview.Layout.init(metrics.width, metrics.height, model.tabs.items.len);
+        const select_hover = if (event == .hover or event == .move) self.overlay.tab_peek.input.hover(x, y) else false;
+        if (event == .begin) self.overlay.tab_peek.input.press(x, y);
         const elapsed = self.cursorNowMs() -| self.overlay.tab_peek.started_ms;
         const progress: f32 = if (platform.animationsEnabled()) @min(1, @as(f32, @floatFromInt(elapsed)) / peek_duration_ms) else 1;
         var hit: ?usize = null;
@@ -250,7 +253,7 @@ pub fn handleOverlayPointer(self: *Application, event: platform.PointerEvent, x:
             }
         }
         if (hit) |index| {
-            if (event == .hover or event == .move or event == .begin) {
+            if (select_hover or event == .begin) {
                 if (self.overlay.tab_peek.selected_index != index) {
                     self.overlay.tab_peek.selected_index = index;
                     platform.invalidateWindow();

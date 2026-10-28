@@ -60,7 +60,7 @@ pub fn showDialog(presentation: DialogPresentation) !void {
         .count = presentation.items.len,
         .shells = if (presentation.shells.len == 0) null else &shells,
         .shell_count = presentation.shells.len,
-        .settings = .{ .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .copy_on_select = presentation.settings.copy_on_select, .confirm_close = presentation.settings.confirm_close, .font_family = presentation.settings.font_family },
+        .settings = .{ .ui_density = @intFromEnum(presentation.settings.ui_density), .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .copy_on_select = presentation.settings.copy_on_select, .confirm_close = presentation.settings.confirm_close, .font_family = presentation.settings.font_family },
         .palette = platform.nativeChromePalette(presentation.palette),
         .icon = platform.nativeAppIcon(presentation.icon),
         .anchor_x = presentation.anchor_x,
@@ -126,6 +126,7 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
             if (raw.theme >= themes.themes.len or raw.font_size < 9 or raw.font_size > 32) return error.InvalidUserSettings;
             const settings: preferences.UserSettings = .{
                 .theme_index = @intCast(raw.theme),
+                .ui_density = std.meta.intToEnum(preferences.UiDensity, raw.ui_density) catch return error.InvalidUiDensity,
                 .font_size = @intCast(raw.font_size),
                 .cursor_blink = raw.cursor_blink,
                 .copy_on_select = raw.copy_on_select,
@@ -151,7 +152,7 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
 }
 
 test "native dialog events validate settings and query data before entering the terminal owner" {
-    const raw: c.VexUserSettings = .{ .theme = 2, .font_size = 19, .shell = 3, .cursor_blink = true, .copy_on_select = false, .confirm_close = false, .font_family = preferences.default_font };
+    const raw: c.VexUserSettings = .{ .theme = 2, .font_size = 19, .shell = 3, .cursor_blink = true, .copy_on_select = false, .confirm_close = false, .font_family = preferences.default_font, .ui_density = 1 };
     const result = try decodeDialogEvent(4, 0, "", raw);
     try std.testing.expectEqual(@as(u8, 19), result.settings.font_size);
     try std.testing.expectEqual(preferences.DefaultShell.pwsh, result.settings.default_shell);
@@ -160,6 +161,9 @@ test "native dialog events validate settings and query data before entering the 
     var invalid = raw;
     invalid.font_size = 0;
     try std.testing.expectError(error.InvalidUserSettings, decodeDialogEvent(4, 0, "", invalid));
+    invalid = raw;
+    invalid.ui_density = 3;
+    try std.testing.expectError(error.InvalidUiDensity, decodeDialogEvent(4, 0, "", invalid));
     invalid = raw;
     invalid.shell = 6;
     try std.testing.expectError(error.InvalidDefaultShell, decodeDialogEvent(4, 0, "", invalid));
@@ -172,7 +176,7 @@ test "native dialog events validate settings and query data before entering the 
 }
 
 test "custom shell form separates arguments without interpreting quotes or command syntax" {
-    const raw: c.VexUserSettings = .{ .theme = 0, .font_size = 14, .shell = 1, .cursor_blink = true, .copy_on_select = true, .confirm_close = true, .font_family = preferences.default_font };
+    const raw: c.VexUserSettings = .{ .theme = 0, .font_size = 14, .shell = 1, .cursor_blink = true, .copy_on_select = true, .confirm_close = true, .font_family = preferences.default_font, .ui_density = 1 };
     const form = (try decodeDialogEvent(7, 0, "Future 音\x00C:\\My Shell\\shell.exe\x00--interactive \"hello world\"", raw)).save_shell;
     try std.testing.expectEqualStrings("Future 音", form.name);
     try std.testing.expectEqualStrings("C:\\My Shell\\shell.exe", form.program);
@@ -181,7 +185,7 @@ test "custom shell form separates arguments without interpreting quotes or comma
     try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "missing separator", raw));
     try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "a\x00b\x00c\x00d", raw));
     try std.testing.expectError(error.InvalidShellForm, decodeDialogEvent(7, 0, "a\x00b\x00\xff", raw));
-    const custom = try decodeDialogEvent(4, 0, "", .{ .theme = 0, .font_size = 14, .shell = 256, .cursor_blink = true, .copy_on_select = true, .confirm_close = true, .font_family = preferences.default_font });
+    const custom = try decodeDialogEvent(4, 0, "", .{ .theme = 0, .font_size = 14, .shell = 256, .cursor_blink = true, .copy_on_select = true, .confirm_close = true, .font_family = preferences.default_font, .ui_density = 1 });
     try std.testing.expectEqual(@as(u32, 256), @intFromEnum(custom.settings.default_shell));
 }
 

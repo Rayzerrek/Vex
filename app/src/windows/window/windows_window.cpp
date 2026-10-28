@@ -106,10 +106,15 @@ static void setNotificationCursor(NotificationHit hit) {
     const bool clickable = hit == NotificationHit::action || hit == NotificationHit::close;
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(clickable ? 32649 : 32512)));
 }
+static VexUiMetrics uiMetrics = { 28, 6, 0, 5, 200, 6 };
+extern "C" void vex_window_set_ui_metrics(VexUiMetrics metrics) {
+    uiMetrics = metrics;
+    vex_window_invalidate();
+}
 static VexChromePalette chromePalette = {
-    0x080a0d, 0x0b0d11, 0x2f323a, 0x0d0f14, 0x0a0c10,
-    0x1e2128, 0x514998, 0x171a20,
-    0xe6e9f0, 0x898d98, 0x8b7cff,
+    0x16171e, 0x1c1d26, 0x3c3c44, 0x17181f, 0x1e1e28,
+    0x2c2c37, 0x766f99, 0x22232a,
+    0xe3e1eb, 0xaaa9b2, 0xb1a4e3,
     true
 };
 
@@ -126,16 +131,16 @@ static constexpr float tabStripLeft = 8;
 static float tabStripEnd() { return tabStripLeft + tabStripCount * (tabWidthDip + 4); }
 static float plusLeft() { return fmaxf(tabStripEnd(), clientWidth - 166.0f); }
 extern "C" int vex_window_tab_strip(uint32_t count, float tab_width) {
-    if (!count || count > 8 || !isfinite(tab_width) || tab_width < 24 || tab_width > 200) return ERROR_INVALID_PARAMETER;
+    if (!count || count > 8 || !isfinite(tab_width) || tab_width < 24 || tab_width > 220) return ERROR_INVALID_PARAMETER;
     tabStripCount = count; tabWidthDip = tab_width;
     return 0;
 }
 extern "C" int vex_draw_tab_insertion_marker(float x) {
     if (!target || !brush || !isfinite(x) || x < tabStripLeft || x > tabStripEnd()) return ERROR_INVALID_PARAMETER;
     brush->SetColor(rgb(chromePalette.accent, 0.16f));
-    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 5, 5, x + 5, 39), 5, 5), brush);
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 5, uiMetrics.tab_inset, x + 5, 44 - uiMetrics.tab_inset), 5, 5), brush);
     brush->SetColor(rgb(chromePalette.accent));
-    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 1, 9, x + 1, 35), 1, 1), brush);
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 1, uiMetrics.tab_inset + 4, x + 1, 40 - uiMetrics.tab_inset), 1, 1), brush);
     return 0;
 }
 extern "C" void vex_window_set_chrome_palette(VexChromePalette palette) {
@@ -477,12 +482,12 @@ static void renderUiVerificationScene() {
 }
 
 static void renderScene(double timeMs) {
-    beginWindowChromeFrame({ target, textFactory, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, notificationFont, chromePalette, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
+    beginWindowChromeFrame({ target, textFactory, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, notificationFont, chromePalette, uiMetrics, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
         timeMs, vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window),
         chromePointerX, chromePointerY, !tooltipSuppressed && trackingMouseLeave && pointerCaptureState == PointerCaptureState::none && GetForegroundWindow() == window && IsWindowEnabled(window) });
-    beginTerminalDrawingFrame({ &renderer, drawingFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
+    beginTerminalDrawingFrame({ &renderer, drawingFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg, uiMetrics });
     target->Clear(rgb(chromePalette.window_bg));
-    rectangle(0.0f, 0.0f, clientWidth, 44.0f, chromePalette.titlebar_bg);
+    rectangle(0.0f, 0.0f, clientWidth, 44.0f, uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg);
     drawNewTabButton();
     callbacks.paint(callbacks.context);
     if (tabStripCount < 8) offerWindowChromeShortcut(L"Ctrl + Shift + T", { plusLeft(), 7, 24, 30 });

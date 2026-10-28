@@ -8,6 +8,7 @@ const shell = @import("../shell/shell_launch.zig");
 const tab_strip = @import("../workspace/tab_strip.zig");
 const app_icon = @import("../terminal/app_icon.zig");
 const terminal_theme = @import("../workspace/terminal_theme.zig");
+const density = @import("../workspace/ui_density.zig");
 const dialogs = @import("windows_dialog.zig");
 
 /// Raw Windows bridge declarations stay confined to native IO modules.
@@ -31,6 +32,7 @@ pub const WindowMetrics = struct {
     cell_width: f32,
     cell_height: f32,
     scale: f32,
+    ui_density: density.UiDensity = .comfortable,
     /// Validate floats before any float-to-integer conversion or allocation.
     pub fn validate(self: WindowMetrics) !void {
         for ([_]f32{ self.width, self.height, self.cell_width, self.cell_height, self.scale }) |value| {
@@ -42,8 +44,8 @@ pub const WindowMetrics = struct {
         try self.validate();
         try bounds.validate();
         return .{
-            .columns = @intFromFloat(std.math.clamp(@floor((bounds.width - 24) / self.cell_width), 2, 1000)),
-            .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - 36) / self.cell_height), 1, 1000)),
+            .columns = @intFromFloat(std.math.clamp(@floor((bounds.width - self.ui_density.metrics().horizontalInset()) / self.cell_width), 2, 1000)),
+            .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - self.ui_density.metrics().verticalInset()) / self.cell_height), 1, 1000)),
             .cell_width_px = @intFromFloat(std.math.clamp(@round(self.cell_width * self.scale), 1, 65536)),
             .cell_height_px = @intFromFloat(std.math.clamp(@round(self.cell_height * self.scale), 1, 65536)),
         };
@@ -52,10 +54,10 @@ pub const WindowMetrics = struct {
     pub fn viewportPoint(self: WindowMetrics, bounds: panes.PaneRect, x: f32, y: f32, clamp_outside: bool) !?ViewportPoint {
         if (!std.math.isFinite(x) or !std.math.isFinite(y)) return error.InvalidWindowMetrics;
         const size = try self.terminalSize(bounds);
-        const grid_left = bounds.x + 6;
-        const grid_top = bounds.y + 30;
-        const grid_right = bounds.x + bounds.width - 18;
-        const grid_bottom = bounds.y + bounds.height - 6;
+        const grid_left = bounds.x + self.ui_density.metrics().pane_padding;
+        const grid_top = bounds.y + self.ui_density.metrics().gridTop();
+        const grid_right = bounds.x + bounds.width - self.ui_density.metrics().pane_padding - 12;
+        const grid_bottom = bounds.y + bounds.height - self.ui_density.metrics().pane_padding;
         if (grid_right <= grid_left or grid_bottom <= grid_top) return null;
         if (!clamp_outside and (x < grid_left or x >= grid_right or y < grid_top or y >= grid_bottom)) return null;
         const max_x = @max(0, @as(f32, @floatFromInt(size.columns)) * self.cell_width - 0.001);
@@ -92,9 +94,12 @@ pub const ScrollbarGeometry = struct {
 
     /// Returns null when the pane has no scrollback or its viewport track is too short.
     pub fn compute(bounds: panes.PaneRect, info: terminal.ScrollbarInfo) ?ScrollbarGeometry {
+        return computeWithDensity(bounds, info, .comfortable);
+    }
+    pub fn computeWithDensity(bounds: panes.PaneRect, info: terminal.ScrollbarInfo, ui_density: density.UiDensity) ?ScrollbarGeometry {
         if (!info.isVisible()) return null;
-        const track_top = bounds.y + 30.0;
-        const track_height = bounds.height - 36.0;
+        const track_top = bounds.y + ui_density.metrics().gridTop();
+        const track_height = bounds.height - ui_density.metrics().verticalInset();
         if (!std.math.isFinite(track_top) or !std.math.isFinite(track_height) or track_height < 12.0 or bounds.width < 24.0) return null;
         const total_f: f32 = @floatFromInt(@max(1, info.total));
         const len_f: f32 = @floatFromInt(info.len);
@@ -858,9 +863,9 @@ pub fn fontSize() f32 {
     return c.vex_window_font_size();
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
-pub fn beginPane(bounds: panes.PaneRect, pane_id: panes.PaneId, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32) void {
+pub fn beginPane(bounds: panes.PaneRect, pane_id: panes.PaneId, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32, moving: bool) void {
     const action_code: u8 = if (hovered_action) |action| @intFromEnum(action) else 0;
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, @intFromEnum(pane_id), focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary, phase));
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, @intFromEnum(pane_id), focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary, phase), moving);
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {
@@ -1420,6 +1425,28 @@ test "window geometry rejects NaN/zero metrics and clamps tiny/large terminal vi
     try std.testing.expectError(error.InvalidWindowMetrics, invalid.validate());
 }
 
+test "density grid sizes and mouse coordinates use identical insets at mixed DPI" {
+    const bounds: panes.PaneRect = .{ .x = 10, .y = 50, .width = 500, .height = 400 };
+    for (std.enums.values(density.UiDensity)) |value| {
+        const metrics: WindowMetrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1.5, .ui_density = value };
+        const style = value.metrics();
+        const left = bounds.x + style.pane_padding;
+        const top = bounds.y + style.gridTop();
+        const origin = (try metrics.viewportPoint(bounds, left, top, false)).?;
+        try std.testing.expectEqual(@as(u16, 0), origin.column);
+        try std.testing.expectEqual(@as(u16, 0), origin.row);
+        try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, left, top - 1, false));
+        try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, left - 1, top, false));
+        const next = (try metrics.viewportPoint(bounds, left + 8, top + 16, false)).?;
+        try std.testing.expectEqual(@as(u16, 1), next.column);
+        try std.testing.expectEqual(@as(u16, 1), next.row);
+        try std.testing.expectEqual(@as(f64, 12), next.x_px);
+        try std.testing.expectEqual(@as(f64, 24), next.y_px);
+        const size = try metrics.terminalSize(bounds);
+        try std.testing.expectApproxEqAbs(@floor((bounds.width - style.horizontalInset()) / 8), @as(f32, @floatFromInt(size.columns)), 0.001);
+    }
+}
+
 test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid cells and scaled pixels" {
     const metrics: WindowMetrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1.5 };
     const bounds: panes.PaneRect = .{ .x = 10, .y = 50, .width = 332, .height = 228 };
@@ -1581,4 +1608,10 @@ test "ensureMinimumContrast preserves readable colors and boosts low-contrast fo
     try std.testing.expect(isBlockGraphic("\u{E0B0}"));
     try std.testing.expect(!isBlockGraphic("─"));
     try std.testing.expect(!isBlockGraphic("A"));
+}
+
+/// A single metrics table drives Zig hit testing and native painting.
+pub fn setUiDensity(value: density.UiDensity) void {
+    const metrics = value.metrics();
+    c.vex_window_set_ui_metrics(.{ .pane_header_height = metrics.pane_header_height, .pane_padding = metrics.pane_padding, .workspace_padding = metrics.workspace_padding, .tab_inset = metrics.tab_inset, .tab_max_width = metrics.tab_max_width, .pane_gap = metrics.pane_gap });
 }

@@ -99,7 +99,7 @@ pub fn presentTerminalModal(self: *Application) !void {
                     if (index != model.selected_tab) {
                         request.kind = .close_popover;
                         if (self.metrics) |metrics| {
-                            const strip = try @import("../workspace/tab_strip.zig").TabStripLayout.init(metrics.width, model.tabs.items.len);
+                            const strip = try @import("../workspace/tab_strip.zig").TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density);
                             request.anchor_x = @TypeOf(strip).left + @as(f32, @floatFromInt(index)) * strip.slotWidth();
                         }
                     }

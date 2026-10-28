@@ -1,6 +1,7 @@
 #include "dialog_internal.h"
 #include "overlay_scrollbar.h"
 #include "pixel_scroll.h"
+#include "selection_input.h"
 #include <gdiplus.h>
 #include <uxtheme.h>
 #include <math.h>
@@ -11,6 +12,7 @@ namespace vex::dialog {
 struct ListOverlay {
     OverlayScrollbarVisibility visibility;
     PixelScroll scroll;
+    SelectionInput selection;
     HWND combo = nullptr;
     bool hovered = false, dragging = false, horizontal = false, ownsCapture = false, pointerInput = false, releasingCapture = false;
     float grab = 0;
@@ -251,6 +253,7 @@ LRESULT CALLBACK listOverlayInput(HWND control, UINT message, WPARAM wparam, LPA
         }
         TRACKMOUSEEVENT tracking = { sizeof(tracking), TME_LEAVE, control, 0 };
         TrackMouseEvent(&tracking);
+        if (!(wparam & MK_LBUTTON) && !state.dragging && !state.selection.hover((short)LOWORD(lparam), (short)HIWORD(lparam))) return 0;
         if (state.dragging) {
             const auto geometry = listOverlayGeometry(control, state);
             const float point = (float)(state.horizontal ? (short)LOWORD(lparam) : (short)HIWORD(lparam));
@@ -265,6 +268,7 @@ LRESULT CALLBACK listOverlayInput(HWND control, UINT message, WPARAM wparam, LPA
         wakeListOverlay(control, state);
     }
     if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) {
+        state.selection.press((short)LOWORD(lparam), (short)HIWORD(lparam));
         const auto geometry = listOverlayGeometry(control, state);
         if (geometry.maximum && listOverlayHit(control, state, lparam)) {
             const float point = (float)(state.horizontal ? (short)LOWORD(lparam) : (short)HIWORD(lparam));
@@ -338,6 +342,9 @@ LRESULT CALLBACK listOverlayInput(HWND control, UINT message, WPARAM wparam, LPA
     }
     return result;
 }
+void suspendListHover(HWND control) {
+    if (auto* state = static_cast<ListOverlay*>(GetPropW(control, L"VexListOverlay"))) state->selection.fromKeyboard();
+}
 bool installListOverlay(HWND control, bool horizontal, HWND combo = nullptr) {
     auto* state = static_cast<ListOverlay*>(HeapAlloc(GetProcessHeap(), 0, sizeof(ListOverlay)));
     if (!state) return false;
@@ -377,7 +384,7 @@ LRESULT CALLBACK dialogControlInput(HWND control, UINT message, WPARAM wparam, L
         EndPaint(control, &paint);
         return 0;
     }
-    if (message == WM_KEYDOWN && GetDlgCtrlID(control) == listId && navigateCommandList(wparam)) return 0;
+    if (message == WM_KEYDOWN && (GetDlgCtrlID(control) == listId || GetDlgCtrlID(control) == themeGridId) && navigateDialogList(control, wparam)) return 0;
     // Only command and shell picker rows follow hover; keep native dragging and avoid repainting unchanged rows.
     wchar_t selftest[2];
     const bool allowShellHover = host.model.kind == 5 && (GetEnvironmentVariableW(L"VEX_NATIVE_SELFTEST", selftest, 2) != 1 || selftest[0] != L'1');
@@ -426,7 +433,7 @@ LRESULT CALLBACK themedCombo(HWND control, UINT message, WPARAM wparam, LPARAM l
         if (dc) {
             const int saved = SaveDC(dc);
             RECT bounds; GetClientRect(control, &bounds);
-            FillRect(dc, &bounds, host.field);
+            FillRect(dc, &bounds, GetDlgCtrlID(control) == densityId ? host.background : host.field);
             RECT field = bounds; InflateRect(&field, -1, -1);
             const bool focus = GetFocus() == control;
             roundedFill(dc, field, fieldColor(), focus ? color(host.model.palette.accent) : fieldColor(), px(14));
@@ -472,7 +479,11 @@ LRESULT CALLBACK selectableText(HWND control, UINT message, WPARAM wparam, LPARA
         return 0;
     }
     // Home/End (including Shift selection) belong to the search caret, not the results.
-    if (message == WM_KEYDOWN && id == queryId && wparam != VK_HOME && wparam != VK_END && navigateCommandList(wparam)) return 0;
+    if (message == WM_KEYDOWN && id == queryId) {
+        HWND list = GetDlgItem(host.window, listId);
+        suspendListHover(list);
+        if (wparam != VK_HOME && wparam != VK_END && navigateDialogList(list, wparam)) return 0;
+    }
     if (message == WM_KEYDOWN && wparam == 'A' && GetKeyState(VK_CONTROL) < 0) {
         SendMessageW(control, EM_SETSEL, 0, -1);
         return 0;
@@ -619,7 +630,7 @@ float dialogHeight() {
         const size_t rows = host.model.count > shellLimit ? shellLimit : host.model.count;
         return 120.0f + (float)px(listRowHeight()) / host.scale * (float)rows;
     }
-    return host.model.kind == 8 ? 184.0f : host.model.kind == 6 ? 208.0f : host.model.kind == 4 ? 580.0f : 520.0f;
+    return host.model.kind == 8 ? 184.0f : host.model.kind == 6 ? 208.0f : host.model.kind == 4 ? 640.0f : 520.0f;
 }
 bool settingsRect(int id, float& x, float& y, float& w, float& h) {
     if (host.model.kind != 4) return false;
@@ -646,7 +657,10 @@ bool settingsRect(int id, float& x, float& y, float& w, float& h) {
     switch (id) {
     case titleId: x = 120; y = compact ? 12.0f : 18.0f; w = host.width - 240; h = 28; return true;
     case closeId: x = host.width - 42; y = 12; w = 28; h = 28; return true;
-    case themeGridId: x = 16; y = appearance.gridTop; w = host.width - 32; h = appearance.gridHeight; return true;
+    case densityLabelId: x = appearance.left + 4; y = appearance.densityY + (compact ? 8 : 4); w = appearance.right - 232 - x; h = 22; return true;
+    case densityDetailId: x = appearance.left + 4; y = appearance.densityY + 28; w = appearance.right - 232 - x; h = 20; return true;
+    case densityId: x = appearance.right - 208; y = appearance.densityY + 4; w = 208; h = 160; return true;
+    case themeGridId: w = themeGridWidth(); x = (host.width - w) / 2; y = appearance.gridTop; h = appearance.gridHeight; return true;
     case shellLabelId: label(general, 0, 0, 248, false); return true;
     case shellDetailId: label(general, 0, 0, 248, true); return true;
     case shellId: trailing(general, 0, 0, 248, 220, 30, 0); return true;
@@ -681,6 +695,7 @@ void showPage(SettingsPage previousPage) {
     const struct PageControl { int id; bool visible; } controls[] = {
         { shellId, general }, { shellLabelId, general }, { shellDetailId, general && detail }, { customShellLabelId, general }, { customShellDetailId, general && detail },
         { addShellId, general }, { copyOnSelectId, general }, { confirmCloseId, general }, { themeGridId, appearance },
+        { densityId, appearance }, { densityLabelId, appearance }, { densityDetailId, appearance && detail },
         { sizeId, terminal }, { blinkId, terminal }, { fontSizeLabelId, terminal }, { fontSizeDetailId, terminal && detail }, { fontId, terminal }, { fontLabelId, terminal }, { fontDetailId, terminal && detail },
     };
     constexpr UINT visibilityFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
@@ -718,10 +733,24 @@ bool createControls(float width, float height) {
         return control(klass, text, style, id, x, y, w, h);
     };
     if (settings) ok = place(L"STATIC", L"General", SS_NOPREFIX | SS_CENTER, titleId) != nullptr;
-    else if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | SS_LEFT | (closing ? SS_ENDELLIPSIS : 0), titleId, closing && !exiting ? 68 : 24, closing ? 24 : 22, closing && !exiting ? width - 88 : width - 48, 28) != nullptr;
+    // Static labels paint their entire rectangle, even past the end of the text.
+    // Reserve the close button's area so a heading cannot erase part of its X.
+    else if (!commands && !shells) ok = control(L"STATIC", host.model.title, SS_NOPREFIX | SS_LEFT | SS_ENDELLIPSIS, titleId, closing && !exiting ? 68 : 24, closing ? 24 : 22, closing ? (exiting ? width - 48 : width - 88) : width - 80, 28) != nullptr;
     if (settings) {
         const wchar_t* pages[] = { L"General", L"Appearance", L"Terminal", L"About" };
         for (int i = 0; i < 4; ++i) ok = place(L"BUTTON", pages[i], BS_OWNERDRAW | WS_TABSTOP, firstPageId + i) && ok;
+        ok = place(L"STATIC", L"Interface density", SS_NOPREFIX | SS_ENDELLIPSIS, densityLabelId) && ok;
+        ok = place(L"STATIC", L"Spacing around tabs and terminals", SS_NOPREFIX | SS_ENDELLIPSIS, densityDetailId) && ok;
+        HWND density = place(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, densityId);
+        ok = density && ok;
+        if (density) {
+            const wchar_t* names[] = { L"Compact", L"Comfortable", L"Spacious" };
+            for (int i = 0; i < 3; ++i) {
+                const auto row = SendMessageW(density, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(names[i]));
+                if (row >= 0) SendMessageW(density, CB_SETITEMDATA, row, i);
+            }
+            SendMessageW(density, CB_SETCURSEL, host.model.settings.ui_density, 0);
+        }
         HWND grid = place(L"LISTBOX", L"", WS_TABSTOP | WS_HSCROLL | LBS_MULTICOLUMN | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT, themeGridId);
         ok = grid && ok;
         if (grid) { SendMessageW(grid, LB_SETITEMHEIGHT, 0, px(themeRowHeight())); SendMessageW(grid, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0); fillList(themeGridId); }

@@ -18,11 +18,12 @@ COLORREF surfaceColor() { return blend(color(host.model.palette.pane_bg), color(
 COLORREF fieldColor() { return blend(surfaceColor(), color(host.model.palette.text_primary), 0.055f); }
 COLORREF selectionColor() { return blend(surfaceColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.44f : 0.20f); }
 int listRowHeight() { return host.model.kind == 9 ? 64 : host.model.kind == 2 ? 32 : 58; }
+float themeGridWidth() { return fminf(preferredThemeGridWidth, host.width - 32); }
 int themeRowHeight() {
     const float available = (host.model.kind == 4 ? settingsGeometry(SettingsPage::appearance).gridHeight : host.height - 170) - 16;
-    return (int)fmaxf(104, floorf(available / 2));
+    return (int)fmaxf(104, floorf(fminf(available, preferredThemeGridHeight - 16) / 2));
 }
-int themeColumnWidth() { return (int)floorf((host.width - 32) / 3); }
+int themeColumnWidth() { return (int)floorf(themeGridWidth() / 3); }
 int headingSize() { return host.model.kind == 8 || host.model.kind == 4 ? 16 : 20; }
 SettingsGeometry settingsGeometry(SettingsPage page) {
     SettingsGeometry g = {};
@@ -44,10 +45,14 @@ SettingsGeometry settingsGeometry(SettingsPage page) {
         y += headerGap + rows[i] * g.rowHeight + sectionGap;
     }
     if (page == SettingsPage::appearance) {
-        g.headerY[0] = top;
-        g.gridTop = top + headerGap - 2;
+        // The same grid measures as Theme Studio keep previews and labels identical.
+        g.left = (host.width - themeGridWidth()) / 2 + 4;
+        g.right = (host.width + themeGridWidth()) / 2 - 4;
+        g.densityY = top;
+        g.headerY[0] = top + (g.compact ? 52 : 72);
+        g.gridTop = g.headerY[0] + headerGap - 2;
         // The footer hint only has room on full-height dialogs.
-        g.gridHeight = host.height - g.gridTop - (g.compact ? 16.0f : 44.0f);
+        g.gridHeight = fminf(preferredThemeGridHeight, host.height - g.gridTop - (g.compact ? 16.0f : 44.0f));
     }
     return g;
 }

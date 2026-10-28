@@ -7,6 +7,9 @@ test {
     _ = @import("terminal/app_icon.zig");
     _ = @import("workspace/pane_navigation.zig");
     _ = @import("workspace/workspace_model.zig");
+    _ = @import("workspace/terminal_theme.zig");
+    _ = @import("workspace/ui_density.zig");
+    _ = @import("workspace/selection_input.zig");
     _ = @import("workspace/layout_motion.zig");
     _ = @import("workspace/smooth_scroll.zig");
     _ = @import("workspace/pane_drag_preview.zig");
