@@ -106,6 +106,13 @@ int testKittyImageRenderer() {
             memcmp(pixels + 2 * 256 + 22 * 4, expected, 3) || renderer.geometryBuilds != 1 || renderer.geometryHits != frame * 2 + 1) failure = 17;
         const D3D12_RANGE noWrite = { 0, 0 }; readback->Unmap(0, &noWrite);
         if (renderer.imageUploads != (frame < 2 ? 1u : 2u)) failure = 12;
+        if (frame == 0 || frame == 2) {
+            if (!renderer.imageUploadCapacity()) failure = 18;
+            // The fence completed above: retire transfers without another beginFrame.
+            renderer.trimUnusedUploads(frame % 2, GetTickCount64());
+            if (renderer.imageUploadCapacity()) failure = 19;
+            // The following frame must still hit the cached texture and produce the same pixels.
+        }
     }
     if (!failure) {
         constexpr UINT width = 4096, height = 2048;
@@ -135,10 +142,28 @@ int testKittyImageRenderer() {
         }
     }
     // Drain before releasing upload pages and per-frame retained textures, including failure paths.
-    result = queue->Signal(fence.Get(), ++serial);
-    if (SUCCEEDED(result)) result = fence->SetEventOnCompletion(serial, event);
-    if (FAILED(result) || WaitForSingleObject(event, INFINITE) != WAIT_OBJECT_0 || FAILED(device->GetDeviceRemovedReason())) {
+    auto drain = [&]() {
+        HRESULT status = queue->Signal(fence.Get(), ++serial);
+        if (SUCCEEDED(status)) status = fence->SetEventOnCompletion(serial, event);
+        return SUCCEEDED(status) && WaitForSingleObject(event, INFINITE) == WAIT_OBJECT_0 && SUCCEEDED(device->GetDeviceRemovedReason());
+    };
+    if (!drain()) {
         if (!failure) failure = 16;
+    }
+    if (!failure) {
+        if (!renderer.cachedImageCapacity() || !renderer.imageUploadCapacity()) failure = 20;
+        const ULONGLONG idle = GetTickCount64() + 2001;
+        renderer.trimUnusedUploads(0, idle, true);
+        renderer.trimUnusedUploads(1, idle, true);
+        if (renderer.uploadCapacity() || renderer.imageUploadCapacity() || renderer.cachedImageCapacity()) failure = 21;
+        // Waking after full idle reclamation must rebuild transfers and remain drawable.
+        const UINT64 uploads = renderer.imageUploads;
+        result = renderer.beginFrame(0);
+        if (SUCCEEDED(result)) result = renderer.beginPass(target.Get(), views->GetCPUDescriptorHandleForHeapStart(), { 0, 0, 32, 16 }, 32, 16, 96);
+        if (SUCCEEDED(result)) result = renderer.drawImage(12, green, 1, 1, bounds, uv);
+        if (SUCCEEDED(result)) result = renderer.endPass(queue.Get());
+        if (FAILED(result) || renderer.imageUploads != uploads + 1 || !renderer.imageUploadCapacity()) failure = 22;
+        if (!drain() && !failure) failure = 23;
     }
     renderer.shutdown();
     CloseHandle(event);

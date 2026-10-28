@@ -53,6 +53,24 @@ public API per decoded cell because equal style IDs can carry different content
 backgrounds; inverse and faint colors are applied only after that lookup.
 The shared cache is discarded between snapshots, including palette changes.
 Cursor drawing and workspace transitions reuse cached geometry.
+One D3D12 device and command queue serve the application's window, including
+terminal panes, UI and capture. All terminal panes share one bounded 1024×1024
+glyph atlas; UI fonts use a separate atlas and share the terminal pipeline state.
+Opening a pane does not create a device, queue, pipeline or atlas for that pane.
+Only active workspace panes and explicitly requested previews materialize frames.
+
+After the prepared startup frame, hidden, minimized and DWM-cloaked windows stop
+painting and cancel pending output, synchronized-output and animation frames.
+PTY output continues to update emulator state. Show/resize events and the existing
+250 ms maintenance tick detect visibility changes; resuming invalidates the window
+to paint current state. Covering the window with another window does not itself
+suspend rendering.
+Maintenance retires completed image transfers even without a subsequent frame.
+Textures unused for over two seconds leave the GPU image cache; in-flight frame
+slots retain their own references until their fences complete. Upload pages unused
+for two seconds shrink to a small warm reserve while visible, or to zero while
+suspended. The shared glyph atlases stay warm for wakeup and new panes.
+
 Terminal geometry uses pane-local coordinates; pane movement and fractional scrolling
 replay cached geometry with a translation. Dragging never resizes a PTY;
 committing a pane move resizes it to the final grid once while its bounds settle.

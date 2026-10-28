@@ -314,7 +314,7 @@ HRESULT WindowsRenderer::endFrame(void* pixels, UINT stride) {
     return result;
 }
 
-HRESULT WindowsRenderer::trimUnusedTerminalUploads() {
+HRESULT WindowsRenderer::trimUnusedTerminalUploads(bool releaseWarmReserve) {
     if (!ready() || phase != FramePhase::none) return S_OK;
     const UINT64 completed = fence->GetCompletedValue();
     if (completed == UINT64_MAX) return device->GetDeviceRemovedReason();
@@ -322,8 +322,8 @@ HRESULT WindowsRenderer::trimUnusedTerminalUploads() {
     // Maintenance never waits on the GPU or treats cursor-only presents as upload activity.
     for (UINT index = 0; index < bufferCount; index++) {
         if (completed >= frames[index].fenceValue) {
-            terminal.trimUnusedUploads(index, now);
-            ui.batches.trimUnusedUploads(index, now);
+            terminal.trimUnusedUploads(index, now, releaseWarmReserve);
+            ui.batches.trimUnusedUploads(index, now, releaseWarmReserve);
         }
     }
     return S_OK;

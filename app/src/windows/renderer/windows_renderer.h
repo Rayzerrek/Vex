@@ -37,7 +37,7 @@ public:
     UINT64 debugErrorCount() const;
     bool debugValidationEnabled() const;
     HRESULT videoMemoryUsage(bool local, UINT64& bytes) const;
-    HRESULT trimUnusedTerminalUploads();
+    HRESULT trimUnusedTerminalUploads(bool releaseWarmReserve = false);
     static bool deviceLost(HRESULT result);
 
 private:

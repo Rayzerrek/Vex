@@ -1,4 +1,5 @@
 #include "windows_renderer.h"
+#include "window_visibility.h"
 #include <stdio.h>
 
 // Hidden WARP fixture: exercise worker ownership without depending on a hardware adapter or UI input.
@@ -22,6 +23,8 @@ int testRendererStartup() {
     HWND window = CreateWindowExW(0, L"STATIC", L"Vex renderer fixture", WS_POPUP, 0, 0, 32, 16, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!window) return 9;
     int failure = 0;
+    if (windowCanRender(nullptr, true) || windowCanRender(window, false) || !windowCanRender(window, true) ||
+        !windowCanRender(window, true, true) || windowCanRender(window, false, true)) failure = 21;
     if (FAILED(renderer.prepareDeviceAsync(true))) failure = 10;
     if (!failure && renderer.initialize(window, factory.Get(), false) != E_INVALIDARG) failure = 11;
     if (!failure && (renderer.ready() || FAILED(renderer.prepareDeviceAsync(true)))) failure = 12;

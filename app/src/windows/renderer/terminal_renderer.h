@@ -34,7 +34,9 @@ public:
     UINT64 geometryCapacity() const;
     bool geometryEnabled = true;
     // Caller must verify this frame slot's fence completed; never frees recently used pages.
-    void trimUnusedUploads(UINT index, ULONGLONG now);
+    void trimUnusedUploads(UINT index, ULONGLONG now, bool releaseWarmReserve = false);
+    UINT64 imageUploadCapacity() const;
+    UINT64 cachedImageCapacity() const { return imageBytes; }
     UINT64 glyphHits = 0, glyphMisses = 0, atlasResets = 0, drawCalls = 0, uploadAllocations = 0;
     UINT64 uploadCapacity() const;
     UINT64 uploadTrims = 0;
@@ -122,4 +124,6 @@ private:
     HRESULT replayGeometry(const Geometry& geometry);
     HRESULT uploadGlyph(Glyph& glyph);
     HRESULT uploadImage(CachedImage& image, const uint8_t* rgba, UINT width, UINT height);
+    void releaseFrameImages(Frame& frame);
+    void trimCachedImages(ULONGLONG now);
 };

@@ -7,6 +7,7 @@
 #include "windows_renderer.h"
 #include "windows_chrome.h"
 #include "terminal_drawing.h"
+#include "window_visibility.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
@@ -45,6 +46,8 @@ static FrameSchedule frameSchedule = FrameSchedule::none;
 static bool firstOutput, firstFrame, startupCloaked;
 static bool cursorWakeArmed;
 static bool workspaceAnimationPending;
+static bool renderingSuspended;
+static bool windowCloaked;
 static ULONGLONG frameDeadline;
 static int platformError;
 static LARGE_INTEGER startupCounter, counterFrequency;
@@ -225,16 +228,44 @@ static void updateWindowMetrics() {
     clientHeight = bounds.bottom / scale;
     callbacks.resize(callbacks.context, clientWidth, clientHeight, cellWidth, cellHeight, scale);
 }
-static void renderScheduledFrame() {
+static void cancelScheduledFrame() {
+    if (frameSchedule == FrameSchedule::none) return;
     KillTimer(window, 1);
     if (outputFrameTimer) CancelWaitableTimer(outputFrameTimer);
     frameSchedule = FrameSchedule::none;
+}
+static bool refreshRenderVisibility(bool checkCloaking = false) {
+    // Query DWM on visibility events/maintenance, never for every PTY output packet.
+    if (checkCloaking && firstFrame) {
+        DWORD cloaked = 0;
+        windowCloaked = SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked;
+    }
+    if (!windowCanRender(window, !firstFrame, windowCloaked)) {
+        cancelScheduledFrame();
+        if (!renderingSuspended) {
+            renderingSuspended = true;
+            callbacks.cursor_activity(callbacks.context, false);
+        }
+        return false;
+    }
+    if (renderingSuspended) {
+        renderingSuspended = false;
+        nextOutputFrame = 0;
+        callbacks.cursor_activity(callbacks.context, GetFocus() == window);
+        // Changes received while asleep are represented by one fresh snapshot on wake.
+        InvalidateRect(window, nullptr, FALSE);
+    }
+    return true;
+}
+static void renderScheduledFrame() {
+    cancelScheduledFrame();
+    if (!refreshRenderVisibility()) return;
     InvalidateRect(window, nullptr, FALSE); UpdateWindow(window);
 }
 // Called during paint; the next frame uses the same monitor-paced scheduler as chrome.
 extern "C" void vex_window_request_animation_frame() { workspaceAnimationPending = true; }
 extern "C" void vex_window_invalidate() {
-    if (!IsWindow(window)) return;
+    if (!IsWindow(window) || !refreshRenderVisibility()) return;
     ULONGLONG now = GetTickCount64();
     if (frameSchedule != FrameSchedule::posted) {
         frameDeadline = now + 8;
@@ -246,7 +277,7 @@ extern "C" void vex_window_invalidate() {
     } else if (now >= frameDeadline) renderScheduledFrame();
 }
 static void invalidateOutputFrame() {
-    if (!IsWindow(window)) return;
+    if (!IsWindow(window) || !refreshRenderVisibility()) return;
     if (frameSchedule == FrameSchedule::posted || frameSchedule == FrameSchedule::synchronized) {
         vex_window_invalidate();
         return;
@@ -284,7 +315,7 @@ static BOOL nextWindowMessage(MSG& message) {
 }
 
 extern "C" void vex_window_defer_synchronized() {
-    if (!IsWindow(window)) return;
+    if (!IsWindow(window) || !refreshRenderVisibility()) return;
     ULONGLONG now = GetTickCount64();
     if (frameSchedule != FrameSchedule::synchronized) {
         frameDeadline = now + 100;
@@ -471,7 +502,7 @@ static void renderScene(double timeMs) {
 
 static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     RECT bounds;
-    if (!IsWindow(window) || IsIconic(window) || !GetClientRect(window, &bounds) || bounds.right <= 0 || bounds.bottom <= 0) return false;
+    if (!IsWindow(window) || !refreshRenderVisibility() || !GetClientRect(window, &bounds) || bounds.right <= 0 || bounds.bottom <= 0) return false;
     HRESULT result = createRenderTarget();
     if (SUCCEEDED(result)) result = renderer.beginFrame();
     if (FAILED(result)) { rendererFault(result); return false; }
@@ -949,7 +980,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         repositionTerminalDialogs();
         break;
     case WM_SIZE:
-        callbacks.cursor_activity(callbacks.context, wparam != SIZE_MINIMIZED && IsWindowVisible(hwnd) && GetFocus() == hwnd);
+        if (window) refreshRenderVisibility(true);
+        callbacks.cursor_activity(callbacks.context, !renderingSuspended && wparam != SIZE_MINIMIZED && IsWindowVisible(hwnd) && GetFocus() == hwnd);
         if (wparam != SIZE_MINIMIZED && window) {
             RECT bounds;
             if (!GetClientRect(hwnd, &bounds) || bounds.right <= 0 || bounds.bottom <= 0) return 0;
@@ -1122,6 +1154,9 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             case 63: return clipboardToken;
             case 64: return clipboardReadError;
             case 65: return terminalNotificationVisible() ? 1 : 0;
+            case 69: return renderingSuspended ? 1 : 0;
+            case 67: return (LRESULT)renderer.terminal.imageUploadCapacity();
+            case 68: return (LRESULT)renderer.terminal.cachedImageCapacity();
             case 90: case 91: case 92: case 93: testTerminalNotification((uint32_t)wparam - 90); return 1;
             case 94: dismissTerminalNotification(); return 1;
             case 95: return terminalNotificationAnimationPending() || windowsUpdateAnimationPending() ? 1 : 0;
@@ -1188,7 +1223,9 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             KillTimer(hwnd, 3); cursorWakeArmed = false;
             callbacks.cursor_wake(callbacks.context);
         } else if (wparam == 2) {
-            HRESULT result = renderer.trimUnusedTerminalUploads();
+            // DWM cloak changes (including virtual desktops) need not send WM_SHOWWINDOW.
+            refreshRenderVisibility(true);
+            HRESULT result = renderer.trimUnusedTerminalUploads(renderingSuspended);
             if (FAILED(result)) { rendererFault(result); return 0; }
             if (callbacks.tick) callbacks.tick(callbacks.context);
         } else if (wparam == 1 && frameSchedule == FrameSchedule::synchronized && GetTickCount64() >= frameDeadline) {
@@ -1205,10 +1242,12 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
         return DefWindowProcW(hwnd, message, wparam, lparam);
     case WM_SETFOCUS:
-        callbacks.cursor_activity(callbacks.context, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+        if (window) refreshRenderVisibility(true);
+        callbacks.cursor_activity(callbacks.context, !renderingSuspended && IsWindowVisible(hwnd) && !IsIconic(hwnd));
         return 0;
     case WM_SHOWWINDOW:
-        callbacks.cursor_activity(callbacks.context, wparam && !IsIconic(hwnd) && GetFocus() == hwnd);
+        if (window) refreshRenderVisibility(true);
+        callbacks.cursor_activity(callbacks.context, !renderingSuspended && wparam && !IsIconic(hwnd) && GetFocus() == hwnd);
         break;
     case WM_KILLFOCUS:
         hideChromeTooltip();

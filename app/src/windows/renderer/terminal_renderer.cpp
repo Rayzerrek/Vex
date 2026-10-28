@@ -129,18 +129,8 @@ HRESULT TerminalRenderer::beginFrame(UINT index) {
     frameTimeMs = GetTickCount64();
     auto& frame = frames[index];
     // beginFrame is called only after this slot's fence completes.
-    for (UINT i = 0; i < frame.imageCount; ++i) {
-        frame.images[i].reset();
-        frame.imageUploads[i].Reset();
-    }
-    frame.imageCount = 0;
-    frame.imageUploadBytes = 0;
-    for (auto& image : images) {
-        if (image.resource.texture && frameTimeMs - image.lastUsed > 2000) {
-            imageBytes -= image.bytes;
-            image.reset();
-        }
-    }
+    releaseFrameImages(frame);
+    trimCachedImages(frameTimeMs);
     frame.pageIndex = 0;
     for (UINT i = 0; i < frame.pageCount; i++) frame.pages[i].used = 0;
     return frame.allocator->Reset();
@@ -579,11 +569,40 @@ UINT64 TerminalRenderer::uploadCapacity() const {
     return total;
 }
 
-void TerminalRenderer::trimUnusedUploads(UINT index, ULONGLONG now) {
+UINT64 TerminalRenderer::imageUploadCapacity() const {
+    UINT64 total = 0;
+    for (const auto& frame : frames) total += frame.imageUploadBytes;
+    return total;
+}
+
+void TerminalRenderer::releaseFrameImages(Frame& frame) {
+    for (UINT i = 0; i < frame.imageCount; ++i) {
+        frame.images[i].reset();
+        frame.imageUploads[i].Reset();
+    }
+    frame.imageCount = 0;
+    frame.imageUploadBytes = 0;
+}
+
+void TerminalRenderer::trimCachedImages(ULONGLONG now) {
+    // In-flight slots retain their own texture references until their fences complete.
+    for (auto& image : images) {
+        if (image.resource.texture && now - image.lastUsed > 2000) {
+            imageBytes -= image.bytes;
+            image.reset();
+        }
+    }
+}
+
+void TerminalRenderer::trimUnusedUploads(UINT index, ULONGLONG now, bool releaseWarmReserve) {
+    if (index >= frameCount || passOpen) return;
     auto& frame = frames[index];
+    // An idle/hidden window may never call beginFrame again to retire image transfers.
+    releaseFrameImages(frame);
+    trimCachedImages(now);
     const UINT previousCount = frame.pageCount;
     // Keep a warm reserve and a contiguous prefix so allocation can reuse the remaining pages.
-    while (frame.pageCount > 2) {
+    while (frame.pageCount > (releaseWarmReserve ? 0u : 2u)) {
         auto& upload = frame.pages[frame.pageCount - 1];
         if (now - upload.lastUsedMs < 2000) break;
         upload.resource->Unmap(0, nullptr);
