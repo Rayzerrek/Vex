@@ -58,6 +58,21 @@ terminal panes, UI and capture. All terminal panes share one bounded 1024×1024
 glyph atlas; UI fonts use a separate atlas and share the terminal pipeline state.
 Opening a pane does not create a device, queue, pipeline or atlas for that pane.
 Only active workspace panes and explicitly requested previews materialize frames.
+Terminal text atlas entries use DirectWrite ink bounds independently of cell
+advances, preserving italic and combining-mark overhangs. All four font styles
+share a baseline and line height measured across their faces. Private-use font
+icons are fitted to their allocated cells; procedural box/Powerline graphics
+retain exact cell edges. Backgrounds precede text so adjacent cells cannot erase
+overhanging ink.
+
+ASCII programming ligatures use the selected font's OpenType substitution inputs
+and DirectWrite's standard/contextual ligatures and contextual alternates.
+Eligible input/punctuation spans share the glyph atlas; ordinary text keeps its
+single-cell cache. Runs stop at row, style, selection and cursor-cell boundaries.
+Cursor position participates in the geometry key, while blinking and cursor shape
+do not. The regular face defines cell width; wider synthetic faces fit their
+advances to that grid. Long spans use pixel-aligned atlas tiles and a bounded
+eight-entry DirectWrite layout cache, cleared when fonts change.
 
 After the prepared startup frame, hidden, minimized and DWM-cloaked windows stop
 painting and cancel pending output, synchronized-output and animation frames.

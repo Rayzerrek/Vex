@@ -14,10 +14,14 @@ preferences, font zoom and copying a selection. `Ctrl+S` remains terminal input.
 | Path picker | `Ctrl+Shift+F` |
 | New tab | `Ctrl+Shift+T` |
 | Close active pane or tab | `Ctrl+Shift+W` |
+| Close application | `Alt+F4` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Split right / down | `Ctrl+Shift+R` / `Ctrl+Shift+D` |
 | Font size / reset | `Ctrl++` / `Ctrl+-` / `Ctrl+0` |
 | Close overlay | `Esc` |
+
+Closing the final tab closes the application. Both paths review active programs
+before exiting when close confirmation is enabled; idle shells close immediately.
 
 Drag a pane by its header to move it. A compact tab with the pane icon and title follows the pointer;
 highlighted edges show the split destination. Drag over another tab to reveal its

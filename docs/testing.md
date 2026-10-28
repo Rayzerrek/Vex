@@ -47,6 +47,18 @@ try {
 }
 ```
 
+Native font regressions check DirectWrite ink bounds and software-rasterized
+pixels for all four styles, combining marks and private-use icons at 100–200%
+DPI. They exercise system fonts and additionally check Cascadia Mono, Ioskeley
+Mono/Nerd Font and JetBrains Mono when installed. WARP readback verifies that
+glyph overhangs survive atlas uploads and cache reuse. These are offscreen checks;
+they do not establish interactive desktop appearance for every installed font.
+Programming-font samples compare segmented ligatures against DirectWrite's
+shaped reference; synthetic faces with nonuniform advances compare operator
+spans on the terminal grid. A hidden WARP test covers long-run tiling and exact
+pixel reuse on subsequent frames, including Windows images without an installed
+programming ligature font.
+
 ## Desktop validation
 
 Use a real Windows desktop for rendering, mixed DPI, clipboard/TUI behavior,

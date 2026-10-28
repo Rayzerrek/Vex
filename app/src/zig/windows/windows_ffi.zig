@@ -936,6 +936,12 @@ fn drawTerminalGeometry(pane_id: panes.PaneId, frame: *const terminal.TerminalFr
     if (!reused) {
         var complete = false;
         defer c.vex_terminal_geometry_end(complete);
+        if (layer == 0) {
+            // Keep both passes in one cache entry; later backgrounds must not erase overhanging ink.
+            c.vex_terminal_cell_layer(1);
+            try drawTerminalCells(frame, link, theme);
+            c.vex_terminal_cell_layer(2);
+        }
         try drawTerminalCells(frame, link, theme);
         complete = true;
     }
@@ -992,6 +998,8 @@ fn terminalGeometryKey(
         .link_row = if (hovered_link) |link| link.row else absent,
         .link_start = if (hovered_link) |link| link.start_col else absent,
         .link_end = if (hovered_link) |link| link.end_col else absent,
+        .cursor_row = if (frame.cursor.visible) frame.cursor.row else absent,
+        .cursor_column = if (frame.cursor.visible) frame.cursor.column else absent,
     };
 }
 
@@ -1172,7 +1180,10 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
                 cell_style.foreground = cached_corrected_fg;
             }
             const ascii = cell.width == .narrow and (text.len == 0 or (text.len == 1 and text[0] >= 32 and text[0] <= 126));
-            if (!ascii or !std.meta.eql(style, cell_style) or length == buffer.len) {
+            // A cursor inside an operator must address its own cell, including a block-cursor redraw.
+            const cursor_boundary = frame.cursor.visible and row == frame.cursor.row and
+                (column == frame.cursor.column or column == @as(usize, frame.cursor.column) + 1);
+            if (!ascii or cursor_boundary or !std.meta.eql(style, cell_style) or length == buffer.len) {
                 try drawRun(start, row, run_cells, buffer[0..length], style, theme.background);
                 run_cells = 0;
                 length = 0;
@@ -1205,19 +1216,23 @@ test "contrast cache preserves exact correction across hits, collisions and appe
     }
 }
 
-test "terminal geometry excludes cursor shape, blink and motion including block cursors" {
+test "terminal geometry tracks ligature cursor boundaries without depending on cursor shape or blink" {
     const testing = std.testing;
     const theme = terminal_theme.themes[0];
     var frame: terminal.TerminalFrame = .{ .columns = 80, .rows = 24, .generation = 1 };
     const pane: panes.PaneId = @enumFromInt(1);
     const initial = terminalGeometryKey(pane, &frame, null, theme);
     frame.cursor = .{ .column = 12, .row = 3, .visible = true, .shape = .bar };
-    try testing.expect(std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, theme)));
+    const moved = terminalGeometryKey(pane, &frame, null, theme);
+    try testing.expect(!std.meta.eql(initial, moved));
     frame.cursor.shape = .block;
+    try testing.expect(std.meta.eql(moved, terminalGeometryKey(pane, &frame, null, theme)));
     frame.cursor.column += 1;
-    try testing.expect(std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, theme)));
+    try testing.expect(!std.meta.eql(moved, terminalGeometryKey(pane, &frame, null, theme)));
     frame.cursor.visible = false;
-    try testing.expect(std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, theme)));
+    const hidden = terminalGeometryKey(pane, &frame, null, theme);
+    frame.cursor.column += 1;
+    try testing.expect(std.meta.eql(hidden, terminalGeometryKey(pane, &frame, null, theme)));
 }
 
 test "block cursor overlay preserves wide text and decorations without inheriting selection colors" {

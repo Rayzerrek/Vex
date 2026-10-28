@@ -7,6 +7,7 @@
 
 // Rasterizes one borrowed UTF-8 grapheme into a white-on-transparent software target.
 using TerminalGlyphPainter = HRESULT (*)(ID2D1RenderTarget*, ID2D1SolidColorBrush*, const uint8_t*, size_t, uint32_t, float, float, float, float);
+using TerminalGlyphMeasurer = HRESULT (*)(const uint8_t*, size_t, uint32_t, float, float, D2D1_RECT_F&);
 
 // One bounded glyph atlas shared by every pane; uploads belong to fence-protected frame slots.
 class TerminalRenderer final {
@@ -20,7 +21,7 @@ public:
     HRESULT drawImage(uint64_t generation, const uint8_t* rgba, UINT width, UINT height, const float (&bounds)[4], const float (&uv)[4]);
     UINT64 imageHits = 0, imageUploads = 0;
     HRESULT drawSolid(float left, float top, float right, float bottom, uint32_t color, uint8_t alpha = 255);
-    HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha = 255, bool cellAligned = false);
+    HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha = 255, bool cellAligned = false, TerminalGlyphMeasurer measurer = nullptr);
     HRESULT drawRounded(float left, float top, float right, float bottom, float radius, float stroke, uint32_t color, uint8_t alpha);
     HRESULT drawRoundedGradient(float left, float top, float right, float bottom, float radius, uint32_t topColor, uint32_t bottomColor, uint8_t alpha);
     HRESULT drawLine(float x1, float y1, float x2, float y2, float stroke, bool roundCaps, uint32_t color, uint8_t alpha);
@@ -29,7 +30,7 @@ public:
     void clearGlyphCache();
     void setPreviewTransform(float factor = 1, float x = 0, float y = 0) { previewScale = factor; previewX = x; previewY = y; }
     // A hit replays immutable CPU instances into this slot's fence-protected uploads.
-    HRESULT beginGeometry(uint64_t generation, const uint32_t (&key)[12], const float (&geometry)[4], bool& reused);
+    HRESULT beginGeometry(uint64_t generation, const uint32_t (&key)[14], const float (&geometry)[4], bool& reused);
     void endGeometry(bool complete);
     UINT64 geometryHits = 0, geometryBuilds = 0;
     UINT64 geometryCapacity() const;
@@ -81,7 +82,7 @@ private:
     struct Geometry {
         Quad* quads = nullptr;
         UINT count = 0, capacity = 0;
-        uint32_t key[12] = {};
+        uint32_t key[14] = {};
         float geometry[4] = {};
         UINT64 generation = 0, atlasGeneration = 0, lastUsed = 0;
         bool valid = false;
@@ -92,6 +93,7 @@ private:
     struct Glyph {
         uint8_t* text = nullptr;
         UINT length = 0, x = 0, y = 0, width = 0, height = 0;
+        float layoutWidth = 0, layoutHeight = 0, offsetX = 0, offsetY = 0;
         uint32_t style = 0, phase = 0;
         UINT64 hash = 0;
     };

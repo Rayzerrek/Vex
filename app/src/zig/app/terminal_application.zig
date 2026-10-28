@@ -879,7 +879,11 @@ pub const TerminalApplication = struct {
     fn requestCloseTab(self: *TerminalApplication, index: usize) !void {
         self.commitTabRename();
         const model = if (self.model) |*model| model else return;
-        if (index >= model.tabs.items.len or model.tabs.items.len <= 1) return;
+        if (index >= model.tabs.items.len) return;
+        if (model.tabs.items.len == 1) {
+            if (self.onCloseRequested()) self.completeWindowExit();
+            return;
+        }
         var review: close_confirmation.TabCloseReview = .{};
         if (self.settings.confirm_close) try self.reviewTabClose(model.tabs.items[index].tree.root, &review);
         if (review.confirmation) |confirmation| {
@@ -1669,6 +1673,25 @@ test "final session exit preserves terminal output and uses a persistent header 
         try std.testing.expectEqual(cursor.column, (try session.terminal.readFrame()).cursor.column);
         try std.testing.expectEqualStrings(if (code == 0) "Session finished" else "Process exited", session.displayTitle());
     }
+}
+
+test "closing the final tab reviews active work and retains sessions if confirmation cannot open" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    const session = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+    try session.terminal.feedOutput("\x1b]7501;state=working:app=node\x07");
+    try std.testing.expect(app.onKey('W', 3));
+    try std.testing.expectEqual(@as(usize, 1), app.exit_review.rows.items.len);
+    // The fixture has no desktop owner: failure to present confirmation must refuse to exit.
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqual(@as(usize, 1), app.model.?.tabs.items.len);
+    try std.testing.expect(session.state == .running);
+    try session.terminal.feedOutput("\x1b]7501;state=idle\x07");
+    try std.testing.expect(app.onCloseRequested());
+    try app.requestCloseActive();
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expect(app.health == .running);
 }
 
 test "cancelling update restart clears the install intent without closing sessions" {

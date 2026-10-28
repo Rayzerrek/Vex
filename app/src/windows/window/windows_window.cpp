@@ -7,6 +7,7 @@
 #include "windows_renderer.h"
 #include "windows_chrome.h"
 #include "terminal_drawing.h"
+#include "terminal_font.h"
 #include "window_visibility.h"
 #include <windows.h>
 #include <windowsx.h>
@@ -30,6 +31,7 @@ static UiRenderer* target;
 static UiBrush uiBrush;
 static UiBrush* brush = &uiBrush;
 static IDWriteTextFormat* terminalFonts[4];
+static TerminalLigatureMap terminalLigatures;
 static IDWriteTextFormat* chromeFont;
 static IDWriteTextFormat* notificationFont;
 static IDWriteTextFormat* paneTitleFont;
@@ -485,7 +487,7 @@ static void renderScene(double timeMs) {
     beginWindowChromeFrame({ target, textFactory, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, notificationFont, chromePalette, uiMetrics, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
         timeMs, vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window),
         chromePointerX, chromePointerY, !tooltipSuppressed && trackingMouseLeave && pointerCaptureState == PointerCaptureState::none && GetForegroundWindow() == window && IsWindowEnabled(window) });
-    beginTerminalDrawingFrame({ &renderer, drawingFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg, uiMetrics });
+    beginTerminalDrawingFrame({ &renderer, drawingFactory, textFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, &terminalLigatures, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg, uiMetrics });
     target->Clear(rgb(chromePalette.window_bg));
     rectangle(0.0f, 0.0f, clientWidth, 44.0f, uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg);
     drawNewTabButton();
@@ -1238,6 +1240,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN:
+        if (message == WM_SYSKEYDOWN && wparam == VK_F4 && (lparam & (1LL << 29))) {
+            SendMessageW(hwnd, WM_CLOSE, 0, 0);
+            return 1;
+        }
         hideChromeTooltip();
         if (terminalNotificationKey((uint32_t)wparam, currentModifiers()) || windowsUpdateKey((uint32_t)wparam, currentModifiers())) { refreshHoverCursor(hwnd); return 1; }
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
@@ -1301,33 +1307,15 @@ static HRESULT rebuildTerminalFonts(float fontSize) {
     if (!textFactory || !isfinite(fontSize)) return E_INVALIDARG;
     const float clamped = fminf(32.0f, fmaxf(9.0f, roundf(fontSize)));
     IDWriteTextFormat* newFonts[4] = {};
-    HRESULT result = S_OK;
-    for (int i = 0; i < 4 && SUCCEEDED(result); i++) {
-        result = textFactory->CreateTextFormat(terminalFontFamily, nullptr, (i & 1) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-            (i & 2) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, clamped, L"en-us", &newFonts[i]);
-        if (SUCCEEDED(result)) result = newFonts[i]->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    }
     float newCellWidth = 0.0f, newCellHeight = 0.0f;
-    if (SUCCEEDED(result)) {
-        IDWriteTextLayout* measure = nullptr;
-        result = textFactory->CreateTextLayout(L"M", 1, newFonts[0], 200, 200, &measure);
-        if (SUCCEEDED(result)) {
-            DWRITE_TEXT_METRICS metrics; DWRITE_LINE_METRICS line; UINT32 count;
-            result = measure->GetMetrics(&metrics);
-            if (SUCCEEDED(result)) result = measure->GetLineMetrics(&line, 1, &count);
-            if (SUCCEEDED(result)) {
-                newCellWidth = metrics.width;
-                newCellHeight = ceilf(line.height);
-                if (!isfinite(newCellWidth) || !isfinite(newCellHeight) || newCellWidth <= 0 || newCellHeight <= 0) result = E_INVALIDARG;
-                for (int i = 0; i < 4 && SUCCEEDED(result); i++) result = newFonts[i]->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, newCellHeight, line.baseline);
-            }
-            releaseCom(measure);
-        }
-    }
+    HRESULT result = createTerminalFonts(textFactory, terminalFontFamily, clamped, newFonts, newCellWidth, newCellHeight);
+    if (FAILED(result)) return result;
+    result = terminalLigatures.initialize(textFactory, newFonts);
     if (FAILED(result)) {
-        for (auto& font : newFonts) releaseCom(font);
+        for (auto font : newFonts) font->Release();
         return result;
     }
+    clearTerminalDrawingFontCache();
     renderer.terminal.clearGlyphCache();
     for (int i = 0; i < 4; i++) {
         releaseCom(terminalFonts[i]);
@@ -1449,6 +1437,11 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 ShowWindow(window, SW_SHOW); UpdateWindow(window);
                 MSG message; BOOL status;
                 while ((status = nextWindowMessage(message)) > 0) {
+                    // Handle the system close chord before a modal or terminal encoder can consume it.
+                    if (message.message == WM_SYSKEYDOWN && message.wParam == VK_F4 && (message.lParam & (1LL << 29))) {
+                        SendMessageW(window, WM_CLOSE, 0, 0);
+                        continue;
+                    }
                     if (routeTerminalDialogMessage(message)) continue;
                     if (message.message == WM_KEYDOWN || message.message == WM_SYSKEYDOWN) {
                         // Do not TranslateMessage a consumed workspace chord into terminal control bytes.
@@ -1467,6 +1460,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     HRESULT shutdown = releaseRenderer();
     if (FAILED(shutdown) && !WindowsRenderer::deviceLost(shutdown) && !platformError) platformError = (int)shutdown;
     releaseCom(chromeFont); releaseCom(notificationFont); releaseCom(paneTitleFont); releaseCom(chromeBoldFont); releaseCom(badgeFont);
+    clearTerminalDrawingFontCache();
     for (auto& font : terminalFonts) releaseCom(font);
     releaseCom(textFactory); releaseCom(drawingFactory);
     return platformError;

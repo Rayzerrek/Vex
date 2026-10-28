@@ -268,7 +268,7 @@ HRESULT TerminalRenderer::replayGeometry(const Geometry& entry) {
     return S_OK;
 }
 
-HRESULT TerminalRenderer::beginGeometry(uint64_t generation, const uint32_t (&key)[12], const float (&geometry)[4], bool& reused) {
+HRESULT TerminalRenderer::beginGeometry(uint64_t generation, const uint32_t (&key)[14], const float (&geometry)[4], bool& reused) {
     reused = false;
     if (!passOpen || recording) return E_UNEXPECTED;
     if (!geometryEnabled) return S_OK;
@@ -496,7 +496,7 @@ HRESULT TerminalRenderer::uploadGlyph(Glyph& glyph) {
     return S_OK;
 }
 
-HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha, bool cellAligned) {
+HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha, bool cellAligned, TerminalGlyphMeasurer measurer) {
     if (!passOpen || !text || !length || length > 65536 || !painter || !isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) || width <= 0 || height <= 0) return E_INVALIDARG;
     // Cell graphics must share the background's rounded screen edges. Quantizing
     // their atlas-local phase independently can move an edge into the next cell.
@@ -507,19 +507,38 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
     const float rasterWidth = cellAligned ? roundf((x + width) * scale) - left : width * scale;
     const float rasterHeight = cellAligned ? roundf((y + height) * scale) - top : height * scale;
     if (rasterWidth <= 0 || rasterHeight <= 0) return S_OK;
-    const UINT w = (UINT)ceilf(rasterWidth) + 1, h = (UINT)ceilf(rasterHeight) + 1;
-    if (w > 512 || h > 512) return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
-    const UINT phase = phaseX | (phaseY << 2) | (cellAligned ? 16u : 0u), style = flags & 3;
+    const UINT phase = phaseX | (phaseY << 2) | (cellAligned ? 16u : 0u) | (measurer ? 32u : 0u), style = flags & 3;
+    UINT widthBits, heightBits;
+    memcpy(&widthBits, &rasterWidth, sizeof(widthBits));
+    memcpy(&heightBits, &rasterHeight, sizeof(heightBits));
     UINT64 hash = 14695981039346656037ull;
     for (size_t i = 0; i < length; i++) hash = (hash ^ text[i]) * 1099511628211ull;
-    hash ^= ((UINT64)w << 32) | ((UINT64)h << 16) | (phase << 2) | style;
+    hash ^= ((UINT64)widthBits << 32) | heightBits;
+    hash = (hash ^ ((phase << 2) | style)) * 1099511628211ull;
     UINT slot = (UINT)(hash % cacheSlots);
     while (glyphs[slot].text) {
         const auto& candidate = glyphs[slot];
-        if (candidate.hash == hash && candidate.length == length && candidate.width == w && candidate.height == h && candidate.style == style && candidate.phase == phase && memcmp(candidate.text, text, length) == 0) break;
+        if (candidate.hash == hash && candidate.length == length && candidate.layoutWidth == rasterWidth && candidate.layoutHeight == rasterHeight && candidate.style == style && candidate.phase == phase && memcmp(candidate.text, text, length) == 0) break;
         slot = (slot + 1) % cacheSlots;
     }
     if (!glyphs[slot].text) {
+        float offsetX = 0, offsetY = 0;
+        float bitmapWidth = ceilf(rasterWidth) + 1, bitmapHeight = ceilf(rasterHeight) + 1;
+        if (measurer) {
+            D2D1_RECT_F ink;
+            const HRESULT measured = measurer(text, length, flags, width, height, ink);
+            if (FAILED(measured)) return measured;
+            if (!isfinite(ink.left) || !isfinite(ink.top) || !isfinite(ink.right) || !isfinite(ink.bottom) || ink.right < ink.left || ink.bottom < ink.top) return E_INVALIDARG;
+            // Keep the layout origin and fractional phase while allocating the actual ink,
+            // including a pixel of antialiasing coverage beyond DirectWrite's ideal bounds.
+            offsetX = floorf(ink.left * scale + phaseX * 0.25f) - 1;
+            offsetY = floorf(ink.top * scale + phaseY * 0.25f) - 1;
+            bitmapWidth = ceilf(ink.right * scale + phaseX * 0.25f) + 1 - offsetX;
+            bitmapHeight = ceilf(ink.bottom * scale + phaseY * 0.25f) + 1 - offsetY;
+        }
+        if (bitmapWidth <= 0 || bitmapHeight <= 0) return S_OK;
+        if (!isfinite(bitmapWidth) || !isfinite(bitmapHeight) || bitmapWidth > 512 || bitmapHeight > 512) return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+        const UINT w = (UINT)bitmapWidth, h = (UINT)bitmapHeight;
         UINT nextX = shelfX, nextY = shelfY, nextHeight = shelfHeight;
         if (nextX + w + 2 > atlasSize) { nextX = 0; nextY += nextHeight; nextHeight = 0; }
         if (glyphCount == maxGlyphs || keyBytes + length > 1024 * 1024 || nextY + h + 2 > atlasSize) {
@@ -532,11 +551,12 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
         Glyph glyph;
         glyph.text = key; glyph.length = (UINT)length; glyph.hash = hash; glyph.width = w; glyph.height = h;
         glyph.x = nextX + 1; glyph.y = nextY + 1; glyph.style = style; glyph.phase = phase;
+        glyph.layoutWidth = rasterWidth; glyph.layoutHeight = rasterHeight; glyph.offsetX = offsetX; glyph.offsetY = offsetY;
         rasterTarget->BeginDraw();
         rasterTarget->PushAxisAlignedClip(D2D1::RectF(0, 0, w / scale, h / scale), D2D1_ANTIALIAS_MODE_ALIASED);
         rasterTarget->Clear(D2D1::ColorF(0, 0.0f));
         HRESULT result = painter(rasterTarget.Get(), rasterBrush.Get(), text, length, flags,
-            phaseX * 0.25f / scale, phaseY * 0.25f / scale,
+            (phaseX * 0.25f - offsetX) / scale, (phaseY * 0.25f - offsetY) / scale,
             cellAligned ? rasterWidth / scale : width, cellAligned ? rasterHeight / scale : height);
         rasterTarget->PopAxisAlignedClip();
         const HRESULT ended = rasterTarget->EndDraw();
@@ -548,8 +568,8 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
         glyphCount++; keyBytes += (UINT)length; glyphMisses++;
     } else glyphHits++;
     const auto& glyph = glyphs[slot];
-    Quad quad = { { left, top, left + w, top + h },
-        { (float)glyph.x / atlasSize, (float)glyph.y / atlasSize, (float)(glyph.x + w) / atlasSize, (float)(glyph.y + h) / atlasSize },
+    Quad quad = { { left + glyph.offsetX, top + glyph.offsetY, left + glyph.offsetX + glyph.width, top + glyph.offsetY + glyph.height },
+        { (float)glyph.x / atlasSize, (float)glyph.y / atlasSize, (float)(glyph.x + glyph.width) / atlasSize, (float)(glyph.y + glyph.height) / atlasSize },
         ((UINT)alpha << 24) | ((color & 255) << 16) | (color & 0xff00) | ((color >> 16) & 255) };
     return appendQuad(quad);
 }

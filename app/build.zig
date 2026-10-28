@@ -38,6 +38,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/windows/window/windows_capture.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/window/windows_chrome.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_drawing.cpp"), .flags = native_flags });
+    module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_font.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_image.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/platform/windows_system.cpp"), .flags = native_flags });
     module.addCSourceFile(.{ .file = b.path("src/windows/update/windows_update.cpp"), .flags = native_flags });
@@ -109,6 +110,9 @@ pub fn build(b: *std.Build) void {
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_install_guard.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/update/update_handoff.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/terminal_cell_glyph.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/terminal_font.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_font.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/terminal_drawing.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/kitty_image_renderer.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/renderer_startup.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("src/windows/renderer/windows_renderer.cpp"), .flags = native_flags });

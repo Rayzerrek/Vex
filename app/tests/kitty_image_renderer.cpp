@@ -2,6 +2,16 @@
 #include <dxgi1_4.h>
 #include <string.h>
 
+static HRESULT measureOverhang(const uint8_t*, size_t, uint32_t, float width, float height, D2D1_RECT_F& bounds) {
+    bounds = D2D1::RectF(-2, -1, width + 2, height + 1);
+    return S_OK;
+}
+static HRESULT paintOverhang(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const uint8_t*, size_t, uint32_t,
+    float x, float y, float width, float height) {
+    target->FillRectangle(D2D1::RectF(x - 2, y - 1, x + width + 2, y + height + 1), brush);
+    return S_OK;
+}
+
 // Offscreen WARP test: no window, desktop interaction or hardware GPU is required.
 int testKittyImageRenderer() {
     RendererComPtr<IDXGIFactory4> factory;
@@ -59,7 +69,7 @@ int testKittyImageRenderer() {
         if (SUCCEEDED(result)) result = renderer.drawSolid(30, 0, 32, 16, 0x0000ff);
         // A pane and its drag thumbnail must share local geometry while replaying
         // at independent positions/scales, without rebuilding or leaking a transform.
-        const uint32_t key[12] = { 99, 4, 4 };
+        const uint32_t key[14] = { 99, 4, 4 };
         const float geometry[4] = { 0, 0, 8, 16 };
         for (UINT viewIndex = 0; SUCCEEDED(result) && viewIndex < 2; ++viewIndex) {
             renderer.setPreviewTransform(viewIndex ? 0.5f : 1.0f, viewIndex ? 20 : 2, 2);
@@ -71,6 +81,8 @@ int testKittyImageRenderer() {
             }
         }
         renderer.setPreviewTransform();
+        const uint8_t glyph[] = { 'x' };
+        if (SUCCEEDED(result)) result = renderer.drawGlyph(4, 9, 2, 2, glyph, 1, 0, 0xffffff, paintOverhang, 255, false, measureOverhang);
         if (SUCCEEDED(result)) result = renderer.endPass(queue.Get());
         if (FAILED(result)) { failure = 6; break; }
         result = allocator->Reset();
@@ -104,6 +116,10 @@ int testKittyImageRenderer() {
         const uint8_t yellow[] = { 0, 255, 255 };
         if (memcmp(pixels + 3 * 256 + 3 * 4, yellow, 3) || memcmp(pixels + 2 * 256 + 20 * 4, yellow, 3) ||
             memcmp(pixels + 2 * 256 + 22 * 4, expected, 3) || renderer.geometryBuilds != 1 || renderer.geometryHits != frame * 2 + 1) failure = 17;
+        const uint8_t white[] = { 255, 255, 255 };
+        // Both left/top and right/bottom ink outside the cell survive atlas upload and cache replay.
+        if (memcmp(pixels + 8 * 256 + 2 * 4, white, 3) || memcmp(pixels + 11 * 256 + 7 * 4, white, 3) ||
+            renderer.glyphMisses != 1 || renderer.glyphHits != frame) failure = 24;
         const D3D12_RANGE noWrite = { 0, 0 }; readback->Unmap(0, &noWrite);
         if (renderer.imageUploads != (frame < 2 ? 1u : 2u)) failure = 12;
         if (frame == 0 || frame == 2) {

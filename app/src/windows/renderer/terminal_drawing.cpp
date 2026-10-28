@@ -1,13 +1,17 @@
 #include "terminal_drawing.h"
 #include "terminal_cell_glyph.h"
+#include "terminal_font.h"
 #include "drawing_color.h"
 #include "windows_renderer.h"
 #include <math.h>
+#include <string.h>
 
 namespace {
 WindowsRenderer* renderer;
 ID2D1Factory* drawingFactory;
+IDWriteFactory* textFactory;
 IDWriteTextFormat* terminalFonts[4];
+const TerminalLigatureMap* ligatures;
 ID2D1RenderTarget* glyphTarget;
 ID2D1SolidColorBrush* glyphBrush;
 float dpiScale, cellWidth, cellHeight, gridLeft, gridTop;
@@ -21,7 +25,9 @@ bool scrollGuard;
 void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
     renderer = frame.renderer;
     drawingFactory = frame.factory;
+    textFactory = frame.textFactory;
     for (int i = 0; i < 4; ++i) terminalFonts[i] = frame.fonts[i];
+    ligatures = frame.ligatures;
     dpiScale = frame.dpiScale; cellWidth = frame.cellWidth; cellHeight = frame.cellHeight;
     paneBackground = frame.paneBackground;
     uiMetrics = frame.uiMetrics;
@@ -336,19 +342,108 @@ static HRESULT paintAtlasGlyph(ID2D1RenderTarget* raster, ID2D1SolidColorBrush* 
     }
     glyphTarget = nullptr; glyphBrush = nullptr;
     if (custom) return S_OK;
-    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)utf8, (int)length, nullptr, 0);
-    if (count <= 0) return HRESULT_FROM_WIN32(GetLastError());
-    wchar_t scratch[4096];
-    auto text = count <= 4096 ? scratch : static_cast<wchar_t*>(HeapAlloc(GetProcessHeap(), 0, (size_t)count * sizeof(wchar_t)));
-    if (!text) return E_OUTOFMEMORY;
-    HRESULT result = S_OK;
-    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)utf8, (int)length, text, count)) result = HRESULT_FROM_WIN32(GetLastError());
-    else {
+    TerminalTextLayout layout;
+    const HRESULT result = layout.initialize(textFactory, terminalFonts[flags & 3], utf8, length, width, height);
+    if (SUCCEEDED(result)) {
         rasterBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
-        raster->DrawText(text, count, terminalFonts[flags & 3], D2D1::RectF(x, y, x + width, y + height), rasterBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        layout.draw(raster, rasterBrush, x, y);
     }
-    if (text != scratch) HeapFree(GetProcessHeap(), 0, text);
     return result;
+}
+static HRESULT measureAtlasGlyph(const uint8_t* utf8, size_t length, uint32_t flags, float width, float height, D2D1_RECT_F& bounds) {
+    TerminalTextLayout layout;
+    const HRESULT result = layout.initialize(textFactory, terminalFonts[flags & 3], utf8, length, width, height);
+    if (SUCCEEDED(result)) bounds = layout.bounds();
+    return result;
+}
+namespace {
+struct LongLigatureLayout {
+    TerminalTextLayout layout;
+    uint8_t text[4096];
+    size_t length = 0;
+    float width = 0, height = 0;
+    uint32_t style = 0;
+    uint64_t used = 0;
+};
+LongLigatureLayout longLayouts[8];
+uint64_t layoutClock;
+HRESULT longLigatureLayout(const uint8_t* text, size_t length, uint32_t flags, float width, float height, TerminalTextLayout*& result) {
+    if (length > sizeof(longLayouts[0].text)) return E_INVALIDARG;
+    LongLigatureLayout* oldest = &longLayouts[0];
+    for (auto& entry : longLayouts) {
+        if (entry.length == length && entry.width == width && entry.height == height && entry.style == (flags & 3) &&
+            memcmp(entry.text, text, length) == 0) {
+            entry.used = ++layoutClock; result = &entry.layout; return S_OK;
+        }
+        if (entry.used < oldest->used) oldest = &entry;
+    }
+    oldest->length = 0;
+    const HRESULT status = oldest->layout.initialize(textFactory, terminalFonts[flags & 3], text, length, width, height);
+    if (FAILED(status)) return status;
+    memcpy(oldest->text, text, length);
+    oldest->length = length; oldest->width = width; oldest->height = height; oldest->style = flags & 3;
+    oldest->used = ++layoutClock; result = &oldest->layout;
+    return S_OK;
+}
+struct LigatureTile {
+    float width, offset;
+    uint32_t length;
+};
+HRESULT paintLigatureTile(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const uint8_t* bytes, size_t length,
+    uint32_t flags, float x, float y, float width, float height) {
+    if (length < sizeof(LigatureTile)) return E_INVALIDARG;
+    LigatureTile key;
+    memcpy(&key, bytes, sizeof(key));
+    if (key.length != length - sizeof(key)) return E_INVALIDARG;
+    TerminalTextLayout* layout;
+    const HRESULT result = longLigatureLayout(bytes + sizeof(key), key.length, flags, key.width, height, layout);
+    if (SUCCEEDED(result)) {
+        brush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+        // Integer pixel tile edges keep the atlas padding from blending the same ink twice.
+        target->PushAxisAlignedClip(D2D1::RectF(x, 0, x + width, 512 / dpiScale), D2D1_ANTIALIAS_MODE_ALIASED);
+        layout->draw(target, brush, x - key.offset, y);
+        target->PopAxisAlignedClip();
+    }
+    return result;
+}
+HRESULT measureLigatureTile(const uint8_t* bytes, size_t length, uint32_t flags, float width, float height, D2D1_RECT_F& bounds) {
+    if (length < sizeof(LigatureTile)) return E_INVALIDARG;
+    LigatureTile key;
+    memcpy(&key, bytes, sizeof(key));
+    if (key.length != length - sizeof(key)) return E_INVALIDARG;
+    TerminalTextLayout* layout;
+    const HRESULT result = longLigatureLayout(bytes + sizeof(key), key.length, flags, key.width, height, layout);
+    if (SUCCEEDED(result)) {
+        const auto ink = layout->bounds();
+        bounds = D2D1::RectF(0, ink.top, width, ink.bottom);
+    }
+    return result;
+}
+HRESULT drawLigature(float x, float y, const uint8_t* text, size_t length, uint32_t flags, uint32_t color) {
+    const float width = length * cellWidth;
+    if (width * dpiScale <= 384)
+        return renderer->terminal.drawGlyph(x, y, width, cellHeight, text, length, flags, color, paintAtlasGlyph, 255, false, measureAtlasGlyph);
+    TerminalTextLayout* layout;
+    HRESULT result = longLigatureLayout(text, length, flags, width, cellHeight, layout);
+    if (FAILED(result)) return result;
+    const auto ink = layout->bounds();
+    const float first = floorf((x + ink.left) * dpiScale), last = ceilf((x + ink.right) * dpiScale);
+    uint8_t keyBytes[4096 + sizeof(LigatureTile)];
+    if (length > sizeof(keyBytes) - sizeof(LigatureTile)) return E_INVALIDARG;
+    memcpy(keyBytes + sizeof(LigatureTile), text, length);
+    for (float left = first; left < last && SUCCEEDED(result); left += 384) {
+        const float tileWidth = fminf(384, last - left) / dpiScale;
+        const LigatureTile key = { width, left / dpiScale - x, (uint32_t)length };
+        memcpy(keyBytes, &key, sizeof(key));
+        result = renderer->terminal.drawGlyph(left / dpiScale, y, tileWidth, cellHeight, keyBytes, sizeof(key) + length,
+            flags, color, paintLigatureTile, 255, false, measureLigatureTile);
+    }
+    return result;
+}
+}
+void clearTerminalDrawingFontCache() {
+    for (auto& entry : longLayouts) { entry.layout.reset(); entry.length = 0; entry.used = 0; }
+    layoutClock = 0;
 }
 extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags) {
     const float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight, width = cells * cellWidth;
@@ -361,10 +456,18 @@ extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const
     bool ascii = length == cells;
     for (size_t i = 0; ascii && i < trimmed; i++) ascii = utf8[i] >= 32 && utf8[i] <= 126;
     if (ascii) {
-        for (size_t i = 0; i < trimmed && SUCCEEDED(result); i++) {
-            if (utf8[i] != ' ') result = renderer->terminal.drawGlyph(x + (float)i * cellWidth, y, cellWidth, cellHeight, utf8 + i, 1, flags, foreground, paintAtlasGlyph);
+        for (size_t i = 0; i < trimmed && SUCCEEDED(result);) {
+            size_t start = trimmed - i, end = start;
+            if (ligatures) ligatures->next(utf8 + i, trimmed - i, flags, start, end);
+            for (size_t plain = 0; plain < start && SUCCEEDED(result); ++plain) {
+                const size_t column = i + plain;
+                if (utf8[column] != ' ') result = renderer->terminal.drawGlyph(x + (float)column * cellWidth, y, cellWidth, cellHeight,
+                    utf8 + column, 1, flags, foreground, paintAtlasGlyph, 255, false, measureAtlasGlyph);
+            }
+            if (end > start && SUCCEEDED(result)) result = drawLigature(x + (float)(i + start) * cellWidth, y, utf8 + i + start, end - start, flags, foreground);
+            i += end;
         }
-    } else if (trimmed) result = renderer->terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph, 255, terminalCellGlyph(utf8, trimmed));
+    } else if (trimmed) result = renderer->terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph, 255, terminalCellGlyph(utf8, trimmed), terminalCellGlyph(utf8, trimmed) ? nullptr : measureAtlasGlyph);
     if (SUCCEEDED(result) && (flags & 4)) result = renderer->terminal.drawSolid(x, y + cellHeight - 2, x + width, y + cellHeight - 1, foreground);
     if (SUCCEEDED(result) && (flags & 8)) result = renderer->terminal.drawSolid(x, y + cellHeight * 0.55f, x + width, y + cellHeight * 0.55f + 1, foreground);
     return (int)renderer->terminalResult(result);
@@ -395,7 +498,7 @@ extern "C" int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reu
     const uint32_t scalars[] = {
         key.pane_id, key.columns, key.rows, key.background, key.foreground, key.cursor,
         key.selection_background, key.accent, key.is_dark | (scrollGuard ? 8u : 0u),
-        key.link_row, key.link_start, key.link_end
+        key.link_row, key.link_start, key.link_end, key.cursor_row, key.cursor_column
     };
     const float geometry[] = { gridLeft, gridTop, cellWidth, cellHeight };
     return (int)renderer->terminalResult(renderer->terminal.beginGeometry(key.generation, scalars, geometry, *reused));

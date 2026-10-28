@@ -21,6 +21,11 @@ Use exact theme names from Theme Studio. Shell IDs are `startup`, `cmd`,
 Explicit appearance overrides an incompatible theme with that mode's default.
 Unknown keys and invalid values are errors.
 
+Programming ligatures are rendered when the font provides them, for example in
+JetBrains Mono or Cascadia Code. They preserve terminal cell positions and stop
+at style/selection changes and the cursor cell. Font variants without ligatures
+retain ordinary character rendering.
+
 ## Built-in themes
 
 The twelve Vex palettes pair a tinted terminal background with coordinated window

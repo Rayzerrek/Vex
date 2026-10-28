@@ -1,6 +1,55 @@
 #include "windows_renderer.h"
 #include "window_visibility.h"
+#include "terminal_font.h"
+#include "terminal_drawing.h"
+#include <string.h>
 #include <stdio.h>
+
+namespace {
+int testTerminalTextTiles(WindowsRenderer& renderer, ID2D1Factory* d2d) {
+    RendererComPtr<IDWriteFactory> factory;
+    if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&factory)))) return 30;
+    IDWriteTextFormat* fonts[4] = {};
+    float width = 0, height = 0;
+    if (FAILED(createTerminalFonts(factory.Get(), L"Consolas", 14, fonts, width, height))) return 31;
+    // Force the long-run route even on Windows images without a programming ligature font.
+    TerminalLigatureMap map;
+    map.characters[0]['='] = true;
+    const UINT columns = 130, viewportWidth = 1280, viewportHeight = 64;
+    const size_t bytes = viewportWidth * viewportHeight * 4;
+    auto pixels = static_cast<uint8_t*>(HeapAlloc(GetProcessHeap(), 0, bytes * 2));
+    int failure = pixels ? 0 : 32;
+    uint64_t baselineMass = 0, misses = 0;
+    if (!failure && FAILED(renderer.resize(viewportWidth, viewportHeight, 96))) failure = 33;
+    for (unsigned frame = 0; frame < 3 && !failure; ++frame) {
+        if (FAILED(renderer.beginFrame())) { failure = 34; break; }
+        renderer.ui.Clear(D2D1::ColorF(0x000000));
+        beginTerminalDrawingFrame({ &renderer, d2d, factory.Get(), { fonts[0], fonts[1], fonts[2], fonts[3] }, frame ? &map : nullptr, 1, width, height, 0, {} });
+        beginTerminalPane({ 0, 0, (float)viewportWidth, (float)viewportHeight });
+        // A cold procedural shade leaves a translucent brush. Text must restore its own mask opacity.
+        // Keep the shade outside the viewport so cache-replay pixels remain directly comparable.
+        const uint8_t shade[] = { 0xe2, 0x96, (uint8_t)(0x91 + frame) };
+        const HRESULT seed = (HRESULT)vex_draw_run(200, 0, 1, shade, sizeof(shade), 0xffffff, 0, 0);
+        uint8_t text[columns]; memset(text, '=', sizeof(text));
+        const HRESULT draw = (HRESULT)vex_draw_run(0, 0, columns, text, sizeof(text), 0xffffff, 0, 0);
+        vex_end_pane();
+        const HRESULT end = renderer.endFrame(pixels, viewportWidth * 4);
+        if (FAILED(seed) || FAILED(draw) || FAILED(end)) { failure = 35; break; }
+        uint64_t mass = 0;
+        for (size_t i = 0; i < bytes; i += 4) mass += pixels[i];
+        if (!frame) baselineMass = mass;
+        else if (!baselineMass || mass * 100 < baselineMass * 90 || mass * 100 > baselineMass * 110) { failure = 36; break; }
+        if (frame == 1) {
+            memcpy(pixels + bytes, pixels, bytes);
+            misses = renderer.terminal.glyphMisses;
+        } else if (frame == 2 && (memcmp(pixels, pixels + bytes, bytes) || renderer.terminal.glyphMisses != misses + 1)) failure = 37;
+    }
+    clearTerminalDrawingFontCache();
+    if (pixels) HeapFree(GetProcessHeap(), 0, pixels);
+    for (auto font : fonts) font->Release();
+    return failure;
+}
+}
 
 // Hidden WARP fixture: exercise worker ownership without depending on a hardware adapter or UI input.
 int testRendererStartup() {
@@ -77,6 +126,7 @@ int testRendererStartup() {
             }
         }
     }
+    if (!failure) failure = testTerminalTextTiles(renderer, factory.Get());
     if (FAILED(renderer.shutdown()) && !failure) failure = 18;
     // Recovery still supports synchronous initialization without an earlier warmup request.
     if (!failure && FAILED(renderer.initialize(window, factory.Get(), true))) failure = 19;
