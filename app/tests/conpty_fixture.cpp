@@ -5,6 +5,7 @@
 #include <string.h>
 
 int testPtyInputQueue();
+int testShellCatalog();
 
 namespace {
 DWORD WINAPI copyOutput(void* context) {
@@ -115,6 +116,7 @@ int testUpdateInstallerRestarted();
 int main(int argc, char** argv) {
     if (argc == 1) return testUpdateInstallerRestarted();
     if (argc == 2 && !strcmp(argv[1], "pty-input-queue")) return testPtyInputQueue();
+    if (argc == 2 && !strcmp(argv[1], "shell-catalog")) return testShellCatalog();
     if (argc == 2 && !strcmp(argv[1], "kitty-renderer")) return testKittyImageRenderer();
     if (argc == 2 && !strcmp(argv[1], "renderer-startup")) return testRendererStartup();
     if (argc == 4 && !strcmp(argv[1], "--update-parent")) return testUpdateInstallerParent();

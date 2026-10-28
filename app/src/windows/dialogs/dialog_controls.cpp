@@ -352,6 +352,18 @@ bool installListOverlay(HWND control, bool horizontal, HWND combo = nullptr) {
     return true;
 }
 LRESULT CALLBACK dialogControlInput(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    const bool button = (GetWindowLongPtrW(control, GWL_STYLE) & BS_TYPEMASK) == BS_OWNERDRAW;
+    // Owner-drawn buttons do not advertise a default-pushbutton style to IsDialogMessage.
+    // Claim Enter so keyboard navigation activates the focused button, like Space does.
+    if (button && message == WM_GETDLGCODE && lparam) {
+        const auto& key = *reinterpret_cast<const MSG*>(lparam);
+        if ((key.message == WM_KEYDOWN || key.message == WM_CHAR) && key.wParam == VK_RETURN)
+            return DefSubclassProc(control, message, wparam, lparam) | DLGC_WANTMESSAGE;
+    }
+    if (button && wparam == VK_RETURN) {
+        if (message == WM_KEYDOWN) { SendMessageW(control, BM_CLICK, 0, 0); return 0; }
+        if (message == WM_CHAR) return 0;
+    }
     if (message == WM_ERASEBKGND) return 1;
     if (message == WM_PAINT) {
         PAINTSTRUCT paint;

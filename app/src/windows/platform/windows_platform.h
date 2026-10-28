@@ -146,6 +146,8 @@ void vex_window_error(const char* message);
 int vex_window_shell_name(const uint8_t* bytes, size_t length);
 /* Tokens are nonzero, never reused, and cannot be interpreted as heap pointers. */
 int vex_pty_open(uint32_t token, uint16_t columns, uint16_t rows, VexPtyLaunch launch, VexPty** output);
+/* Window thread: identities of available builtins and saved shell profiles, independent of open panes. */
+int vex_pty_set_shell_catalog(const VexDialogText* programs, size_t count);
 int vex_machine_name(uint8_t* bytes, size_t capacity, size_t* length);
 int vex_system_directory(uint8_t* bytes, size_t capacity, size_t* length);
 int vex_shell_path(uint8_t* bytes, size_t capacity, size_t* length);

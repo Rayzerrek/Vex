@@ -390,7 +390,7 @@ fn resolvedShellKind(profile: BuiltinShellProfile) ShellKind {
         .gitbash => .gitbash,
     };
 }
-fn resolveBuiltinProgram(allocator: std.mem.Allocator, kind: BuiltinShellProfile, system_directory: []const u8, environment: *const std.process.EnvMap) !?[]u8 {
+pub fn resolveBuiltinProgram(allocator: std.mem.Allocator, kind: BuiltinShellProfile, system_directory: []const u8, environment: *const std.process.EnvMap) !?[]u8 {
     if (try resolveCanonicalProgram(allocator, kind, system_directory, environment)) |path| return path;
     const executable = switch (kind) {
         .system, .cmd => "cmd.exe",

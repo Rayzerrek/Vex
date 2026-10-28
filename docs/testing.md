@@ -27,6 +27,26 @@ Alternatively, copy `app/zig-out/bin/` to a local Windows filesystem and run
 `OpenConsole.exe` and `vex-conpty-fixture.exe`. UNC-backed temporary directories
 can fail Windows file-locking tests. A Linux cross-build is **not** a Windows test pass.
 
+When cross-building in WSL, copy the binaries **and change the working directory**
+to a local Windows directory before running them. Tests that start Windows shells
+in the current directory correctly reject a WSL share with
+`WslDirectoryRequiresShell` (reported as `ShellStartFailed` by the application).
+A UNC working directory also leaves test temporary files on the share, where
+Windows file locks may be unavailable. From PowerShell in `app/`:
+
+```powershell
+$testDirectory = Join-Path $env:TEMP ('Vex-tests-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $testDirectory | Out-Null
+Copy-Item .\zig-out\bin\* $testDirectory
+Push-Location $testDirectory
+try {
+    & .\vex-native-tests.exe
+    if ($LASTEXITCODE -ne 0) { throw "Native tests failed: $LASTEXITCODE" }
+} finally {
+    Pop-Location
+}
+```
+
 ## Desktop validation
 
 Use a real Windows desktop for rendering, mixed DPI, clipboard/TUI behavior,

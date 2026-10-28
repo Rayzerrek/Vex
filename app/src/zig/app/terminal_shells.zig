@@ -5,13 +5,16 @@ const shell = @import("../shell/shell_launch.zig");
 const wsl_registry = @import("../windows/wsl_registry.zig");
 const custom_profiles = @import("../shell/custom_profiles.zig");
 
-/// Refresh only when opening shell-selection UI or validating an external configuration change.
+/// Refresh at startup, when opening shell-selection UI or validating an external configuration change.
 /// Modal updates reuse the snapshot so sliders and theme previews never scan PATH.
 pub fn discoverAvailableShells(self: *TerminalApplication) void {
     const system_directory = platform.systemDirectoryAlloc(self.allocator) catch null;
     defer if (system_directory) |dir| self.allocator.free(dir);
     var environment = platform.shellEnvironment(self.allocator) catch null;
     defer if (environment) |*env| env.deinit();
+    if (system_directory) |sys_dir| if (environment) |*env| {
+        refreshShellCatalog(self, sys_dir, env) catch |err| self.fail(err);
+    };
 
     const candidates = [_]shell.ShellKind{ .pwsh, .powershell, .cmd, .nu, .gitbash, .wsl };
     var count: u8 = 0;
@@ -47,6 +50,34 @@ pub fn discoverAvailableShells(self: *TerminalApplication) void {
         count = 1;
     }
     self.available_shell_count = count;
+}
+
+fn refreshShellCatalog(self: *TerminalApplication, system_directory: []const u8, environment: *const std.process.EnvMap) !void {
+    var programs: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (programs.items) |program| self.allocator.free(program);
+        programs.deinit(self.allocator);
+    }
+    // Reserve the chooser's complete catalog so appending a resolved path cannot leak it.
+    try programs.ensureTotalCapacity(self.allocator, 64);
+    if (self.launch.isDeclaredShell()) programs.appendAssumeCapacity(try self.allocator.dupe(u8, self.launch.program));
+    for (std.enums.values(shell.BuiltinShellProfile)) |profile| {
+        if (profile == .system) continue;
+        if (try shell.resolveBuiltinProgram(self.allocator, profile, system_directory, environment)) |program|
+            programs.appendAssumeCapacity(program);
+    }
+    for (self.custom_shells.profiles.items) |profile| {
+        // Linux executable roles come from the per-session WSL process probe.
+        if (std.mem.startsWith(u8, profile.program, "wsl:")) continue;
+        const program = shell.resolveCustomProgramAlloc(self.allocator, profile.program, environment) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            continue;
+        };
+        programs.appendAssumeCapacity(program);
+    }
+    var native: [64]platform.c.VexDialogText = undefined;
+    for (programs.items, 0..) |program, i| native[i] = .{ .bytes = program.ptr, .length = program.len };
+    if (platform.c.vex_pty_set_shell_catalog(&native, programs.items.len) != 0) return error.ShellCatalogFailed;
 }
 pub fn shellLabel(self: *const TerminalApplication, kind: shell.ShellKind) []const u8 {
     if (self.custom_shells.find(@intFromEnum(kind))) |profile| return profile.name;

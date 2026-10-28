@@ -640,6 +640,19 @@ pub const TabEdit = struct {
     select_all: bool,
 };
 
+test "shell catalog recognizes unopened custom profiles by file identity and refreshes atomically" {
+    const allocator = std.testing.allocator;
+    const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(executable_directory);
+    const fixture = try std.fs.path.join(allocator, &.{ executable_directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "shell-catalog" }, .max_output_bytes = 4096 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    if (output.term != .Exited or output.term.Exited != 0) std.debug.print("{s}", .{output.stderr});
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
 test "PTY input queue grows lazily, preserves FIFO on wrap and OOM, and reserves protocol reply quota" {
     const allocator = std.testing.allocator;
     const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);

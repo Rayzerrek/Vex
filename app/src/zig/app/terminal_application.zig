@@ -499,7 +499,10 @@ pub const TerminalApplication = struct {
         try self.sessions.ensureUnusedCapacity(self.allocator, 1);
         const token = self.next_token;
         self.next_token = try std.math.add(u32, token, 1);
-        const session = TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, launch_ptr) catch |err| return if (err == error.OutOfMemory) err else error.ShellStartFailed;
+        const session = TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, launch_ptr) catch |err| {
+            if (@import("builtin").is_test) std.debug.print("Session creation failed: {s}; Win32={d}; program={s}; directory={s}\n", .{ @errorName(err), platform.lastPtyLaunchError(), launch_ptr.program, path.bytes });
+            return if (err == error.OutOfMemory) err else error.ShellStartFailed;
+        };
         errdefer session.destroy(self.allocator);
         const t = self.currentTheme();
         try session.terminal.applyPalette(t.foreground, t.background, t.cursor, &t.ansi);
@@ -529,6 +532,7 @@ pub const TerminalApplication = struct {
         };
     }
     fn initializeWorkspace(self: *TerminalApplication) !void {
+        self.discoverAvailableShells();
         const first = try self.addHomeSessionWithKind(self.default_shell_kind);
         errdefer self.removeSession(first.id);
         self.model = try workspace.WorkspaceModel.init(self.allocator, first.id);

@@ -3,6 +3,7 @@
 #include "conpty_graphics_reply.h"
 #include "pty_input_queue.h"
 #include "windows_wsl_probe.h"
+#include "shell_catalog.h"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <winternl.h>
@@ -10,7 +11,6 @@
 #include <string.h>
 
 HWND vex_native_window();
-static void extractLowerStem(const wchar_t* path, wchar_t (&stem)[64]);
 
 struct VexPty {
     uint32_t token;
@@ -441,24 +441,6 @@ extern "C" bool vex_pty_wsl_snapshot(VexPty* session, uint8_t* bytes, size_t cap
     return session && readWslProcessSnapshot(session->wslProbe, bytes, capacity, length);
 }
 
-static void extractLowerStem(const wchar_t* path, wchar_t (&stem)[64]) {
-    const wchar_t* start = path;
-    for (const wchar_t* p = path; *p; ++p) {
-        if (*p == L'\\' || *p == L'/') start = p + 1;
-    }
-    size_t len = 0;
-    while (start[len] && len < 63) {
-        wchar_t c = start[len];
-        stem[len] = (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c;
-        ++len;
-    }
-    stem[len] = 0;
-    if (len > 4 && (wcscmp(stem + len - 4, L".exe") == 0 || wcscmp(stem + len - 4, L".cmd") == 0 ||
-                    wcscmp(stem + len - 4, L".bat") == 0 || wcscmp(stem + len - 4, L".com") == 0)) {
-        stem[len - 4] = 0;
-    }
-}
-
 static bool matchStem(const wchar_t* stem, const wchar_t* const* list, size_t count) {
     for (size_t i = 0; i < count; ++i) {
         if (wcscmp(stem, list[i]) == 0) return true;
@@ -473,9 +455,15 @@ static bool isIgnoredHelper(const wchar_t* stem) {
     return matchStem(stem, list, sizeof(list) / sizeof(list[0]));
 }
 
+static ShellCatalog shellCatalog;
+
+extern "C" int vex_pty_set_shell_catalog(const VexDialogText* programs, size_t count) {
+    return shellCatalog.set(programs, count);
+}
+
 static bool isConfiguredShell(DWORD pid, const wchar_t* stem) {
     // Names only avoid unnecessary process/file queries; file identity makes the decision.
-    bool candidate = false;
+    bool candidate = shellCatalog.hasStem(stem);
     for (auto profile = sessions; profile; profile = profile->next) {
         if (profile->declaredShell && profile->shellIdentityKnown && wcscmp(profile->rootStem, stem) == 0) {
             candidate = true;
@@ -497,6 +485,7 @@ static bool isConfiguredShell(DWORD pid, const wchar_t* stem) {
     const bool known = GetFileInformationByHandle(image, &info) != FALSE;
     CloseHandle(image);
     if (!known) return false;
+    if (shellCatalog.matches(info)) return true;
     for (auto profile = sessions; profile; profile = profile->next) {
         if (profile->declaredShell && profile->shellIdentityKnown && profile->shellVolume == info.dwVolumeSerialNumber &&
             profile->shellFileHigh == info.nFileIndexHigh && profile->shellFileLow == info.nFileIndexLow) return true;
