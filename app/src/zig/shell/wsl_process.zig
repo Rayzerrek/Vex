@@ -135,9 +135,9 @@ test "WSL local scripts retain runtime icons while installed tools keep their id
     const cases = [_]struct { row: []const u8, glyph: app_icon.GlyphId }{
         .{ .row = "200 100 200 200 python3.13 /usr/bin/python3.13 server.py", .glyph = .python },
         .{ .row = "200 100 200 200 MainThread node server.js", .glyph = .nodedotjs },
-        .{ .row = "200 100 200 200 bun bun run server.ts", .glyph = .none },
+        .{ .row = "200 100 200 200 bun bun run server.ts", .glyph = .nodedotjs },
         .{ .row = "200 100 200 200 uv uv run uvicorn backend:app", .glyph = .python },
-        .{ .row = "200 100 200 200 node pnpm run build", .glyph = .none },
+        .{ .row = "200 100 200 200 node pnpm run build", .glyph = .nodedotjs },
         .{ .row = "200 100 200 200 node node /npm/node_modules/@anthropic-ai/claude-code/cli.js", .glyph = .claudecode },
     };
     for (cases) |case| {

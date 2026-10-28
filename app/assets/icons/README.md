@@ -29,6 +29,14 @@ serve light and dark themes: `icon_contrast.h` adapts the drawing color to the
 actual background when needed to maintain at least 3:1 contrast, without swapping
 icon sets. Pi uses the three-color pixel mark defined in `pi_icon.h`, shared by
 chrome and dialogs; each color follows the same background-contrast rule.
+Node.js uses an original three-face silver/graphite cube in `node_icon.h`, inspired by the
+hexagonal silhouette of the [Node.js mark](https://nodejs.org/en/about/branding/).
+Chrome caches each face as a DPI-specific mask; dialogs use the same geometry
+and colors. Contrast correction moves all three colors together to keep the
+lighting consistent while meeting 3:1 contrast against the background.
+JavaScript package managers (`npm`, `pnpm`, `yarn`, `bun`, and their runners) and
+web development tools such as Vite and Next.js share this runtime icon. Recognized
+tools launched through a package manager still use their own icons.
 Nine entries without a
 bundled path have explicit monograms rather than unrelated brand logos.
 

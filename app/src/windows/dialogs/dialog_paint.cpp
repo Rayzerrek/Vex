@@ -4,6 +4,7 @@
 #include <d2d1.h>
 #include "app_icon_geometry.generated.h"
 #include "icon_contrast.h"
+#include "node_icon.h"
 #include "pi_icon.h"
 
 namespace vex::dialog {
@@ -167,7 +168,18 @@ void drawProgramIcon(HDC dc, VexAppIcon icon, RECT bounds) {
     roundedFill(dc, bounds, tile, tile, px(12));
     const float x = (float)bounds.left + px(6), y = (float)bounds.top + px(6);
     const float size = (float)(bounds.right - bounds.left) - px(12);
-    if (icon.kind == 1 && icon.glyph == static_cast<uint8_t>(AppIconGlyph::pi)) {
+    if (icon.kind == 1 && icon.glyph == static_cast<uint8_t>(AppIconGlyph::nodedotjs)) {
+        Gdiplus::Graphics graphics(dc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        for (uint8_t faceIndex = 0; faceIndex < sizeof(nodeIconFaces) / sizeof(nodeIconFaces[0]); ++faceIndex) {
+            const auto& face = nodeIconFaces[faceIndex];
+            Gdiplus::PointF points[4];
+            for (uint32_t i = 0; i < 4; ++i) points[i] = Gdiplus::PointF(x + face.points[i].x * size / 24.0f, y + face.points[i].y * size / 24.0f);
+            const COLORREF tint = color(nodeIconColor(faceIndex, tileRgb));
+            Gdiplus::SolidBrush brush(Gdiplus::Color(255, GetRValue(tint), GetGValue(tint), GetBValue(tint)));
+            graphics.FillPolygon(&brush, points, 4);
+        }
+    } else if (icon.kind == 1 && icon.glyph == static_cast<uint8_t>(AppIconGlyph::pi)) {
         Gdiplus::Graphics graphics(dc);
         for (const auto& block : piIconBlocks) {
             const COLORREF tint = color(contrastingIconColor(block.color, tileRgb));

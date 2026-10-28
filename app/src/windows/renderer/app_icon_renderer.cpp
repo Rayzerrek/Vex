@@ -2,12 +2,13 @@
 #include "app_icon_geometry.generated.h"
 #include "drawing_color.h"
 #include "icon_contrast.h"
+#include "node_icon.h"
 #include "pi_icon.h"
 #include <string.h>
 
 namespace {
 // A distinct binary prefix keeps icon masks separate from text in the shared atlas.
-struct AppIconMaskKey { uint8_t tag[4]; uint8_t glyph; };
+struct AppIconMaskKey { uint8_t tag[4]; uint8_t glyph; uint8_t face; };
 
 HRESULT paintAppIcon(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const uint8_t* bytes, size_t length, uint32_t, float x, float y, float width, float height) {
     if (length != sizeof(AppIconMaskKey)) return E_INVALIDARG;
@@ -25,7 +26,13 @@ HRESULT paintAppIcon(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, con
     if (FAILED(result)) return result;
     sink->SetFillMode(icon.fill);
     const auto point = [&](D2D1_POINT_2F p) { return D2D1::Point2F(x + p.x * width / 24.0f, y + p.y * height / 24.0f); };
-    for (uint32_t i = 0; i < icon.figureCount; ++i) {
+    if (key.glyph == static_cast<uint8_t>(AppIconGlyph::nodedotjs)) {
+        if (key.face >= sizeof(nodeIconFaces) / sizeof(nodeIconFaces[0])) return E_INVALIDARG;
+        const auto& face = nodeIconFaces[key.face];
+        sink->BeginFigure(point(D2D1::Point2F(face.points[0].x, face.points[0].y)), D2D1_FIGURE_BEGIN_FILLED);
+        for (uint32_t j = 1; j < 4; ++j) sink->AddLine(point(D2D1::Point2F(face.points[j].x, face.points[j].y)));
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    } else for (uint32_t i = 0; i < icon.figureCount; ++i) {
         const auto& figure = icon.figures[i];
         sink->BeginFigure(point(icon.points[figure.offset]), D2D1_FIGURE_BEGIN_FILLED);
         for (uint32_t j = 1; j < figure.count; ++j) sink->AddLine(point(icon.points[figure.offset + j]));
@@ -40,6 +47,15 @@ HRESULT paintAppIcon(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, con
 }
 
 void UiRenderer::DrawAppIcon(uint8_t glyph, IDWriteTextFormat* badgeFont, D2D1_RECT_F rect, const UiBrush* brush, uint32_t background) {
+    if (glyph == static_cast<uint8_t>(AppIconGlyph::nodedotjs)) {
+        for (uint8_t i = 0; i < sizeof(nodeIconFaces) / sizeof(nodeIconFaces[0]); ++i) {
+            const AppIconMaskKey key = { { 'I', 'C', 'O', 'N' }, glyph, i };
+            record(batches.drawGlyph(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                reinterpret_cast<const uint8_t*>(&key), sizeof(key), 0,
+                nodeIconColor(i, background), paintAppIcon, colorAlpha(brush->color)));
+        }
+        return;
+    }
     if (glyph == static_cast<uint8_t>(AppIconGlyph::pi)) {
         const float sx = (rect.right - rect.left) / 24.0f, sy = (rect.bottom - rect.top) / 24.0f;
         UiBrush ink;
@@ -60,7 +76,7 @@ void UiRenderer::DrawAppIcon(uint8_t glyph, IDWriteTextFormat* badgeFont, D2D1_R
         DrawText(text, count, badgeFont, rect, brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         return;
     }
-    const AppIconMaskKey key = { { 'I', 'C', 'O', 'N' }, glyph };
+    const AppIconMaskKey key = { { 'I', 'C', 'O', 'N' }, glyph, 0 };
     record(batches.drawGlyph(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
         reinterpret_cast<const uint8_t*>(&key), sizeof(key), 0, colorRgb(brush->color), paintAppIcon, colorAlpha(brush->color)));
 }

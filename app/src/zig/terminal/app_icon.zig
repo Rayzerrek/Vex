@@ -181,7 +181,7 @@ const glyph_catalog = [_]GlyphEntry{
     .{ .slug = "neovim", .id = .neovim, .rgb = 0x57A143 },
     .{ .slug = "nextdotjs", .id = .nextdotjs, .rgb = 0x000000 },
     .{ .slug = "nginx", .id = .nginx, .rgb = 0x009639 },
-    .{ .slug = "nodedotjs", .id = .nodedotjs, .rgb = 0x5FA04E },
+    .{ .slug = "nodedotjs", .id = .nodedotjs, .rgb = 0xB4BAC4 },
     .{ .slug = "npm", .id = .npm, .rgb = 0xCB3837 },
     .{ .slug = "nushell", .id = .nushell, .rgb = 0x4E9A06, .is_shell = true },
     .{ .slug = "opencode", .id = .opencode, .rgb = 0xF1ECEC },
@@ -362,10 +362,7 @@ pub fn resolveDirect(raw_name: []const u8) ?AppIcon {
 fn packageRuntimeIcon(name: []const u8) ?AppIcon {
     for ([_][]const u8{ "npm", "pnpm", "yarn", "bun", "npx", "pnpx", "bunx", "corepack", "vite", "next", "nextjs", "nuxt", "astro", "vue-cli-service", "react-scripts" }) |manager| {
         if (std.ascii.eqlIgnoreCase(name, manager)) {
-            // The terminal glyph does not make a running task an idle shell.
-            var icon = AppIcon.terminal_shell;
-            icon.is_shell = false;
-            return icon;
+            return AppIcon.glyphIcon(.nodedotjs, 0xB4BAC4, false);
         }
     }
     for ([_][]const u8{ "uv", "uvx", "pip", "pip3", "pipx", "poetry", "pdm" }) |manager| {
@@ -630,7 +627,7 @@ test "app icon resolution handles shim command lines, OSC titles, and unknown pr
     try std.testing.expect(idle_shell.is_shell);
 }
 
-test "package commands use terminal icons without becoming idle shells" {
+test "package commands use runtime icons without becoming idle shells" {
     for ([_][]const u8{
         "npm run dev",           "npm start",                "pnpm dev",                                 "pnpm run dev:web",                                           "yarn serve",                                               "bun run dev",                        "bun start",
         "pnpm --filter web dev", "npm --prefix web run dev", "yarn --cwd web start",                     "cmd /d /s /c npm run dev",                                   "node C:\\npm\\node_modules\\npm\\bin\\npm-cli.js run dev", "node node_modules/vite/bin/vite.js", "npx vite dev",
@@ -638,12 +635,14 @@ test "package commands use terminal icons without becoming idle shells" {
     }) |command| {
         const icon = resolve(command_identity.commandExecutable(command), command, "nvim", null);
         errdefer std.debug.print("dev server command: {s}\n", .{command});
-        try std.testing.expectEqual(Kind.shell, icon.kind);
+        try std.testing.expectEqual(Kind.glyph, icon.kind);
+        try std.testing.expectEqual(GlyphId.nodedotjs, icon.glyph);
         try std.testing.expect(!icon.is_shell);
     }
     for ([_][]const u8{ "npm install", "npm run build", "pnpm test", "yarn lint", "bun run server.ts", "npx next build", "corepack pnpm run build", "pnpx custom-tool" }) |command| {
         const icon = resolve(command_identity.commandExecutable(command), command, "nvim", null);
-        try std.testing.expectEqual(Kind.shell, icon.kind);
+        try std.testing.expectEqual(Kind.glyph, icon.kind);
+        try std.testing.expectEqual(GlyphId.nodedotjs, icon.glyph);
         try std.testing.expect(!icon.is_shell);
     }
     for ([_][]const u8{ "uv run server.py", "uv run uvicorn backend:app", "uvx custom-tool", "poetry run python server.py", "pdm run backend", "pipx run custom-tool" }) |command| {
@@ -652,6 +651,12 @@ test "package commands use terminal icons without becoming idle shells" {
     try std.testing.expectEqual(GlyphId.python, resolve("uvicorn", "uv run uvicorn backend:app", null, null).glyph);
     try std.testing.expectEqual(GlyphId.claudecode, resolve("npx", "npx claude", null, null).glyph);
     try std.testing.expectEqual(GlyphId.neovim, resolve("npm", "npm run dev", null, "nvim").glyph);
+    for ([_][]const u8{ "npm", "npm.cmd", "pnpm.exe", "bun.exe", "yarn", "corepack", "vite", "next" }) |process| {
+        const icon = resolve(process, null, null, null);
+        try std.testing.expectEqual(GlyphId.nodedotjs, icon.glyph);
+        try std.testing.expect(!icon.is_shell);
+    }
+    try std.testing.expectEqual(GlyphId.nodedotjs, resolve("dev", "pnpm run dev", null, null).glyph);
 }
 
 test "runtime icons survive local scripts and versioned Python executables" {

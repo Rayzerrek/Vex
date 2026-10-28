@@ -5,6 +5,7 @@ test {
     _ = @import("terminal/path_walker.zig");
     _ = @import("terminal/url_detector.zig");
     _ = @import("terminal/app_icon.zig");
+    _ = @import("shell/wsl_process.zig");
     _ = @import("workspace/pane_navigation.zig");
     _ = @import("workspace/workspace_model.zig");
     _ = @import("workspace/terminal_theme.zig");
