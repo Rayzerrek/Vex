@@ -54,6 +54,15 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         const focused = active_tab.active_pane == placement.id and self.overlay == .none and self.editing_tab == null;
         const hovered = self.hovered_pane == placement.id and self.overlay == .none;
         const hovered_action = if (hovered) self.hovered_header_action else null;
+        const scroll_before = try session.terminal.scrollbar();
+        session.smooth_scroll.synchronize(scroll_before.offset, scroll_before.scrollable(), paint_now);
+        const scroll_position = session.smooth_scroll.position(paint_now, motion_enabled);
+        try session.terminal.scrollToRow(@intFromFloat(@floor(scroll_position)));
+        const scrollbar = try session.terminal.scrollbar();
+        session.smooth_scroll.observed_row = scrollbar.offset;
+        const fraction: f32 = if (motion_enabled) @floatCast(scroll_position - @as(f64, @floatFromInt(scrollbar.offset))) else 0;
+        const guard = if (fraction > 0) try session.terminal.readScrollGuard() else null;
+        if (session.smooth_scroll.pending(paint_now)) platform.requestAnimationFrame();
         const frame = try session.terminal.readFrame();
         if (active_tab.active_pane == placement.id) {
             saw_active_pane = true;
@@ -63,14 +72,18 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
                 null;
             self.cursor_blink.synchronize(key, self.cursorNowMs());
         }
-        const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
+        const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none and fraction == 0 and !session.smooth_scroll.pending(paint_now)) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
         {
             const summary = session.terminal.program_status.programStatus();
-            platform.beginPane(placement.bounds, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex());
+            platform.beginPane(placement.bounds, placement.id, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex());
             defer platform.endPane();
+            if (fraction > 0) platform.setTerminalScrollOffset(-fraction, false, frame.rows);
             try platform.drawTerminalFrame(placement.id, frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
+            if (guard) |edge| {
+                platform.setTerminalScrollOffset(@as(f32, @floatFromInt(frame.rows)) - fraction, true, frame.rows);
+                try platform.drawTerminalFrame(placement.id, edge, false, false, null, active_theme);
+            }
         }
-        const scrollbar = try session.terminal.scrollbar();
         if (self.metrics) |metrics| {
             if (session.copy_feedback.progress(self.cursorNowMs(), scrollbar.offset, platform.animationsEnabled())) |copy_progress| {
                 platform.drawCopyFeedback(placement.bounds, metrics.cell_width, metrics.cell_height, session.copy_feedback.spans.items, copy_progress);
@@ -78,6 +91,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         }
         var geometry = platform.ScrollbarGeometry.compute(placement.bounds, scrollbar);
         if (geometry) |*sb| {
+            sb.thumb_y += sb.travel * fraction / @as(f32, @floatFromInt(@max(1, sb.scrollable)));
             if (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id) {
                 const drag = self.pointer_drag.scrollbar;
                 sb.thumb_y = sb.thumbTopForY(drag.pointer_y, drag.grab_offset);
@@ -113,15 +127,9 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         const drag = self.pointer_drag.pane;
         const session = self.findSession(drag.pane_id) orelse return;
         const metrics = self.metrics orelse return;
-        const width = @min(200, @max(40, metrics.width - 8));
-        const ghost: panes.PaneRect = .{
-            .x = @max(4, @min(drag.point.x - 24, metrics.width - width - 4)),
-            .y = @max(3, @min(drag.point.y - 14, metrics.height - 38)),
-            .width = width,
-            .height = 34,
-        };
-        const icons = [_]app_icon.AppIcon{session.icon};
-        platform.drawTabDrag(ghost, model.tabs.items.len, session.displayTitle(), &icons, drop.target != null);
+        const ghost = drag.ghostBounds(metrics.width, metrics.height);
+        const detach_target = pointer.paneDetachAt(self, drag.pane_id, drag.point);
+        platform.drawPaneDrag(ghost, detach_target, session.displayTitle(), session.icon, drop.target != null);
     }
     if (!saw_active_pane) self.cursor_blink.synchronize(null, self.cursorNowMs());
     try self.syncAnimationWake();

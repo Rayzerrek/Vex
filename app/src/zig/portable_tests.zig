@@ -8,4 +8,6 @@ test {
     _ = @import("workspace/pane_navigation.zig");
     _ = @import("workspace/workspace_model.zig");
     _ = @import("workspace/layout_motion.zig");
+    _ = @import("workspace/smooth_scroll.zig");
+    _ = @import("workspace/pane_drag_preview.zig");
 }

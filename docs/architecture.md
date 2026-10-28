@@ -53,6 +53,13 @@ public API per decoded cell because equal style IDs can carry different content
 backgrounds; inverse and faint colors are applied only after that lookup.
 The shared cache is discarded between snapshots, including palette changes.
 Cursor drawing and workspace transitions reuse cached geometry.
+Terminal geometry uses pane-local coordinates; pane movement and fractional scrolling
+replay cached geometry with a translation. Dragging never resizes a PTY;
+committing a pane move resizes it to the final grid once while its bounds settle.
+Wheel scrolling retains fractional-row targets and retargets a 100 ms transition.
+Snapshots change only at integer row boundaries; a cached extra row fills the
+exposed edge. Typing, selection, resize and external viewport changes cancel stale
+scroll targets. TUIs with mouse tracking receive their original wheel events.
 
 ## Dependencies and output
 

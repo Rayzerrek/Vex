@@ -36,6 +36,12 @@ pub fn onProbe(self: *Application, query: u32) u64 {
         156 => return self.path_completion.selected_index,
         157 => return self.path_completion.first_visible,
         158 => return self.path_completion.query_len,
+        159 => {
+            const session = self.activeSession() orelse return 0;
+            const position = if (session.smooth_scroll.initialized) session.smooth_scroll.sample(self.cursorNowMs()) else @as(f64, @floatFromInt((session.terminal.scrollbar() catch return 0).offset));
+            return @intFromFloat(position * 1000);
+        },
+        160 => return if (self.activeSession()) |session| @intFromBool(session.smooth_scroll.pending(self.cursorNowMs())) else 0,
         104 => return @intFromBool(self.path_completion.index == .deferred and self.path_completion.index.deferred.loading),
         105 => return self.path_completion.entries.items.len,
         110...113 => {

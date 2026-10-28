@@ -11,6 +11,7 @@ const tab_strip = @import("../workspace/tab_strip.zig");
 const workspace = @import("../workspace/workspace_model.zig");
 const url_detector = @import("../terminal/url_detector.zig");
 const overlays = @import("terminal_overlays.zig");
+const drag_preview = @import("../workspace/pane_drag_preview.zig");
 
 pub const HoveredLink = struct {
     pane_id: panes.PaneId,
@@ -44,16 +45,31 @@ const PaneDrag = struct {
     pane_id: panes.PaneId,
     start_x: f32,
     start_y: f32,
+    source_bounds: panes.PaneRect,
     origin_tab: workspace.TabId,
     point: tab_strip.TabPointer,
     dragging: bool = false,
     target: ?panes.PaneId = null,
     zone: panes.DropZone = .none,
+
+    pub fn ghostBounds(self: PaneDrag, width: f32, height: f32) panes.PaneRect {
+        return drag_preview.bounds(self.source_bounds, .{ .x = self.start_x, .y = self.start_y }, self.point, width, height);
+    }
 };
 
 pub const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, pane: PaneDrag, selection: SelectionDrag, mouse: MouseDrag, scrollbar: ScrollbarDrag };
 
 pub const PaneDrop = struct { target: ?panes.PaneId = null, zone: panes.DropZone = .none };
+
+pub fn paneDetachAt(self: *Application, source: panes.PaneId, point: tab_strip.TabPointer) ?panes.PaneRect {
+    const model = if (self.model) |*model| model else return null;
+    const metrics = self.metrics orelse return null;
+    if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) return null;
+    const from = model.paneTabIndex(source) orelse return null;
+    if (model.tabs.items[from].tree.paneCount() <= 1) return null;
+    const layout = tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len) catch return null;
+    return drag_preview.detachTarget(layout, point, metrics.width);
+}
 
 pub fn paneDropAt(self: *Application, source: panes.PaneId, x: f32, y: f32) PaneDrop {
     const model = if (self.model) |*model| model else return .{};
@@ -114,6 +130,7 @@ fn handleScroll(self: *Application, delta: i32, x: f32, y: f32, modifiers: u32) 
     for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
         const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
         if ((modifiers & 1) == 0 and try session.terminal.isMouseTracking()) {
+            session.smooth_scroll.clear();
             if (try metrics.viewportPoint(placement.bounds, x, y, true)) |vp| {
                 const ticks = session.wheel_scroll.take(delta, 1);
                 const wheel_button: terminal.MouseButton = if (ticks < 0) .wheel_up else .wheel_down;
@@ -127,20 +144,24 @@ fn handleScroll(self: *Application, delta: i32, x: f32, y: f32, modifiers: u32) 
                 return;
             }
         }
-        const units = platform.wheelScrollLines() orelse if (session.size) |size| size.rows else 24;
-        const rows = session.wheel_scroll.take(delta, units);
-        if (rows == 0) return;
-        session.terminal.scroll(rows);
-        session.scrollbar_visibility.reveal(self.cursorNowMs());
-        platform.invalidateWindow();
+        try scrollSession(self, session, delta);
         return;
     };
-    const session = self.activeSession() orelse return;
+    if (self.activeSession()) |session| try scrollSession(self, session, delta);
+}
+
+fn scrollSession(self: *Application, session: *TerminalSession, delta: i32) !void {
+    const info = try session.terminal.scrollbar();
     const units = platform.wheelScrollLines() orelse if (session.size) |size| size.rows else 24;
-    const rows = session.wheel_scroll.take(delta, units);
-    if (rows == 0) return;
-    session.terminal.scroll(rows);
-    session.scrollbar_visibility.reveal(self.cursorNowMs());
+    const now = self.cursorNowMs();
+    session.smooth_scroll.synchronize(info.offset, info.scrollable(), now);
+    session.smooth_scroll.wheel(delta, units, now, platform.animationsEnabled());
+    if (!platform.animationsEnabled()) {
+        try session.terminal.scrollToRow(@intFromFloat(session.smooth_scroll.position(now, false)));
+        session.smooth_scroll.observed_row = (try session.terminal.scrollbar()).offset;
+    }
+    session.copy_feedback.clear();
+    session.scrollbar_visibility.reveal(now);
     platform.invalidateWindow();
 }
 
@@ -376,6 +397,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                                 .pane_id = placement.id,
                                 .start_x = x,
                                 .start_y = y,
+                                .source_bounds = placement.bounds,
                                 .origin_tab = model.activeTab().id,
                                 .point = point,
                             } };
@@ -496,10 +518,12 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                                 const token = self.next_token;
                                 self.next_token = try std.math.add(u32, token, 1);
                                 try self.layout_motion.capture(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled());
-                                if (try model.movePane(pdrag.pane_id, target.?, zone, @enumFromInt(token))) try self.updateLayout();
-                            } else if (point.y >= 0 and point.y < tab_strip.TabStripLayout.height and point.x >= tab_strip.TabStripLayout.left and point.x < layout.plusLeft() + 36 and (try layout.hitTab(point)) == null and model.tabs.items.len < workspace.WorkspaceModel.max_tabs) {
+                                _ = try model.movePane(pdrag.pane_id, target.?, zone, @enumFromInt(token));
+                                try self.updateLayout();
+                            } else if (paneDetachAt(self, pdrag.pane_id, point) != null) {
                                 const token = self.next_token;
                                 self.next_token = try std.math.add(u32, token, 1);
+                                try self.layout_motion.capture(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled());
                                 if (try model.detachPane(pdrag.pane_id, @enumFromInt(token))) {
                                     const session = self.findSession(pdrag.pane_id) orelse return error.MissingPaneSession;
                                     self.rememberTabShell(session);

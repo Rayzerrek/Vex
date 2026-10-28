@@ -1201,3 +1201,55 @@ test "scrollbar state and scrollToRow seek exact scrollback offsets" {
     try std.testing.expectEqual(@as(u64, 4), (try terminal.scrollbar()).offset);
     try std.testing.expect(try terminal.containsViewportText("ROW_7"));
 }
+
+test "fractional scrolling guard preserves styles and Unicode without moving the viewport or selection state" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(20, 4, 8, 16);
+    for (0..12) |row| {
+        var buffer: [128]u8 = undefined;
+        try terminal.feedOutput(try std.fmt.bufPrint(&buffer, "\x1b[38;2;{d};40;80mR{d} é 界\x1b[0m\r\n", .{ row * 10, row }));
+    }
+    try terminal.scrollToRow(0);
+    terminal.kb_selection_active = true;
+    const before = try terminal.scrollbar();
+    const guard = (try terminal.readScrollGuard()).?;
+    try std.testing.expectEqualDeep(before, try terminal.scrollbar());
+    try std.testing.expect(terminal.kb_selection_active);
+    const generation = (try terminal.readFrame()).generation;
+    try std.testing.expect((try terminal.readScrollGuard()).? == guard);
+    try std.testing.expectEqual(generation, (try terminal.readFrame()).generation);
+    try terminal.scrollToRow(1);
+    const reference = try terminal.readFrame();
+    for (guard.cells.items, reference.cells.items[3 * 20 ..][0..20]) |actual, expected| {
+        try std.testing.expectEqualDeep(expected.style, actual.style);
+        try std.testing.expectEqual(expected.width, actual.width);
+        try std.testing.expectEqualStrings(reference.cellText(expected), guard.cellText(actual));
+    }
+    terminal.scrollToBottom();
+    try std.testing.expect(try terminal.readScrollGuard() == null);
+}
+
+test "fractional scroll guard retains an image just below the viewport and releases deleted pixels" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(20, 4, 8, 16);
+    try terminal.feedOutput("0\r\n1\r\n2\r\n3\r\n\x1b_Ga=T,f=24,s=2,v=1,i=42,c=2,r=1,C=1,z=-1;/wAAAP8A\x1b\\\r\n5\r\n6\r\n7");
+    terminal.scrollToTop();
+    var stage: []const u8 = "base viewport";
+    errdefer std.debug.print("image scroll guard failure at {s}\n", .{stage});
+    try std.testing.expectEqual(@as(usize, 0), (try terminal.readFrame()).graphics.placements.items.len);
+    stage = "guard row";
+    const guard = (try terminal.readScrollGuard()).?;
+    try std.testing.expectEqual(@as(usize, 1), guard.graphics.placements.items.len);
+    try std.testing.expectEqual(@as(i32, 0), guard.graphics.placements.items[0].row);
+    try std.testing.expectEqual(@as(i32, -1), guard.graphics.placements.items[0].z);
+    try std.testing.expectEqual(@as(usize, 1), guard.graphics.images.items.len);
+    try std.testing.expectEqual(@as(usize, 0), (try terminal.readFrame()).graphics.placements.items.len);
+    stage = "image deletion";
+    try terminal.feedOutput("\x1b_Ga=d,d=I,i=42\x1b\\");
+    const cleared = (try terminal.readScrollGuard()).?;
+    try std.testing.expectEqual(@as(usize, 0), cleared.graphics.images.items.len);
+}

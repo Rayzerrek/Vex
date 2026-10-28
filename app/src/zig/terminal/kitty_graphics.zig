@@ -60,6 +60,13 @@ pub const Snapshot = struct {
     }
 
     pub fn update(self: *Snapshot, allocator: std.mem.Allocator, api: *const binding.Api, terminal: c.GhosttyTerminal, iterator_ptr: *c.GhosttyKittyGraphicsPlacementIterator, geometry_dirty: bool) !void {
+        return self.updateClipped(allocator, api, terminal, iterator_ptr, geometry_dirty, null, 1);
+    }
+    /// The guard owns only images crossing the one extra row, not a second full viewport.
+    pub fn updateRow(self: *Snapshot, allocator: std.mem.Allocator, api: *const binding.Api, terminal: c.GhosttyTerminal, iterator_ptr: *c.GhosttyKittyGraphicsPlacementIterator, row: i32, cell_height: u32) !void {
+        return self.updateClipped(allocator, api, terminal, iterator_ptr, true, row, @max(1, cell_height));
+    }
+    fn updateClipped(self: *Snapshot, allocator: std.mem.Allocator, api: *const binding.Api, terminal: c.GhosttyTerminal, iterator_ptr: *c.GhosttyKittyGraphicsPlacementIterator, geometry_dirty: bool, clip_row: ?i32, cell_height: u32) !void {
         var graphics: c.GhosttyKittyGraphics = null;
         try check(api.terminal_get(terminal, c.GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, @ptrCast(&graphics)));
         var generation: u64 = 0;
@@ -88,6 +95,13 @@ pub const Snapshot = struct {
             info.size = @sizeOf(c.GhosttyKittyGraphicsPlacementRenderInfo);
             try check(api.kitty_graphics_placement_render_info(iterator, handle, terminal, &info));
             if (!info.viewport_visible or info.pixel_width == 0 or info.pixel_height == 0) continue;
+            var y_offset: u32 = 0;
+            try check(api.kitty_graphics_placement_get(iterator, c.GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, &y_offset));
+            if (clip_row) |row| {
+                const top = @as(i64, info.viewport_row) * cell_height + y_offset;
+                const edge = @as(i64, row) * cell_height;
+                if (top >= edge + cell_height or top + info.pixel_height <= edge) continue;
+            }
             var image_generation: u64 = 0;
             try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_IMAGE_DATA_GENERATION, &image_generation));
             var image: ?*Image = null;
@@ -117,9 +131,9 @@ pub const Snapshot = struct {
                 .placement_id = 0,
                 .z = 0,
                 .column = info.viewport_col,
-                .row = info.viewport_row,
+                .row = info.viewport_row - (clip_row orelse 0),
                 .x_offset = 0,
-                .y_offset = 0,
+                .y_offset = y_offset,
                 .width = info.pixel_width,
                 .height = info.pixel_height,
                 .source_x = info.source_x,
@@ -130,7 +144,6 @@ pub const Snapshot = struct {
             try check(api.kitty_graphics_placement_get(iterator, c.GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID, &placement.placement_id));
             try check(api.kitty_graphics_placement_get(iterator, c.GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, &placement.z));
             try check(api.kitty_graphics_placement_get(iterator, c.GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET, &placement.x_offset));
-            try check(api.kitty_graphics_placement_get(iterator, c.GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, &placement.y_offset));
             try self.placements.append(allocator, placement);
         }
         var index: usize = 0;

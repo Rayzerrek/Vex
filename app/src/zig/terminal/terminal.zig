@@ -129,6 +129,9 @@ pub const Terminal = struct {
     kb_focus_col: u16 = 0,
     kb_focus_row: u16 = 0,
     frame: TerminalFrame = .{},
+    scroll_guard: TerminalFrame = .{},
+    scroll_guard_generation: ?u64 = null,
+    scroll_guard_graphics_generation: u64 = 0,
     graphics_iterator: c.GhosttyKittyGraphicsPlacementIterator = null,
     grapheme: std.ArrayList(u8) = .empty,
     search_row: std.ArrayList(u8) = .empty,
@@ -245,6 +248,9 @@ pub const Terminal = struct {
         self.api.terminal_free(self.handle);
         self.frame.cells.deinit(self.allocator);
         self.frame.utf8.deinit(self.allocator);
+        self.scroll_guard.cells.deinit(self.allocator);
+        self.scroll_guard.utf8.deinit(self.allocator);
+        self.scroll_guard.graphics.deinit(self.allocator);
         self.grapheme.deinit(self.allocator);
         self.search_row.deinit(self.allocator);
         self.program_status.deinit();
@@ -904,6 +910,42 @@ pub const Terminal = struct {
         self.frame.generation = try std.math.add(u64, self.frame.generation, 1);
         self.frame_valid = true;
         return &self.frame;
+    }
+    /// One extra row fills the exposed bottom edge of a fractional scroll. Cache it
+    /// until the viewport snapshot changes, not once per animation frame.
+    pub fn readScrollGuard(self: *Terminal) !?*const TerminalFrame {
+        const base = try self.readFrame();
+        const info = try self.scrollbar();
+        if (info.offset >= info.scrollable()) return null;
+        if (self.scroll_guard_generation == base.generation and self.scroll_guard_graphics_generation == base.graphics.generation) return &self.scroll_guard;
+        self.scroll_guard_generation = null;
+        const keyboard_selection = self.kb_selection_active;
+        defer self.kb_selection_active = keyboard_selection;
+        errdefer self.scrollToRow(info.offset) catch {};
+        try self.scrollToRow(info.offset + 1);
+        const next = try self.readFrame();
+        const columns = next.columns;
+        const cells = next.cells.items[(@as(usize, next.rows) - 1) * columns ..][0..columns];
+        try self.scroll_guard.cells.ensureTotalCapacity(self.allocator, columns);
+        self.scroll_guard.cells.clearRetainingCapacity();
+        self.scroll_guard.utf8.clearRetainingCapacity();
+        for (cells) |cell| {
+            var copy = cell;
+            copy.text_start = @intCast(self.scroll_guard.utf8.items.len);
+            try self.scroll_guard.utf8.appendSlice(self.allocator, next.cellText(cell));
+            self.scroll_guard.cells.appendAssumeCapacity(copy);
+        }
+        try self.scroll_guard.graphics.updateRow(self.allocator, self.api, self.handle, &self.graphics_iterator, @as(i32, next.rows) - 1, self.cell_height_px);
+        self.scroll_guard.columns = columns;
+        self.scroll_guard.rows = 1;
+        self.scroll_guard.cell_width_px = next.cell_width_px;
+        self.scroll_guard.cell_height_px = next.cell_height_px;
+        self.scroll_guard.generation +|= 1;
+        try self.scrollToRow(info.offset);
+        const restored = try self.readFrame();
+        self.scroll_guard_generation = restored.generation;
+        self.scroll_guard_graphics_generation = restored.graphics.generation;
+        return &self.scroll_guard;
     }
     /// Viewport search is for diagnostics; it shares the renderer's parsed snapshot, not raw PTY bytes.
     pub fn containsViewportText(self: *Terminal, text: []const u8) !bool {

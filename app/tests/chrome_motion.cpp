@@ -40,9 +40,22 @@ constexpr bool switchMotionReversesAndRespectsReducedMotion() {
     motion.update(0, 0, false);
     if (motion.update(1, 10, true) != 0 || motion.sample(90) != 0.875f) return false;
     if (motion.update(0, 90, true) != 0.875f) return false;
-    if (motion.sample(170) != 0.109375f) return false;
+    if (motion.sample(170) != 0.4375f) return false;
     return motion.update(1, 170, false) == 1 && !motion.pending(170);
 }
+constexpr bool chromeMotionKeepsVelocityOnRapidRetarget() {
+    ChromeMotion motion;
+    motion.update(0, 0, false);
+    motion.update(100, 10, true);
+    const float position = motion.sample(50), velocity = motion.velocity(50);
+    if (motion.update(200, 50, true) != position) return false;
+    const float following = motion.sample(50.01);
+    if (following <= position || following > 200) return false;
+    const float derivative = (following - position) / 0.01f;
+    if (derivative < velocity * 0.95f || derivative > velocity * 1.05f) return false;
+    return motion.sample(210) == 200 && !motion.pending(210);
+}
+static_assert(chromeMotionKeepsVelocityOnRapidRetarget());
 constexpr bool overlayScrollbarGeometryAndDrag() {
     if (OverlayScrollbar::compute(8, 8, 0, 240, 24).maximum != 0) return false;
     if (OverlayScrollbar::compute(8, 0, 0, 0, 24).maximum != 0) return false;

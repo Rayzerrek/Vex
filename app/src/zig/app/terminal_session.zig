@@ -58,6 +58,7 @@ pub const TerminalSession = struct {
     copy_source: copy_effect.Snapshot = .{},
     pending_copy_text: ?[]u8 = null,
     pending_copy_ms: i64 = 0,
+    smooth_scroll: @import("../workspace/smooth_scroll.zig").SmoothScroll = .{},
     wheel_scroll: @import("../workspace/wheel_scroll.zig").WheelScroll = .{},
     sync_defer_since_ms: ?i64 = null,
     icon: app_icon.AppIcon = app_icon.AppIcon.terminal_shell,
@@ -196,6 +197,7 @@ pub const TerminalSession = struct {
     /// User input acknowledges completed results; emulator replies deliberately bypass this path.
     pub fn writeUserInput(self: *TerminalSession, bytes: []const u8) !void {
         if (bytes.len == 0) return;
+        self.smooth_scroll.clear();
         self.recordApplicationInput();
         const previous = status_presentation.statusPresentationKey(self.terminal.program_status.programStatus());
         self.terminal.program_status.acknowledgeProgramStatus();
@@ -283,6 +285,7 @@ pub const TerminalSession = struct {
     pub fn resize(self: *TerminalSession, size: platform.TerminalSize) !void {
         if (self.size) |previous| if (std.meta.eql(previous, size)) return;
         self.cancelApplicationCopy();
+        self.smooth_scroll.clear();
         if (self.state == .running) try self.pty.resize(size);
         try self.terminal.resize(size.columns, size.rows, size.cell_width_px, size.cell_height_px);
         self.size = size;

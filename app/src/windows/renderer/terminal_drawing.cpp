@@ -13,6 +13,9 @@ ID2D1SolidColorBrush* glyphBrush;
 float dpiScale, cellWidth, cellHeight, gridLeft, gridTop;
 uint32_t paneBackground;
 uint32_t cellLayer = 0;
+float paneOriginX, paneOriginY;
+D3D12_RECT paneClip;
+bool scrollGuard;
 }
 void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
     renderer = frame.renderer;
@@ -23,14 +26,21 @@ void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
 }
 void beginTerminalPane(VexPaneRect bounds) {
     cellLayer = 0;
-    gridLeft = bounds.x + 6; gridTop = bounds.y + 30;
+    const float left = bounds.x + 6, top = bounds.y + 30;
+    // Keep cached glyph geometry local: moving a pane or drawing its drag preview
+    // changes only the replay transform, rather than rebuilding every terminal cell.
+    gridLeft = 0; gridTop = 0;
     const float scale = dpiScale;
     const D3D12_RECT clip = {
-        (LONG)fmaxf(0, roundf(gridLeft * scale)), (LONG)fmaxf(0, roundf(gridTop * scale)),
-        (LONG)fminf((float)renderer->width(), fmaxf(gridLeft, bounds.x + bounds.width - 18) * scale),
-        (LONG)fminf((float)renderer->height(), fmaxf(gridTop, bounds.y + bounds.height - 6) * scale)
+        (LONG)fmaxf(0, roundf(left * scale)), (LONG)fmaxf(0, roundf(top * scale)),
+        (LONG)fminf((float)renderer->width(), fmaxf(left, bounds.x + bounds.width - 18) * scale),
+        (LONG)fminf((float)renderer->height(), fmaxf(top, bounds.y + bounds.height - 6) * scale)
     };
+    paneClip = clip; scrollGuard = false;
+    paneOriginX = roundf(left * scale) / scale; paneOriginY = roundf(top * scale) / scale;
     renderer->beginTerminalPass(clip);
+    // Align the replay origin with the scissor so settled text stays crisp at mixed DPI.
+    renderer->terminal.setPreviewTransform(1, paneOriginX, paneOriginY);
 }
 
 static float snapDip(float v) {
@@ -379,15 +389,27 @@ extern "C" int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reu
     if (!reused) return (int)renderer->terminalResult(E_INVALIDARG);
     const uint32_t scalars[] = {
         key.pane_id, key.columns, key.rows, key.background, key.foreground, key.cursor,
-        key.selection_background, key.accent, key.is_dark,
+        key.selection_background, key.accent, key.is_dark | (scrollGuard ? 8u : 0u),
         key.link_row, key.link_start, key.link_end
     };
     const float geometry[] = { gridLeft, gridTop, cellWidth, cellHeight };
     return (int)renderer->terminalResult(renderer->terminal.beginGeometry(key.generation, scalars, geometry, *reused));
 }
 extern "C" void vex_terminal_geometry_end(bool complete) { renderer->terminal.endGeometry(complete); }
+extern "C" void vex_terminal_scroll_offset(float rows, bool guard, uint16_t viewport_rows) {
+    if (!isfinite(rows)) return;
+    scrollGuard = guard;
+    renderer->terminal.setPreviewTransform(1, paneOriginX, paneOriginY + rows * cellHeight);
+    D3D12_RECT clip = paneClip;
+    const float edge = (paneOriginY + (guard ? rows : viewport_rows + rows) * cellHeight) * dpiScale;
+    if (guard) {
+        clip.top = (LONG)fmaxf((float)clip.top, roundf(edge));
+        clip.bottom = (LONG)fminf((float)clip.bottom, roundf((paneOriginY + viewport_rows * cellHeight) * dpiScale));
+    } else clip.bottom = (LONG)fminf((float)clip.bottom, roundf(edge));
+    renderer->terminalResult(renderer->terminal.setClip(clip));
+}
 extern "C" void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns, uint16_t rows) {
-    cellLayer = 0;
+    cellLayer = 0; scrollGuard = false;
     gridLeft = 0; gridTop = 0;
     const float factor = fminf(bounds.width / fmaxf(1, columns * cellWidth), bounds.height / fmaxf(1, rows * cellHeight));
     const D3D12_RECT clip = {
@@ -399,6 +421,7 @@ extern "C" void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns,
     renderer->terminal.setPreviewTransform(factor, bounds.x, bounds.y);
 }
 extern "C" void vex_end_pane() {
+    scrollGuard = false;
     renderer->terminal.setPreviewTransform();
     renderer->endTerminalPass();
 }

@@ -141,6 +141,7 @@ int vex_window_tab_strip(uint32_t count, float tab_width);
 void vex_draw_tab_strip_background(uint32_t active_index);
 int vex_draw_tab_insertion_marker(float x);
 void vex_draw_tab_drag(VexPaneRect bounds, uint32_t source, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, bool valid_target);
+void vex_draw_pane_drag(VexPaneRect bounds, VexPaneRect detach_target, const uint8_t* title, size_t title_length, VexAppIcon icon, bool valid_target);
 void vex_window_error(const char* message);
 int vex_window_shell_name(const uint8_t* bytes, size_t length);
 /* Tokens are nonzero, never reused, and cannot be interpreted as heap pointers. */
@@ -173,11 +174,12 @@ bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length
 void vex_pty_ack_output(uint32_t token);
 bool vex_pty_exists(uint32_t token);
 void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTabEdit edit, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention);
-void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status);
+void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status);
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity);
 void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress);
 void vex_draw_split_preview(VexPaneRect bounds);
+void vex_terminal_scroll_offset(float rows, bool guard, uint16_t viewport_rows);
 void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns, uint16_t rows);
 void vex_draw_tab_overview(bool animating);
 void vex_draw_preview_close(VexPaneRect bounds, bool hovered);

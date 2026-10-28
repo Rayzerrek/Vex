@@ -41,7 +41,8 @@ bool hoveredTabClose;
 double chromeTimeMs;
 bool chromeMotionEnabled, chromeMotionPending, chromeEffectsPending;
 ChromeMotion tabSelectionMotion, tabSelectionWidthMotion, tabHoverMotion[8], tabCloseHoverMotion[8], tabEditMotion[8];
-ChromeMotion paneActionHoverMotion[4];
+struct PaneChromeMotion { uint32_t id = 0; ChromeMotion action[4], focus; };
+PaneChromeMotion paneChromeMotion[64];
 ChromeMotion splitPreviewRectMotion[4], splitPreviewAlphaMotion;
 ChromeMotion pathOpenMotion, pathRowMotion;
 bool splitPreviewSeenLastFrame, splitPreviewSeenThisFrame;
@@ -540,7 +541,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
     target->DrawLine(D2D1::Point2F(cx - 3.0f, cy - 3.0f), D2D1::Point2F(cx + 3.0f, cy + 3.0f), brush, 1.2f, roundCaps);
     target->DrawLine(D2D1::Point2F(cx + 3.0f, cy - 3.0f), D2D1::Point2F(cx - 3.0f, cy + 3.0f), brush, 1.2f, roundCaps);
 }
-static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action) {
+static void drawPaneHeaderActions(VexPaneRect bounds, PaneChromeMotion& motion, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action) {
     if (bounds.width < 180.0f || bounds.height < 28.0f) return;
     const float right = bounds.x + bounds.width - 6.0f;
     const float top = bounds.y + 3.5f;
@@ -548,10 +549,8 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
     float actionAlpha[4] = {};
     for (uint8_t i = 0; i < 4; ++i) {
         const float targetAlpha = (hovered && hovered_action == i + 1) ? 1.0f : 0.0f;
-        actionAlpha[i] = hovered
-            ? paneActionHoverMotion[i].update(targetAlpha, chromeTimeMs, chromeMotionEnabled)
-            : targetAlpha;
-        if (hovered) chromeEffectsPending |= paneActionHoverMotion[i].pending(chromeTimeMs);
+        actionAlpha[i] = motion.action[i].update(targetAlpha, chromeTimeMs, chromeMotionEnabled);
+        chromeEffectsPending |= motion.action[i].pending(chromeTimeMs);
     }
     const auto drawButtonPill = [&](float bx, uint32_t fill, float alpha = 1.0f) {
         if (alpha <= 0.0f) return;
@@ -605,7 +604,7 @@ static void drawPaneHeaderActions(VexPaneRect bounds, bool focused, bool hovered
         target->DrawLine(D2D1::Point2F(cx + 3.5f, cy - 3.5f), D2D1::Point2F(cx - 3.5f, cy + 3.5f), brush, 1.25f, roundCaps);
     }
 }
-extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status) {
+extern "C" void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status) {
     const D2D1_ROUNDED_RECT paneCard = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), 6.0f, 6.0f);
     brush->SetColor(rgb(chromePalette.pane_bg));
     target->FillRoundedRectangle(paneCard, brush);
@@ -616,12 +615,14 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, bool focused, bool hovered, b
         brush->SetColor(rgb(chromePalette.border, chromePalette.is_dark ? 0.38f : 0.45f));
         target->FillRectangle(D2D1::RectF(bounds.x + 1.0f, bounds.y + 26.0f, bounds.x + bounds.width - 1.0f, bounds.y + 27.0f), brush);
     }
-    const uint32_t borderCol = (can_focus && focused)
-        ? blendRgb(chromePalette.border, chromePalette.active_tab_border, 0.55f)
-        : chromePalette.border;
-    brush->SetColor(rgb(borderCol, (can_focus && focused) ? 0.82f : 0.48f));
+    auto& motion = paneChromeMotion[pane_id % 64];
+    if (motion.id != pane_id) { motion = {}; motion.id = pane_id; }
+    const float focus = motion.focus.update(can_focus && focused ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled);
+    chromeEffectsPending |= motion.focus.pending(chromeTimeMs);
+    const uint32_t borderCol = blendRgb(chromePalette.border, chromePalette.active_tab_border, focus * 0.55f);
+    brush->SetColor(rgb(borderCol, 0.48f + focus * 0.34f));
     target->DrawRoundedRectangle(paneCard, brush, 1.0f);
-    drawPaneHeaderActions(bounds, focused, hovered, can_focus, zoomed, hovered_action);
+    drawPaneHeaderActions(bounds, motion, focused, hovered, can_focus, zoomed, hovered_action);
     const float actionsWidth = (bounds.width >= 180.0f && bounds.height >= 28.0f) ? (can_focus ? 94.0f : 72.0f) : 0.0f;
     const float remainingWidth = fmaxf(0, bounds.width - actionsWidth);
     const float statusWidth = status.state >= 2 && status.state <= 5 && remainingWidth >= 90 ? 20.0f : 0.0f;
@@ -790,10 +791,15 @@ extern "C" void vex_draw_tab_drag(VexPaneRect bounds, uint32_t source, const uin
     }
     titleLabel(title, title_length, x + inset, y + 8, fmaxf(0, w - inset - 20), chromePalette.text_primary, tabTitleFont, {});
     if (w >= 48) {
-        brush->SetColor(rgb(chromePalette.text_muted, 0.65f));
-        for (int row = 0; row < 3; ++row) for (int col = 0; col < 2; ++col)
-            target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x + w - 12 + col * 3, y + 12 + row * 4), 0.7f, 0.7f), brush);
+        brush->SetColor(rgb(chromePalette.text_muted));
+        const float cx = x + w - 13, cy = y + 17;
+        target->DrawLine(D2D1::Point2F(cx - 3, cy - 3), D2D1::Point2F(cx + 3, cy + 3), brush, 1.2f, roundCaps);
+        target->DrawLine(D2D1::Point2F(cx + 3, cy - 3), D2D1::Point2F(cx - 3, cy + 3), brush, 1.2f, roundCaps);
     }
+}
+extern "C" void vex_draw_pane_drag(VexPaneRect bounds, VexPaneRect detach_target, const uint8_t* title, size_t title_length, VexAppIcon icon, bool valid_target) {
+    if (detach_target.width > 0) vex_draw_tab_insertion_marker(detach_target.x);
+    vex_draw_tab_drag(bounds, tabStripCount, title, title_length, &icon, 1, valid_target || detach_target.width > 0);
 }
 extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
     if (!target || !brush || !isfinite(bounds.x) || !isfinite(bounds.y) || !isfinite(bounds.width) || !isfinite(bounds.height)) return;

@@ -20,7 +20,7 @@ int testNotificationSurface() {
     CHECK_NOTICE(noticeNear(motion.update(true, 500, true), 0));
     const float interrupted = motion.update(true, 580, true);
     CHECK_NOTICE(noticeNear(motion.update(false, 580, true), interrupted));
-    CHECK_NOTICE(noticeNear(motion.update(false, 660, true), interrupted * 0.125f));
+    CHECK_NOTICE(noticeNear(motion.update(false, 660, true), interrupted * 0.5f));
     CHECK_NOTICE(noticeNear(motion.update(true, 700, false), 1) && !motion.pending(700));
     CHECK_NOTICE(noticeNear(motion.update(false, 710, false), 0) && !motion.pending(710));
     const auto update = NotificationGeometry::place(1000, 700, 0, 110, 0, 0, 90, false, 1);

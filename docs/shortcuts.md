@@ -19,6 +19,12 @@ preferences, font zoom and copying a selection. `Ctrl+S` remains terminal input.
 | Font size / reset | `Ctrl++` / `Ctrl+-` / `Ctrl+0` |
 | Close overlay | `Esc` |
 
+Drag a pane by its header to move it. A compact tab with the pane icon and title follows the pointer;
+highlighted edges show the split destination. Drag over another tab to reveal its
+panes, or over the plus button or empty tab-bar space to detach a split pane into
+a new tab. An insertion marker confirms the new-tab destination before release.
+`Esc` cancels the drag.
+
 ## Terminal
 
 | Action | Keys |
@@ -37,6 +43,10 @@ Selection/scrollback navigation applies on the primary screen; full-screen TUIs
 keep their arrows and paging keys. Copy/paste/cut remain available there.
 `Ctrl+C` sends an interrupt when nothing is selected. Hold Shift to bypass a
 TUI's mouse reporting and select locally.
+
+The terminal wheel scrolls smoothly, retaining small touchpad deltas. Windows'
+client-area animation preference controls the transition; scrollbar dragging and
+keyboard paging remain direct.
 
 Mouse selections copy and clear on release by default; disable **Copy on select**
 in Settings to copy explicitly.

@@ -251,6 +251,7 @@ pub const TerminalApplication = struct {
         try platform.scheduleCursorWake(delay);
     }
     pub fn resetCursorOnInput(self: *TerminalApplication) !void {
+        for (self.sessions.items) |session| session.smooth_scroll.clear();
         const now = self.cursorNowMs();
         if (self.cursor_blink.resetOnInput(now)) platform.invalidateWindow();
         try self.syncAnimationWake();
@@ -1704,14 +1705,21 @@ test "pane drag crosses tabs, cancellation restores selection and detaching reta
     const moved = app.findPlacement(first.id).?.bounds;
     _ = app.onPointer(.begin, moved.x + 40, moved.y + 12, 0);
     const layout = try tab_strip.TabStripLayout.init(1120, app.model.?.tabs.items.len);
-    _ = app.onPointer(.move, layout.plusLeft() + 10, 20, 0);
-    _ = app.onPointer(.end, layout.plusLeft() + 10, 20, 0);
+    try std.testing.expect(pointer.paneDetachAt(&app, first.id, .{ .x = layout.plusLeft() + 10, .y = 20 }) != null);
+    try std.testing.expect(pointer.paneDetachAt(&app, first.id, .{ .x = 1010, .y = 20 }) == null);
+    _ = app.onPointer(.move, 950, 20, 0);
+    const origin_bounds = app.findPlacement(first.id).?.bounds;
+    _ = app.onPointer(.end, 950, 20, 0);
     try std.testing.expect(app.health == .running);
     try std.testing.expectEqual(@as(usize, 3), app.model.?.tabs.items.len);
     try std.testing.expectEqual(first.id, app.model.?.activeTab().active_pane);
     try std.testing.expectEqual(@as(usize, 3), app.sessions.items.len);
     try std.testing.expectEqual(handle, first.pty.handle);
     try std.testing.expectEqual(@as(?usize, 0), app.model.?.activeTab().shell_launch_id);
+    try std.testing.expect(pointer.paneDetachAt(&app, first.id, .{ .x = 950, .y = 20 }) == null);
+    if (platform.animationsEnabled()) {
+        try std.testing.expectEqualDeep(origin_bounds, app.layout_motion.previous.items[0].bounds);
+    }
 }
 
 test "tab drag merges the entire split group without replacing its terminals" {

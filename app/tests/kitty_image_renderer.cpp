@@ -57,6 +57,20 @@ int testKittyImageRenderer() {
         if (SUCCEEDED(result)) result = renderer.drawImage(frame < 2 ? 1 : 2, frame < 2 ? red : green, 1, 1, bounds, uv);
         // Exercise a following glyph-atlas/solid batch after descriptor heap restoration.
         if (SUCCEEDED(result)) result = renderer.drawSolid(30, 0, 32, 16, 0x0000ff);
+        // A pane and its drag thumbnail must share local geometry while replaying
+        // at independent positions/scales, without rebuilding or leaking a transform.
+        const uint32_t key[12] = { 99, 4, 4 };
+        const float geometry[4] = { 0, 0, 8, 16 };
+        for (UINT viewIndex = 0; SUCCEEDED(result) && viewIndex < 2; ++viewIndex) {
+            renderer.setPreviewTransform(viewIndex ? 0.5f : 1.0f, viewIndex ? 20 : 2, 2);
+            bool reused = false;
+            result = renderer.beginGeometry(1, key, geometry, reused);
+            if (SUCCEEDED(result) && !reused) {
+                result = renderer.drawSolid(0, 0, 4, 4, 0xffff00);
+                renderer.endGeometry(SUCCEEDED(result));
+            }
+        }
+        renderer.setPreviewTransform();
         if (SUCCEEDED(result)) result = renderer.endPass(queue.Get());
         if (FAILED(result)) { failure = 6; break; }
         result = allocator->Reset();
@@ -87,6 +101,9 @@ int testKittyImageRenderer() {
         const auto pixels = static_cast<const uint8_t*>(memory);
         const uint8_t expected[] = { 0, (uint8_t)(frame < 2 ? 0 : 255), (uint8_t)(frame < 2 ? 128 : 0) };
         if (memcmp(pixels + 8 * 256 + 16 * 4, expected, 3) || pixels[8 * 256 + 31 * 4] != 255) failure = 11;
+        const uint8_t yellow[] = { 0, 255, 255 };
+        if (memcmp(pixels + 3 * 256 + 3 * 4, yellow, 3) || memcmp(pixels + 2 * 256 + 20 * 4, yellow, 3) ||
+            memcmp(pixels + 2 * 256 + 22 * 4, expected, 3) || renderer.geometryBuilds != 1 || renderer.geometryHits != frame * 2 + 1) failure = 17;
         const D3D12_RANGE noWrite = { 0, 0 }; readback->Unmap(0, &noWrite);
         if (renderer.imageUploads != (frame < 2 ? 1u : 2u)) failure = 12;
     }

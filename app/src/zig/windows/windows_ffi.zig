@@ -748,6 +748,19 @@ pub fn drawTabDrag(bounds: panes.PaneRect, source: usize, title: []const u8, ico
     c.vex_draw_tab_drag(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, @intCast(source), if (title.len == 0) null else title.ptr, title.len, &native_icons, count, valid_target);
 }
 
+pub fn drawPaneDrag(bounds: panes.PaneRect, detach_target: ?panes.PaneRect, title: []const u8, icon: app_icon.AppIcon, valid_target: bool) void {
+    const empty: panes.PaneRect = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
+    const dst = detach_target orelse empty;
+    c.vex_draw_pane_drag(
+        .{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height },
+        .{ .x = dst.x, .y = dst.y, .width = dst.width, .height = dst.height },
+        if (title.len == 0) null else title.ptr,
+        title.len,
+        nativeAppIcon(icon),
+        valid_target,
+    );
+}
+
 pub fn nativeAppIcon(icon: app_icon.AppIcon) c.VexAppIcon {
     var badge = [4]u8{ 0, 0, 0, 0 };
     const len: usize = @min(@as(usize, icon.badge_len), 2);
@@ -832,9 +845,9 @@ pub fn fontSize() f32 {
     return c.vex_window_font_size();
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
-pub fn beginPane(bounds: panes.PaneRect, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32) void {
+pub fn beginPane(bounds: panes.PaneRect, pane_id: panes.PaneId, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32) void {
     const action_code: u8 = if (hovered_action) |action| @intFromEnum(action) else 0;
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary, phase));
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, @intFromEnum(pane_id), focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary, phase));
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {
@@ -852,6 +865,9 @@ pub fn drawCopyFeedback(bounds: panes.PaneRect, cell_width: f32, cell_height: f3
 /// Draws the translucent split preview overlay for an active pane header drag-to-split gesture.
 pub fn drawSplitPreview(bounds: panes.PaneRect) void {
     c.vex_draw_split_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height });
+}
+pub fn setTerminalScrollOffset(rows: f32, guard: bool, viewport_rows: u16) void {
+    c.vex_terminal_scroll_offset(rows, guard, viewport_rows);
 }
 pub fn drawTerminalPreview(pane_id: panes.PaneId, bounds: panes.PaneRect, frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme) !void {
     c.vex_begin_terminal_preview(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, frame.columns, frame.rows);
