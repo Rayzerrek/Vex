@@ -35,7 +35,7 @@ SettingsGeometry settingsGeometry(SettingsPage page) {
     int rows[2] = {};
     switch (page) {
     case SettingsPage::general: g.cardCount = 2; rows[0] = 2; rows[1] = 2; g.headers[0] = L"Sessions"; g.headers[1] = L"Behavior"; break;
-    case SettingsPage::terminal: g.cardCount = 2; rows[0] = 2; rows[1] = 1; g.headers[0] = L"Text"; g.headers[1] = L"Cursor"; break;
+    case SettingsPage::terminal: g.cardCount = 2; rows[0] = 2; rows[1] = 2; g.headers[0] = L"Text"; g.headers[1] = L"Cursor and focus"; break;
     case SettingsPage::appearance: g.headers[0] = host.model.palette.is_dark ? L"Dark themes" : L"Light themes"; break;
     case SettingsPage::about: g.cardCount = 1; rows[0] = 3; g.headers[0] = L"Vex"; break;
     }
@@ -428,8 +428,8 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
 void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     const int id = (int)draw.CtlID;
     const bool navigation = id >= firstPageId && id < firstPageId + 4;
-    const bool toggle = id == blinkId || id == copyOnSelectId || id == confirmCloseId;
-    const bool checked = navigation ? (int)host.page == id - firstPageId : id == blinkId ? host.draft.cursor_blink : id == confirmCloseId ? host.draft.confirm_close : id == copyOnSelectId && host.draft.copy_on_select;
+    const bool toggle = id == blinkId || id == copyOnSelectId || id == confirmCloseId || id == activePaneBorderId;
+    const bool checked = navigation ? (int)host.page == id - firstPageId : id == blinkId ? host.draft.cursor_blink : id == confirmCloseId ? host.draft.confirm_close : id == activePaneBorderId ? host.draft.active_pane_border : id == copyOnSelectId && host.draft.copy_on_select;
     const bool pressed = (draw.itemState & ODS_SELECTED) != 0;
     RECT bounds = draw.rcItem; InflateRect(&bounds, -1, -1);
     // Rows and secondary actions sit on a card, so their corners must match the card rather than the window.
@@ -474,7 +474,7 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
     }
     if (toggle) {
         const auto now = GetTickCount64();
-        auto& motion = id == blinkId ? host.cursorBlinkMotion : id == confirmCloseId ? host.confirmCloseMotion : host.copyOnSelectMotion;
+        auto& motion = id == blinkId ? host.cursorBlinkMotion : id == confirmCloseId ? host.confirmCloseMotion : id == activePaneBorderId ? host.activePaneBorderMotion : host.copyOnSelectMotion;
         float position = motion.update(checked ? 1.0f : 0.0f, now, vex_window_animations_enabled());
         if (motion.pending(now) && !SetTimer(host.window, 8, 16, nullptr))
             position = motion.update(checked ? 1.0f : 0.0f, now, false);
@@ -493,6 +493,7 @@ void drawDialogButton(const DRAWITEMSTRUCT& draw) {
         bounds.left += px(12);
         const wchar_t* detail = id == blinkId ? L"Blink the cursor while a pane has focus."
             : id == copyOnSelectId ? L"Copy selected text to the clipboard automatically."
+            : id == activePaneBorderId ? L"Outline the focused pane with a border in the theme accent."
             : L"Ask before closing panes, tabs or Vex while programs are running.";
         if (host.height >= 430) {
             RECT title = { bounds.left, bounds.top + px(6), bounds.right, bounds.top + px(28) };

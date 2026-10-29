@@ -341,10 +341,11 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
             if (page != host.page) { const auto previousPage = host.page; host.page = page; showPage(previousPage); }
             return TRUE;
         }
-        if (LOWORD(wparam) == blinkId || LOWORD(wparam) == copyOnSelectId || LOWORD(wparam) == confirmCloseId) {
+        if (LOWORD(wparam) == blinkId || LOWORD(wparam) == copyOnSelectId || LOWORD(wparam) == confirmCloseId || LOWORD(wparam) == activePaneBorderId) {
             const int id = LOWORD(wparam);
             if (id == blinkId) host.draft.cursor_blink = !host.draft.cursor_blink;
             else if (id == copyOnSelectId) host.draft.copy_on_select = !host.draft.copy_on_select;
+            else if (id == activePaneBorderId) host.draft.active_pane_border = !host.draft.active_pane_border;
             else host.draft.confirm_close = !host.draft.confirm_close;
             notify(4, 0, nullptr, 0, host.draft);
             InvalidateRect(GetDlgItem(window, id), nullptr, FALSE);
@@ -467,11 +468,13 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
             host.cursorBlinkMotion.update(host.draft.cursor_blink ? 1.0f : 0.0f, now, vex_window_animations_enabled());
             host.copyOnSelectMotion.update(host.draft.copy_on_select ? 1.0f : 0.0f, now, vex_window_animations_enabled());
             host.confirmCloseMotion.update(host.draft.confirm_close ? 1.0f : 0.0f, now, vex_window_animations_enabled());
-            if ((!host.cursorBlinkMotion.pending(now) && !host.copyOnSelectMotion.pending(now) && !host.confirmCloseMotion.pending(now)) ||
+            host.activePaneBorderMotion.update(host.draft.active_pane_border ? 1.0f : 0.0f, now, vex_window_animations_enabled());
+            if ((!host.cursorBlinkMotion.pending(now) && !host.copyOnSelectMotion.pending(now) && !host.confirmCloseMotion.pending(now) && !host.activePaneBorderMotion.pending(now)) ||
                 (host.page != SettingsPage::terminal && host.page != SettingsPage::general)) KillTimer(window, 8);
             InvalidateRect(GetDlgItem(window, blinkId), nullptr, FALSE);
             InvalidateRect(GetDlgItem(window, copyOnSelectId), nullptr, FALSE);
             InvalidateRect(GetDlgItem(window, confirmCloseId), nullptr, FALSE);
+            InvalidateRect(GetDlgItem(window, activePaneBorderId), nullptr, FALSE);
             return TRUE;
         }
         if (wparam == 7 && host.layered) {
@@ -727,6 +730,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
         const bool blinkChanged = host.model.settings.cursor_blink != next.settings.cursor_blink;
         const bool copyChanged = host.model.settings.copy_on_select != next.settings.copy_on_select;
         const bool confirmChanged = host.model.settings.confirm_close != next.settings.confirm_close;
+        const bool borderChanged = host.model.settings.active_pane_border != next.settings.active_pane_border;
         if (itemsChanged || paletteChanged) clearThemeCardCache();
         host.model = next;
         if (host.model.kind == 4) {
@@ -745,6 +749,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
             if (blinkChanged) InvalidateRect(GetDlgItem(host.window, blinkId), nullptr, FALSE);
             if (copyChanged) InvalidateRect(GetDlgItem(host.window, copyOnSelectId), nullptr, FALSE);
             if (confirmChanged) InvalidateRect(GetDlgItem(host.window, confirmCloseId), nullptr, FALSE);
+            if (borderChanged) InvalidateRect(GetDlgItem(host.window, activePaneBorderId), nullptr, FALSE);
         }
         const int listControlId = host.model.kind == 4 ? themeGridId : listId;
         HWND list = GetDlgItem(host.window, listControlId);
@@ -789,6 +794,8 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     host.copyOnSelectMotion.update(host.draft.copy_on_select ? 1.0f : 0.0f, GetTickCount64(), false);
     host.confirmCloseMotion = {};
     host.confirmCloseMotion.update(host.draft.confirm_close ? 1.0f : 0.0f, GetTickCount64(), false);
+    host.activePaneBorderMotion = {};
+    host.activePaneBorderMotion.update(host.draft.active_pane_border ? 1.0f : 0.0f, GetTickCount64(), false);
     host.page = SettingsPage::general;
     host.fontSizeInvalid = false;
     host.layoutReady = false;

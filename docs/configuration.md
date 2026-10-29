@@ -12,6 +12,7 @@ vex.config.font_size = 14 -- integer, 9–32
 vex.config.cursor_blink = true
 vex.config.copy_on_select = true
 vex.config.confirm_close = true
+vex.config.active_pane_border = true -- accent ring around the focused pane
 vex.config.default_shell = "startup"
 ```
 

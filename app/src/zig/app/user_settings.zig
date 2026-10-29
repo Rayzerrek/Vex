@@ -41,6 +41,7 @@ pub const UserSettings = struct {
     font_family: [128]u8 = default_font,
     cursor_blink: bool = true,
     copy_on_select: bool = true,
+    active_pane_border: bool = true,
     confirm_close: bool = true,
     default_shell: DefaultShell = .startup,
     ui_density: UiDensity = .comfortable,
@@ -86,9 +87,10 @@ pub const UserSettings = struct {
             \\vex.config.cursor_blink = {s}
             \\vex.config.copy_on_select = {s}
             \\vex.config.confirm_close = {s}
+            \\vex.config.active_pane_border = {s}
             \\vex.config.default_shell = "{s}"
             \\
-        , .{ theme, if (themes.themes[self.theme_index].is_dark) "dark" else "light", @tagName(self.ui_density), family, self.font_size, if (self.cursor_blink) "true" else "false", if (self.copy_on_select) "true" else "false", if (self.confirm_close) "true" else "false", shell_name });
+        , .{ theme, if (themes.themes[self.theme_index].is_dark) "dark" else "light", @tagName(self.ui_density), family, self.font_size, if (self.cursor_blink) "true" else "false", if (self.copy_on_select) "true" else "false", if (self.confirm_close) "true" else "false", if (self.active_pane_border) "true" else "false", shell_name });
     }
 };
 
@@ -133,6 +135,7 @@ fn decodeLuaSettings(allocator: std.mem.Allocator, bytes: []const u8, path: []co
     raw.cursor_blink = defaults.cursor_blink;
     raw.copy_on_select = defaults.copy_on_select;
     raw.confirm_close = defaults.confirm_close;
+    raw.active_pane_border = defaults.active_pane_border;
     diagnostic.* = .{};
     const source = if (std.mem.startsWith(u8, bytes, "\xef\xbb\xbf")) bytes[3..] else bytes;
     switch (lua.vex_lua_settings_decode(source.ptr, source.len, source_path.ptr, &raw, &diagnostic.bytes, diagnostic.bytes.len)) {
@@ -157,6 +160,7 @@ fn decodeLuaSettings(allocator: std.mem.Allocator, bytes: []const u8, path: []co
         .cursor_blink = raw.cursor_blink,
         .copy_on_select = raw.copy_on_select,
         .confirm_close = raw.confirm_close,
+        .active_pane_border = raw.active_pane_border,
         .default_shell = try DefaultShell.parse(std.mem.sliceTo(&raw.default_shell, 0)),
         .ui_density = std.meta.stringToEnum(UiDensity, std.mem.sliceTo(&raw.ui_density, 0)) orelse return error.InvalidUiDensity,
     };
@@ -290,6 +294,9 @@ test "Lua configuration evaluates expressions and validates settings" {
     try std.testing.expect((try UserSettings.decode(std.testing.allocator, "")).confirm_close);
     try std.testing.expect(!(try UserSettings.decode(std.testing.allocator, "vex.config.confirm_close = false")).confirm_close);
     try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.confirm_close = 0"));
+    try std.testing.expect((try UserSettings.decode(std.testing.allocator, "")).active_pane_border);
+    try std.testing.expect(!(try UserSettings.decode(std.testing.allocator, "vex.config.active_pane_border = false")).active_pane_border);
+    try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.active_pane_border = 1"));
     try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.copy_on_select = 0"));
     try std.testing.expectEqual(DefaultShell.pwsh, settings.default_shell);
     try std.testing.expectError(error.InvalidLuaSettings, UserSettings.decode(std.testing.allocator, "vex.config.font_size = 0"));

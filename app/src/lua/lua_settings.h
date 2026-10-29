@@ -12,6 +12,7 @@ typedef struct VexLuaSettings {
     bool cursor_blink;
     bool copy_on_select;
     bool confirm_close;
+    bool active_pane_border;
 } VexLuaSettings;
 
 typedef int (*VexShellCallback)(void* context, unsigned id, const char* name, size_t name_length,

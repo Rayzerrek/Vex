@@ -42,6 +42,7 @@ int hoveredTabIndex;
 bool hoveredTabClose;
 double chromeTimeMs;
 bool chromeMotionEnabled, chromeMotionPending, chromeEffectsPending;
+bool activePaneBorderEnabled = true;
 ChromeMotion tabSelectionMotion, tabSelectionWidthMotion, tabHoverMotion[8], tabCloseHoverMotion[8], tabEditMotion[8];
 struct PaneChromeMotion { uint32_t id = 0; ChromeMotion action[4], focus; };
 PaneChromeMotion paneChromeMotion[64];
@@ -640,6 +641,14 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focuse
         brush->SetColor(rgb(borderCol, 0.48f + focus * 0.34f));
         target->DrawRoundedRectangle(paneCard, brush, 1.0f);
     }
+    if (activePaneBorderEnabled && focus > 0.0f) {
+        // Eased with the focus motion so the ring fades between panes instead of snapping.
+        // Inset by half the stroke so the rim stays inside the pane and is never clipped by neighbours.
+        const float inset = 0.75f, radius = joined ? 0.0f : 6.0f - inset;
+        const uint32_t ring = blendRgb(chromePalette.pane_bg, chromePalette.accent, chromePalette.is_dark ? 0.62f : 0.78f);
+        brush->SetColor(rgb(ring, focus));
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x + inset, bounds.y + inset, bounds.x + bounds.width - inset, bounds.y + bounds.height - inset), radius, radius), brush, 1.5f);
+    }
     // A revealing pane must not paint its caption or actions over its neighbour.
     target->PushAxisAlignedClip(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     drawPaneHeaderActions(bounds, motion, focused, hovered, can_focus, zoomed, hovered_action);
@@ -962,4 +971,8 @@ extern "C" void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* dire
         : L"\x2190 Parent   Tab Open   Enter Insert   Esc Close";
     labelWithFont(badgeFont, hint, mx + 12, my + mh - 22, mw - 24, chromePalette.text_muted);
     target->PopAxisAlignedClip();
+}
+extern "C" void vex_window_set_active_pane_border(bool enabled) {
+    activePaneBorderEnabled = enabled;
+    vex_window_invalidate();
 }

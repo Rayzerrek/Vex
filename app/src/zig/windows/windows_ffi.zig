@@ -1625,6 +1625,10 @@ test "ensureMinimumContrast preserves readable colors and boosts low-contrast fo
     try std.testing.expect(!isBlockGraphic("A"));
 }
 
+pub fn setActivePaneBorder(enabled: bool) void {
+    c.vex_window_set_active_pane_border(enabled);
+}
+
 /// A single metrics table drives Zig hit testing and native painting.
 pub fn setUiDensity(value: density.UiDensity) void {
     const metrics = value.metrics();

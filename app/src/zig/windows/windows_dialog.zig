@@ -60,7 +60,7 @@ pub fn showDialog(presentation: DialogPresentation) !void {
         .count = presentation.items.len,
         .shells = if (presentation.shells.len == 0) null else &shells,
         .shell_count = presentation.shells.len,
-        .settings = .{ .ui_density = @intFromEnum(presentation.settings.ui_density), .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .copy_on_select = presentation.settings.copy_on_select, .confirm_close = presentation.settings.confirm_close, .font_family = presentation.settings.font_family },
+        .settings = .{ .ui_density = @intFromEnum(presentation.settings.ui_density), .theme = presentation.settings.theme_index, .font_size = presentation.settings.font_size, .shell = @intFromEnum(presentation.settings.default_shell), .cursor_blink = presentation.settings.cursor_blink, .copy_on_select = presentation.settings.copy_on_select, .confirm_close = presentation.settings.confirm_close, .active_pane_border = presentation.settings.active_pane_border, .font_family = presentation.settings.font_family },
         .palette = platform.nativeChromePalette(presentation.palette),
         .icon = platform.nativeAppIcon(presentation.icon),
         .anchor_x = presentation.anchor_x,
@@ -131,6 +131,7 @@ pub fn decodeDialogEvent(event: u32, value: u32, text: []const u8, raw: c.VexUse
                 .cursor_blink = raw.cursor_blink,
                 .copy_on_select = raw.copy_on_select,
                 .confirm_close = raw.confirm_close,
+                .active_pane_border = raw.active_pane_border,
                 .font_family = raw.font_family,
                 .default_shell = std.meta.intToEnum(preferences.DefaultShell, raw.shell) catch return error.InvalidDefaultShell,
             };

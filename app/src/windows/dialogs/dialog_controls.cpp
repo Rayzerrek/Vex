@@ -677,6 +677,7 @@ bool settingsRect(int id, float& x, float& y, float& w, float& h) {
     // The edit sits inside a painted field that extends 8 dip past it on each side.
     case sizeId: trailing(terminal, 0, 1, 64, 26, 26, 8); return true;
     case blinkId: toggle(terminal, 1, 0); return true;
+    case activePaneBorderId: toggle(terminal, 1, 1); return true;
     }
     return false;
 }
@@ -696,7 +697,7 @@ void showPage(SettingsPage previousPage) {
         { shellId, general }, { shellLabelId, general }, { shellDetailId, general && detail }, { customShellLabelId, general }, { customShellDetailId, general && detail },
         { addShellId, general }, { copyOnSelectId, general }, { confirmCloseId, general }, { themeGridId, appearance },
         { densityId, appearance }, { densityLabelId, appearance }, { densityDetailId, appearance && detail },
-        { sizeId, terminal }, { blinkId, terminal }, { fontSizeLabelId, terminal }, { fontSizeDetailId, terminal && detail }, { fontId, terminal }, { fontLabelId, terminal }, { fontDetailId, terminal && detail },
+        { sizeId, terminal }, { blinkId, terminal }, { activePaneBorderId, terminal }, { fontSizeLabelId, terminal }, { fontSizeDetailId, terminal && detail }, { fontId, terminal }, { fontLabelId, terminal }, { fontDetailId, terminal && detail },
     };
     constexpr UINT visibilityFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
     HDWP batch = BeginDeferWindowPos((int)(sizeof(controls) / sizeof(controls[0])));
@@ -765,6 +766,7 @@ bool createControls(float width, float height) {
         HWND fonts = place(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_SORT | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, fontId);
         ok = fonts && ok;
         ok = place(L"BUTTON", L"Blink terminal cursor", BS_OWNERDRAW | WS_TABSTOP, blinkId) && ok;
+        ok = place(L"BUTTON", L"Highlight active pane", BS_OWNERDRAW | WS_TABSTOP, activePaneBorderId) && ok;
         ok = place(L"STATIC", L"Default shell", SS_NOPREFIX | SS_ENDELLIPSIS, shellLabelId) && ok;
         ok = place(L"STATIC", L"Used for new tabs and splits", SS_NOPREFIX | SS_ENDELLIPSIS, shellDetailId) && ok;
         HWND shell = place(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, shellId);

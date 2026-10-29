@@ -13,7 +13,7 @@ constexpr int sizeId = 111, blinkId = 112, shellId = 113, copyOnSelectId = 114, 
 constexpr int closeId = 125, firstPageId = 130;
 constexpr int fontSizeLabelId = 121, shellLabelId = 122, shellDetailId = 123, fontSizeDetailId = 126;
 constexpr int customShellLabelId = 140, customShellDetailId = 141, fontDetailId = 142;
-constexpr int densityLabelId = 143, densityDetailId = 144, densityId = 145;
+constexpr int densityLabelId = 143, densityDetailId = 144, densityId = 145, activePaneBorderId = 146;
 enum class SettingsPage { general, appearance, terminal, about };
 constexpr size_t itemLimit = 64, shellLimit = 64;
 struct DialogItem {
@@ -50,7 +50,7 @@ struct DialogHost {
     enum class Phase { closed, creating, active, closing } phase = Phase::closed;
     bool synchronizing = false, fontSizeInvalid = false;
     DialogMotion motion;
-    ChromeMotion cursorBlinkMotion, copyOnSelectMotion, confirmCloseMotion;
+    ChromeMotion cursorBlinkMotion, copyOnSelectMotion, confirmCloseMotion, activePaneBorderMotion;
     uint32_t pendingEvent = 0, pendingValue = 0;
     bool layered = false, layoutReady = false;
     SettingsPage page = SettingsPage::general;

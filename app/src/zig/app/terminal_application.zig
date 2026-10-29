@@ -162,6 +162,7 @@ pub const TerminalApplication = struct {
         try platform.setShellName(launch.shellName());
         platform.setChromePalette(terminal_theme.themes[settings.theme_index].chromePalette());
         platform.setUiDensity(settings.ui_density);
+        platform.setActivePaneBorder(settings.active_pane_border);
         try platform.setFontPreferences(&settings.font_family, @floatFromInt(settings.font_size));
         return .{
             .allocator = allocator,
@@ -323,7 +324,7 @@ pub const TerminalApplication = struct {
     }
     /// Captures runtime values without serializing any live session or launch command.
     pub fn currentPreferences(self: *TerminalApplication) preferences.UserSettings {
-        return .{ .ui_density = self.settings.ui_density, .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .copy_on_select = self.settings.copy_on_select, .confirm_close = self.settings.confirm_close, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
+        return .{ .ui_density = self.settings.ui_density, .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .copy_on_select = self.settings.copy_on_select, .confirm_close = self.settings.confirm_close, .active_pane_border = self.settings.active_pane_border, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
     }
     /// Writes GUI preferences only when changed; storage failure never closes running terminals.
     pub fn commitPreferences(self: *TerminalApplication, settings: preferences.UserSettings) !void {
@@ -394,6 +395,7 @@ pub const TerminalApplication = struct {
         }
         self.settings = settings;
         platform.setUiDensity(settings.ui_density);
+        platform.setActivePaneBorder(settings.active_pane_border);
         if (self.metrics) |*metrics| metrics.ui_density = settings.ui_density;
         if (density_changed) try self.updateLayout();
         if (self.theme_index != settings.theme_index) try self.applyTheme(settings.theme_index);
