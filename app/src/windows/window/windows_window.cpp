@@ -108,11 +108,7 @@ static void setNotificationCursor(NotificationHit hit) {
     const bool clickable = hit == NotificationHit::action || hit == NotificationHit::close;
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(clickable ? 32649 : 32512)));
 }
-static VexUiMetrics uiMetrics = { 28, 6, 0, 5, 200, 6 };
-extern "C" void vex_window_set_ui_metrics(VexUiMetrics metrics) {
-    uiMetrics = metrics;
-    vex_window_invalidate();
-}
+static VexUiMetrics uiMetrics = { 36, 6, 0, 5, 200, 6, 16, 24, 14, 10, 15 };
 static VexChromePalette chromePalette = {
     0x16171e, 0x1c1d26, 0x3c3c44, 0x17181f, 0x1e1e28,
     0x2c2c37, 0x766f99, 0x22232a,
@@ -124,6 +120,34 @@ HWND vex_native_window() { return window; }
 
 template<class T> static void releaseCom(T*& object) {
     if (object) { object->Release(); object = nullptr; }
+}
+static float paneTitleFontSize = 0.0f;
+static HRESULT configureChromeFormat(IDWriteTextFormat* fmt) {
+    HRESULT hr = fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    if (FAILED(hr)) return hr;
+    IDWriteInlineObject* ellipsis = nullptr;
+    hr = textFactory->CreateEllipsisTrimmingSign(fmt, &ellipsis);
+    DWRITE_TRIMMING trimming = {}; trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+    if (SUCCEEDED(hr)) hr = fmt->SetTrimming(&trimming, ellipsis);
+    releaseCom(ellipsis);
+    return hr;
+}
+// Rebuilds the caption format at the density's size; the previous format stays valid until the swap.
+static HRESULT createPaneTitleFont(float size) {
+    IDWriteTextFormat* fmt = nullptr;
+    HRESULT hr = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"en-us", &fmt);
+    if (SUCCEEDED(hr)) hr = configureChromeFormat(fmt);
+    if (FAILED(hr)) { releaseCom(fmt); return hr; }
+    releaseCom(paneTitleFont);
+    paneTitleFont = fmt;
+    paneTitleFontSize = size;
+    return S_OK;
+}
+extern "C" void vex_window_set_ui_metrics(VexUiMetrics metrics) {
+    uiMetrics = metrics;
+    // Before window creation the factory is absent; startup builds the caption at uiMetrics.header_title_size.
+    if (textFactory && paneTitleFont && metrics.header_title_size != paneTitleFontSize) createPaneTitleFont(metrics.header_title_size);
+    vex_window_invalidate();
 }
 static void rectangle(float x, float y, float width, float height, uint32_t color) {
     brush->SetColor(rgb(color));
@@ -1375,23 +1399,12 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     if (SUCCEEDED(result)) result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &drawingFactory);
     if (FAILED(result)) { releaseRenderer(); return (int)result; }
     result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&textFactory);
-    const auto configureChromeFormat = [](IDWriteTextFormat* fmt) -> HRESULT {
-        HRESULT hr = fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        if (FAILED(hr)) return hr;
-        IDWriteInlineObject* ellipsis = nullptr;
-        hr = textFactory->CreateEllipsisTrimmingSign(fmt, &ellipsis);
-        DWRITE_TRIMMING trimming = {}; trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
-        if (SUCCEEDED(hr)) hr = fmt->SetTrimming(&trimming, ellipsis);
-        releaseCom(ellipsis);
-        return hr;
-    };
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.5f, L"en-us", &chromeFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(chromeFont);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.5f, L"en-us", &notificationFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(notificationFont);
     if (SUCCEEDED(result)) result = notificationFont->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-    if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"en-us", &paneTitleFont);
-    if (SUCCEEDED(result)) result = configureChromeFormat(paneTitleFont);
+    if (SUCCEEDED(result)) result = createPaneTitleFont(uiMetrics.header_title_size);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us", &chromeBoldFont);
     if (SUCCEEDED(result)) result = configureChromeFormat(chromeBoldFont);
     if (SUCCEEDED(result)) result = textFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f, L"en-us", &badgeFont);

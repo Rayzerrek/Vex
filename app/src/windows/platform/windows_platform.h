@@ -24,6 +24,7 @@ typedef struct {
 } VexChromePalette;
 typedef struct {
     float pane_header_height, pane_padding, workspace_padding, tab_inset, tab_max_width, pane_gap;
+    float header_icon, header_action, header_inset, header_edge, header_title_size;
 } VexUiMetrics;
 typedef struct {
     const uint8_t* name; size_t name_length;

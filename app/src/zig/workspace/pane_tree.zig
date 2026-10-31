@@ -30,23 +30,32 @@ pub const PaneRect = struct {
     pub fn contains(self: PaneRect, x: f32, y: f32) bool {
         return x >= self.x and y >= self.y and x < self.x + self.width and y < self.y + self.height;
     }
-    /// Hit-tests the right-aligned 20x20 DIP header buttons when the pane is at least 180 DIPs wide.
+    /// Hit-tests the right-aligned square header buttons when the pane is at least 180 DIPs wide.
+    /// Slots are laid out from the right edge in the same order the renderer draws them.
     pub fn hitHeaderAction(self: PaneRect, can_focus: bool, x: f32, y: f32) ?PaneHeaderAction {
         return self.hitHeaderActionWithDensity(can_focus, x, y, .comfortable);
     }
     pub fn hitHeaderActionWithDensity(self: PaneRect, can_focus: bool, x: f32, y: f32, density: @import("ui_density.zig").UiDensity) ?PaneHeaderAction {
-        const header = density.metrics().pane_header_height;
-        const offset = (header - 28) / 2;
+        const metrics = density.metrics();
+        const header = metrics.pane_header_height;
+        const size = metrics.header_action;
+        const pitch = size + 2;
+        const top = self.y + metrics.headerActionTop();
         if (!self.contains(x, y) or self.width < 180 or self.height < header) return null;
-        if (y < self.y + 4 + offset or y >= self.y + 24 + offset) return null;
-        const right = self.x + self.width - 6;
-        if (x >= right - 20 and x < right) return .close;
-        if (x >= right - 42 and x < right - 22) return .split_down;
-        if (x >= right - 64 and x < right - 44) return .split_right;
-        if (can_focus and x >= right - 86 and x < right - 66) return .focus_toggle;
+        if (y < top or y >= top + size) return null;
+        const right = self.x + self.width - metrics.header_edge;
+        const slotLeft = struct {
+            fn at(edge: f32, slot: f32, button: f32, step: f32) f32 {
+                return edge - (slot * step + button);
+            }
+        }.at;
+        if (x >= slotLeft(right, 0, size, pitch) and x < right) return .close;
+        if (x >= slotLeft(right, 1, size, pitch) and x < slotLeft(right, 1, size, pitch) + size) return .split_down;
+        if (x >= slotLeft(right, 2, size, pitch) and x < slotLeft(right, 2, size, pitch) + size) return .split_right;
+        if (can_focus and x >= slotLeft(right, 3, size, pitch) and x < slotLeft(right, 3, size, pitch) + size) return .focus_toggle;
         return null;
     }
-    /// True when the pointer is inside the 28 DIP pane title bar and not on a header action button.
+    /// True when the pointer is inside the pane title bar and not on a header action button.
     pub fn isHeaderDragArea(self: PaneRect, can_focus: bool, x: f32, y: f32) bool {
         return self.isHeaderDragAreaWithDensity(can_focus, x, y, .comfortable);
     }
@@ -418,27 +427,36 @@ test "duplicate IDs, invalid ratios/geometry and excessive depth fail without mu
     try std.testing.expectError(error.PaneDepthLimit, tree.splitPane(@enumFromInt(65), @enumFromInt(66), .right));
 }
 
+/// Horizontal centre of a header slot (0 close, 1 split down, 2 split right, 3 focus), measured from the right edge like the renderer.
+fn headerSlotCenter(bounds: PaneRect, density: @import("ui_density.zig").UiDensity, slot: f32) f32 {
+    const metrics = density.metrics();
+    return bounds.x + bounds.width - metrics.header_edge - slot * (metrics.header_action + 2) - metrics.header_action / 2;
+}
+
 test "density header targets stay inside the visible header and clear of terminal input" {
     const bounds: PaneRect = .{ .x = 0, .y = 44, .width = 500, .height = 400 };
     for (std.enums.values(@import("ui_density.zig").UiDensity)) |value| {
         const header = value.metrics().pane_header_height;
         const center = bounds.y + header / 2;
-        try std.testing.expectEqual(@as(?PaneHeaderAction, .close), bounds.hitHeaderActionWithDensity(true, 484, center, value));
+        const close_x = headerSlotCenter(bounds, value, 0);
+        try std.testing.expectEqual(@as(?PaneHeaderAction, .close), bounds.hitHeaderActionWithDensity(true, close_x, center, value));
         try std.testing.expect(bounds.isHeaderDragAreaWithDensity(true, 50, center, value));
-        try std.testing.expect(!bounds.isHeaderDragAreaWithDensity(true, 484, center, value));
+        try std.testing.expect(!bounds.isHeaderDragAreaWithDensity(true, close_x, center, value));
         try std.testing.expect(!bounds.isHeaderDragAreaWithDensity(true, 50, bounds.y + header, value));
-        try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderActionWithDensity(true, 484, bounds.y + header + 2, value));
+        try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderActionWithDensity(true, close_x, bounds.y + header + 2, value));
     }
 }
 
 test "pane header action hit testing aligns with right-anchored button slots and width guard" {
     const bounds: PaneRect = .{ .x = 100, .y = 50, .width = 400, .height = 300 };
-    try std.testing.expectEqual(@as(?PaneHeaderAction, .close), bounds.hitHeaderAction(true, 485, 60));
-    try std.testing.expectEqual(@as(?PaneHeaderAction, .split_down), bounds.hitHeaderAction(true, 463, 60));
-    try std.testing.expectEqual(@as(?PaneHeaderAction, .split_right), bounds.hitHeaderAction(true, 441, 60));
-    try std.testing.expectEqual(@as(?PaneHeaderAction, .focus_toggle), bounds.hitHeaderAction(true, 419, 60));
-    try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderAction(false, 419, 60));
-    try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderAction(true, 485, 90));
+    const comfortable = @import("ui_density.zig").UiDensity.comfortable;
+    const center_y = bounds.y + comfortable.metrics().headerActionTop() + comfortable.metrics().header_action / 2;
+    try std.testing.expectEqual(@as(?PaneHeaderAction, .close), bounds.hitHeaderAction(true, headerSlotCenter(bounds, comfortable, 0), center_y));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, .split_down), bounds.hitHeaderAction(true, headerSlotCenter(bounds, comfortable, 1), center_y));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, .split_right), bounds.hitHeaderAction(true, headerSlotCenter(bounds, comfortable, 2), center_y));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, .focus_toggle), bounds.hitHeaderAction(true, headerSlotCenter(bounds, comfortable, 3), center_y));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderAction(false, headerSlotCenter(bounds, comfortable, 3), center_y));
+    try std.testing.expectEqual(@as(?PaneHeaderAction, null), bounds.hitHeaderAction(true, headerSlotCenter(bounds, comfortable, 0), bounds.y + 90));
     const narrow: PaneRect = .{ .x = 0, .y = 0, .width = 179, .height = 300 };
     try std.testing.expectEqual(@as(?PaneHeaderAction, null), narrow.hitHeaderAction(true, 165, 14));
 }
@@ -497,8 +515,9 @@ test "ordered splits put the fresh pane on the requested side" {
 test "pane drag targets include corners and previews match committed split geometry" {
     const bounds: PaneRect = .{ .x = 100, .y = 50, .width = 400, .height = 300 };
     try std.testing.expect(bounds.isHeaderDragArea(true, 150, 60));
-    try std.testing.expect(!bounds.isHeaderDragArea(true, 485, 60));
-    try std.testing.expect(!bounds.isHeaderDragArea(true, 150, 85));
+    const comfortable_header = @import("ui_density.zig").UiDensity.comfortable.metrics().pane_header_height;
+    try std.testing.expect(!bounds.isHeaderDragArea(true, headerSlotCenter(bounds, .comfortable, 0), 60));
+    try std.testing.expect(!bounds.isHeaderDragArea(true, 150, bounds.y + comfortable_header));
 
     try std.testing.expectEqual(DropZone.left, bounds.dropZoneAt(120, 200));
     try std.testing.expectEqual(DropZone.right, bounds.dropZoneAt(480, 200));

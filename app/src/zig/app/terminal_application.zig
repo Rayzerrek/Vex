@@ -1587,7 +1587,9 @@ test "ordinary splits retain the tab launch across overrides, original pane remo
     try app.updateLayout();
     const override_handle = override.pty.handle;
     const header = app.findPlacement(override.id).?.bounds;
-    app.onClick(header.x + header.width - 54, header.y + 12);
+    // Split-right is the third slot from the right edge; its centre follows the density's button metrics.
+    const density = app.settings.ui_density.metrics();
+    app.onClick(header.x + header.width - density.header_edge - 2 * (density.header_action + 2) - density.header_action / 2, header.y + density.headerActionTop() + 4);
     try std.testing.expect(app.health == .running);
     try std.testing.expectEqual(@as(usize, 5), app.sessions.items.len);
     try std.testing.expect(app.activeSession().?.shell_launch == tab_launch);

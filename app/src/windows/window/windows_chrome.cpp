@@ -553,8 +553,13 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
 }
 static void drawPaneHeaderActions(VexPaneRect bounds, PaneChromeMotion& motion, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action) {
     if (bounds.width < 180.0f || bounds.height < uiMetrics.pane_header_height) return;
-    const float right = bounds.x + bounds.width - 6.0f;
-    const float top = bounds.y + 3.5f + (uiMetrics.pane_header_height - 28) / 2;
+    // Glyphs are drawn for the 20 DIP comfortable button and scaled to the density's button size.
+    const float size = uiMetrics.header_action, pill = size - 1.0f, pitch = size + 2.0f, s = size / 20.0f;
+    const float right = bounds.x + bounds.width - uiMetrics.header_edge;
+    const float top = bounds.y + (uiMetrics.pane_header_height - size - 1.0f) / 2.0f;
+    const float cy = top + pill / 2.0f;
+    // Slots count from the right edge (0 close, 1 split down, 2 split right, 3 focus) and match hit testing.
+    const auto slotX = [&](int slot) { return right - (slot * pitch + size); };
     const uint32_t baseColor = (focused || hovered) ? chromePalette.text_muted : chromePalette.border;
     float actionAlpha[4] = {};
     for (uint8_t i = 0; i < 4; ++i) {
@@ -565,58 +570,62 @@ static void drawPaneHeaderActions(VexPaneRect bounds, PaneChromeMotion& motion, 
     const auto drawButtonPill = [&](float bx, uint32_t fill, float alpha = 1.0f) {
         if (alpha <= 0.0f) return;
         brush->SetColor(rgb(fill, alpha));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, top, bx + 20.0f, top + 19.0f), 5.0f, 5.0f), brush);
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, top, bx + size, top + pill), 5.0f * s, 5.0f * s), brush);
+    };
+    const auto line = [&](float cx, float glyphY, float x1, float y1, float x2, float y2, float width) {
+        target->DrawLine(D2D1::Point2F(cx + x1 * s, glyphY + y1 * s), D2D1::Point2F(cx + x2 * s, glyphY + y2 * s), brush, width, roundCaps);
     };
     if (can_focus) {
-        const float bx = right - 86.0f, cx = bx + 10.0f, cy = top + 9.5f;
+        const float bx = slotX(3), cx = bx + size / 2.0f;
         if (zoomed) drawButtonPill(bx, chromePalette.active_tab_bg, 1.0f);
         else if (actionAlpha[0] > 0.0f) drawButtonPill(bx, chromePalette.inactive_tab_hover_bg, actionAlpha[0]);
         brush->SetColor(rgb(zoomed ? chromePalette.accent : blendRgb(baseColor, chromePalette.text_primary, actionAlpha[0])));
         if (!zoomed) {
-            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 1.0f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx + 1.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 4.5f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 4.5f, cy - 1.5f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 1.0f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx - 1.5f, cy + 4.5f), D2D1::Point2F(cx - 4.5f, cy + 4.5f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx - 4.5f, cy + 4.5f), D2D1::Point2F(cx - 4.5f, cy + 1.5f), brush, 1.2f, roundCaps);
+            line(cx, cy, 1.0f, -1.0f, 4.5f, -4.5f, 1.2f);
+            line(cx, cy, 1.5f, -4.5f, 4.5f, -4.5f, 1.2f);
+            line(cx, cy, 4.5f, -4.5f, 4.5f, -1.5f, 1.2f);
+            line(cx, cy, -1.0f, 1.0f, -4.5f, 4.5f, 1.2f);
+            line(cx, cy, -1.5f, 4.5f, -4.5f, 4.5f, 1.2f);
+            line(cx, cy, -4.5f, 4.5f, -4.5f, 1.5f, 1.2f);
         } else {
-            target->DrawLine(D2D1::Point2F(cx + 4.5f, cy - 4.5f), D2D1::Point2F(cx + 1.0f, cy - 1.0f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 4.0f), D2D1::Point2F(cx + 1.0f, cy - 1.0f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx + 1.0f, cy - 1.0f), D2D1::Point2F(cx + 4.0f, cy - 1.0f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx - 4.5f, cy + 4.5f), D2D1::Point2F(cx - 1.0f, cy + 1.0f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 4.0f), D2D1::Point2F(cx - 1.0f, cy + 1.0f), brush, 1.2f, roundCaps);
-            target->DrawLine(D2D1::Point2F(cx - 1.0f, cy + 1.0f), D2D1::Point2F(cx - 4.0f, cy + 1.0f), brush, 1.2f, roundCaps);
+            line(cx, cy, 4.5f, -4.5f, 1.0f, -1.0f, 1.2f);
+            line(cx, cy, 1.0f, -4.0f, 1.0f, -1.0f, 1.2f);
+            line(cx, cy, 1.0f, -1.0f, 4.0f, -1.0f, 1.2f);
+            line(cx, cy, -4.5f, 4.5f, -1.0f, 1.0f, 1.2f);
+            line(cx, cy, -1.0f, 4.0f, -1.0f, 1.0f, 1.2f);
+            line(cx, cy, -1.0f, 1.0f, -4.0f, 1.0f, 1.2f);
         }
     }
     {
-        const float bx = right - 64.0f, cx = bx + 10.0f, cy = top + 9.5f;
-        offerTooltip(L"Ctrl + Shift + R", { bx, top, 20, 19 });
+        const float bx = slotX(2), cx = bx + size / 2.0f;
+        offerTooltip(L"Ctrl + Shift + R", { bx, top, size, pill });
         drawButtonPill(bx, chromePalette.inactive_tab_hover_bg, actionAlpha[1]);
         brush->SetColor(rgb(blendRgb(baseColor, chromePalette.text_primary, actionAlpha[1])));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 6.0f, cy - 6.0f, cx + 6.0f, cy + 6.0f), 1.8f, 1.8f), brush, 1.4f);
-        target->DrawLine(D2D1::Point2F(cx, cy - 6.0f), D2D1::Point2F(cx, cy + 6.0f), brush, 1.4f, roundCaps);
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 6.0f * s, cy - 6.0f * s, cx + 6.0f * s, cy + 6.0f * s), 1.8f * s, 1.8f * s), brush, 1.4f);
+        line(cx, cy, 0.0f, -6.0f, 0.0f, 6.0f, 1.4f);
     }
     {
-        const float bx = right - 42.0f, cx = bx + 10.0f, cy = top + 9.5f;
-        offerTooltip(L"Ctrl + Shift + D", { bx, top, 20, 19 });
+        const float bx = slotX(1), cx = bx + size / 2.0f;
+        offerTooltip(L"Ctrl + Shift + D", { bx, top, size, pill });
         drawButtonPill(bx, chromePalette.inactive_tab_hover_bg, actionAlpha[2]);
         brush->SetColor(rgb(blendRgb(baseColor, chromePalette.text_primary, actionAlpha[2])));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 6.0f, cy - 6.0f, cx + 6.0f, cy + 6.0f), 1.8f, 1.8f), brush, 1.4f);
-        target->DrawLine(D2D1::Point2F(cx - 6.0f, cy), D2D1::Point2F(cx + 6.0f, cy), brush, 1.4f, roundCaps);
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 6.0f * s, cy - 6.0f * s, cx + 6.0f * s, cy + 6.0f * s), 1.8f * s, 1.8f * s), brush, 1.4f);
+        line(cx, cy, -6.0f, 0.0f, 6.0f, 0.0f, 1.4f);
     }
     {
-        const float bx = right - 20.0f, cx = bx + 10.0f, cy = top + 9.5f;
+        const float bx = slotX(0), cx = bx + size / 2.0f;
         // The keyboard chord closes the active pane, never a different hovered pane.
-        if (focused) offerTooltip(L"Ctrl + Shift + W", { bx, top, 20, 19 });
+        if (focused) offerTooltip(L"Ctrl + Shift + W", { bx, top, size, pill });
         drawButtonPill(bx, chromePalette.is_dark ? 0x4d2b31 : 0xfad2d8, actionAlpha[3]);
         brush->SetColor(rgb(blendRgb(baseColor, chromePalette.is_dark ? 0xffb4be : 0xb42336, actionAlpha[3])));
-        target->DrawLine(D2D1::Point2F(cx - 3.5f, cy - 3.5f), D2D1::Point2F(cx + 3.5f, cy + 3.5f), brush, 1.25f, roundCaps);
-        target->DrawLine(D2D1::Point2F(cx + 3.5f, cy - 3.5f), D2D1::Point2F(cx - 3.5f, cy + 3.5f), brush, 1.25f, roundCaps);
+        line(cx, cy, -3.5f, -3.5f, 3.5f, 3.5f, 1.25f);
+        line(cx, cy, 3.5f, -3.5f, -3.5f, 3.5f, 1.25f);
     }
 }
 extern "C" void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status, bool moving) {
     const bool joined = uiMetrics.pane_gap == 0;
-    const float headerOffset = (uiMetrics.pane_header_height - 28) / 2;
+    // Caption centred in the header rule; the 0.665 factor approximates half of Segoe UI's line height.
+    const float captionY = bounds.y + (uiMetrics.pane_header_height - 2.0f) / 2.0f - uiMetrics.header_title_size * 0.665f;
     const float headerBottom = bounds.y + uiMetrics.pane_header_height - 2;
     const D2D1_ROUNDED_RECT paneCard = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), joined ? 0.0f : 6.0f, joined ? 0.0f : 6.0f);
     brush->SetColor(rgb(chromePalette.pane_bg));
@@ -652,21 +661,23 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focuse
     // A revealing pane must not paint its caption or actions over its neighbour.
     target->PushAxisAlignedClip(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     drawPaneHeaderActions(bounds, motion, focused, hovered, can_focus, zoomed, hovered_action);
-    const float actionsWidth = (bounds.width >= 180.0f && bounds.height >= uiMetrics.pane_header_height) ? (can_focus ? 94.0f : 72.0f) : 0.0f;
+    const float actionPitch = uiMetrics.header_action + 2.0f;
+    const float actionsWidth = (bounds.width >= 180.0f && bounds.height >= uiMetrics.pane_header_height) ? (can_focus ? 3.0f : 2.0f) * actionPitch + uiMetrics.header_action + uiMetrics.header_edge + 2.0f : 0.0f;
     const float remainingWidth = fmaxf(0, bounds.width - actionsWidth);
     const float statusWidth = status.state >= 2 && status.state <= 5 && remainingWidth >= 90 ? 20.0f : 0.0f;
     float titleInset = 10.0f;
     if (bounds.width >= 90.0f && bounds.height >= uiMetrics.pane_header_height) {
-        drawAppIcon(icon, bounds.x + 11.0f, bounds.y + 7.0f + headerOffset, 12.0f);
-        if (focused) focusedPaneIconKey = computeIconCacheKey(icon, 12);
-        titleInset = 30.0f;
+        const float iconSize = uiMetrics.header_icon;
+        drawAppIcon(icon, bounds.x + uiMetrics.header_inset, bounds.y + (uiMetrics.pane_header_height - 2.0f - iconSize) / 2.0f, iconSize);
+        if (focused) focusedPaneIconKey = computeIconCacheKey(icon, (uint32_t)iconSize);
+        titleInset = uiMetrics.header_inset + 7.0f + iconSize;
     }
     const float titleWidth = fmaxf(0, remainingWidth - titleInset - statusWidth - 12);
-    const float captionWidth = titleLabel(title, title_length, bounds.x + titleInset, bounds.y + 4.0f + headerOffset, titleWidth,
+    const float captionWidth = titleLabel(title, title_length, bounds.x + titleInset, captionY, titleWidth,
         focused ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont, { bounds.x, bounds.y, remainingWidth, uiMetrics.pane_header_height - 2 });
     if (statusWidth > 0 && titleWidth > 0) {
         // Follow short titles closely, but reserve the indicator's space when text is trimmed.
-        drawProgramStatus(status, bounds.x + titleInset + captionWidth + 4, bounds.y + 4 + headerOffset, statusWidth, true);
+        drawProgramStatus(status, bounds.x + titleInset + captionWidth + 4, captionY, statusWidth, true);
     }
     target->PopAxisAlignedClip();
     beginTerminalPane(bounds, moving);
