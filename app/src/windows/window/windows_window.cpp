@@ -108,7 +108,7 @@ static void setNotificationCursor(NotificationHit hit) {
     const bool clickable = hit == NotificationHit::action || hit == NotificationHit::close;
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(clickable ? 32649 : 32512)));
 }
-static VexUiMetrics uiMetrics = { 36, 6, 0, 5, 200, 6, 16, 24, 14, 10, 15 };
+static VexUiMetrics uiMetrics = { 32, 6, 0, 5, 200, 6, 14, 22, 13, 8, 14.5 };
 static VexChromePalette chromePalette = {
     0x16171e, 0x1c1d26, 0x3c3c44, 0x17181f, 0x1e1e28,
     0x2c2c37, 0x766f99, 0x22232a,

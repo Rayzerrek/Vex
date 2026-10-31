@@ -10,8 +10,8 @@ pub const UiDensity = enum(u32) {
     pub fn metrics(self: UiDensity) Metrics {
         return switch (self) {
             .compact => .{ .pane_header_height = 28, .header_icon = 14, .header_action = 22, .header_inset = 12, .header_edge = 8, .header_title_size = 14.5, .pane_padding = 4, .workspace_padding = 0, .tab_inset = 8, .tab_max_width = 180, .pane_gap = 0 },
-            .comfortable => .{ .pane_header_height = 36, .header_icon = 16, .header_action = 24, .header_inset = 14, .header_edge = 10, .header_title_size = 15, .pane_padding = 6, .workspace_padding = 0, .tab_inset = 5, .tab_max_width = 200, .pane_gap = 6 },
-            .spacious => .{ .pane_header_height = 42, .header_icon = 18, .header_action = 26, .header_inset = 16, .header_edge = 12, .header_title_size = 15.5, .pane_padding = 10, .workspace_padding = 8, .tab_inset = 3, .tab_max_width = 220, .pane_gap = 6 },
+            .comfortable => .{ .pane_header_height = 32, .header_icon = 14, .header_action = 22, .header_inset = 13, .header_edge = 8, .header_title_size = 14.5, .pane_padding = 6, .workspace_padding = 0, .tab_inset = 5, .tab_max_width = 200, .pane_gap = 6 },
+            .spacious => .{ .pane_header_height = 39, .header_icon = 15, .header_action = 23, .header_inset = 14, .header_edge = 9, .header_title_size = 15, .pane_padding = 10, .workspace_padding = 8, .tab_inset = 3, .tab_max_width = 220, .pane_gap = 6 },
         };
     }
 };
@@ -53,14 +53,14 @@ test "density preserves the existing default and gains terminal space in compact
     const compact = UiDensity.compact.metrics();
     const comfortable = UiDensity.comfortable.metrics();
     const spacious = UiDensity.spacious.metrics();
-    try std.testing.expectEqual(@as(f32, 38), comfortable.gridTop());
+    try std.testing.expectEqual(@as(f32, 34), comfortable.gridTop());
     try std.testing.expectEqual(@as(f32, 24), comfortable.horizontalInset());
-    try std.testing.expectEqual(@as(f32, 44), comfortable.verticalInset());
+    try std.testing.expectEqual(@as(f32, 40), comfortable.verticalInset());
     try std.testing.expect(compact.horizontalInset() < comfortable.horizontalInset());
     try std.testing.expect(compact.verticalInset() < comfortable.verticalInset());
     try std.testing.expect(spacious.verticalInset() > comfortable.verticalInset());
     try std.testing.expect(compact.pane_header_height >= 24);
-    try std.testing.expectEqual(@as(f32, 5.5), comfortable.headerActionTop());
+    try std.testing.expectEqual(@as(f32, 4.5), comfortable.headerActionTop());
 }
 
 test "every density enlarges the pane header relative to the previous layout" {

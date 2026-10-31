@@ -1465,18 +1465,18 @@ test "density grid sizes and mouse coordinates use identical insets at mixed DPI
 test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid cells and scaled pixels" {
     const metrics: WindowMetrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1.5 };
     const bounds: panes.PaneRect = .{ .x = 10, .y = 50, .width = 332, .height = 228 };
-    // Header clicks (y < bounds.y + 38) do not start a viewport selection.
+    // Header clicks (y < bounds.y + 34) do not start a viewport selection.
     try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 24, 62, false));
-    // Inside the terminal grid (grid_left = 16, grid_top = 88):
+    // Inside the terminal grid (grid_left = 16, grid_top = 84):
     const inside = (try metrics.viewportPoint(bounds, 36, 122, false)).?;
     try std.testing.expectEqual(@as(u16, 2), inside.column);
     try std.testing.expectEqual(@as(u16, 2), inside.row);
     try std.testing.expectApproxEqAbs(@as(f64, 30.0), inside.x_px, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f64, 51.0), inside.y_px, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f64, 57.0), inside.y_px, 0.01);
     // The scrollbar gutter is never terminal text, even when no scrollbar is visible yet.
     try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 330, 122, false));
     try std.testing.expectEqual(@as(u16, 38), (try metrics.terminalSize(bounds)).columns);
-    // Clamped drag outside the pane clamps to the boundary cells. Grid height 184 / 16 = 11 rows, so the last row is 10.
+    // Clamped drag outside the pane clamps to the boundary cells. Grid height 188 / 16 = 11 rows, so the last row is 10.
     const clamped = (try metrics.viewportPoint(bounds, -50, 900, true)).?;
     try std.testing.expectEqual(@as(u16, 0), clamped.column);
     try std.testing.expectEqual(@as(u16, 10), clamped.row);
@@ -1486,24 +1486,24 @@ test "ScrollbarGeometry computes thumb travel, right-edge hit zone, and drag tar
     const bounds: panes.PaneRect = .{ .x = 10, .y = 40, .width = 300, .height = 236 };
     // Not visible when total <= len.
     try std.testing.expectEqual(@as(?ScrollbarGeometry, null), ScrollbarGeometry.compute(bounds, .{ .total = 24, .offset = 0, .len = 24 }));
-    // Track height = 236 - 44 = 192, track_top = 78. With total=100, len=25: thumb_height = 48, travel = 144, scrollable = 75.
+    // Track height = 236 - 40 = 196, track_top = 74. With total=100, len=25: thumb_height = 49, travel = 147, scrollable = 75.
     const mid = ScrollbarGeometry.compute(bounds, .{ .total = 100, .offset = 25, .len = 25 }).?;
-    try std.testing.expectApproxEqAbs(@as(f32, 78.0), mid.track_top, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 192.0), mid.track_height, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 48.0), mid.thumb_height, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 144.0), mid.travel, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 74.0), mid.track_top, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 196.0), mid.track_height, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 49.0), mid.thumb_height, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 147.0), mid.travel, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 123.5), mid.thumbTopForY(133.5, 10), 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 78), mid.thumbTopForY(-100, 10), 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 222), mid.thumbTopForY(900, 10), 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 126.0), mid.thumb_y, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 74), mid.thumbTopForY(-100, 10), 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 221), mid.thumbTopForY(900, 10), 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 123.0), mid.thumb_y, 0.01);
     try std.testing.expect(mid.containsPoint(bounds, 305.0, 130.0));
     try std.testing.expect(!mid.containsPoint(bounds, 280.0, 130.0));
     try std.testing.expect(mid.containsThumb(130.0));
     try std.testing.expect(!mid.containsThumb(90.0));
-    // Dragging with grab_offset=10.0 to y=80.0 -> desired=0 -> offset 0; to y=155.0 -> desired=67 -> offset 35;
-    // to y=240.0 -> desired clamps to travel 144 -> offset 75.
+    // Dragging with grab_offset=10.0 to y=80.0 -> desired=0 -> offset 0; to y=155.0 -> desired=71 -> offset 36;
+    // to y=240.0 -> desired clamps to travel 147 -> offset 75.
     try std.testing.expectEqual(@as(u64, 0), mid.targetOffsetForY(80.0, 10.0));
-    try std.testing.expectEqual(@as(u64, 35), mid.targetOffsetForY(155.0, 10.0));
+    try std.testing.expectEqual(@as(u64, 36), mid.targetOffsetForY(155.0, 10.0));
     try std.testing.expectEqual(@as(u64, 75), mid.targetOffsetForY(240.0, 10.0));
 }
 
