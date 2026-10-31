@@ -241,6 +241,7 @@ const aliases = [_]AliasEntry{
     .{ .alias = "qwen-code", .canonical = "qwen" },
     .{ .alias = "aider-chat", .canonical = "aider" },
     .{ .alias = "pi-coding-agent", .canonical = "pi" },
+    .{ .alias = "π", .canonical = "pi" },
     .{ .alias = "nvim", .canonical = "neovim" },
     .{ .alias = "vim", .canonical = "vim" },
     .{ .alias = "gvim", .canonical = "vim" },
@@ -625,6 +626,9 @@ test "app icon resolution handles shim command lines, OSC titles, and unknown pr
     const idle_shell = resolve(null, null, "C:\\Users\\Ziut\\code\\vex", null);
     try std.testing.expectEqual(Kind.shell, idle_shell.kind);
     try std.testing.expect(idle_shell.is_shell);
+    // refreshAppIcon hands the parsed application token back on its own, so the bare glyph must resolve too.
+    try std.testing.expectEqual(GlyphId.pi, resolve(null, null, "π - Vex", null).glyph);
+    try std.testing.expectEqual(GlyphId.pi, resolve(null, null, "π", null).glyph);
 }
 
 test "package commands use runtime icons without becoming idle shells" {

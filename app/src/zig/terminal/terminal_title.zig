@@ -117,6 +117,8 @@ fn isShellCaption(text: []const u8) bool {
 }
 fn isAppToken(text: []const u8) bool {
     if (text.len == 0) return false;
+    // Pi prints its brand glyph instead of its name, so the glyph names the same application.
+    if (std.mem.eql(u8, text, "π")) return true;
     for (text) |byte| if (!std.ascii.isAlphanumeric(byte) and std.mem.indexOfScalar(u8, "_.+-", byte) == null) return false;
     return true;
 }
@@ -159,7 +161,7 @@ fn isFormatScalar(cp: u21) bool {
 
 test "titles treat known and future applications alike without guessing status from free text" {
     var scratch: [TerminalTitle.max_raw_bytes]u8 = undefined;
-    for ([_][]const u8{ "new-agent", "claude", "opencode", "pi-future" }) |app| {
+    for ([_][]const u8{ "new-agent", "claude", "opencode", "pi-future", "π" }) |app| {
         var raw: [128]u8 = undefined;
         const parsed = try parseTitle(try std.fmt.bufPrint(&raw, "{s} - Fix rendering", .{app}), &scratch);
         try std.testing.expectEqualStrings("Fix rendering", parsed.title);
