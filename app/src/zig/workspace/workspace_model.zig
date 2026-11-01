@@ -232,6 +232,14 @@ pub const WorkspaceModel = struct {
         const target = @import("pane_navigation.zig").target(placements.items, tab.active_pane, direction) orelse return false;
         return self.focusPane(target);
     }
+    /// True when directional navigation from the active pane would reach another pane.
+    pub fn hasPaneNeighbor(self: *WorkspaceModel, bounds: panes.PaneRect, direction: @import("pane_navigation.zig").Direction) !bool {
+        const tab = self.activeTab();
+        var placements: std.ArrayList(panes.PanePlacement) = .empty;
+        defer placements.deinit(self.allocator);
+        try tab.tree.layout(self.allocator, &placements, bounds);
+        return @import("pane_navigation.zig").target(placements.items, tab.active_pane, direction) != null;
+    }
     /// Focus changes only after hit testing an actual leaf of the selected tab.
     pub fn focusPane(self: *WorkspaceModel, id: panes.PaneId) bool {
         const tab = self.activeTab();

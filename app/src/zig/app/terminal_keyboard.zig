@@ -82,12 +82,19 @@ pub fn onKey(self: *Application, key: u32, modifiers: u32) bool {
         return true;
     }
     if (platform.workspaceShortcut(key, modifiers)) |action| {
-        if (action == .close_active) {
-            self.requestCloseActive() catch |err| self.fail(err);
-        } else {
-            self.onAction(action, 0);
+        // Alt+Arrow without a pane in that direction falls through as an Alt-modified key for the TUI.
+        const claims_key = self.paneFocusTargetExists(action) catch |err| {
+            self.fail(err);
+            return true;
+        };
+        if (claims_key) {
+            if (action == .close_active) {
+                self.requestCloseActive() catch |err| self.fail(err);
+            } else {
+                self.onAction(action, 0);
+            }
+            return true;
         }
-        return true;
     }
     const session = self.activeSession() orelse return false;
     return handleSessionKey(self, session, key, modifiers) catch |err| {
@@ -129,6 +136,12 @@ fn handleSessionKey(self: *Application, session: *TerminalSession, key: u32, mod
             return true;
         }
     }
+    if (key == 0x2E and modifiers == 0 and try session.terminal.hasSelection()) {
+        if (try session.replaceSelection(self.allocator, "")) {
+            platform.invalidateWindow();
+            return true;
+        }
+    }
     if (try session.terminal.extendKeyboardSelection(key, modifiers)) {
         platform.invalidateWindow();
         return true;
@@ -157,13 +170,13 @@ pub fn onText(self: *Application, bytes: []const u8) void {
         return;
     };
     if (self.overlay == .command_palette) {
-        if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
+        if (!isTextInput(bytes)) return;
         var cp = &self.overlay.command_palette;
         if (cp.appendQuery(bytes)) platform.invalidateWindow();
         return;
     }
     if (self.overlay == .path_completion) {
-        if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
+        if (!isTextInput(bytes)) return;
         self.path_completion.appendQuery(bytes) catch |err| {
             self.fail(if (err == error.InvalidUtf8) error.InvalidTextUtf8 else err);
             return;
@@ -174,24 +187,38 @@ pub fn onText(self: *Application, bytes: []const u8) void {
     }
     if (self.overlay != .none) return;
     if (self.editing_tab) |*edit| {
-        if (bytes.len == 1 and (bytes[0] < 0x20 or bytes[0] == 0x7F)) return;
+        if (!isTextInput(bytes)) return;
         if (edit.append(bytes)) platform.invalidateWindow();
         return;
     }
     const session = self.activeSession() orelse return;
     if (session.state == .running) {
-        if (session.terminal.hasSelection() catch |err| {
+        const has_selection = session.terminal.hasSelection() catch |err| {
             self.fail(err);
             return;
-        }) {
+        };
+        if (has_selection) {
+            platform.invalidateWindow();
+            // Printable text replaces an editable selection; Alt chords and control bytes only dismiss it.
+            if (isTextInput(bytes)) {
+                const replaced = session.replaceSelection(self.allocator, bytes) catch |err| {
+                    self.fail(err);
+                    return;
+                };
+                if (replaced) return;
+            }
             session.terminal.clearSelection(true) catch |err| {
                 self.fail(err);
                 return;
             };
-            platform.invalidateWindow();
         }
         session.writeUserInput(bytes) catch |err| self.fail(err);
     }
+}
+
+/// Typed characters, not control bytes or ESC-prefixed Alt chords from WM_SYSCHAR.
+fn isTextInput(bytes: []const u8) bool {
+    return bytes.len > 0 and bytes[0] >= 0x20 and bytes[0] != 0x7F;
 }
 
 pub fn onPaste(self: *Application, bytes: []const u8) void {
@@ -236,11 +263,16 @@ pub fn onPaste(self: *Application, bytes: []const u8) void {
             self.fail(err);
             return;
         }) {
-            session.terminal.clearSelection(true) catch |err| {
+            platform.invalidateWindow();
+            // Pasting over an editable selection replaces it, like typing does.
+            const replaced = bytes.len > 0 and (session.replaceSelection(self.allocator, "") catch |err| {
+                self.fail(err);
+                return;
+            });
+            if (!replaced) session.terminal.clearSelection(true) catch |err| {
                 self.fail(err);
                 return;
             };
-            platform.invalidateWindow();
         }
         session.paste(self.allocator, bytes) catch |err| self.fail(err);
     }

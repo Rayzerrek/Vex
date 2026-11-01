@@ -598,6 +598,66 @@ pub const Terminal = struct {
         try self.clearSelection(true);
         return count;
     }
+    /// Line-editor keystrokes that delete a selection on the live cursor row.
+    pub const SelectionEdit = struct {
+        /// Left-arrow presses that move the caret back to the selection end.
+        left: usize = 0,
+        /// Right-arrow presses that move the caret forward to the selection start.
+        right: usize = 0,
+        /// Forward-Delete presses removing selected characters after the caret.
+        forward: usize = 0,
+        /// Backspaces removing selected characters before the caret.
+        backward: usize = 0,
+    };
+    /// Converts a single-row primary-screen selection on the cursor row into caret moves and deletions, then clears it.
+    /// Cells after the last visible character are never targeted, so cmd.exe never replays history on Right arrow.
+    pub fn consumeSelectionEdit(self: *Terminal) !?SelectionEdit {
+        if (!try self.hasSelection() or try self.isAlternateScreen()) return null;
+        if (try self.mouseTrackingMode() != .none) return null;
+        const sb = try self.scrollbar();
+        if (sb.offset +| sb.len < sb.total) return null;
+        const frame = try self.readFrame();
+        if (frame.columns == 0 or frame.rows == 0 or !frame.cursor.visible) return null;
+        const cols: usize = frame.columns;
+        const row: u16 = frame.cursor.row;
+        const row_start = @as(usize, row) * cols;
+        if (row >= frame.rows or row_start + cols > frame.cells.items.len) return null;
+        var first: ?usize = null;
+        var last: usize = 0;
+        for (frame.cells.items, 0..) |cell, index| {
+            if (!cell.selected) continue;
+            if (first == null) first = index;
+            last = index;
+        }
+        const first_index = first orelse return null;
+        if (first_index < row_start or last >= row_start + cols) return null;
+        const line = frame.cells.items[row_start..][0..cols];
+        var start = first_index - row_start;
+        var end = last - row_start + 1;
+        for (line[start..end]) |cell| if (!cell.selected) return null;
+        // A wide glyph is one editor character even when only one of its cells is selected.
+        if (start > 0 and line[start].width == .tail) start -= 1;
+        if (end < cols and line[end].width == .tail) end += 1;
+        const caret: usize = @min(frame.cursor.caretColumn(), frame.columns);
+        var text_end: usize = cols;
+        while (text_end > 0 and isWhitespaceOrEmptyCell(frame, row, @intCast(text_end - 1))) text_end -= 1;
+        end = @min(end, @max(text_end, caret));
+        if (start >= end) return null;
+        var edit: SelectionEdit = .{};
+        if (end <= caret) {
+            edit.left = editorCharacters(line[end..caret]);
+            edit.backward = editorCharacters(line[start..end]);
+        } else if (start >= caret) {
+            edit.right = editorCharacters(line[caret..start]);
+            edit.forward = editorCharacters(line[start..end]);
+        } else {
+            edit.forward = editorCharacters(line[caret..end]);
+            edit.backward = editorCharacters(line[start..caret]);
+        }
+        if (edit.forward + edit.backward == 0) return null;
+        try self.clearSelection(true);
+        return edit;
+    }
     /// Formats the active selection as UTF-8 plain text with soft-wrap unwrapping; returns null when no selection is active.
     pub fn selectedTextAlloc(self: *const Terminal, allocator: std.mem.Allocator, trim: bool) !?[]u8 {
         const options: c.GhosttyTerminalSelectionFormatOptions = .{
@@ -817,6 +877,13 @@ pub const Terminal = struct {
             // DEL represents a plain Backspace for both Windows shells and Unix line editors.
             output[0] = if (mods == 2) 0x17 else 0x7f;
             return output[0..1];
+        }
+        if (virtual_key == 0x08 and (mods == 4 or mods == 5)) {
+            if (output.len < 2) return error.InvalidTerminalBufferLength;
+            // Alt+Backspace is meta-DEL (backward-kill-word in readline, PSReadLine and most TUIs).
+            output[0] = 0x1b;
+            output[1] = 0x7f;
+            return output[0..2];
         }
         const key = physicalTerminalKey(virtual_key) orelse return null;
         self.api.key_encoder_setopt_from_terminal(self.key_encoder, self.handle);
@@ -1287,6 +1354,13 @@ fn physicalTerminalKey(virtual_key: u32) ?c.GhosttyKey {
         0x70...0x87 => @as(c.GhosttyKey, c.GHOSTTY_KEY_F1) + virtual_key - 0x70,
         else => null,
     };
+}
+fn editorCharacters(cells: []const TerminalCell) usize {
+    var count: usize = 0;
+    for (cells) |cell| {
+        if (cell.width != .tail and cell.width != .head) count += 1;
+    }
+    return count;
 }
 fn wordBoundaryCol(frame: *const TerminalFrame, row: u16, col: u16, forward: bool) u16 {
     var cursor = @min(col, frame.columns);

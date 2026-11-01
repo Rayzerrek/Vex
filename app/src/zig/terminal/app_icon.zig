@@ -103,6 +103,14 @@ pub const AppIcon = struct {
         .is_shell = true,
     };
 
+    /// A running program without a catalog glyph keeps the neutral shell prompt instead of a letter badge.
+    pub const unknown_program: AppIcon = .{
+        .kind = .shell,
+        .glyph = .none,
+        .color_rgb = 0x868D96,
+        .is_shell = false,
+    };
+
     pub fn glyphIcon(id: GlyphId, raw_rgb: u32, is_shell_glyph: bool) AppIcon {
         return .{
             .kind = .glyph,
@@ -372,13 +380,10 @@ fn packageRuntimeIcon(name: []const u8) ?AppIcon {
     return null;
 }
 
-/// Resolves a process name to a catalog icon or a deterministic FNV-1a pastel letter badge.
+/// Resolves a process name to a catalog icon, or the neutral shell prompt for unknown programs.
 pub fn fromProcess(process_name: []const u8) AppIcon {
-    const clean = cleanExecutableName(process_name);
-    if (resolveDirect(clean)) |known| return known;
-    const initial: u8 = if (clean.len > 0 and std.ascii.isAlphanumeric(clean[0])) std.ascii.toUpper(clean[0]) else '?';
-    const badge = [1]u8{initial};
-    return AppIcon.badgeIcon(&badge, hashColor(clean));
+    if (resolveDirect(process_name)) |known| return known;
+    return AppIcon.unknown_program;
 }
 
 /// Scans a shim host's command line for the actual tool being executed (e.g. `node .../claude-code/cli.js`).
@@ -394,7 +399,7 @@ pub fn fromCommandLine(command_line: []const u8, shim_name: []const u8) ?AppIcon
                 if (!icon.is_shell) return icon;
             } else if (app.len > 0) {
                 // A user's script is not a new brand; keep the runtime visible like its REPL.
-                // Package and module identities still receive their own deterministic badges.
+                // Unknown package and module identities fall back to the neutral shell prompt.
                 if (identity.is_local_script) {
                     if (resolveDirect(clean_shim)) |runtime| {
                         if (!runtime.is_shell) return runtime;
@@ -467,41 +472,6 @@ pub fn resolve(
     return AppIcon.terminal_shell;
 }
 
-/// Stable pastel color from a process name: 32-bit FNV-1a hash mapped to HSV(hash % 360, 0.55, 0.75).
-pub fn hashColor(seed: []const u8) u32 {
-    var hash: u32 = 2166136261;
-    for (seed) |ch| {
-        hash ^= ch;
-        hash *%= 16777619;
-    }
-    return fromHsv(@floatFromInt(hash % 360), 0.55, 0.75);
-}
-
-fn fromHsv(hue: f64, saturation: f64, value: f64) u32 {
-    const c = value * saturation;
-    const h_div = hue / 60.0;
-    const h_mod = @mod(h_div, 2.0);
-    const x = c * (1.0 - @abs(h_mod - 1.0));
-    const m = value - c;
-    const rgb = if (hue < 60.0)
-        .{ c, x, 0.0 }
-    else if (hue < 120.0)
-        .{ x, c, 0.0 }
-    else if (hue < 180.0)
-        .{ 0.0, c, x }
-    else if (hue < 240.0)
-        .{ 0.0, x, c }
-    else if (hue < 300.0)
-        .{ x, 0.0, c }
-    else
-        .{ c, 0.0, x };
-
-    const r: u32 = @intFromFloat((rgb[0] + m) * 255.0);
-    const g: u32 = @intFromFloat((rgb[1] + m) * 255.0);
-    const b: u32 = @intFromFloat((rgb[2] + m) * 255.0);
-    return (r << 16) | (g << 8) | b;
-}
-
 fn cleanExecutableName(raw: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n\"'");
     if (trimmed.len == 0) return "";
@@ -561,7 +531,7 @@ test "app icon catalog resolves curated glyphs, aliases, special badges, and dar
     try std.testing.expectEqual(GlyphId.btop, btop_icon.glyph);
     for ([_][]const u8{ "deno", "kakoune", "ranger", "lf", "screen", "gitui", "tig", "btm", "mosh" }) |name| {
         try std.testing.expect(resolveDirect(name) == null);
-        try std.testing.expectEqual(Kind.badge, fromProcess(name).kind);
+        try std.testing.expect(fromProcess(name).eql(AppIcon.unknown_program));
     }
 
     const pwsh = resolveDirect("pwsh.exe").?;
@@ -617,11 +587,11 @@ test "app icon resolution handles shim command lines, OSC titles, and unknown pr
     try std.testing.expectEqual(GlyphId.nodedotjs, bare_node.glyph);
 
     const unknown_proc = resolve("ripgrep.exe", null, null, null);
-    try std.testing.expectEqual(Kind.badge, unknown_proc.kind);
-    try std.testing.expectEqualStrings("R", unknown_proc.badgeSlice());
+    try std.testing.expectEqual(Kind.shell, unknown_proc.kind);
+    try std.testing.expectEqual(@as(u8, 0), unknown_proc.badge_len);
     try std.testing.expect(!unknown_proc.is_shell);
     const unicode_proc = fromProcess("音.exe");
-    try std.testing.expectEqualStrings("?", unicode_proc.badgeSlice());
+    try std.testing.expect(unicode_proc.eql(AppIcon.unknown_program));
 
     const idle_shell = resolve(null, null, "C:\\Users\\Ziut\\code\\vex", null);
     try std.testing.expectEqual(Kind.shell, idle_shell.kind);
@@ -684,10 +654,9 @@ test "runtime icons survive local scripts and versioned Python executables" {
     }
 
     const module = resolve("python3.13", "python3.13 -m custom_module", null, null);
-    try std.testing.expectEqual(Kind.badge, module.kind);
+    try std.testing.expect(module.eql(AppIcon.unknown_program));
     const package = resolve("node", "node node_modules/@future/custom-agent/dist/cli.js", null, null);
-    try std.testing.expectEqual(Kind.badge, package.kind);
-    try std.testing.expectEqualStrings("C", package.badgeSlice());
+    try std.testing.expect(package.eql(AppIcon.unknown_program));
     try std.testing.expectEqual(GlyphId.neovim, resolve("node", "node server.js", null, "nvim").glyph);
 }
 
@@ -696,8 +665,7 @@ test "explicit shim app beats stale OSC title and native processes keep their ow
     try std.testing.expectEqual(GlyphId.neovim, resolve("nvim.exe", null, "claude", null).glyph);
     try std.testing.expectEqual(GlyphId.claudecode, resolve("future-runtime.exe", null, "nvim", "claude-code").glyph);
     const unknown = resolve("custom-tool.exe", null, "nvim", null);
-    try std.testing.expectEqual(Kind.badge, unknown.kind);
-    try std.testing.expectEqualStrings("C", unknown.badgeSlice());
+    try std.testing.expect(unknown.eql(AppIcon.unknown_program));
     try std.testing.expectEqual(GlyphId.antigravity, resolveDirect("antigravity").?.glyph);
     try std.testing.expectEqual(GlyphId.antigravity, resolveDirect("agy").?.glyph);
 }

@@ -1293,16 +1293,26 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_CHAR: case WM_SYSCHAR: {
         hideChromeTooltip();
         uint16_t unit = (uint16_t)wparam;
+        // Alt+Space keeps the Windows system menu; every other Alt character belongs to the terminal.
+        const bool altChord = message == WM_SYSCHAR && (lparam & (1LL << 29));
+        if (altChord && unit == L' ') return DefWindowProcW(hwnd, message, wparam, lparam);
         if (unit >= 0xd800 && unit <= 0xdbff) { pendingSurrogate = unit; return 0; }
         wchar_t text[2]; int count = 1;
         if (pendingSurrogate && unit >= 0xdc00 && unit <= 0xdfff) { text[0] = pendingSurrogate; text[1] = unit; count = 2; }
         else text[0] = unit;
         pendingSurrogate = 0;
-        uint8_t bytes[8];
-        int length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, count, (char*)bytes, sizeof(bytes), nullptr, nullptr);
-        if (length > 0) callbacks.text(callbacks.context, bytes, (size_t)length);
+        // Alt chords use the xterm meta convention: ESC followed by the character.
+        uint8_t bytes[9];
+        const int prefix = altChord ? 1 : 0;
+        if (altChord) bytes[0] = 0x1b;
+        int length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, count, (char*)bytes + prefix, (int)sizeof(bytes) - prefix, nullptr, nullptr);
+        if (length > 0) callbacks.text(callbacks.context, bytes, (size_t)(length + prefix));
         return 0;
     }
+    case WM_SYSCOMMAND:
+        // A lone Alt tap must not park keyboard focus in the invisible system menu; Alt+Space still opens it.
+        if ((wparam & 0xfff0) == SC_KEYMENU && lparam == 0) return 0;
+        break;
     case WM_MOUSEWHEEL: {
         hideChromeTooltip();
         POINT point = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };

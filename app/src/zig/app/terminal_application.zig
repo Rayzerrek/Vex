@@ -1227,6 +1227,19 @@ pub const TerminalApplication = struct {
         if (self.health == .failed) return;
         self.applyAction(action, index) catch |err| self.fail(err);
     }
+    /// Alt+Arrow focuses a neighbouring pane only when one exists; otherwise the chord belongs to the terminal app.
+    pub fn paneFocusTargetExists(self: *TerminalApplication, action: platform.WorkspaceAction) !bool {
+        const direction: @import("../workspace/pane_navigation.zig").Direction = switch (action) {
+            .focus_left => .left,
+            .focus_right => .right,
+            .focus_up => .up,
+            .focus_down => .down,
+            else => return true,
+        };
+        const model = if (self.model) |*model| model else return false;
+        const metrics = self.metrics orelse return false;
+        return model.hasPaneNeighbor(windowContentBounds(metrics), direction);
+    }
     pub fn applyAction(self: *TerminalApplication, action: platform.WorkspaceAction, index: u32) !void {
         if (try pointer.cancelPointerDrag(self)) try self.updateLayout();
         switch (action) {
