@@ -16,8 +16,7 @@ struct TerminalDrawingFrame {
     const TerminalLigatureMap* ligatures;
     float dpiScale, cellWidth, cellHeight;
     uint32_t paneBackground;
-    VexUiMetrics uiMetrics;
 };
 void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame);
 void clearTerminalDrawingFontCache();
-void beginTerminalPane(VexPaneRect bounds, bool moving = false);
+void beginTerminalPane(VexPaneRect bounds, VexPaneRect grid, bool moving = false);

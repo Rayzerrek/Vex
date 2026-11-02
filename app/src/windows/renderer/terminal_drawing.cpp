@@ -16,7 +16,6 @@ ID2D1RenderTarget* glyphTarget;
 ID2D1SolidColorBrush* glyphBrush;
 float dpiScale, cellWidth, cellHeight, gridLeft, gridTop;
 uint32_t paneBackground;
-VexUiMetrics uiMetrics;
 uint32_t cellLayer = 0;
 float paneOriginX, paneOriginY;
 D3D12_RECT paneClip;
@@ -30,19 +29,24 @@ void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
     ligatures = frame.ligatures;
     dpiScale = frame.dpiScale; cellWidth = frame.cellWidth; cellHeight = frame.cellHeight;
     paneBackground = frame.paneBackground;
-    uiMetrics = frame.uiMetrics;
 }
-void beginTerminalPane(VexPaneRect bounds, bool moving) {
+void beginTerminalPane(VexPaneRect bounds, VexPaneRect grid, bool moving) {
     cellLayer = 0;
-    const float left = bounds.x + uiMetrics.pane_padding, top = bounds.y + uiMetrics.pane_header_height + 2;
+    const float left = grid.x, top = grid.y;
     // Keep cached glyph geometry local: moving a pane or drawing its drag preview
     // changes only the replay transform, rather than rebuilding every terminal cell.
     gridLeft = 0; gridTop = 0;
     const float scale = dpiScale;
+    // The cell rect already carries the balanced padding; clip one pixel wider
+    // so antialiased ink at the last row/column is not shaved off.
+    const float clipLeft = fmaxf(bounds.x, grid.x - 1.0f);
+    const float clipTop = fmaxf(bounds.y, grid.y - 1.0f);
+    const float clipRight = fminf(bounds.x + bounds.width, grid.x + grid.width + 1.0f);
+    const float clipBottom = fminf(bounds.y + bounds.height, grid.y + grid.height + 1.0f);
     const D3D12_RECT clip = {
-        (LONG)fmaxf(0, roundf(left * scale)), (LONG)fmaxf(0, roundf(top * scale)),
-        (LONG)fminf((float)renderer->width(), fmaxf(left, bounds.x + bounds.width - uiMetrics.pane_padding - 12) * scale),
-        (LONG)fminf((float)renderer->height(), fmaxf(top, bounds.y + bounds.height - uiMetrics.pane_padding) * scale)
+        (LONG)fmaxf(0, roundf(clipLeft * scale)), (LONG)fmaxf(0, roundf(clipTop * scale)),
+        (LONG)fminf((float)renderer->width(), roundf(clipRight * scale)),
+        (LONG)fminf((float)renderer->height(), roundf(clipBottom * scale))
     };
     paneClip = clip; scrollGuard = false;
     // Preserve fractional translation while moving; snapping each frame makes the

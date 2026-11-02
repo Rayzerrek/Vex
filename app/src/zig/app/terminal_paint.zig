@@ -11,6 +11,7 @@ const panes = @import("../workspace/pane_tree.zig");
 
 pub fn paintWorkspace(self: *TerminalApplication) !void {
     const model = if (self.model) |*model| model else return;
+    const metrics = self.metrics orelse return;
     const active_theme = self.currentTheme();
     platform.drawTabStripBackground(model.selected_tab);
     for (model.tabs.items, 0..) |tab, index| {
@@ -37,7 +38,6 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, tab_edit, default_title, tab_icons[0..icon_count], presentation.summary, self.status_pulse.phaseIndex(), presentation.attention);
     }
     if (self.pointer_drag == .tab) {
-        const metrics = self.metrics orelse return;
         if (try self.pointer_drag.tab.markerX(model, try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density))) |x| try platform.drawTabInsertionMarker(x);
     }
     const active_tab = model.activeTab();
@@ -51,7 +51,8 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     if (!self.layout_motion.active(paint_now) or
         (self.closing_panes.items.len > 0 and self.closing_panes.items[0].tab_id != active_tab.id)) self.clearClosingPanes();
     if (self.overlay != .tab_peek) for (self.closing_panes.items) |*closing| {
-        platform.beginPane(closing.placement.bounds, closing.placement.id, false, false, true, false, null, closing.title, closing.icon, closing.summary, self.status_pulse.phaseIndex(), false);
+        const grid = try metrics.terminalGrid(closing.placement.bounds);
+        platform.beginPane(closing.placement.bounds, grid, closing.placement.id, false, false, true, false, null, closing.title, closing.icon, closing.summary, self.status_pulse.phaseIndex(), false);
         defer platform.endPane();
         try platform.drawTerminalFrame(closing.placement.id, &closing.frame, false, false, null, active_theme);
     };
@@ -59,6 +60,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         const placement: panes.PanePlacement = .{ .id = final_placement.id, .bounds = self.layout_motion.bounds(final_placement, placement_index, paint_now, motion_enabled) };
         if (self.overlay == .tab_peek) break;
         if (placement.bounds.width < 14 or placement.bounds.height < self.settings.ui_density.metrics().verticalInset() + 2) continue;
+        const grid = try metrics.terminalGrid(placement.bounds);
         const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
         const focused = active_tab.active_pane == placement.id and self.overlay == .none and self.editing_tab == null;
         const hovered = self.hovered_pane == placement.id and self.overlay == .none;
@@ -84,7 +86,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none and fraction == 0 and !session.smooth_scroll.pending(paint_now)) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
         {
             const summary = session.terminal.program_status.programStatus();
-            platform.beginPane(placement.bounds, placement.id, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex(), !std.meta.eql(placement.bounds, final_placement.bounds));
+            platform.beginPane(placement.bounds, grid, placement.id, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex(), !std.meta.eql(placement.bounds, final_placement.bounds));
             defer platform.endPane();
             if (fraction > 0) platform.setTerminalScrollOffset(-fraction, false, frame.rows);
             try platform.drawTerminalFrame(placement.id, frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
@@ -93,12 +95,10 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
                 try platform.drawTerminalFrame(placement.id, edge, false, false, null, active_theme);
             }
         }
-        if (self.metrics) |metrics| {
-            if (session.copy_feedback.progress(self.cursorNowMs(), scrollbar.offset, platform.animationsEnabled())) |copy_progress| {
-                platform.drawCopyFeedback(placement.bounds, metrics.cell_width, metrics.cell_height, session.copy_feedback.spans.items, copy_progress);
-            }
+        if (session.copy_feedback.progress(self.cursorNowMs(), scrollbar.offset, platform.animationsEnabled())) |copy_progress| {
+            platform.drawCopyFeedback(grid, metrics.cell_width, metrics.cell_height, session.copy_feedback.spans.items, copy_progress);
         }
-        var geometry = platform.ScrollbarGeometry.computeWithDensity(placement.bounds, scrollbar, self.settings.ui_density);
+        var geometry = platform.ScrollbarGeometry.compute(placement.bounds, grid, scrollbar);
         if (geometry) |*sb| {
             sb.thumb_y += sb.travel * fraction / @as(f32, @floatFromInt(@max(1, sb.scrollable)));
             if (self.pointer_drag == .scrollbar and self.pointer_drag.scrollbar.pane_id == placement.id) {
@@ -135,7 +135,6 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging) {
         const drag = self.pointer_drag.pane;
         const session = self.findSession(drag.pane_id) orelse return;
-        const metrics = self.metrics orelse return;
         const ghost = drag.ghostBounds(metrics.width, metrics.height);
         const detach_target = pointer.paneDetachAt(self, drag.pane_id, drag.point);
         platform.drawPaneDrag(ghost, detach_target, session.displayTitle(), session.icon, drop.target != null);
@@ -144,7 +143,6 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     try self.syncAnimationWake();
     try overlays.drawActiveOverlay(self);
     if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) {
-        const metrics = self.metrics orelse return;
         const drag = &self.pointer_drag.tab;
         const index = model.tabIndex(drag.tabId().?) orelse return;
         const tab = &model.tabs.items[index];

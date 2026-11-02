@@ -52,11 +52,13 @@ the dark and light collections.
 
 Interface density is available in **Settings → Appearance** and through the
 **Interface Density** commands in the command palette. Compact reduces tab and
-pane spacing and joins split edges with thin separators; Comfortable is the default; Spacious adds room around the
-workspace. Every density uses taller pane headers with more padding, larger program icons, action buttons and
-caption text; the presets only differ in how much space they give those elements. Changes apply immediately and are
-saved with other preferences. They do not change terminal font size or Windows
-caption-button sizes. Existing terminal sessions and scrollback remain open.
+pane-header spacing and joins split edges with thin separators; Comfortable is
+the default; Spacious adds room around the workspace. Every density keeps the
+same 6.5 DIP left, right and bottom terminal padding, with no extra top inset
+below the pane header; the presets only differ in header, tab and workspace
+chrome. Changes apply immediately and are saved with other preferences. They do
+not change terminal font size or Windows caption-button sizes. Existing terminal
+sessions and scrollback remain open.
 
 ## Save and reload
 

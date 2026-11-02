@@ -618,7 +618,8 @@ test "hidden TUI cursor retains its viewport position on both screens" {
         try std.testing.expectEqual(@as(u16, 7), cursor.row);
         const popup = @import("../workspace/completion_popup.zig");
         const bounds = @import("../workspace/pane_tree.zig").PaneRect{ .x = 0, .y = 0, .width = 800, .height = 596 };
-        const layout = popup.compute(bounds, bounds, 8, 16, if (cursor.in_viewport) .{ .column = cursor.caretColumn(), .row = cursor.row } else null).?;
+        const grid = @import("../workspace/pane_tree.zig").PaneRect{ .x = 6, .y = 30, .width = 788, .height = 560 };
+        const layout = popup.compute(bounds, bounds, grid, 8, 16, if (cursor.in_viewport) .{ .column = cursor.caretColumn(), .row = cursor.row } else null).?;
         try std.testing.expectEqual(@as(f32, 102), layout.bounds.x);
         try std.testing.expectEqual(@as(f32, 162), layout.bounds.y);
         try terminal.feedOutput("\x1b[?25h");

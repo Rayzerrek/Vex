@@ -63,7 +63,9 @@ pub fn onProbe(self: *Application, query: u32) u64 {
             if (query == 117) return info.scrollable();
             if (query == 118) return info.len;
             const placement = self.findPlacement(session.id) orelse return 0;
-            const geometry = platform.ScrollbarGeometry.computeWithDensity(placement.bounds, info, self.settings.ui_density) orelse return 0;
+            const metrics = self.metrics orelse return 0;
+            const grid = metrics.terminalGrid(placement.bounds) catch return 0;
+            const geometry = platform.ScrollbarGeometry.compute(placement.bounds, grid, info) orelse return 0;
             const value = switch (query) {
                 119 => geometry.thumb_y,
                 120 => geometry.thumb_height,

@@ -511,7 +511,7 @@ static void renderScene(double timeMs) {
     beginWindowChromeFrame({ target, textFactory, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, notificationFont, chromePalette, uiMetrics, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
         timeMs, vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window),
         chromePointerX, chromePointerY, !tooltipSuppressed && trackingMouseLeave && pointerCaptureState == PointerCaptureState::none && GetForegroundWindow() == window && IsWindowEnabled(window) });
-    beginTerminalDrawingFrame({ &renderer, drawingFactory, textFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, &terminalLigatures, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg, uiMetrics });
+    beginTerminalDrawingFrame({ &renderer, drawingFactory, textFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, &terminalLigatures, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
     target->Clear(rgb(chromePalette.window_bg));
     rectangle(0.0f, 0.0f, clientWidth, 44.0f, uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg);
     drawNewTabButton();

@@ -39,25 +39,54 @@ pub const WindowMetrics = struct {
             if (!std.math.isFinite(value) or value <= 0 or value > 65536) return error.InvalidWindowMetrics;
         }
     }
+    /// Chooses a whole-cell count whose visible padding is closest to the
+    /// requested target. Using one more cell can turn a large remainder into a
+    /// near-exact inset; the minimum keeps text from hugging the pane edge.
+    fn fittedCellCount(extent: f32, start: f32, cell: f32, target: f32, minimum: f32, min_cells: u16, max_cells: u16) u16 {
+        const span = extent - start;
+        if (!std.math.isFinite(span) or !std.math.isFinite(cell) or cell <= 0) return min_cells;
+        var count: f32 = @floor(@max(0, span - target * 2) / cell);
+        const base_padding = (span - count * cell) / 2;
+        const next_padding = (span - (count + 1) * cell) / 2;
+        if (next_padding >= minimum and @abs(next_padding - target) < @abs(base_padding - target)) count += 1;
+        return @intFromFloat(std.math.clamp(count, @as(f32, @floatFromInt(min_cells)), @as(f32, @floatFromInt(max_cells))));
+    }
     /// Bounded terminal grid matches the pane's inner surface, including header/padding.
     pub fn terminalSize(self: WindowMetrics, bounds: panes.PaneRect) !TerminalSize {
         try self.validate();
         try bounds.validate();
+        const style = self.ui_density.metrics();
         return .{
-            .columns = @intFromFloat(std.math.clamp(@floor((bounds.width - self.ui_density.metrics().horizontalInset()) / self.cell_width), 2, 1000)),
-            .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - self.ui_density.metrics().verticalInset()) / self.cell_height), 1, 1000)),
+            .columns = fittedCellCount(bounds.width, 0, self.cell_width, style.pane_padding, density.UiDensity.terminal_min_padding, 2, 1000),
+            .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - style.verticalInset()) / self.cell_height), 1, 1000)),
             .cell_width_px = @intFromFloat(std.math.clamp(@round(self.cell_width * self.scale), 1, 65536)),
             .cell_height_px = @intFromFloat(std.math.clamp(@round(self.cell_height * self.scale), 1, 65536)),
+        };
+    }
+    /// Integral cell area inside a pane. Left and right share a fixed 6.5 DIP
+    /// target margin, the bottom keeps at least 6.5 DIP, and the grid starts
+    /// directly after the pane header with no extra top padding.
+    pub fn terminalGrid(self: WindowMetrics, bounds: panes.PaneRect) !panes.PaneRect {
+        const size = try self.terminalSize(bounds);
+        const style = self.ui_density.metrics();
+        const width = @as(f32, @floatFromInt(size.columns)) * self.cell_width;
+        const height = @as(f32, @floatFromInt(size.rows)) * self.cell_height;
+        return .{
+            .x = bounds.x + @max(0, (bounds.width - width) / 2),
+            .y = bounds.y + style.terminalTop(),
+            .width = width,
+            .height = height,
         };
     }
     /// Maps a window DIP point into a pane's terminal viewport, optionally clamping outside drags to the grid.
     pub fn viewportPoint(self: WindowMetrics, bounds: panes.PaneRect, x: f32, y: f32, clamp_outside: bool) !?ViewportPoint {
         if (!std.math.isFinite(x) or !std.math.isFinite(y)) return error.InvalidWindowMetrics;
         const size = try self.terminalSize(bounds);
-        const grid_left = bounds.x + self.ui_density.metrics().pane_padding;
-        const grid_top = bounds.y + self.ui_density.metrics().gridTop();
-        const grid_right = bounds.x + bounds.width - self.ui_density.metrics().pane_padding - 12;
-        const grid_bottom = bounds.y + bounds.height - self.ui_density.metrics().pane_padding;
+        const grid = try self.terminalGrid(bounds);
+        const grid_left = grid.x;
+        const grid_top = grid.y;
+        const grid_right = grid.x + grid.width;
+        const grid_bottom = grid.y + grid.height;
         if (grid_right <= grid_left or grid_bottom <= grid_top) return null;
         if (!clamp_outside and (x < grid_left or x >= grid_right or y < grid_top or y >= grid_bottom)) return null;
         const max_x = @max(0, @as(f32, @floatFromInt(size.columns)) * self.cell_width - 0.001);
@@ -90,16 +119,13 @@ pub const ScrollbarGeometry = struct {
     travel: f32,
     scrollable: u64,
 
-    pub const hit_width: f32 = 16.0;
-
     /// Returns null when the pane has no scrollback or its viewport track is too short.
-    pub fn compute(bounds: panes.PaneRect, info: terminal.ScrollbarInfo) ?ScrollbarGeometry {
-        return computeWithDensity(bounds, info, .comfortable);
-    }
-    pub fn computeWithDensity(bounds: panes.PaneRect, info: terminal.ScrollbarInfo, ui_density: density.UiDensity) ?ScrollbarGeometry {
+    /// The track spans the centered cell rect so its ends line up with the first
+    /// and last terminal rows instead of the pane's unused remainder.
+    pub fn compute(bounds: panes.PaneRect, grid: panes.PaneRect, info: terminal.ScrollbarInfo) ?ScrollbarGeometry {
         if (!info.isVisible()) return null;
-        const track_top = bounds.y + ui_density.metrics().gridTop();
-        const track_height = bounds.height - ui_density.metrics().verticalInset();
+        const track_top = grid.y;
+        const track_height = grid.height;
         if (!std.math.isFinite(track_top) or !std.math.isFinite(track_height) or track_height < 12.0 or bounds.width < 24.0) return null;
         const total_f: f32 = @floatFromInt(@max(1, info.total));
         const len_f: f32 = @floatFromInt(info.len);
@@ -119,9 +145,10 @@ pub const ScrollbarGeometry = struct {
             .scrollable = scrollable,
         };
     }
-    /// True when (x, y) is inside the right-edge scrollbar hit strip.
-    pub fn containsPoint(self: ScrollbarGeometry, bounds: panes.PaneRect, x: f32, y: f32) bool {
-        const hit_left = @max(bounds.x, bounds.x + bounds.width - hit_width);
+    /// The scrollbar hit strip starts at the cell edge, never over terminal text;
+    /// the visible thumb may still overhang the last cell while scrolling.
+    pub fn containsPoint(self: ScrollbarGeometry, bounds: panes.PaneRect, grid_right: f32, x: f32, y: f32) bool {
+        const hit_left = @max(bounds.x, grid_right);
         return x >= hit_left and x < bounds.x + bounds.width and y >= self.track_top and y < self.track_top + self.track_height;
     }
     /// True when y falls on the draggable thumb rather than the track above/below it.
@@ -863,9 +890,9 @@ pub fn fontSize() f32 {
     return c.vex_window_font_size();
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
-pub fn beginPane(bounds: panes.PaneRect, pane_id: panes.PaneId, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32, moving: bool) void {
+pub fn beginPane(bounds: panes.PaneRect, grid: panes.PaneRect, pane_id: panes.PaneId, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32, moving: bool) void {
     const action_code: u8 = if (hovered_action) |action| @intFromEnum(action) else 0;
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, @intFromEnum(pane_id), focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary, phase), moving);
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, .{ .x = grid.x, .y = grid.y, .width = grid.width, .height = grid.height }, @intFromEnum(pane_id), focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary, phase), moving);
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {
@@ -876,9 +903,9 @@ pub fn drawScrollbar(bounds: panes.PaneRect, geometry: ScrollbarGeometry, active
     c.vex_draw_scrollbar(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, geometry.thumb_y, geometry.thumb_height, active, opacity);
 }
 /// Draws the specular sweep confirmation over recently copied terminal selection spans.
-pub fn drawCopyFeedback(bounds: panes.PaneRect, cell_width: f32, cell_height: f32, spans: []const c.VexCopySpan, progress: f32) void {
+pub fn drawCopyFeedback(grid: panes.PaneRect, cell_width: f32, cell_height: f32, spans: []const c.VexCopySpan, progress: f32) void {
     if (spans.len == 0) return;
-    c.vex_draw_copy_feedback(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, cell_width, cell_height, spans.ptr, spans.len, progress);
+    c.vex_draw_copy_feedback(.{ .x = grid.x, .y = grid.y, .width = grid.width, .height = grid.height }, cell_width, cell_height, spans.ptr, spans.len, progress);
 }
 /// Draws the translucent split preview overlay for an active pane header drag-to-split gesture.
 pub fn drawSplitPreview(bounds: panes.PaneRect) void {
@@ -1445,38 +1472,61 @@ test "density grid sizes and mouse coordinates use identical insets at mixed DPI
     for (std.enums.values(density.UiDensity)) |value| {
         const metrics: WindowMetrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1.5, .ui_density = value };
         const style = value.metrics();
-        const left = bounds.x + style.pane_padding;
-        const top = bounds.y + style.gridTop();
-        const origin = (try metrics.viewportPoint(bounds, left, top, false)).?;
+        const grid = try metrics.terminalGrid(bounds);
+        const left = grid.x - bounds.x;
+        const right = bounds.x + bounds.width - (grid.x + grid.width);
+        const top = grid.y - (bounds.y + style.terminalTop());
+        const bottom = bounds.y + bounds.height - (grid.y + grid.height);
+        try std.testing.expectApproxEqAbs(left, right, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f32, 0), top, 0.001);
+        try std.testing.expect(left >= density.UiDensity.terminal_min_padding - 0.001);
+        try std.testing.expect(bottom >= style.pane_padding - 0.001);
+        const origin = (try metrics.viewportPoint(bounds, grid.x, grid.y, false)).?;
         try std.testing.expectEqual(@as(u16, 0), origin.column);
         try std.testing.expectEqual(@as(u16, 0), origin.row);
-        try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, left, top - 1, false));
-        try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, left - 1, top, false));
-        const next = (try metrics.viewportPoint(bounds, left + 8, top + 16, false)).?;
+        try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, grid.x, grid.y - 1, false));
+        try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, grid.x - 1, grid.y, false));
+        const next = (try metrics.viewportPoint(bounds, grid.x + 8, grid.y + 16, false)).?;
         try std.testing.expectEqual(@as(u16, 1), next.column);
         try std.testing.expectEqual(@as(u16, 1), next.row);
         try std.testing.expectEqual(@as(f64, 12), next.x_px);
         try std.testing.expectEqual(@as(f64, 24), next.y_px);
         const size = try metrics.terminalSize(bounds);
-        try std.testing.expectApproxEqAbs(@floor((bounds.width - style.horizontalInset()) / 8), @as(f32, @floatFromInt(size.columns)), 0.001);
+        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(size.columns)) * 8, grid.width, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(size.rows)) * 16, grid.height, 0.001);
     }
+}
+
+test "terminal grid has no top inset and keeps left/right padding equal" {
+    const bounds: panes.PaneRect = .{ .x = 0, .y = 0, .width = 953, .height = 990 };
+    const metrics: WindowMetrics = .{ .width = 953, .height = 990, .cell_width = 10, .cell_height = 18, .scale = 1, .ui_density = .compact };
+    const style = metrics.ui_density.metrics();
+    const grid = try metrics.terminalGrid(bounds);
+    const left = grid.x - bounds.x;
+    const right = bounds.x + bounds.width - (grid.x + grid.width);
+    const top = grid.y - (bounds.y + style.terminalTop());
+    const bottom = bounds.y + bounds.height - (grid.y + grid.height);
+    try std.testing.expectApproxEqAbs(left, right, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0), top, 0.001);
+    try std.testing.expect(left >= density.UiDensity.terminal_min_padding);
+    try std.testing.expect(bottom >= style.pane_padding);
 }
 
 test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid cells and scaled pixels" {
     const metrics: WindowMetrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1.5 };
     const bounds: panes.PaneRect = .{ .x = 10, .y = 50, .width = 332, .height = 228 };
-    // Header clicks (y < bounds.y + 34) do not start a viewport selection.
+    // Header clicks (y < grid.y) do not start a viewport selection.
     try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 24, 62, false));
-    // Inside the terminal grid (grid_left = 16, grid_top = 84):
+    // Inside the grid (grid_left = 16, grid_top = 84; no top inset):
     const inside = (try metrics.viewportPoint(bounds, 36, 122, false)).?;
     try std.testing.expectEqual(@as(u16, 2), inside.column);
     try std.testing.expectEqual(@as(u16, 2), inside.row);
     try std.testing.expectApproxEqAbs(@as(f64, 30.0), inside.x_px, 0.01);
     try std.testing.expectApproxEqAbs(@as(f64, 57.0), inside.y_px, 0.01);
-    // The scrollbar gutter is never terminal text, even when no scrollbar is visible yet.
-    try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 330, 122, false));
-    try std.testing.expectEqual(@as(u16, 38), (try metrics.terminalSize(bounds)).columns);
-    // Clamped drag outside the pane clamps to the boundary cells. Grid height 188 / 16 = 11 rows, so the last row is 10.
+    // The right padding is outside the cells; clicking it never selects text.
+    try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 340, 122, false));
+    try std.testing.expectEqual(@as(u16, 40), (try metrics.terminalSize(bounds)).columns);
+    // Clamped drag outside the pane clamps to the boundary cells. Grid height 176 / 16 = 11 rows, so the last row is 10.
     const clamped = (try metrics.viewportPoint(bounds, -50, 900, true)).?;
     try std.testing.expectEqual(@as(u16, 0), clamped.column);
     try std.testing.expectEqual(@as(u16, 10), clamped.row);
@@ -1484,10 +1534,11 @@ test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid 
 
 test "ScrollbarGeometry computes thumb travel, right-edge hit zone, and drag target offsets" {
     const bounds: panes.PaneRect = .{ .x = 10, .y = 40, .width = 300, .height = 236 };
+    const grid: panes.PaneRect = .{ .x = 16, .y = 74, .width = 288, .height = 196 };
     // Not visible when total <= len.
-    try std.testing.expectEqual(@as(?ScrollbarGeometry, null), ScrollbarGeometry.compute(bounds, .{ .total = 24, .offset = 0, .len = 24 }));
-    // Track height = 236 - 40 = 196, track_top = 74. With total=100, len=25: thumb_height = 49, travel = 147, scrollable = 75.
-    const mid = ScrollbarGeometry.compute(bounds, .{ .total = 100, .offset = 25, .len = 25 }).?;
+    try std.testing.expectEqual(@as(?ScrollbarGeometry, null), ScrollbarGeometry.compute(bounds, grid, .{ .total = 24, .offset = 0, .len = 24 }));
+    // Track height = 196, track_top = 74. With total=100, len=25: thumb_height = 49, travel = 147, scrollable = 75.
+    const mid = ScrollbarGeometry.compute(bounds, grid, .{ .total = 100, .offset = 25, .len = 25 }).?;
     try std.testing.expectApproxEqAbs(@as(f32, 74.0), mid.track_top, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 196.0), mid.track_height, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 49.0), mid.thumb_height, 0.01);
@@ -1496,8 +1547,11 @@ test "ScrollbarGeometry computes thumb travel, right-edge hit zone, and drag tar
     try std.testing.expectApproxEqAbs(@as(f32, 74), mid.thumbTopForY(-100, 10), 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 221), mid.thumbTopForY(900, 10), 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 123.0), mid.thumb_y, 0.01);
-    try std.testing.expect(mid.containsPoint(bounds, 305.0, 130.0));
-    try std.testing.expect(!mid.containsPoint(bounds, 280.0, 130.0));
+    try std.testing.expect(mid.containsPoint(bounds, 304, 305.0, 130.0));
+    try std.testing.expect(!mid.containsPoint(bounds, 304, 303.0, 130.0));
+    // A wider right padding still lets the strip start at the cell edge.
+    try std.testing.expect(mid.containsPoint(bounds, 240, 280.0, 130.0));
+    try std.testing.expect(!mid.containsPoint(bounds, 294, 290.0, 130.0));
     try std.testing.expect(mid.containsThumb(130.0));
     try std.testing.expect(!mid.containsThumb(90.0));
     // Dragging with grab_offset=10.0 to y=80.0 -> desired=0 -> offset 0; to y=155.0 -> desired=71 -> offset 36;

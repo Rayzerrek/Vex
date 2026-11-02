@@ -256,8 +256,11 @@ fn updateHoverState(self: *Application, can_focus: bool, x: f32, y: f32, modifie
             if (next_action == null) {
                 if (self.findSession(placement.id)) |session| {
                     if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
-                        if (platform.ScrollbarGeometry.computeWithDensity(placement.bounds, try session.terminal.scrollbar(), self.settings.ui_density)) |sb| {
-                            if (sb.containsPoint(placement.bounds, x, y)) next_scrollbar = placement.id;
+                        if (self.metrics) |metrics| {
+                            const grid = try metrics.terminalGrid(placement.bounds);
+                            if (platform.ScrollbarGeometry.compute(placement.bounds, grid, try session.terminal.scrollbar())) |sb| {
+                                if (sb.containsPoint(placement.bounds, grid.x + grid.width, x, y)) next_scrollbar = placement.id;
+                            }
                         }
                     }
                     if (next_scrollbar == null) {
@@ -406,8 +409,9 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                         }
                         const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
                         if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
-                            if (platform.ScrollbarGeometry.computeWithDensity(placement.bounds, try session.terminal.scrollbar(), self.settings.ui_density)) |sb| {
-                                if (sb.containsPoint(placement.bounds, x, y)) {
+                            const grid = try metrics.terminalGrid(placement.bounds);
+                            if (platform.ScrollbarGeometry.compute(placement.bounds, grid, try session.terminal.scrollbar())) |sb| {
+                                if (sb.containsPoint(placement.bounds, grid.x + grid.width, x, y)) {
                                     session.scrollbar_visibility.reveal(self.cursorNowMs());
                                     _ = model.focusPane(placement.id);
                                     try self.clearOtherSelections(placement.id);
@@ -586,7 +590,8 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                     sb_drag.pointer_y = y;
                     if (self.findPlacement(sb_drag.pane_id)) |placement| {
                         if (self.findSession(sb_drag.pane_id)) |session| {
-                            if (platform.ScrollbarGeometry.computeWithDensity(placement.bounds, try session.terminal.scrollbar(), self.settings.ui_density)) |sb| {
+                            const grid = try metrics.terminalGrid(placement.bounds);
+                            if (platform.ScrollbarGeometry.compute(placement.bounds, grid, try session.terminal.scrollbar())) |sb| {
                                 try session.terminal.scrollToRow(sb.targetOffsetForY(y, sb_drag.grab_offset));
                                 session.scrollbar_visibility.reveal(self.cursorNowMs());
                                 platform.invalidateWindow();

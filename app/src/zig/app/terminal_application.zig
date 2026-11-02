@@ -948,7 +948,8 @@ pub const TerminalApplication = struct {
         const metrics = self.metrics orelse return null;
         const state = self.overlay.path_completion;
         const placement = self.findPlacement(state.pane_id) orelse return null;
-        return completion_popup.compute(.{ .x = 0, .y = 0, .width = metrics.width, .height = metrics.height }, placement.bounds, metrics.cell_width, metrics.cell_height, state.anchor);
+        const grid = metrics.terminalGrid(placement.bounds) catch return null;
+        return completion_popup.compute(.{ .x = 0, .y = 0, .width = metrics.width, .height = metrics.height }, placement.bounds, grid, metrics.cell_width, metrics.cell_height, state.anchor);
     }
     fn openPathCompletion(self: *TerminalApplication) !void {
         self.commitTabRename();
@@ -963,7 +964,8 @@ pub const TerminalApplication = struct {
             null;
         const metrics = self.metrics orelse return;
         const placement = self.findPlacement(pane_id) orelse return;
-        if (completion_popup.compute(.{ .x = 0, .y = 0, .width = metrics.width, .height = metrics.height }, placement.bounds, metrics.cell_width, metrics.cell_height, anchor) == null) return;
+        const grid = try metrics.terminalGrid(placement.bounds);
+        if (completion_popup.compute(.{ .x = 0, .y = 0, .width = metrics.width, .height = metrics.height }, placement.bounds, grid, metrics.cell_width, metrics.cell_height, anchor) == null) return;
         // Only parsed OSC 7/launch metadata selects a directory; terminal text is not a trusted prompt.
         const dir = try path_completion.initialDirectoryAlloc(self.allocator, session.directory.current(), session.directory.context);
         defer self.allocator.free(dir);
@@ -2148,7 +2150,7 @@ test "density commands resize live grids without replacing sessions or terminal 
     try app.executeCommand(.density_compact);
     try std.testing.expectEqual(preferences.UiDensity.compact, app.settings.ui_density);
     try std.testing.expect(session.size.?.rows >= initial.rows);
-    try std.testing.expect(session.size.?.columns >= initial.columns);
+    try std.testing.expectEqual(initial.columns, session.size.?.columns);
     try app.executeCommand(.density_spacious);
     try std.testing.expect(session.size.?.rows < initial.rows);
     try std.testing.expect(session.size.?.columns < initial.columns);

@@ -24,8 +24,8 @@ int testTerminalTextTiles(WindowsRenderer& renderer, ID2D1Factory* d2d) {
     for (unsigned frame = 0; frame < 3 && !failure; ++frame) {
         if (FAILED(renderer.beginFrame())) { failure = 34; break; }
         renderer.ui.Clear(D2D1::ColorF(0x000000));
-        beginTerminalDrawingFrame({ &renderer, d2d, factory.Get(), { fonts[0], fonts[1], fonts[2], fonts[3] }, frame ? &map : nullptr, 1, width, height, 0, {} });
-        beginTerminalPane({ 0, 0, (float)viewportWidth, (float)viewportHeight });
+        beginTerminalDrawingFrame({ &renderer, d2d, factory.Get(), { fonts[0], fonts[1], fonts[2], fonts[3] }, frame ? &map : nullptr, 1, width, height, 0 });
+        beginTerminalPane({ 0, 0, (float)viewportWidth, (float)viewportHeight }, { 0, 0, (float)viewportWidth, (float)viewportHeight });
         // A cold procedural shade leaves a translucent brush. Text must restore its own mask opacity.
         // Keep the shade outside the viewport so cache-replay pixels remain directly comparable.
         const uint8_t shade[] = { 0xe2, 0x96, (uint8_t)(0x91 + frame) };

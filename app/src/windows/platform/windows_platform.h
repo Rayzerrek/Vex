@@ -182,10 +182,10 @@ bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length
 void vex_pty_ack_output(uint32_t token);
 bool vex_pty_exists(uint32_t token);
 void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTabEdit edit, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention);
-void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status, bool moving);
+void vex_begin_pane(VexPaneRect bounds, VexPaneRect grid, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status, bool moving);
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity);
-void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress);
+void vex_draw_copy_feedback(VexPaneRect grid, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress);
 void vex_draw_split_preview(VexPaneRect bounds);
 void vex_terminal_scroll_offset(float rows, bool guard, uint16_t viewport_rows);
 void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns, uint16_t rows);

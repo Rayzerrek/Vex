@@ -622,7 +622,7 @@ static void drawPaneHeaderActions(VexPaneRect bounds, PaneChromeMotion& motion, 
         line(cx, cy, 3.5f, -3.5f, -3.5f, 3.5f, 1.25f);
     }
 }
-extern "C" void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status, bool moving) {
+extern "C" void vex_begin_pane(VexPaneRect bounds, VexPaneRect grid, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status, bool moving) {
     const bool joined = uiMetrics.pane_gap == 0;
     // Caption centred in the header rule; the 0.665 factor approximates half of Segoe UI's line height.
     const float captionY = bounds.y + (uiMetrics.pane_header_height - 2.0f) / 2.0f - uiMetrics.header_title_size * 0.665f;
@@ -680,7 +680,7 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, uint32_t pane_id, bool focuse
         drawProgramStatus(status, bounds.x + titleInset + captionWidth + 4, captionY, statusWidth, true);
     }
     target->PopAxisAlignedClip();
-    beginTerminalPane(bounds, moving);
+    beginTerminalPane(bounds, grid, moving);
 }
 extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity) {
     if (!isfinite(thumb_y) || !isfinite(thumb_height) || !isfinite(opacity) || opacity <= 0.0f || thumb_height <= 0.0f || bounds.width < 24.0f) return;
@@ -692,18 +692,18 @@ extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thum
     brush->SetColor(rgb(chromePalette.text_primary, (active ? 0.38f : 0.22f) * fminf(opacity, 1.0f)));
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, thumb_y, right, thumb_y + thumb_height), radius, radius), brush);
 }
-extern "C" void vex_draw_copy_feedback(VexPaneRect bounds, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress) {
+extern "C" void vex_draw_copy_feedback(VexPaneRect grid, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress) {
     if (!target || !brush || !spans || span_count == 0 || !isfinite(progress) || progress < 0.0f || progress >= 1.0f) return;
     if (!isfinite(cell_width) || !isfinite(cell_height) || cell_width <= 0.0f || cell_height <= 0.0f) return;
     if (chromeMotionEnabled) chromeEffectsPending = true;
 
-    const float gridLeft = bounds.x + uiMetrics.pane_padding;
-    const float gridTop = bounds.y + uiMetrics.pane_header_height + 2;
-    const float clipRight = bounds.x + bounds.width - uiMetrics.pane_padding - 8;
-    const float clipBottom = bounds.y + bounds.height - uiMetrics.pane_padding + 2;
+    const float gridLeft = grid.x;
+    const float gridTop = grid.y;
+    const float clipRight = grid.x + grid.width + 2;
+    const float clipBottom = grid.y + grid.height + 2;
     if (clipRight <= gridLeft || clipBottom <= gridTop) return;
 
-    target->PushAxisAlignedClip(D2D1::RectF(bounds.x + 3.0f, bounds.y + uiMetrics.pane_header_height, clipRight, clipBottom), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    target->PushAxisAlignedClip(D2D1::RectF(gridLeft - 2, gridTop - 2, clipRight, clipBottom), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
     float minX = 1e9f, maxX = -1e9f;
     float minY = 1e9f, maxY = -1e9f;
