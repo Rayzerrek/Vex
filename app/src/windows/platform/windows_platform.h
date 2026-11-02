@@ -205,6 +205,12 @@ typedef struct {
 int vex_draw_terminal_image(VexTerminalImage image);
 /* 0: normal; 1: backgrounds only; 2: text/decorations only. */
 void vex_terminal_cell_layer(uint32_t layer);
+/* Pane padding extension (outside the geometry cache). begin returns 0 when disabled, 1 for left/right
+ * only, 3 for all sides, and must be paired with end when nonzero. Edges: 0 left, 1 right (rows),
+ * 2 top, 3 bottom (columns), 4-7 corners tl, tr, bl, br. */
+uint32_t vex_terminal_edge_begin(void);
+void vex_terminal_edge_end(void);
+int vex_draw_edge_fill(uint32_t edge, uint16_t first, uint16_t count, uint16_t columns, uint16_t rows, uint32_t color);
 /* Exact scalar key: pane, dimensions, palette, block cursor and hovered link. No borrowed pointers. */
 typedef struct {
     uint64_t generation;

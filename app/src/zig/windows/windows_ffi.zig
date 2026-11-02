@@ -64,16 +64,20 @@ pub const WindowMetrics = struct {
         };
     }
     /// Integral cell area inside a pane. Left and right share a fixed 6.5 DIP
-    /// target margin, the bottom keeps at least 6.5 DIP, and the grid starts
-    /// directly after the pane header with no extra top padding.
+    /// target margin. Vertically the grid keeps 6.5 DIP at the bottom and starts
+    /// at the pane header; the sub-row remainder is split evenly between the gap
+    /// under the header and the bottom margin, so the bottom never absorbs a
+    /// whole row's worth of slack on its own.
     pub fn terminalGrid(self: WindowMetrics, bounds: panes.PaneRect) !panes.PaneRect {
         const size = try self.terminalSize(bounds);
         const style = self.ui_density.metrics();
         const width = @as(f32, @floatFromInt(size.columns)) * self.cell_width;
         const height = @as(f32, @floatFromInt(size.rows)) * self.cell_height;
+        // Rows are clamped to at least one, so a tiny pane can have no slack at all.
+        const spare = @max(0, bounds.height - style.verticalInset() - height);
         return .{
             .x = bounds.x + @max(0, (bounds.width - width) / 2),
-            .y = bounds.y + style.terminalTop(),
+            .y = bounds.y + style.terminalTop() + spare / 2,
             .width = width,
             .height = height,
         };
@@ -932,6 +936,7 @@ pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalF
     const cursor = frame.cursor;
     const cursor_visible = focused and cursor_shown and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
     const block_cursor = cursor_visible and cursor.shape == .block;
+    try drawEdgeExtension(frame, theme);
     if (frame.graphics.placements.items.len == 0 or frame.graphics.placements.items[0].z >= 0) {
         try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 0);
         try drawTerminalImages(frame, 0, std.math.maxInt(i32));
@@ -949,6 +954,67 @@ pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalF
         }
     } else if (cursor_visible) {
         c.vex_draw_cursor(cursor.column, cursor.row, @intFromEnum(cursor.shape), theme.cursor);
+    }
+}
+
+/// Surface of one edge cell as drawn, ignoring selection and links so a transient highlight never bleeds into the padding.
+const EdgeSurface = struct {
+    frame: *const terminal.TerminalFrame,
+    theme: terminal_theme.TerminalTheme,
+    appearance: ?AppearanceCorrection,
+    highlight_source: ?terminal.TextStyle = null,
+    highlight_style: terminal.TextStyle = undefined,
+
+    fn background(self: *EdgeSurface, row: usize, column: usize) u32 {
+        const cell = self.frame.cells.items[row * self.frame.columns + column];
+        return surfaceStyle(cell, self.frame.cellText(cell), self.theme, &self.appearance, &self.highlight_source, &self.highlight_style).background;
+    }
+};
+
+fn fillEdge(frame: *const terminal.TerminalFrame, edge: u32, first: usize, count: usize, color: u32) !void {
+    if (c.vex_draw_edge_fill(edge, @intCast(first), @intCast(count), frame.columns, frame.rows, color) != 0) return error.NativeTextRenderingFailed;
+}
+
+/// Extends edge cells into the padding around the grid, so a colored status line or highlighted row reaches the
+/// pane edge. It runs outside the geometry cache because the padding follows pane bounds, not terminal content.
+fn drawEdgeExtension(frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme) !void {
+    const columns: usize = frame.columns;
+    const rows: usize = frame.rows;
+    if (columns == 0 or rows == 0 or frame.cells.items.len < columns * rows) return;
+    const sides = c.vex_terminal_edge_begin();
+    if (sides == 0) return;
+    defer c.vex_terminal_edge_end();
+    var surface: EdgeSurface = .{ .frame = frame, .theme = theme, .appearance = AppearanceCorrection.init(frame, theme) };
+    // Equal neighbours coalesce into one rectangle, so a uniform edge costs a single draw.
+    for ([_]struct { edge: u32, column: usize }{ .{ .edge = 0, .column = 0 }, .{ .edge = 1, .column = columns - 1 } }) |side| {
+        var row: usize = 0;
+        while (row < rows) {
+            const color = surface.background(row, side.column);
+            var end = row + 1;
+            while (end < rows and surface.background(end, side.column) == color) end += 1;
+            if (color != theme.background) try fillEdge(frame, side.edge, row, end - row, color);
+            row = end;
+        }
+    }
+    if ((sides & 2) == 0) return;
+    for ([_]struct { edge: u32, row: usize }{ .{ .edge = 2, .row = 0 }, .{ .edge = 3, .row = rows - 1 } }) |side| {
+        var column: usize = 0;
+        while (column < columns) {
+            const color = surface.background(side.row, column);
+            var end = column + 1;
+            while (end < columns and surface.background(side.row, end) == color) end += 1;
+            if (color != theme.background) try fillEdge(frame, side.edge, column, end - column, color);
+            column = end;
+        }
+    }
+    for ([_]struct { edge: u32, row: usize, column: usize }{
+        .{ .edge = 4, .row = 0, .column = 0 },
+        .{ .edge = 5, .row = 0, .column = columns - 1 },
+        .{ .edge = 6, .row = rows - 1, .column = 0 },
+        .{ .edge = 7, .row = rows - 1, .column = columns - 1 },
+    }) |corner| {
+        const color = surface.background(corner.row, corner.column);
+        if (color != theme.background) try fillEdge(frame, corner.edge, 0, 0, color);
     }
 }
 
@@ -1162,6 +1228,28 @@ fn softenHighlight(style: terminal.TextStyle, theme: terminal_theme.TerminalThem
     return result;
 }
 
+/// Cell style after palette adaptation and highlight softening, before selection, link and contrast
+/// adjustments. Shared by the cell pass and the padding extension so both show the same surface.
+fn surfaceStyle(
+    cell: terminal.TerminalCell,
+    text: []const u8,
+    theme: terminal_theme.TerminalTheme,
+    appearance: *?AppearanceCorrection,
+    highlight_source: *?terminal.TextStyle,
+    highlight_style: *terminal.TextStyle,
+) terminal.TextStyle {
+    var cell_style = cell.style;
+    if (appearance.*) |*correction| cell_style = correction.apply(cell_style);
+    if (!isBlockGraphic(text)) {
+        if (highlight_source.* == null or !std.meta.eql(highlight_source.*.?, cell_style)) {
+            highlight_source.* = cell_style;
+            highlight_style.* = softenHighlight(cell_style, theme);
+        }
+        cell_style = highlight_style.*;
+    }
+    return cell_style;
+}
+
 fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
     var appearance = AppearanceCorrection.init(frame, theme);
     var highlight_source: ?terminal.TextStyle = null;
@@ -1181,15 +1269,7 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
             if (cell.width == .tail) continue;
             const text = frame.cellText(cell);
             const in_link = if (row_link) |hl| (column >= hl.start_col and column <= hl.end_col) else false;
-            var cell_style = cell.style;
-            if (appearance) |*correction| cell_style = correction.apply(cell_style);
-            if (!isBlockGraphic(text)) {
-                if (highlight_source == null or !std.meta.eql(highlight_source.?, cell_style)) {
-                    highlight_source = cell_style;
-                    highlight_style = softenHighlight(cell_style, theme);
-                }
-                cell_style = highlight_style;
-            }
+            var cell_style = surfaceStyle(cell, text, theme, &appearance, &highlight_source, &highlight_style);
             if (in_link) {
                 cell_style.underline = true;
             }
@@ -1478,7 +1558,9 @@ test "density grid sizes and mouse coordinates use identical insets at mixed DPI
         const top = grid.y - (bounds.y + style.terminalTop());
         const bottom = bounds.y + bounds.height - (grid.y + grid.height);
         try std.testing.expectApproxEqAbs(left, right, 0.001);
-        try std.testing.expectApproxEqAbs(@as(f32, 0), top, 0.001);
+        // The sub-row remainder is shared, so the bottom margin exceeds the header gap by exactly the fixed padding.
+        try std.testing.expect(top >= 0);
+        try std.testing.expectApproxEqAbs(style.pane_padding, bottom - top, 0.001);
         try std.testing.expect(left >= density.UiDensity.terminal_min_padding - 0.001);
         try std.testing.expect(bottom >= style.pane_padding - 0.001);
         const origin = (try metrics.viewportPoint(bounds, grid.x, grid.y, false)).?;
@@ -1497,7 +1579,7 @@ test "density grid sizes and mouse coordinates use identical insets at mixed DPI
     }
 }
 
-test "terminal grid has no top inset and keeps left/right padding equal" {
+test "terminal grid splits the vertical remainder and keeps left/right padding equal" {
     const bounds: panes.PaneRect = .{ .x = 0, .y = 0, .width = 953, .height = 990 };
     const metrics: WindowMetrics = .{ .width = 953, .height = 990, .cell_width = 10, .cell_height = 18, .scale = 1, .ui_density = .compact };
     const style = metrics.ui_density.metrics();
@@ -1507,9 +1589,16 @@ test "terminal grid has no top inset and keeps left/right padding equal" {
     const top = grid.y - (bounds.y + style.terminalTop());
     const bottom = bounds.y + bounds.height - (grid.y + grid.height);
     try std.testing.expectApproxEqAbs(left, right, 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 0), top, 0.001);
+    // 990 - 36.5 = 953.5 DIP of rows = 52 rows (936) + 17.5 spare: 8.75 above, 6.5 + 8.75 below.
+    try std.testing.expectApproxEqAbs(@as(f32, 8.75), top, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 15.25), bottom, 0.001);
     try std.testing.expect(left >= density.UiDensity.terminal_min_padding);
     try std.testing.expect(bottom >= style.pane_padding);
+    // An exact fit has no spare room: the grid sits directly under the header again.
+    const exact: panes.PaneRect = .{ .x = 0, .y = 0, .width = 953, .height = style.verticalInset() + 18 * 50 };
+    const flush = try metrics.terminalGrid(exact);
+    try std.testing.expectApproxEqAbs(style.terminalTop(), flush.y, 0.001);
+    try std.testing.expectApproxEqAbs(style.pane_padding, exact.height - (flush.y + flush.height), 0.001);
 }
 
 test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid cells and scaled pixels" {
@@ -1517,14 +1606,14 @@ test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid 
     const bounds: panes.PaneRect = .{ .x = 10, .y = 50, .width = 332, .height = 228 };
     // Header clicks (y < grid.y) do not start a viewport selection.
     try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 24, 62, false));
-    // Inside the grid (grid_left = 16, grid_top = 84; no top inset):
-    const inside = (try metrics.viewportPoint(bounds, 36, 122, false)).?;
+    // Inside the grid (grid_left = 16, grid_top = 89.75: half of the 11.5 DIP spare room sits above the rows):
+    const inside = (try metrics.viewportPoint(bounds, 36, 127.75, false)).?;
     try std.testing.expectEqual(@as(u16, 2), inside.column);
     try std.testing.expectEqual(@as(u16, 2), inside.row);
     try std.testing.expectApproxEqAbs(@as(f64, 30.0), inside.x_px, 0.01);
     try std.testing.expectApproxEqAbs(@as(f64, 57.0), inside.y_px, 0.01);
     // The right padding is outside the cells; clicking it never selects text.
-    try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 340, 122, false));
+    try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 340, 127.75, false));
     try std.testing.expectEqual(@as(u16, 40), (try metrics.terminalSize(bounds)).columns);
     // Clamped drag outside the pane clamps to the boundary cells. Grid height 176 / 16 = 11 rows, so the last row is 10.
     const clamped = (try metrics.viewportPoint(bounds, -50, 900, true)).?;

@@ -19,4 +19,5 @@ struct TerminalDrawingFrame {
 };
 void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame);
 void clearTerminalDrawingFontCache();
-void beginTerminalPane(VexPaneRect bounds, VexPaneRect grid, bool moving = false);
+/* edgeInset keeps the border and focus ring the chrome drew; 0 disables edge extension. */
+void beginTerminalPane(VexPaneRect bounds, VexPaneRect grid, bool moving = false, float contentTop = 0, float edgeInset = 0);

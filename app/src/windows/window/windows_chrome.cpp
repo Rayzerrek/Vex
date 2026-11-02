@@ -680,7 +680,8 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, VexPaneRect grid, uint32_t pa
         drawProgramStatus(status, bounds.x + titleInset + captionWidth + 4, captionY, statusWidth, true);
     }
     target->PopAxisAlignedClip();
-    beginTerminalPane(bounds, grid, moving);
+    // Edge cells may extend until the border and focus ring, which the chrome drew above.
+    beginTerminalPane(bounds, grid, moving, bounds.y + uiMetrics.pane_header_height + 2.0f, joined ? 1.5f : 2.5f);
 }
 extern "C" void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity) {
     if (!isfinite(thumb_y) || !isfinite(thumb_height) || !isfinite(opacity) || opacity <= 0.0f || thumb_height <= 0.0f || bounds.width < 24.0f) return;

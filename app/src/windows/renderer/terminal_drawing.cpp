@@ -20,6 +20,10 @@ uint32_t cellLayer = 0;
 float paneOriginX, paneOriginY;
 D3D12_RECT paneClip;
 bool scrollGuard;
+// Padding that edge cells extend into, relative to the grid origin; set per pane.
+D3D12_RECT activeClip, edgeClip;
+float edgeLeft, edgeTop, edgeRight, edgeBottom;
+bool edgeFillAllowed, scrollOffsetActive;
 }
 void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
     renderer = frame.renderer;
@@ -30,7 +34,7 @@ void beginTerminalDrawingFrame(const TerminalDrawingFrame& frame) {
     dpiScale = frame.dpiScale; cellWidth = frame.cellWidth; cellHeight = frame.cellHeight;
     paneBackground = frame.paneBackground;
 }
-void beginTerminalPane(VexPaneRect bounds, VexPaneRect grid, bool moving) {
+void beginTerminalPane(VexPaneRect bounds, VexPaneRect grid, bool moving, float contentTop, float edgeInset) {
     cellLayer = 0;
     const float left = grid.x, top = grid.y;
     // Keep cached glyph geometry local: moving a pane or drawing its drag preview
@@ -53,6 +57,18 @@ void beginTerminalPane(VexPaneRect bounds, VexPaneRect grid, bool moving) {
     // easing tail visibly step by whole pixels. Settled panes still snap for crisp text.
     paneOriginX = moving ? left : roundf(left * scale) / scale;
     paneOriginY = moving ? top : roundf(top * scale) / scale;
+    activeClip = clip; scrollOffsetActive = false;
+    // Edge cells extend into the padding, stopping inside the border and focus ring the chrome drew.
+    edgeLeft = bounds.x + edgeInset - paneOriginX;
+    edgeRight = bounds.x + bounds.width - edgeInset - paneOriginX;
+    edgeTop = contentTop - paneOriginY;
+    edgeBottom = bounds.y + bounds.height - edgeInset - paneOriginY;
+    edgeClip = {
+        (LONG)fmaxf(0, roundf((bounds.x + edgeInset) * scale)), (LONG)fmaxf(0, roundf(contentTop * scale)),
+        (LONG)fminf((float)renderer->width(), roundf((bounds.x + bounds.width - edgeInset) * scale)),
+        (LONG)fminf((float)renderer->height(), roundf((bounds.y + bounds.height - edgeInset) * scale))
+    };
+    edgeFillAllowed = edgeInset > 0.0f && edgeClip.left < edgeClip.right && edgeClip.top < edgeClip.bottom;
     renderer->beginTerminalPass(clip);
     // Align the replay origin with the scissor so settled text stays crisp at mixed DPI.
     renderer->terminal.setPreviewTransform(1, paneOriginX, paneOriginY);
@@ -477,6 +493,43 @@ extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const
     return (int)renderer->terminalResult(result);
 }
 extern "C" void vex_terminal_cell_layer(uint32_t layer) { cellLayer = layer; }
+// Edge cells paint their own surface into the padding beside them, so a colored
+// row or column reaches the pane edge instead of stopping at the cell grid. This
+// stays outside the geometry cache: it depends on pane bounds, which change
+// while the cached cells are still valid. Returns 0 when nothing may extend,
+// 1 for the left/right sides, 3 when the top and bottom may extend too.
+extern "C" uint32_t vex_terminal_edge_begin() {
+    if (!edgeFillAllowed || scrollGuard) return 0;
+    D3D12_RECT clip = edgeClip;
+    // Smooth scrolling clips by whole rows, so only the sides can follow it.
+    if (scrollOffsetActive) { clip.top = activeClip.top; clip.bottom = activeClip.bottom; }
+    if (clip.left >= clip.right || clip.top >= clip.bottom) return 0;
+    if (FAILED(renderer->terminalResult(renderer->terminal.setClip(clip)))) return 0;
+    return scrollOffsetActive ? 1u : 3u;
+}
+extern "C" void vex_terminal_edge_end() {
+    renderer->terminalResult(renderer->terminal.setClip(activeClip));
+}
+/* edge: 0 left, 1 right (rows first..first+count); 2 top, 3 bottom (columns); 4-7 corners tl, tr, bl, br. */
+extern "C" int vex_draw_edge_fill(uint32_t edge, uint16_t first, uint16_t count, uint16_t columns, uint16_t rows, uint32_t color) {
+    if (color == paneBackground) return 0;
+    const float width = columns * cellWidth, height = rows * cellHeight;
+    const float rowTop = first * cellHeight, rowBottom = (first + count) * cellHeight;
+    const float columnLeft = first * cellWidth, columnRight = (first + count) * cellWidth;
+    float left, top, right, bottom;
+    switch (edge) {
+    case 0: left = edgeLeft; right = 0; top = rowTop; bottom = rowBottom; break;
+    case 1: left = width; right = edgeRight; top = rowTop; bottom = rowBottom; break;
+    case 2: left = columnLeft; right = columnRight; top = edgeTop; bottom = 0; break;
+    case 3: left = columnLeft; right = columnRight; top = height; bottom = edgeBottom; break;
+    case 4: left = edgeLeft; right = 0; top = edgeTop; bottom = 0; break;
+    case 5: left = width; right = edgeRight; top = edgeTop; bottom = 0; break;
+    case 6: left = edgeLeft; right = 0; top = height; bottom = edgeBottom; break;
+    case 7: left = width; right = edgeRight; top = height; bottom = edgeBottom; break;
+    default: return (int)renderer->terminalResult(E_INVALIDARG);
+    }
+    return (int)renderer->terminalResult(renderer->terminal.drawSolid(snapDip(left), snapDip(top), snapDip(right), snapDip(bottom), color));
+}
 extern "C" int vex_draw_terminal_image(VexTerminalImage image) {
     const float bounds[] = { gridLeft + image.left * cellWidth, gridTop + image.top * cellHeight,
         gridLeft + image.right * cellWidth, gridTop + image.bottom * cellHeight };
@@ -518,10 +571,11 @@ extern "C" void vex_terminal_scroll_offset(float rows, bool guard, uint16_t view
         clip.top = (LONG)fmaxf((float)clip.top, roundf(edge));
         clip.bottom = (LONG)fminf((float)clip.bottom, roundf((paneOriginY + viewport_rows * cellHeight) * dpiScale));
     } else clip.bottom = (LONG)fminf((float)clip.bottom, roundf(edge));
+    activeClip = clip; scrollOffsetActive = true;
     renderer->terminalResult(renderer->terminal.setClip(clip));
 }
 extern "C" void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns, uint16_t rows) {
-    cellLayer = 0; scrollGuard = false;
+    cellLayer = 0; scrollGuard = false; edgeFillAllowed = false;
     gridLeft = 0; gridTop = 0;
     const float factor = fminf(bounds.width / fmaxf(1, columns * cellWidth), bounds.height / fmaxf(1, rows * cellHeight));
     const D3D12_RECT clip = {
@@ -533,7 +587,7 @@ extern "C" void vex_begin_terminal_preview(VexPaneRect bounds, uint16_t columns,
     renderer->terminal.setPreviewTransform(factor, bounds.x, bounds.y);
 }
 extern "C" void vex_end_pane() {
-    scrollGuard = false;
+    scrollGuard = false; edgeFillAllowed = false;
     renderer->terminal.setPreviewTransform();
     renderer->endTerminalPass();
 }

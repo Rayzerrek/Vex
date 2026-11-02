@@ -2,7 +2,8 @@ const std = @import("std");
 
 /// Density changes chrome spacing, never terminal typography or Windows caption controls.
 /// Every preset enlarges the pane header; left, right and bottom terminal padding
-/// stays fixed at 6.5 DIP with no extra top inset.
+/// stays fixed at 6.5 DIP. The sub-row remainder is split between the gap under
+/// the header and the bottom margin.
 /// The presets only differ by how much room they give the chrome.
 pub const UiDensity = enum(u32) {
     compact,
@@ -43,7 +44,7 @@ pub const Metrics = struct {
     tab_max_width: f32,
 
     /// Top of the terminal content box, directly after the pane header's small
-    /// rule gap. No additional top padding is added.
+    /// rule gap. Grid placement may add half of the vertical remainder below it.
     pub fn terminalTop(self: Metrics) f32 {
         return self.pane_header_height + 2;
     }
@@ -53,7 +54,8 @@ pub const Metrics = struct {
     }
     /// Fixed minimum margin on the left, right and bottom of the terminal
     /// cells; the sub-cell remainder is split evenly so neither side ends up
-    /// wider than the other. The top edge intentionally has no padding.
+    /// wider than the other. The vertical remainder is shared with the gap
+    /// under the pane header.
     pub fn horizontalInset(self: Metrics) f32 {
         return self.pane_padding * 2;
     }
