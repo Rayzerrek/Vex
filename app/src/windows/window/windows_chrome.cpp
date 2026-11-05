@@ -255,10 +255,13 @@ static void drawAppIcon(VexAppIcon icon, float x, float y, float sizeDip) {
 
 static uint64_t drawAppIconTile(VexAppIcon icon, float x, float y) {
     constexpr float glyphSize = 12.0f;
-    brush->SetColor(rgb(chromePalette.pane_header_bg));
-    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + 18.0f, y + 18.0f), 4.0f, 4.0f), brush);
-    brush->SetColor(rgb(chromePalette.border));
-    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, y + 0.5f, x + 17.5f, y + 17.5f), 3.5f, 3.5f), brush, 1.0f);
+    const uint32_t rawInk = icon.kind ? icon.color_rgb : chromePalette.text_muted;
+    const uint32_t ink = contrastingIconColor(rawInk, chromePalette.pane_header_bg);
+    const uint32_t tileBg = blendRgb(chromePalette.pane_header_bg, ink, chromePalette.is_dark ? 0.13f : 0.09f);
+    brush->SetColor(rgb(tileBg));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + 18.0f, y + 18.0f), 4.5f, 4.5f), brush);
+    brush->SetColor(rgb(blendRgb(chromePalette.border, ink, 0.28f), chromePalette.is_dark ? 0.48f : 0.38f));
+    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 0.5f, y + 0.5f, x + 17.5f, y + 17.5f), 4.0f, 4.0f), brush, 1.0f);
     drawAppIcon(icon, x + 3.0f, y + 3.0f, glyphSize);
     return computeIconCacheKey(icon, (uint32_t)glyphSize);
 }
@@ -378,17 +381,23 @@ extern "C" void vex_draw_tab_strip_background(uint32_t active_index) {
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg, opacity));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, uiMetrics.tab_inset, x + tabWidthDip, 44 - uiMetrics.tab_inset), 10, 10), brush);
     }
+    for (uint32_t i = 0; i + 1 < tabStripCount; ++i) {
+        if (i == active_index || i + 1 == active_index) continue;
+        const float sepFade = 1.0f - fmaxf(tabHoverMotion[i].sample(chromeTimeMs), tabHoverMotion[i + 1].sample(chromeTimeMs));
+        if (sepFade <= 0.05f) continue;
+        const float sepX = tabStripLeft + (i + 1) * (tabWidthDip + 4) - 2.5f;
+        brush->SetColor(rgb(chromePalette.border, (chromePalette.is_dark ? 0.36f : 0.44f) * sepFade));
+        target->FillRectangle(D2D1::RectF(sepX, uiMetrics.tab_inset + 7.0f, sepX + 1.0f, 44.0f - uiMetrics.tab_inset - 7.0f), brush);
+    }
     // Closing a tab can also change slot widths; keep the selection continuous in both dimensions.
     const float x = tabSelectionMotion.update(tabStripLeft + active_index * (tabWidthDip + 4), chromeTimeMs, chromeMotionEnabled);
     const float width = tabSelectionWidthMotion.update(tabWidthDip, chromeTimeMs, chromeMotionEnabled);
     chromeMotionPending |= tabSelectionMotion.pending(chromeTimeMs) || tabSelectionWidthMotion.pending(chromeTimeMs);
     const D2D1_ROUNDED_RECT activeRect = D2D1::RoundedRect(D2D1::RectF(x, uiMetrics.tab_inset, x + width, 44 - uiMetrics.tab_inset), 10, 10);
-    brush->SetColor(rgb(0, chromePalette.is_dark ? 0.16f : 0.05f));
-    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, uiMetrics.tab_inset + 2, x + width, 46 - uiMetrics.tab_inset), 10, 10), brush);
-    target->FillRoundedGradient(activeRect,
-        rgb(materialMix(chromePalette.active_tab_bg, 0xffffff, chromePalette.is_dark ? 0.045f : 0.42f)),
-        rgb(materialMix(chromePalette.active_tab_bg, chromePalette.accent, chromePalette.is_dark ? 0.018f : 0.012f)));
-    brush->SetColor(rgb(blendRgb(chromePalette.border, chromePalette.active_tab_border, 0.42f), chromePalette.is_dark ? 0.55f : 0.40f));
+    brush->SetColor(rgb(0, chromePalette.is_dark ? 0.22f : 0.07f));
+    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 0.5f, uiMetrics.tab_inset + 1.5f, x + width + 0.5f, 45.5f - uiMetrics.tab_inset), 10.5f, 10.5f), brush);
+    fillUiMaterial(*target, *brush, activeRect, chromePalette, chromePalette.active_tab_bg);
+    brush->SetColor(rgb(blendRgb(chromePalette.border, chromePalette.active_tab_border, 0.48f), chromePalette.is_dark ? 0.62f : 0.45f));
     target->DrawRoundedRectangle(activeRect, brush, 1.0f);
 }
 
@@ -628,14 +637,22 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, VexPaneRect grid, uint32_t pa
     const float captionY = bounds.y + (uiMetrics.pane_header_height - 2.0f) / 2.0f - uiMetrics.header_title_size * 0.665f;
     const float headerBottom = bounds.y + uiMetrics.pane_header_height - 2;
     const D2D1_ROUNDED_RECT paneCard = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), joined ? 0.0f : 6.0f, joined ? 0.0f : 6.0f);
+    if (!joined) {
+        brush->SetColor(rgb(0, chromePalette.is_dark ? 0.20f : 0.055f));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x - 0.5f, bounds.y + 1.5f, bounds.x + bounds.width + 0.5f, bounds.y + bounds.height + 2.5f), 6.5f, 6.5f), brush);
+    }
     brush->SetColor(rgb(chromePalette.pane_bg));
     target->FillRoundedRectangle(paneCard, brush);
     if (!joined && bounds.height >= uiMetrics.pane_header_height) {
+        const uint32_t headerTint = blendRgb(chromePalette.pane_bg, chromePalette.pane_header_bg, focused ? 0.48f : 0.24f);
         target->FillRoundedGradient(D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, headerBottom), 6.0f, 6.0f),
-            rgb(materialMix(chromePalette.pane_header_bg, 0xffffff, chromePalette.is_dark ? 0.018f : 0.25f)), rgb(chromePalette.pane_header_bg));
-        rectangle(bounds.x, headerBottom - 8, bounds.width, 8.0f, chromePalette.pane_header_bg);
-        brush->SetColor(rgb(chromePalette.border, chromePalette.is_dark ? 0.38f : 0.45f));
-        target->FillRectangle(D2D1::RectF(bounds.x + 1.0f, headerBottom, bounds.x + bounds.width - 1.0f, headerBottom + 1), brush);
+            rgb(materialMix(headerTint, 0xffffff, chromePalette.is_dark ? 0.018f : 0.22f)), rgb(chromePalette.pane_bg));
+        if (bounds.width > 16.0f) {
+            brush->SetColor(rgb(chromePalette.border, chromePalette.is_dark ? 0.20f : 0.28f));
+            target->FillRectangle(D2D1::RectF(bounds.x + 8.0f, headerBottom, bounds.x + bounds.width - 8.0f, headerBottom + 1.0f), brush);
+            brush->SetColor(rgb(0xffffff, chromePalette.is_dark ? 0.06f : 0.45f));
+            target->DrawLine(D2D1::Point2F(bounds.x + 7.0f, bounds.y + 1.0f), D2D1::Point2F(bounds.x + bounds.width - 7.0f, bounds.y + 1.0f), brush, 1.0f);
+        }
     }
     auto& motion = paneChromeMotion[pane_id % 64];
     if (motion.id != pane_id) { motion = {}; motion.id = pane_id; }
@@ -653,10 +670,14 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, VexPaneRect grid, uint32_t pa
     if (activePaneBorderEnabled && focus > 0.0f) {
         // Eased with the focus motion so the ring fades between panes instead of snapping.
         // Inset by half the stroke so the rim stays inside the pane and is never clipped by neighbours.
-        const float inset = 0.75f, radius = joined ? 0.0f : 6.0f - inset;
-        const uint32_t ring = blendRgb(chromePalette.pane_bg, chromePalette.accent, chromePalette.is_dark ? 0.62f : 0.78f);
-        brush->SetColor(rgb(ring, focus));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x + inset, bounds.y + inset, bounds.x + bounds.width - inset, bounds.y + bounds.height - inset), radius, radius), brush, 1.5f);
+        const float inset = 0.6f, radius = joined ? 0.0f : 6.0f - inset;
+        const uint32_t ring = blendRgb(chromePalette.active_tab_border, chromePalette.accent, chromePalette.is_dark ? 0.58f : 0.72f);
+        brush->SetColor(rgb(ring, focus * 0.85f));
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x + inset, bounds.y + inset, bounds.x + bounds.width - inset, bounds.y + bounds.height - inset), radius, radius), brush, 1.2f);
+        if (!joined && bounds.width > 24.0f) {
+            brush->SetColor(rgb(chromePalette.accent, focus * (chromePalette.is_dark ? 0.68f : 0.58f)));
+            target->DrawLine(D2D1::Point2F(bounds.x + 10.0f, bounds.y + 1.0f), D2D1::Point2F(bounds.x + bounds.width - 10.0f, bounds.y + 1.0f), brush, 1.5f);
+        }
     }
     // A revealing pane must not paint its caption or actions over its neighbour.
     target->PushAxisAlignedClip(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -790,21 +811,20 @@ extern "C" void vex_draw_tab_preview_card(VexPaneRect bounds, const uint8_t* tit
     brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? (selected ? 0.42f : 0.26f) : (selected ? 0.16f : 0.09f)));
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x - 2.0f, bounds.y + 3.0f, bounds.x + bounds.width + 2.0f, bounds.y + bounds.height + 5.0f), 9.0f, 9.0f), brush);
     const auto card = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), 7, 7);
-    brush->SetColor(rgb(chromePalette.pane_bg));
-    target->FillRoundedRectangle(card, brush);
+    fillUiMaterial(*target, *brush, card, chromePalette, chromePalette.pane_bg);
     if (bounds.height >= 28.0f) {
-        brush->SetColor(rgb(chromePalette.pane_header_bg));
-        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + 26.0f), 7.0f, 7.0f), brush);
-        rectangle(bounds.x, bounds.y + 18.0f, bounds.width, 8.0f, chromePalette.pane_header_bg);
-        brush->SetColor(rgb(chromePalette.border, 0.40f));
-        target->FillRectangle(D2D1::RectF(bounds.x + 1.0f, bounds.y + 26.0f, bounds.x + bounds.width - 1.0f, bounds.y + 27.0f), brush);
+        const uint32_t headerTint = blendRgb(chromePalette.pane_bg, chromePalette.pane_header_bg, selected ? 0.55f : 0.30f);
+        target->FillRoundedGradient(D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + 26.0f), 7.0f, 7.0f),
+            rgb(materialMix(headerTint, 0xffffff, chromePalette.is_dark ? 0.025f : 0.28f)), rgb(chromePalette.pane_bg));
+        brush->SetColor(rgb(chromePalette.border, 0.28f));
+        target->FillRectangle(D2D1::RectF(bounds.x + 8.0f, bounds.y + 26.0f, bounds.x + bounds.width - 8.0f, bounds.y + 27.0f), brush);
     }
     if (selected) {
         brush->SetColor(rgb(chromePalette.accent, 0.25f));
         target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bounds.x - 1.5f, bounds.y - 1.5f, bounds.x + bounds.width + 1.5f, bounds.y + bounds.height + 1.5f), 8.5f, 8.5f), brush, 2.5f);
     }
     brush->SetColor(rgb(selected ? chromePalette.accent : chromePalette.border));
-    target->DrawRoundedRectangle(card, brush, selected ? 2.0f : 1.0f);
+    target->DrawRoundedRectangle(card, brush, selected ? 1.6f : 1.0f);
     titleLabel(title, length, bounds.x + 10, bounds.y + 4, fmaxf(0, bounds.width - 44),
         selected ? chromePalette.text_primary : chromePalette.text_muted, paneTitleFont, { bounds.x + 2, bounds.y + 2, fmaxf(0, bounds.width - 32), 26 });
 }
@@ -822,7 +842,7 @@ extern "C" void vex_draw_tab_drag(VexPaneRect bounds, uint32_t source, const uin
     brush->SetColor(rgb(0, chromePalette.is_dark ? 0.28f : 0.12f));
     target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 2, y + 2, x + w + 2, y + h + 5), 12, 12), brush);
     const auto card = D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), 10, 10);
-    brush->SetColor(rgb(chromePalette.active_tab_bg)); target->FillRoundedRectangle(card, brush);
+    fillUiMaterial(*target, *brush, card, chromePalette, chromePalette.active_tab_bg);
     brush->SetColor(rgb(valid_target ? chromePalette.accent : chromePalette.text_muted, valid_target ? 0.85f : 0.6f));
     target->DrawRoundedRectangle(card, brush, 1);
     float inset = 10;

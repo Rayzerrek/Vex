@@ -121,9 +121,25 @@ void drawThemeCard(const DRAWITEMSTRUCT& draw, const DialogItem& item, bool sele
             COLORREF tint = blend(item.background, item.foreground, 0.28f);
             roundedFill(draw.hDC, dot, tint, tint, px(4));
         }
-        RECT prompt = terminal; prompt.left += px(9); prompt.top += px(21); prompt.right -= px(6);
+        if (terminal.right - terminal.left >= px(96)) {
+            for (int i = 0; i < 5; ++i) {
+                RECT swatch = { terminal.right - px(45 - i * 8), terminal.top + px(7), terminal.right - px(40 - i * 8), terminal.top + px(12) };
+                roundedFill(draw.hDC, swatch, item.swatches[i], item.swatches[i], px(5));
+            }
+        }
+        RECT prompt = terminal; prompt.left += px(9); prompt.top += px(20); prompt.right -= px(6);
         SetTextColor(draw.hDC, item.accent);
         DrawTextW(draw.hDC, L"❯  ~/vex", -1, &prompt, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        if (terminal.bottom - terminal.top >= px(52)) {
+            RECT pillA = { terminal.left + px(9), terminal.top + px(39), terminal.left + px(37), terminal.top + px(43) };
+            RECT pillB = { terminal.left + px(41), terminal.top + px(39), terminal.left + px(63), terminal.top + px(43) };
+            COLORREF colA = blend(item.background, item.swatches[1], 0.65f);
+            COLORREF colB = blend(item.background, item.swatches[2], 0.55f);
+            if (pillB.right < terminal.right - px(8)) {
+                roundedFill(draw.hDC, pillA, colA, colA, px(4));
+                roundedFill(draw.hDC, pillB, colB, colB, px(4));
+            }
+        }
     }
     RECT name = inner; name.left += px(10); name.right -= px(25); name.top = art.bottom + px(7); name.bottom = name.top + px(20);
     SetTextColor(draw.hDC, ink);
@@ -276,13 +292,25 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
     roundedFill(draw.hDC, row, fill, stroke, px(commands ? 8 : 14));
     RECT text = row; text.left += px(12); text.right -= px(12);
     if (commands) {
-        RECT shortcut = text;
-        SetTextColor(draw.hDC, color(selected ? host.model.palette.text_primary : host.model.palette.text_muted));
-        DrawTextW(draw.hDC, item.detail, -1, &shortcut, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-        const int shortcutWidth = shortcut.right - shortcut.left;
-        shortcut = text; shortcut.left = shortcut.right - shortcutWidth;
-        DrawTextW(draw.hDC, item.detail, -1, &shortcut, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        if (shortcutWidth) text.right = shortcut.left - px(20);
+        if (item.detail[0]) {
+            RECT shortcut = text;
+            DrawTextW(draw.hDC, item.detail, -1, &shortcut, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            const int shortcutWidth = (shortcut.right - shortcut.left) + px(14);
+            const int midY = (row.top + row.bottom) / 2;
+            RECT kbdPill = { row.right - px(8) - shortcutWidth, midY - px(10), row.right - px(8), midY + px(10) };
+            if (kbdPill.left > row.left + px(110)) {
+                COLORREF pillFill = selected
+                    ? blend(fill, color(host.model.palette.accent), dark ? 0.24f : 0.14f)
+                    : blend(fill, color(host.model.palette.pane_bg), 0.78f);
+                COLORREF pillStroke = selected
+                    ? blend(fill, color(host.model.palette.accent), dark ? 0.50f : 0.32f)
+                    : blend(fill, color(host.model.palette.border), 0.72f);
+                roundedFill(draw.hDC, kbdPill, pillFill, pillStroke, px(6));
+                SetTextColor(draw.hDC, color(selected ? host.model.palette.text_primary : host.model.palette.text_muted));
+                DrawTextW(draw.hDC, item.detail, -1, &kbdPill, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                text.right = kbdPill.left - px(12);
+            }
+        }
         SetTextColor(draw.hDC, color(host.model.palette.text_primary));
         DrawTextW(draw.hDC, item.label, -1, &text, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     } else if (shells) {
@@ -420,8 +448,9 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
         text.top += px(21); SetTextColor(draw.hDC, color(host.model.palette.text_muted));
         DrawTextW(draw.hDC, item.detail, -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
-    if ((shells || GetFocus() == draw.hwndItem) && selected) {
-        RECT mark = row; mark.left += px(3); mark.right = mark.left + px(3); mark.top += px(10); mark.bottom -= px(10);
+    if ((commands || shells || GetFocus() == draw.hwndItem) && selected) {
+        const int inset = commands ? 7 : 10;
+        RECT mark = row; mark.left += px(3); mark.right = mark.left + px(3); mark.top += px(inset); mark.bottom -= px(inset);
         roundedFill(draw.hDC, mark, color(host.model.palette.accent), color(host.model.palette.accent), px(3));
     }
 }
@@ -522,6 +551,12 @@ void paintDialogSurface(HDC dc) {
     RECT bounds; GetClientRect(host.window, &bounds);
     FillRect(dc, &bounds, host.background);
     roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(24));
+    if (bounds.right - bounds.left > px(32)) {
+        Gdiplus::Graphics graphics(dc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        Gdiplus::Pen highlight(Gdiplus::Color(host.model.palette.is_dark ? 28 : 140, 255, 255, 255), 1.0f);
+        graphics.DrawLine(&highlight, (float)px(14), 1.5f, (float)(bounds.right - px(14)), 1.5f);
+    }
     if (host.model.kind == 4) {
         const auto g = settingsGeometry(host.page);
         const COLORREF cardFill = color(host.model.palette.pane_bg);
@@ -590,7 +625,8 @@ void paintDialogSurface(HDC dc) {
     }
     if (host.model.kind == 2) {
         RECT search = { px(12), px(12), bounds.right - px(12), px(52) };
-        roundedFill(dc, search, fieldColor(), fieldColor(), px(20));
+        const COLORREF searchBorder = blend(fieldColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.46f : 0.34f);
+        roundedFill(dc, search, fieldColor(), searchBorder, px(16));
         {
             Gdiplus::Graphics graphics(dc);
             graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
