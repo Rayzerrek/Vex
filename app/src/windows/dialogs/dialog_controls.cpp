@@ -436,13 +436,30 @@ LRESULT CALLBACK themedCombo(HWND control, UINT message, WPARAM wparam, LPARAM l
             FillRect(dc, &bounds, GetDlgCtrlID(control) == densityId ? host.background : host.field);
             RECT field = bounds; InflateRect(&field, -1, -1);
             const bool focus = GetFocus() == control;
-            roundedFill(dc, field, fieldColor(), focus ? color(host.model.palette.accent) : fieldColor(), px(14));
+            const COLORREF stroke = focus ? color(host.model.palette.accent) : blend(fieldColor(), color(host.model.palette.border), 0.72f);
+            roundedFill(dc, field, fieldColor(), stroke, px(12));
             wchar_t text[256]; GetWindowTextW(control, text, 256);
             RECT label = field; label.left += px(12); label.right -= px(32);
             SetBkMode(dc, TRANSPARENT); SetTextColor(dc, color(host.model.palette.text_primary)); SelectObject(dc, host.font);
             DrawTextW(dc, text, -1, &label, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-            RECT arrow = field; arrow.left = arrow.right - px(30);
-            drawSymbol(dc, L"\xE70D", arrow, color(host.model.palette.text_muted));
+            {
+                Gdiplus::Graphics g(dc);
+                g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+                const COLORREF ink = color(host.model.palette.text_muted);
+                Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(ink), GetGValue(ink), GetBValue(ink)), 1.25f * host.scale);
+                pen.SetStartCap(Gdiplus::LineCapRound);
+                pen.SetEndCap(Gdiplus::LineCapRound);
+                pen.SetLineJoin(Gdiplus::LineJoinRound);
+                const float cx = (float)(field.right - px(15));
+                const float cy = (field.top + field.bottom) * 0.5f;
+                const float s = host.scale;
+                Gdiplus::PointF chev[3] = {
+                    Gdiplus::PointF(cx - 3.8f * s, cy - 1.6f * s),
+                    Gdiplus::PointF(cx, cy + 2.2f * s),
+                    Gdiplus::PointF(cx + 3.8f * s, cy - 1.6f * s),
+                };
+                g.DrawLines(&pen, chev, 3);
+            }
             if (saved) RestoreDC(dc, saved);
         }
         if (message == WM_PAINT) EndPaint(control, &paint);

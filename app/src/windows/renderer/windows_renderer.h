@@ -4,6 +4,7 @@
 #include "ui_renderer.h"
 #include <d2d1_1.h>
 #include <d3d12.h>
+#include <dcomp.h>
 #include <dxgi1_4.h>
 
 // Window-thread owner after device preparation joins. UI, terminal and capture share one D3D12 queue.
@@ -17,7 +18,7 @@ public:
     // Only adapter/device/queue creation runs off-thread; HWND and D2D resources stay on the window thread.
     HRESULT prepareDeviceAsync(bool forceWarp);
     HRESULT finishDevicePreparation();
-    HRESULT initialize(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*) = nullptr);
+    HRESULT initialize(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*) = nullptr, bool allowComposition = false);
     HRESULT resize(UINT width, UINT height, float dpi);
     HRESULT beginFrame();
     // Optional BGRA readback is bottom-up, tightly packed, and only used by desktop capture.
@@ -31,6 +32,7 @@ public:
     UiRenderer* drawingTarget() { return &ui; }
     bool ready() const { return swapChain.Get() != nullptr; }
     bool software() const { return ready() && usesWarp; }
+    bool composition() const { return ready() && dcompTarget.Get() != nullptr; }
     UINT width() const { return pixelWidth; }
     UINT height() const { return pixelHeight; }
     UINT64 framesPresented() const { return presented; }
@@ -53,6 +55,9 @@ private:
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12Fence> fence;
     ComPtr<IDXGISwapChain3> swapChain;
+    ComPtr<IDCompositionDevice> dcompDevice;
+    ComPtr<IDCompositionTarget> dcompTarget;
+    ComPtr<IDCompositionVisual> dcompVisual;
     ComPtr<ID3D12DescriptorHeap> renderViews;
     Frame frames[bufferCount];
     HANDLE fenceEvent = nullptr;
@@ -71,7 +76,7 @@ private:
 
     static DWORD WINAPI prepareDeviceWorker(void* context);
     HRESULT initializeAdapter(bool forceWarp);
-    HRESULT initializeDevice(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*));
+    HRESULT initializeDevice(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*), bool allowComposition);
     HRESULT createBuffers(float dpi);
     HRESULT waitForFence(UINT64 value);
     HRESULT waitIdle();

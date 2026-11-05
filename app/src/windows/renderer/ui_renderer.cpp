@@ -46,7 +46,9 @@ void UiRenderer::resetFrame(UINT width, UINT height, float dpi) {
 D2D1_SIZE_F UiRenderer::GetSize() const { return D2D1::SizeF(pixelWidth / scale, pixelHeight / scale); }
 
 void UiRenderer::Clear(D2D1_COLOR_F color) {
-    record(batches.drawSolid(0, 0, pixelWidth / scale, pixelHeight / scale, colorRgb(color), colorAlpha(color)));
+    const uint8_t alpha = colorAlpha(color);
+    if (!alpha) return;
+    record(batches.drawSolid(0, 0, pixelWidth / scale, pixelHeight / scale, colorRgb(color), alpha));
 }
 
 void UiRenderer::FillRectangle(D2D1_RECT_F rect, const UiBrush* brush) {

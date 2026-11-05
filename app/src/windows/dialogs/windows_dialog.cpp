@@ -627,8 +627,15 @@ void repositionTerminalDialogs() {
         else { if (font) DeleteObject(font); if (heading) DeleteObject(heading); if (symbols) DeleteObject(symbols); }
     }
     SetWindowPos(host.window, HWND_TOP, left, origin.y + top, px(host.width), px(host.height), SWP_NOACTIVATE);
-    HRGN rounded = CreateRoundRectRgn(0, 0, px(host.width) + 1, px(host.height) + 1, px(24), px(24));
-    if (rounded && !SetWindowRgn(host.window, rounded, FALSE)) DeleteObject(rounded);
+    BOOL dark = host.model.palette.is_dark ? TRUE : FALSE;
+    DwmSetWindowAttribute(host.window, 20, &dark, sizeof(dark));
+    COLORREF frameBorder = color(host.model.palette.border);
+    DwmSetWindowAttribute(host.window, 34, &frameBorder, sizeof(frameBorder));
+    DWORD corner = 2; // DWMWCP_ROUND on Windows 11; fall back to a GDI region on Windows 10.
+    if (FAILED(DwmSetWindowAttribute(host.window, 33, &corner, sizeof(corner)))) {
+        HRGN rounded = CreateRoundRectRgn(0, 0, px(host.width) + 1, px(host.height) + 1, px(16), px(16));
+        if (rounded && !SetWindowRgn(host.window, rounded, FALSE)) DeleteObject(rounded);
+    }
     const float dx = host.width - host.baseWidth, dy = host.height - host.baseHeight;
     for (size_t i = 0; i < host.controlCount; ++i) {
         const auto& c = host.controls[i];
@@ -758,6 +765,10 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
             HBRUSH field = CreateSolidBrush(color(host.model.palette.pane_bg));
             if (background && field) { DeleteObject(host.background); DeleteObject(host.field); host.background = background; host.field = field; }
             else { if (background) DeleteObject(background); if (field) DeleteObject(field); }
+            BOOL dark = host.model.palette.is_dark ? TRUE : FALSE;
+            DwmSetWindowAttribute(host.window, 20, &dark, sizeof(dark));
+            COLORREF frameBorder = color(host.model.palette.border);
+            DwmSetWindowAttribute(host.window, 34, &frameBorder, sizeof(frameBorder));
             if (appearanceChanged && list) SetWindowTheme(list, host.model.palette.is_dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
         }
         // Preview colors do not change list membership; resetting would discard pixel scrolling.

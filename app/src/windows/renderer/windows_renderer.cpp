@@ -38,9 +38,9 @@ HRESULT WindowsRenderer::finishDevicePreparation() {
     return devicePreparationResult;
 }
 
-HRESULT WindowsRenderer::initialize(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*)) {
+HRESULT WindowsRenderer::initialize(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*), bool allowComposition) {
     if (ready() || !factory || !IsWindow(window)) return E_INVALIDARG;
-    HRESULT result = initializeDevice(window, factory, forceWarp, milestone);
+    HRESULT result = initializeDevice(window, factory, forceWarp, milestone, allowComposition);
     if (FAILED(result)) shutdown();
     return result;
 }
@@ -91,7 +91,7 @@ HRESULT WindowsRenderer::initializeAdapter(bool forceWarp) {
     return S_OK;
 }
 
-HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*)) {
+HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*), bool allowComposition) {
     HRESULT result = finishDevicePreparation();
     if (FAILED(result)) return result;
     if (devicePreparationRequested && deviceForceWarp != forceWarp) return E_INVALIDARG;
@@ -111,10 +111,37 @@ HRESULT WindowsRenderer::initializeDevice(HWND window, ID2D1Factory1* factory, b
     description.BufferCount = bufferCount;
     // Every invalidated frame redraws the whole scene; no discarded buffer contents are reused.
     description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    description.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
     ComPtr<IDXGISwapChain1> chain;
-    result = dxgiFactory->CreateSwapChainForHwnd(queue.Get(), window, &description, nullptr, nullptr, &chain);
-    if (FAILED(result)) return result;
+    bool compositionReady = false;
+    if (allowComposition && !usesWarp) {
+        HMODULE dcompModule = LoadLibraryW(L"dcomp.dll");
+        using CreateDcompFn = HRESULT (WINAPI*)(IDXGIDevice*, REFIID, void**);
+        auto createDcomp = dcompModule ? reinterpret_cast<CreateDcompFn>(reinterpret_cast<void*>(GetProcAddress(dcompModule, "DCompositionCreateDevice"))) : nullptr;
+        if (createDcomp) {
+            description.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
+            if (SUCCEEDED(dxgiFactory->CreateSwapChainForComposition(queue.Get(), &description, nullptr, &chain)) &&
+                SUCCEEDED(createDcomp(nullptr, IID_PPV_ARGS(&dcompDevice))) &&
+                SUCCEEDED(dcompDevice->CreateTargetForHwnd(window, TRUE, &dcompTarget)) &&
+                SUCCEEDED(dcompDevice->CreateVisual(&dcompVisual)) &&
+                SUCCEEDED(dcompVisual->SetContent(chain.Get())) &&
+                SUCCEEDED(dcompTarget->SetRoot(dcompVisual.Get())) &&
+                SUCCEEDED(dcompDevice->Commit())) {
+                compositionReady = true;
+            } else {
+                if (dcompTarget) dcompTarget->SetRoot(nullptr);
+                if (dcompVisual) dcompVisual->SetContent(nullptr);
+                dcompVisual.Reset();
+                dcompTarget.Reset();
+                dcompDevice.Reset();
+                chain.Reset();
+            }
+        }
+    }
+    if (!compositionReady) {
+        description.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+        result = dxgiFactory->CreateSwapChainForHwnd(queue.Get(), window, &description, nullptr, nullptr, &chain);
+        if (FAILED(result)) return result;
+    }
     result = dxgiFactory->MakeWindowAssociation(window, DXGI_MWA_NO_ALT_ENTER);
     if (FAILED(result)) return result;
     result = chain.As(&swapChain);
@@ -187,6 +214,7 @@ HRESULT WindowsRenderer::resize(UINT width, UINT height, float dpi) {
     if (width != pixelWidth || height != pixelHeight) {
         result = swapChain->ResizeBuffers(bufferCount, width, height, DXGI_FORMAT_UNKNOWN, 0);
         if (FAILED(result)) return result;
+        if (dcompDevice) dcompDevice->Commit();
     }
     pixelWidth = width; pixelHeight = height;
     return createBuffers(dpi);
@@ -204,7 +232,7 @@ HRESULT WindowsRenderer::beginFrame() {
     if (FAILED(result)) return result;
     ui.resetFrame(pixelWidth, pixelHeight, targetDpi);
     const D3D12_RECT clip = { 0, 0, (LONG)pixelWidth, (LONG)pixelHeight };
-    result = ui.batches.beginPass(frame.buffer.Get(), frame.rtv, clip, pixelWidth, pixelHeight, targetDpi);
+    result = ui.batches.beginPass(frame.buffer.Get(), frame.rtv, clip, pixelWidth, pixelHeight, targetDpi, true);
     if (SUCCEEDED(result)) phase = FramePhase::ui;
     return result;
 }
@@ -380,6 +408,10 @@ void WindowsRenderer::releaseDevice() {
     terminal.shutdown(); ui.batches.shutdown();
     releaseBuffers();
     renderViews.Reset();
+    if (dcompTarget) dcompTarget->SetRoot(nullptr);
+    if (dcompVisual) dcompVisual->SetContent(nullptr);
+    if (dcompDevice) dcompDevice->Commit();
+    dcompVisual.Reset(); dcompTarget.Reset(); dcompDevice.Reset();
     swapChain.Reset(); fence.Reset(); queue.Reset(); device.Reset(); dxgiFactory.Reset();
     if (fenceEvent) { CloseHandle(fenceEvent); fenceEvent = nullptr; }
     pixelWidth = 0; pixelHeight = 0; nextFence = 1; phase = FramePhase::none;

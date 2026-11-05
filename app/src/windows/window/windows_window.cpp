@@ -6,6 +6,7 @@
 #include "drawing_color.h"
 #include "windows_renderer.h"
 #include "windows_chrome.h"
+#include "chrome_motion.h"
 #include "terminal_drawing.h"
 #include "terminal_font.h"
 #include "window_visibility.h"
@@ -149,10 +150,6 @@ extern "C" void vex_window_set_ui_metrics(VexUiMetrics metrics) {
     if (textFactory && paneTitleFont && metrics.header_title_size != paneTitleFontSize) createPaneTitleFont(metrics.header_title_size);
     vex_window_invalidate();
 }
-static void rectangle(float x, float y, float width, float height, uint32_t color) {
-    brush->SetColor(rgb(color));
-    target->FillRectangle(D2D1::RectF(x, y, x + width, y + height), brush);
-}
 static constexpr float tabStripLeft = 8;
 static float tabStripEnd() { return tabStripLeft + tabStripCount * (tabWidthDip + 4); }
 static float plusLeft() { return fmaxf(tabStripEnd(), clientWidth - 166.0f); }
@@ -170,6 +167,12 @@ extern "C" int vex_draw_tab_insertion_marker(float x) {
     return 0;
 }
 static bool dwmBorderSupported;
+static bool dwmBackdropSupported;
+static ChromeMotion newTabHoverMotion;
+static ChromeMotion shellPickerHoverMotion;
+static ChromeMotion captionHoverMotion[3];
+static bool topChromeAnimationPending;
+static bool selftestEnabled();
 static void applyWindowFrameTheme() {
     if (!IsWindow(window)) return;
     BOOL dark = chromePalette.is_dark ? TRUE : FALSE;
@@ -177,8 +180,23 @@ static void applyWindowFrameTheme() {
     const uint32_t frameRgb = chromePalette.is_dark ? chromePalette.border : chromePalette.active_tab_border;
     COLORREF border = RGB((frameRgb >> 16) & 255, (frameRgb >> 8) & 255, frameRgb & 255);
     dwmBorderSupported = SUCCEEDED(DwmSetWindowAttribute(window, 34, &border, sizeof(border)));
-    COLORREF caption = RGB((chromePalette.titlebar_bg >> 16) & 255, (chromePalette.titlebar_bg >> 8) & 255, chromePalette.titlebar_bg & 255);
-    DwmSetWindowAttribute(window, 35, &caption, sizeof(caption));
+    if (!selftestEnabled()) {
+        DWORD backdrop = 4; // DWMSBT_TABBEDWINDOW (Mica Alt)
+        dwmBackdropSupported = SUCCEEDED(DwmSetWindowAttribute(window, 38, &backdrop, sizeof(backdrop)));
+        if (!dwmBackdropSupported) {
+            backdrop = 2; // DWMSBT_MAINWINDOW (Mica)
+            dwmBackdropSupported = SUCCEEDED(DwmSetWindowAttribute(window, 38, &backdrop, sizeof(backdrop)));
+        }
+    }
+    if (dwmBackdropSupported) {
+        COLORREF none = 0xFFFFFFFE; // DWMWA_COLOR_NONE lets the system backdrop shine through.
+        DwmSetWindowAttribute(window, 35, &none, sizeof(none));
+        MARGINS margins = { -1, -1, -1, -1 };
+        DwmExtendFrameIntoClientArea(window, &margins);
+    } else {
+        COLORREF caption = RGB((chromePalette.titlebar_bg >> 16) & 255, (chromePalette.titlebar_bg >> 8) & 255, chromePalette.titlebar_bg & 255);
+        DwmSetWindowAttribute(window, 35, &caption, sizeof(caption));
+    }
 }
 extern "C" void vex_window_set_chrome_palette(VexChromePalette palette) {
     bool frameChanged = chromePalette.is_dark != palette.is_dark ||
@@ -235,7 +253,7 @@ static void rendererFault(HRESULT result) {
 static HRESULT createRenderTarget() {
     if (!renderer.ready()) {
         if (!firstFrame) startupMilestone("renderer begin");
-        HRESULT result = renderer.initialize(window, drawingFactory, forceWarpEnabled(), firstFrame ? nullptr : startupMilestone);
+        HRESULT result = renderer.initialize(window, drawingFactory, forceWarpEnabled(), firstFrame ? nullptr : startupMilestone, dwmBackdropSupported && !selftestEnabled());
         if (SUCCEEDED(result) && !firstFrame) startupMilestone("renderer ready");
         if (FAILED(result)) return result;
         rendererGeneration++;
@@ -397,65 +415,76 @@ extern "C" int vex_window_schedule_cursor_wake(uint32_t delay_ms) {
     return 0;
 }
 
-static void drawNewTabButton() {
+static void drawNewTabButton(double timeMs, bool animate) {
     const float by = 8.0f;
     const float bx = plusLeft() + 1.0f;
     const float sx = plusLeft() + 24.0f;
     const bool enabled = tabStripCount < 8;
-    const bool groupHot = (enabled && hoveredNewTab) || hoveredShellPicker;
-    const D2D1_ROUNDED_RECT groupRect = D2D1::RoundedRect(D2D1::RectF(bx, by, sx + 15.0f, by + 28.0f), 6.5f, 6.5f);
-    brush->SetColor(rgb(chromePalette.active_tab_bg, groupHot ? (chromePalette.is_dark ? 0.58f : 0.72f) : (chromePalette.is_dark ? 0.34f : 0.45f)));
-    target->FillRoundedRectangle(groupRect, brush);
-    brush->SetColor(rgb(chromePalette.border, groupHot ? (chromePalette.is_dark ? 0.65f : 0.55f) : (chromePalette.is_dark ? 0.28f : 0.22f)));
-    target->DrawRoundedRectangle(groupRect, brush, 1.0f);
-    // New Tab button [ + ]
-    if (enabled && hoveredNewTab) {
-        brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
+    const float plusHover = newTabHoverMotion.update((enabled && hoveredNewTab) ? 1.0f : 0.0f, timeMs, animate);
+    const float pickerHover = shellPickerHoverMotion.update(hoveredShellPicker ? 1.0f : 0.0f, timeMs, animate);
+    if (newTabHoverMotion.pending(timeMs) || shellPickerHoverMotion.pending(timeMs)) topChromeAnimationPending = true;
+    const float groupHover = fmaxf(plusHover, pickerHover);
+    if (groupHover > 0.004f) {
+        const D2D1_ROUNDED_RECT groupRect = D2D1::RoundedRect(D2D1::RectF(bx, by, sx + 15.0f, by + 28.0f), 6.5f, 6.5f);
+        brush->SetColor(rgb(chromePalette.active_tab_bg, (chromePalette.is_dark ? 0.42f : 0.54f) * groupHover));
+        target->FillRoundedRectangle(groupRect, brush);
+        brush->SetColor(rgb(chromePalette.border, (chromePalette.is_dark ? 0.52f : 0.44f) * groupHover));
+        target->DrawRoundedRectangle(groupRect, brush, 1.0f);
+    }
+    if (plusHover > 0.004f) {
+        brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg, plusHover));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx + 1.0f, by + 1.0f, bx + 22.0f, by + 27.0f), 5.5f, 5.5f), brush);
     }
     const float cx = bx + 11.5f;
     const float cy = by + 14.0f;
-    brush->SetColor(rgb(enabled ? (hoveredNewTab ? chromePalette.accent : chromePalette.text_primary) : chromePalette.text_muted));
+    brush->SetColor(rgb(enabled ? (plusHover > 0.5f ? chromePalette.text_primary : chromePalette.text_muted) : chromePalette.text_muted,
+        enabled ? (0.72f + 0.28f * plusHover) : 0.35f));
     target->DrawLine(D2D1::Point2F(cx - 4.2f, cy), D2D1::Point2F(cx + 4.2f, cy), brush, 1.25f, roundCaps);
     target->DrawLine(D2D1::Point2F(cx, cy - 4.2f), D2D1::Point2F(cx, cy + 4.2f), brush, 1.25f, roundCaps);
 
-    // Subtle divider between [+] and [v]
-    brush->SetColor(rgb(chromePalette.border, groupHot ? 0.62f : 0.32f));
-    target->FillRectangle(D2D1::RectF(sx - 0.5f, by + 6.0f, sx + 0.5f, by + 22.0f), brush);
+    if (groupHover > 0.004f) {
+        brush->SetColor(rgb(chromePalette.border, 0.45f * groupHover));
+        target->FillRectangle(D2D1::RectF(sx - 0.5f, by + 6.0f, sx + 0.5f, by + 22.0f), brush);
+    }
 
-    // Shell Picker dropdown caret [ v ]
-    if (hoveredShellPicker) {
-        brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
+    if (pickerHover > 0.004f) {
+        brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg, pickerHover));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sx + 0.5f, by + 1.0f, sx + 14.0f, by + 27.0f), 5.0f, 5.0f), brush);
     }
     const float scx = sx + 7.2f;
-    brush->SetColor(rgb(hoveredShellPicker ? chromePalette.accent : chromePalette.text_muted));
+    brush->SetColor(rgb(pickerHover > 0.5f ? chromePalette.text_primary : chromePalette.text_muted, 0.65f + 0.35f * pickerHover));
     target->DrawLine(D2D1::Point2F(scx - 2.8f, cy - 1.3f), D2D1::Point2F(scx, cy + 1.6f), brush, 1.2f, roundCaps);
     target->DrawLine(D2D1::Point2F(scx, cy + 1.6f), D2D1::Point2F(scx + 2.8f, cy - 1.3f), brush, 1.2f, roundCaps);
 }
 
-static void drawCaptionButtons() {
+static void drawCaptionButtons(double timeMs, bool animate) {
     const float baseLeft = clientWidth - 120.0f;
     // Minimize button (button 1)
     {
         const float left = baseLeft;
         const bool hot = pressedCaptionButton == 1 || hoveredCaptionButton == 1;
-        if (hot) {
-            rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 1 ? chromePalette.active_tab_bg : chromePalette.inactive_tab_hover_bg);
+        const float hover = captionHoverMotion[0].update(hot ? 1.0f : 0.0f, timeMs, animate);
+        if (captionHoverMotion[0].pending(timeMs)) topChromeAnimationPending = true;
+        if (hover > 0.004f) {
+            brush->SetColor(rgb(pressedCaptionButton == 1 ? chromePalette.active_tab_bg : chromePalette.inactive_tab_hover_bg, hover));
+            target->FillRectangle(D2D1::RectF(left, 0.0f, left + 40.0f, 43.0f), brush);
         }
         const float cx = left + 20.0f, cy = 21.5f;
-        brush->SetColor(rgb(hot ? chromePalette.text_primary : chromePalette.text_muted));
+        brush->SetColor(rgb(hover > 0.5f ? chromePalette.text_primary : chromePalette.text_muted, 0.78f + 0.22f * hover));
         target->DrawLine(D2D1::Point2F(cx - 4.8f, cy), D2D1::Point2F(cx + 4.8f, cy), brush, 1.1f, roundCaps);
     }
     // Maximize / Restore button (button 2)
     {
         const float left = baseLeft + 40.0f;
         const bool hot = pressedCaptionButton == 2 || hoveredCaptionButton == 2;
-        if (hot) {
-            rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 2 ? chromePalette.active_tab_bg : chromePalette.inactive_tab_hover_bg);
+        const float hover = captionHoverMotion[1].update(hot ? 1.0f : 0.0f, timeMs, animate);
+        if (captionHoverMotion[1].pending(timeMs)) topChromeAnimationPending = true;
+        if (hover > 0.004f) {
+            brush->SetColor(rgb(pressedCaptionButton == 2 ? chromePalette.active_tab_bg : chromePalette.inactive_tab_hover_bg, hover));
+            target->FillRectangle(D2D1::RectF(left, 0.0f, left + 40.0f, 43.0f), brush);
         }
         const float cx = left + 20.0f, cy = 21.5f;
-        brush->SetColor(rgb(hot ? chromePalette.text_primary : chromePalette.text_muted));
+        brush->SetColor(rgb(hover > 0.5f ? chromePalette.text_primary : chromePalette.text_muted, 0.78f + 0.22f * hover));
         if (IsZoomed(window)) {
             target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - 4.8f, cy - 1.8f, cx + 2.2f, cy + 5.0f), 1.4f, 1.4f), brush, 1.1f);
             target->DrawLine(D2D1::Point2F(cx - 2.0f, cy - 1.8f), D2D1::Point2F(cx - 2.0f, cy - 4.6f), brush, 1.1f, roundCaps);
@@ -470,11 +499,14 @@ static void drawCaptionButtons() {
     {
         const float left = baseLeft + 80.0f;
         const bool hot = pressedCaptionButton == 3 || hoveredCaptionButton == 3;
-        if (hot) {
-            rectangle(left, 0.0f, 40.0f, 43.0f, pressedCaptionButton == 3 ? 0xf1707a : 0xe81123);
+        const float hover = captionHoverMotion[2].update(hot ? 1.0f : 0.0f, timeMs, animate);
+        if (captionHoverMotion[2].pending(timeMs)) topChromeAnimationPending = true;
+        if (hover > 0.004f) {
+            brush->SetColor(rgb(pressedCaptionButton == 3 ? 0xf1707a : 0xe81123, hover));
+            target->FillRectangle(D2D1::RectF(left, 0.0f, left + 40.0f, 43.0f), brush);
         }
         const float cx = left + 20.0f, cy = 21.5f;
-        brush->SetColor(rgb(hot ? 0xffffff : chromePalette.text_muted));
+        brush->SetColor(rgb(hover > 0.5f ? 0xffffff : chromePalette.text_muted, 0.78f + 0.22f * hover));
         target->DrawLine(D2D1::Point2F(cx - 4.4f, cy - 4.4f), D2D1::Point2F(cx + 4.4f, cy + 4.4f), brush, 1.15f, roundCaps);
         target->DrawLine(D2D1::Point2F(cx + 4.4f, cy - 4.4f), D2D1::Point2F(cx - 4.4f, cy + 4.4f), brush, 1.15f, roundCaps);
     }
@@ -519,21 +551,25 @@ static void renderUiVerificationScene() {
     target->DrawText(text, 192, chromeFont, rect(20, 340, 1060, 380), &paint, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
-static void renderScene(double timeMs) {
+static void renderScene(double timeMs, bool captureOpaque) {
+    const bool animate = vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window);
+    const bool nativeMica = dwmBackdropSupported && renderer.composition() && !captureOpaque;
+    topChromeAnimationPending = false;
     beginWindowChromeFrame({ target, textFactory, chromeFont, chromeBoldFont, badgeFont, paneTitleFont, notificationFont, chromePalette, uiMetrics, tabWidthDip, tabStripCount, hoveredTabIndex, hoveredTabClose,
-        timeMs, vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window),
+        timeMs, animate,
         chromePointerX, chromePointerY, !tooltipSuppressed && trackingMouseLeave && pointerCaptureState == PointerCaptureState::none && GetForegroundWindow() == window && IsWindowEnabled(window) });
     beginTerminalDrawingFrame({ &renderer, drawingFactory, textFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, &terminalLigatures, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
-    target->Clear(rgb(chromePalette.window_bg));
-    rectangle(0.0f, 0.0f, clientWidth, 44.0f, uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg);
-    if (uiMetrics.pane_gap > 0) {
+    target->Clear(rgb(chromePalette.window_bg, nativeMica ? (chromePalette.is_dark ? 0.36f : 0.44f) : 1.0f));
+    brush->SetColor(rgb(uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg, nativeMica ? (chromePalette.is_dark ? 0.18f : 0.24f) : 1.0f));
+    target->FillRectangle(D2D1::RectF(0.0f, 0.0f, clientWidth, 44.0f), brush);
+    if (uiMetrics.pane_gap == 0) {
         brush->SetColor(rgb(chromePalette.border, chromePalette.is_dark ? 0.42f : 0.52f));
         target->FillRectangle(D2D1::RectF(0.0f, 43.0f, clientWidth, 44.0f), brush);
     }
-    drawNewTabButton();
+    drawNewTabButton(timeMs, animate);
     callbacks.paint(callbacks.context);
     if (tabStripCount < 8) offerWindowChromeShortcut(L"Ctrl + Shift + T", { plusLeft(), 7, 24, 30 });
-    drawCaptionButtons();
+    drawCaptionButtons(timeMs, animate);
     drawTerminalDialogBackdrop(*target, *brush, dpiScale);
     const float noticeInset = drawWindowsUpdate(*target, *brush, textFactory, chromeFont, chromePalette, timeMs);
     drawTerminalNotification(*target, *brush, textFactory, chromeBoldFont, notificationFont, chromePalette, noticeInset, timeMs);
@@ -571,7 +607,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
         }
     }
     workspaceAnimationPending = false;
-    renderScene(1000.0 * sceneBegin.QuadPart / counterFrequency.QuadPart);
+    renderScene(1000.0 * sceneBegin.QuadPart / counterFrequency.QuadPart, pixels != nullptr);
     if (measureFrameTiming) {
         LARGE_INTEGER sceneEnd; QueryPerformanceCounter(&sceneEnd);
         sceneDurationUs = (UINT64)((sceneEnd.QuadPart - sceneBegin.QuadPart) * 1000000 / counterFrequency.QuadPart);
@@ -581,7 +617,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     rendererRecoveryAttempts = 0;
     // Preparation and a blocking Present already consume the interval; do not add another full period afterward.
     nextOutputFrame = sceneBegin.QuadPart + outputFrameTicks;
-    if ((workspaceAnimationPending || windowChromeAnimationPending() || windowChromeEffectsPending() || terminalNotificationAnimationPending() || windowsUpdateAnimationPending()) &&
+    if ((workspaceAnimationPending || topChromeAnimationPending || windowChromeAnimationPending() || windowChromeEffectsPending() || terminalNotificationAnimationPending() || windowsUpdateAnimationPending()) &&
         frameSchedule != FrameSchedule::synchronized) invalidateOutputFrame();
     if (SUCCEEDED(result) && !firstFrame) {
         firstFrame = true;
@@ -1072,7 +1108,12 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         updateWindowMetrics(); repositionTerminalDialogs(); InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
-    case WM_ERASEBKGND: return 1;
+    case WM_ERASEBKGND:
+        if (dwmBackdropSupported && renderer.composition() && wparam) {
+            RECT rc;
+            if (GetClientRect(hwnd, &rc)) FillRect(reinterpret_cast<HDC>(wparam), &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+        }
+        return 1;
     case WM_PAINT: { PAINTSTRUCT paint; BeginPaint(hwnd, &paint); drawWindow(); EndPaint(hwnd, &paint); return 0; }
     case WM_PRINT:
     case WM_PRINTCLIENT:
@@ -1449,6 +1490,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
         klass.cbSize = sizeof(klass); klass.style = CS_DBLCLKS; klass.lpfnWndProc = windowProcedure;
         klass.hInstance = GetModuleHandleW(nullptr); klass.lpszClassName = L"VexNativeTerminal";
         klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+        klass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
         klass.hIcon = iconBig ? iconBig : LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
         klass.hIconSm = iconSmall ? iconSmall : klass.hIcon;
         if (!RegisterClassExW(&klass)) platformError = (int)GetLastError();

@@ -136,13 +136,17 @@ HRESULT TerminalRenderer::beginFrame(UINT index) {
     return frame.allocator->Reset();
 }
 
-HRESULT TerminalRenderer::beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_RECT clip, UINT width, UINT height, float dpi) {
+HRESULT TerminalRenderer::beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_RECT clip, UINT width, UINT height, float dpi, bool clearRtv) {
     if (passOpen || !buffer || !width || !height || !isfinite(dpi) || dpi <= 0) return E_INVALIDARG;
     HRESULT result = commands->Reset(frames[frameIndex].allocator.Get(), pipeline.Get());
     if (FAILED(result)) return result;
     passBuffer = buffer; passOpen = true; pendingQuads = 0; scale = dpi / 96.0f;
     auto barrier = terminalTransition(buffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     commands->ResourceBarrier(1, &barrier);
+    if (clearRtv) {
+        const float zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        commands->ClearRenderTargetView(rtv, zero, 0, nullptr);
+    }
     commands->SetGraphicsRootSignature(root.Get());
     ID3D12DescriptorHeap* heaps[] = { descriptors.Get() };
     commands->SetDescriptorHeaps(1, heaps);

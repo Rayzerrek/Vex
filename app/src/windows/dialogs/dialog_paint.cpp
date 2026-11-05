@@ -115,29 +115,14 @@ void drawThemeCard(const DRAWITEMSTRUCT& draw, const DialogItem& item, bool sele
     }
     if (art.bottom - art.top >= px(62)) {
         RECT terminal = art; terminal.left += px(13); terminal.right -= px(13); terminal.top += px(12); terminal.bottom -= px(10);
-        roundedFill(draw.hDC, terminal, item.background, blend(item.background, item.foreground, 0.18f), px(10));
-        for (int i = 0; i < 3; ++i) {
-            RECT dot = { terminal.left + px(9 + i * 8), terminal.top + px(8), terminal.left + px(13 + i * 8), terminal.top + px(12) };
-            COLORREF tint = blend(item.background, item.foreground, 0.28f);
-            roundedFill(draw.hDC, dot, tint, tint, px(4));
-        }
-        if (terminal.right - terminal.left >= px(96)) {
-            for (int i = 0; i < 5; ++i) {
-                RECT swatch = { terminal.right - px(45 - i * 8), terminal.top + px(7), terminal.right - px(40 - i * 8), terminal.top + px(12) };
-                roundedFill(draw.hDC, swatch, item.swatches[i], item.swatches[i], px(5));
-            }
-        }
-        RECT prompt = terminal; prompt.left += px(9); prompt.top += px(20); prompt.right -= px(6);
+        roundedFill(draw.hDC, terminal, item.background, blend(item.background, item.foreground, 0.16f), px(10));
+        RECT prompt = terminal; prompt.left += px(10); prompt.top += px(8); prompt.right -= px(8);
         SetTextColor(draw.hDC, item.accent);
         DrawTextW(draw.hDC, L"❯  ~/vex", -1, &prompt, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-        if (terminal.bottom - terminal.top >= px(52)) {
-            RECT pillA = { terminal.left + px(9), terminal.top + px(39), terminal.left + px(37), terminal.top + px(43) };
-            RECT pillB = { terminal.left + px(41), terminal.top + px(39), terminal.left + px(63), terminal.top + px(43) };
-            COLORREF colA = blend(item.background, item.swatches[1], 0.65f);
-            COLORREF colB = blend(item.background, item.swatches[2], 0.55f);
-            if (pillB.right < terminal.right - px(8)) {
-                roundedFill(draw.hDC, pillA, colA, colA, px(4));
-                roundedFill(draw.hDC, pillB, colB, colB, px(4));
+        if (terminal.right - terminal.left >= px(72)) {
+            for (int i = 0; i < 5; ++i) {
+                RECT swatch = { terminal.left + px(10 + i * 10), terminal.bottom - px(14), terminal.left + px(16 + i * 10), terminal.bottom - px(8) };
+                roundedFill(draw.hDC, swatch, item.swatches[i], item.swatches[i], px(6));
             }
         }
     }
@@ -311,8 +296,30 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
                 text.right = kbdPill.left - px(12);
             }
         }
-        SetTextColor(draw.hDC, color(host.model.palette.text_primary));
-        DrawTextW(draw.hDC, item.label, -1, &text, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        const wchar_t* colon = wcsstr(item.label, L": ");
+        if (colon && colon > item.label && (colon - item.label) < 28) {
+            wchar_t prefix[36] = {};
+            const size_t catLen = (size_t)(colon - item.label);
+            memcpy(prefix, item.label, catLen * sizeof(wchar_t));
+            wcscpy(prefix + catLen, L"  ›  ");
+            RECT catCalc = text;
+            DrawTextW(draw.hDC, prefix, -1, &catCalc, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            const int catWidth = catCalc.right - catCalc.left;
+            if (text.left + catWidth + px(40) < text.right) {
+                RECT catRect = text; catRect.right = text.left + catWidth;
+                SetTextColor(draw.hDC, color(host.model.palette.text_muted));
+                DrawTextW(draw.hDC, prefix, -1, &catRect, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                RECT actRect = text; actRect.left += catWidth;
+                SetTextColor(draw.hDC, color(host.model.palette.text_primary));
+                DrawTextW(draw.hDC, colon + 2, -1, &actRect, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            } else {
+                SetTextColor(draw.hDC, color(host.model.palette.text_primary));
+                DrawTextW(draw.hDC, item.label, -1, &text, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            }
+        } else {
+            SetTextColor(draw.hDC, color(host.model.palette.text_primary));
+            DrawTextW(draw.hDC, item.label, -1, &text, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        }
     } else if (shells) {
         COLORREF brand = color(host.model.palette.accent);
         const wchar_t* envDesc = item.detail;
@@ -550,13 +557,7 @@ void drawComboItem(const DRAWITEMSTRUCT& draw) {
 void paintDialogSurface(HDC dc) {
     RECT bounds; GetClientRect(host.window, &bounds);
     FillRect(dc, &bounds, host.background);
-    roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(24));
-    if (bounds.right - bounds.left > px(32)) {
-        Gdiplus::Graphics graphics(dc);
-        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        Gdiplus::Pen highlight(Gdiplus::Color(host.model.palette.is_dark ? 28 : 140, 255, 255, 255), 1.0f);
-        graphics.DrawLine(&highlight, (float)px(14), 1.5f, (float)(bounds.right - px(14)), 1.5f);
-    }
+    roundedFill(dc, bounds, surfaceColor(), color(host.model.palette.border), px(16));
     if (host.model.kind == 4) {
         const auto g = settingsGeometry(host.page);
         const COLORREF cardFill = color(host.model.palette.pane_bg);
