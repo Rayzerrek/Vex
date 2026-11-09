@@ -16,6 +16,7 @@
 #include <d2d1.h>
 #include <dwrite.h>
 #include <dwmapi.h>
+#include <uxtheme.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -173,8 +174,37 @@ static ChromeMotion shellPickerHoverMotion;
 static ChromeMotion captionHoverMotion[3];
 static bool topChromeAnimationPending;
 static bool selftestEnabled();
+static void suppressNativeNonClientCaption(HWND hwnd) {
+    WTA_OPTIONS options = {
+        WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON | WTNCA_NOSYSMENU | WTNCA_NOMIRRORHELP,
+        WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON | WTNCA_NOSYSMENU | WTNCA_NOMIRRORHELP,
+    };
+    SetWindowThemeAttribute(hwnd, WTA_NONCLIENT, &options, sizeof(options));
+    // Prime the standard system menu handle before clearing WS_SYSMENU so DWM's
+    // CTopLevelWindow collapses its native caption-button visuals over translucent Mica.
+    GetSystemMenu(hwnd, FALSE);
+    if (!selftestEnabled()) {
+        const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if (style & WS_SYSMENU) SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~static_cast<LONG_PTR>(WS_SYSMENU));
+    }
+}
+static void showWindowSystemMenu(HWND hwnd, int x, int y) {
+    HMENU menu = GetSystemMenu(hwnd, FALSE);
+    if (!menu) return;
+    const bool zoomed = IsZoomed(hwnd) != FALSE;
+    EnableMenuItem(menu, SC_RESTORE, MF_BYCOMMAND | (zoomed ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(menu, SC_MOVE, MF_BYCOMMAND | (zoomed ? MF_GRAYED : MF_ENABLED));
+    EnableMenuItem(menu, SC_SIZE, MF_BYCOMMAND | (zoomed ? MF_GRAYED : MF_ENABLED));
+    EnableMenuItem(menu, SC_MINIMIZE, MF_BYCOMMAND | MF_ENABLED);
+    EnableMenuItem(menu, SC_MAXIMIZE, MF_BYCOMMAND | (zoomed ? MF_GRAYED : MF_ENABLED));
+    EnableMenuItem(menu, SC_CLOSE, MF_BYCOMMAND | MF_ENABLED);
+    SetMenuDefaultItem(menu, zoomed ? SC_RESTORE : SC_MAXIMIZE, FALSE);
+    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, 0, hwnd, nullptr);
+    if (cmd) SendMessageW(hwnd, WM_SYSCOMMAND, static_cast<WPARAM>(cmd), 0);
+}
 static void applyWindowFrameTheme() {
     if (!IsWindow(window)) return;
+    suppressNativeNonClientCaption(window);
     BOOL dark = chromePalette.is_dark ? TRUE : FALSE;
     DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
     const uint32_t frameRgb = chromePalette.is_dark ? chromePalette.border : chromePalette.active_tab_border;
@@ -191,11 +221,15 @@ static void applyWindowFrameTheme() {
     if (dwmBackdropSupported) {
         COLORREF none = 0xFFFFFFFE; // DWMWA_COLOR_NONE lets the system backdrop shine through.
         DwmSetWindowAttribute(window, 35, &none, sizeof(none));
-        MARGINS margins = { -1, -1, -1, -1 };
+        // Extend from the bottom with a zero top margin so DWM covers the window with Mica
+        // without unclipping its native top caption bar or caption buttons.
+        MARGINS margins = { 0, 0, 0, 0x7fff };
         DwmExtendFrameIntoClientArea(window, &margins);
     } else {
         COLORREF caption = RGB((chromePalette.titlebar_bg >> 16) & 255, (chromePalette.titlebar_bg >> 8) & 255, chromePalette.titlebar_bg & 255);
         DwmSetWindowAttribute(window, 35, &caption, sizeof(caption));
+        MARGINS margins = { 0, 0, 0, 1 };
+        DwmExtendFrameIntoClientArea(window, &margins);
     }
 }
 extern "C" void vex_window_set_chrome_palette(VexChromePalette palette) {
@@ -695,6 +729,7 @@ static void pasteClipboard() {
     size_t length;
     const DWORD error = readClipboardText(&bytes, &length);
     if (bytes) {
+        nextOutputFrame = 0;
         callbacks.paste(callbacks.context, bytes, length);
         HeapFree(GetProcessHeap(), 0, bytes);
     }
@@ -863,6 +898,12 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_NCACTIVATE:
         return DefWindowProcW(hwnd, message, wparam, -1);
+    case WM_NCRBUTTONUP:
+        if (wparam == HTCAPTION && !selftestEnabled()) {
+            showWindowSystemMenu(hwnd, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+            return 0;
+        }
+        break;
     case WM_NCHITTEST: {
         POINT point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
         ScreenToClient(hwnd, &point);
@@ -1183,9 +1224,15 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_APP + 7:
         return (selftestEnabled() && saveCaptureBmp()) ? 1 : 0;
-    case WM_APP + 10:
+    case WM_APP + 10: {
+        MSG pendingChar;
+        // Coalesce a keydown invalidation with its translated WM_CHAR before presenting.
+        if (frameSchedule == FrameSchedule::posted && PeekMessageW(&pendingChar, hwnd, WM_CHAR, WM_SYSCHAR, PM_NOREMOVE)) {
+            if (PostMessageW(hwnd, WM_APP + 10, 0, 0)) return 0;
+        }
         if (frameSchedule == FrameSchedule::posted) renderScheduledFrame();
         return 0;
+    }
     case WM_APP + 9:
         if (!selftestEnabled()) return 0;
         measureFrameTiming = true;
@@ -1331,6 +1378,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             return 1;
         }
         hideChromeTooltip();
+        nextOutputFrame = 0;
         if (terminalNotificationKey((uint32_t)wparam, currentModifiers()) || windowsUpdateKey((uint32_t)wparam, currentModifiers())) { refreshHoverCursor(hwnd); return 1; }
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
@@ -1357,7 +1405,16 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         uint16_t unit = (uint16_t)wparam;
         // Alt+Space keeps the Windows system menu; every other Alt character belongs to the terminal.
         const bool altChord = message == WM_SYSCHAR && (lparam & (1LL << 29));
-        if (altChord && unit == L' ') return DefWindowProcW(hwnd, message, wparam, lparam);
+        if (altChord && unit == L' ') {
+            if (!selftestEnabled()) {
+                RECT rc = {};
+                GetWindowRect(hwnd, &rc);
+                const float scale = GetDpiForWindow(hwnd) / 96.0f;
+                showWindowSystemMenu(hwnd, rc.left + (int)(12 * scale), rc.top + (int)(44 * scale));
+                return 0;
+            }
+            return DefWindowProcW(hwnd, message, wparam, lparam);
+        }
         if (unit >= 0xd800 && unit <= 0xdbff) { pendingSurrogate = unit; return 0; }
         wchar_t text[2]; int count = 1;
         if (pendingSurrogate && unit >= 0xdc00 && unit <= 0xdfff) { text[0] = pendingSurrogate; text[1] = unit; count = 2; }
@@ -1368,7 +1425,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         const int prefix = altChord ? 1 : 0;
         if (altChord) bytes[0] = 0x1b;
         int length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, count, (char*)bytes + prefix, (int)sizeof(bytes) - prefix, nullptr, nullptr);
-        if (length > 0) callbacks.text(callbacks.context, bytes, (size_t)(length + prefix));
+        if (length > 0) {
+            nextOutputFrame = 0;
+            callbacks.text(callbacks.context, bytes, (size_t)(length + prefix));
+        }
         return 0;
     }
     case WM_SYSCOMMAND:
@@ -1506,7 +1566,7 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 initializeWindowsUpdates(window, selftestEnabled());
                 if (iconBig) SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconBig));
                 if (iconSmall) SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
-                MARGINS margins = { 1, 1, 1, 1 };
+                MARGINS margins = { 0, 0, 0, 1 };
                 DwmExtendFrameIntoClientArea(window, &margins);
                 DWORD corner = 2; DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
                 applyWindowFrameTheme();

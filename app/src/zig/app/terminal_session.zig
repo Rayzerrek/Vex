@@ -270,23 +270,36 @@ pub const TerminalSession = struct {
     /// Replaces an editable selection on the cursor row: the line editor moves the caret, deletes the
     /// selected characters, then receives `text` in the same PTY write. Returns false when no such selection exists.
     pub fn replaceSelection(self: *TerminalSession, allocator: std.mem.Allocator, text: []const u8) !bool {
+        return self.replaceSelectionWithPreview(allocator, text, text);
+    }
+    /// Replaces an editable selection with `text` on the PTY while previewing `preview` in the local frame.
+    pub fn replaceSelectionWithPreview(self: *TerminalSession, allocator: std.mem.Allocator, text: []const u8, preview: []const u8) !bool {
         if (self.state != .running) return false;
-        const edit = (try self.terminal.consumeSelectionEdit()) orelse return false;
+        if (try self.terminal.consumeSelectionEditWithPreview(preview)) |edit| {
+            var input: std.ArrayList(u8) = .empty;
+            defer input.deinit(allocator);
+            var key_buffer: [32]u8 = undefined;
+            const moves = [_]struct { key: u32, count: usize }{
+                .{ .key = 0x25, .count = edit.left },
+                .{ .key = 0x27, .count = edit.right },
+                .{ .key = 0x2E, .count = edit.forward },
+            };
+            for (moves) |move| {
+                if (move.count == 0) continue;
+                const encoded = (try self.terminal.encodeKey(move.key, 0, &key_buffer)) orelse return error.InvalidTerminalKeyEncoding;
+                try input.ensureUnusedCapacity(allocator, encoded.len * move.count);
+                for (0..move.count) |_| input.appendSliceAssumeCapacity(encoded);
+            }
+            try input.appendNTimes(allocator, 0x7f, edit.backward);
+            try input.appendSlice(allocator, text);
+            try self.writeUserInput(input.items);
+            return true;
+        }
+        const count = try self.terminal.consumeKeyboardSelectionBackspacesWithPreview(preview);
+        if (count == 0) return false;
         var input: std.ArrayList(u8) = .empty;
         defer input.deinit(allocator);
-        var key_buffer: [32]u8 = undefined;
-        const moves = [_]struct { key: u32, count: usize }{
-            .{ .key = 0x25, .count = edit.left },
-            .{ .key = 0x27, .count = edit.right },
-            .{ .key = 0x2E, .count = edit.forward },
-        };
-        for (moves) |move| {
-            if (move.count == 0) continue;
-            const encoded = (try self.terminal.encodeKey(move.key, 0, &key_buffer)) orelse return error.InvalidTerminalKeyEncoding;
-            try input.ensureUnusedCapacity(allocator, encoded.len * move.count);
-            for (0..move.count) |_| input.appendSliceAssumeCapacity(encoded);
-        }
-        try input.appendNTimes(allocator, 0x7f, edit.backward);
+        try input.appendNTimes(allocator, 0x7f, count);
         try input.appendSlice(allocator, text);
         try self.writeUserInput(input.items);
         return true;
@@ -294,18 +307,7 @@ pub const TerminalSession = struct {
     /// Deletes the selection: any editable cursor-row selection, else a cursor-anchored keyboard selection
     /// (which may span soft-wrapped rows) by sending one DEL (0x7f) per selected character.
     pub fn deleteKeyboardSelection(self: *TerminalSession) !bool {
-        if (try self.replaceSelection(self.terminal.allocator, "")) return true;
-        if (self.state != .running) return false;
-        const count = try self.terminal.consumeKeyboardSelectionBackspaces();
-        if (count == 0) return false;
-        const chunk = [_]u8{0x7f} ** 64;
-        var remaining = count;
-        while (remaining > 0) {
-            const step = @min(remaining, chunk.len);
-            try self.writeUserInput(chunk[0..step]);
-            remaining -= step;
-        }
-        return true;
+        return self.replaceSelection(self.terminal.allocator, "");
     }
     /// Avoids redundant ConPTY/emulator resizes; exited sessions retain a resizable terminal viewport.
     pub fn resize(self: *TerminalSession, size: platform.TerminalSize) !void {

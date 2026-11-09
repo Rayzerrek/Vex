@@ -1000,6 +1000,51 @@ test "extendKeyboardSelection and consumeKeyboardSelectionBackspaces handle word
     try std.testing.expect(!try terminal.extendKeyboardSelection(0x25, 1));
 }
 
+test "optimistic selection replacement updates frame immediately, absorbs intermediate shell echoes, and converges on final output" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(24, 4, 8, 16);
+    try terminal.feedOutput("echo hello world");
+
+    // Select "hello" (cols 5..10) while cursor is at end of line (col 16) and replace with "X".
+    try terminal.setKeyboardSelection(5, 0, 10, 0);
+    const edit = (try terminal.consumeSelectionEditWithPreview("X")).?;
+    try std.testing.expectEqual(@as(usize, 6), edit.left);
+    try std.testing.expectEqual(@as(usize, 5), edit.backward);
+    try std.testing.expect(!try terminal.hasSelection());
+
+    // Frame immediately reflects "echo X world" with cursor at col 6 before any PTY output arrives.
+    var frame = try terminal.readFrame();
+    try std.testing.expect(try terminal.containsViewportText("echo X world"));
+    try std.testing.expect(!try terminal.containsViewportText("hello"));
+    try std.testing.expectEqual(@as(u16, 6), frame.cursor.caretColumn());
+    for (frame.cells.items) |cell| try std.testing.expect(!cell.selected);
+
+    // Follow-up typing and backspace while waiting for the shell also update the optimistic frame immediately.
+    try std.testing.expect(terminal.advanceOptimisticEdit("Y"));
+    try std.testing.expect(try terminal.containsViewportText("echo XY world"));
+    try std.testing.expectEqual(@as(u16, 7), (try terminal.readFrame()).cursor.caretColumn());
+    try std.testing.expect(terminal.backspaceOptimisticEdit());
+    try std.testing.expect(try terminal.containsViewportText("echo X world"));
+    try std.testing.expectEqual(@as(u16, 6), (try terminal.readFrame()).cursor.caretColumn());
+
+    // Intermediate shell output (cursor moving left, partial deletion) must not flash "hello" back onto the screen.
+    try terminal.feedOutput("\x1b[6D");
+    try std.testing.expect(try terminal.containsViewportText("echo X world"));
+    try std.testing.expect(!try terminal.containsViewportText("hello"));
+    try terminal.feedOutput("\x1b[3Dhe world   \x1b[8G");
+    try std.testing.expect(try terminal.containsViewportText("echo X world"));
+
+    // Final shell redraw with syntax highlighting converges and releases the optimistic hold.
+    try terminal.feedOutput("\r\x1b[2Kecho \x1b[32mX\x1b[0m world\x1b[7G");
+    frame = try terminal.readFrame();
+    try std.testing.expect(!terminal.optimistic_edit.active);
+    try std.testing.expect(try terminal.containsViewportText("echo X world"));
+    try std.testing.expectEqual(@as(u16, 6), frame.cursor.caretColumn());
+    try std.testing.expectEqual(@as(u32, 0x5af05a), frame.cells.items[5].style.foreground);
+}
+
 test "mouse tracking priority, partial mode reset resilience, SGR/pixel formats, wheel, motion deduplication, and DEC 2026/2048" {
     const api = try binding.Api.load();
     var terminal = try Terminal.init(std.testing.allocator, &api);

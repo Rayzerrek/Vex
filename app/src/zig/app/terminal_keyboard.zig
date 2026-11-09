@@ -152,6 +152,10 @@ fn handleSessionKey(self: *Application, session: *TerminalSession, key: u32, mod
         if (try session.terminal.hasSelection()) {
             try session.terminal.clearSelection(true);
             platform.invalidateWindow();
+        } else if (key == 0x08 and (modifiers == 0 or modifiers == 1)) {
+            if (session.terminal.backspaceOptimisticEdit()) platform.invalidateWindow();
+        } else if (session.terminal.cancelOptimisticEdit()) {
+            platform.invalidateWindow();
         }
         try session.writeUserInput(bytes);
         return true;
@@ -211,6 +215,10 @@ pub fn onText(self: *Application, bytes: []const u8) void {
                 self.fail(err);
                 return;
             };
+        } else if (isTextInput(bytes)) {
+            if (session.terminal.advanceOptimisticEdit(bytes)) platform.invalidateWindow();
+        } else if (session.terminal.cancelOptimisticEdit()) {
+            platform.invalidateWindow();
         }
         session.writeUserInput(bytes) catch |err| self.fail(err);
     }
@@ -259,13 +267,14 @@ pub fn onPaste(self: *Application, bytes: []const u8) void {
     }
     const session = self.activeSession() orelse return;
     if (session.state == .running) {
-        if (session.terminal.hasSelection() catch |err| {
+        if (bytes.len <= 1024 * 1024 and (session.terminal.hasSelection() catch |err| {
             self.fail(err);
             return;
-        }) {
+        })) {
             platform.invalidateWindow();
             // Pasting over an editable selection replaces it, like typing does.
-            const replaced = bytes.len > 0 and (session.replaceSelection(self.allocator, "") catch |err| {
+            const preview = if (bytes.len <= 512 and std.mem.indexOfAny(u8, bytes, "\r\n") == null) bytes else "";
+            const replaced = bytes.len > 0 and (session.replaceSelectionWithPreview(self.allocator, "", preview) catch |err| {
                 self.fail(err);
                 return;
             });
@@ -273,6 +282,8 @@ pub fn onPaste(self: *Application, bytes: []const u8) void {
                 self.fail(err);
                 return;
             };
+        } else if (session.terminal.cancelOptimisticEdit()) {
+            platform.invalidateWindow();
         }
         session.paste(self.allocator, bytes) catch |err| self.fail(err);
     }

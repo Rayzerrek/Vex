@@ -135,6 +135,7 @@ pub const Terminal = struct {
     kb_focus_col: u16 = 0,
     kb_focus_row: u16 = 0,
     frame: TerminalFrame = .{},
+    optimistic_edit: OptimisticEdit = .{},
     scroll_guard: TerminalFrame = .{},
     scroll_guard_generation: ?u64 = null,
     scroll_guard_graphics_generation: u64 = 0,
@@ -318,6 +319,13 @@ pub const Terminal = struct {
     pub fn writeTerminalOutput(self: *Terminal, bytes: []const u8) !void {
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         self.api.terminal_vt_write(self.handle, bytes.ptr, bytes.len);
+        if (self.optimistic_edit.active) {
+            if (!self.optimistic_edit.had_output) {
+                self.optimistic_edit.had_output = true;
+                self.optimistic_edit.first_output_ns = self.status_clock.read();
+            }
+            self.frame_valid = false;
+        }
         if (self.callback_error) |err| return err;
     }
     /// Capability replies use this pane's PTY sink, never the currently focused terminal.
@@ -337,6 +345,7 @@ pub const Terminal = struct {
     }
     /// RIS resets status, title and mouse motion history; screen switches/soft resets deliberately do not.
     pub fn onTerminalReset(self: *Terminal) void {
+        self.optimistic_edit.active = false;
         self.program_status.resetProgramStatus();
         self.title.reset();
         self.resetMouseEncoder();
@@ -365,6 +374,7 @@ pub const Terminal = struct {
         self.cell_height_px = height_px;
         self.updateMouseEncoderSize(columns, rows, width_px, height_px);
         self.kb_selection_active = false;
+        self.optimistic_edit.active = false;
         self.frame_valid = false;
         if (self.callback_error) |err| return err;
     }
@@ -379,6 +389,7 @@ pub const Terminal = struct {
     /// Clears the active screen selection and optionally resets multi-click gesture history.
     pub fn clearSelection(self: *Terminal, reset_gesture: bool) !void {
         self.kb_selection_active = false;
+        self.optimistic_edit.active = false;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_SELECTION, null));
         if (reset_gesture) self.api.selection_gesture_reset(self.selection_gesture, self.handle);
         self.frame_valid = false;
@@ -386,6 +397,7 @@ pub const Terminal = struct {
     /// Starts or advances a pointer selection gesture, returning the click count (1=cell, 2=word, 3=line, 0=out of bounds).
     pub fn selectionPress(self: *Terminal, column: u16, row: u16, x_px: f64, y_px: f64) !u8 {
         self.kb_selection_active = false;
+        self.optimistic_edit.active = false;
         var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
         grid_ref.size = @sizeOf(c.GhosttyGridRef);
         const point: c.GhosttyPoint = .{
@@ -574,6 +586,13 @@ pub const Terminal = struct {
     }
     /// Consumes a keyboard selection ending at the live cursor and returns the number of 0x7f backspaces to send.
     pub fn consumeKeyboardSelectionBackspaces(self: *Terminal) !usize {
+        return self.consumeKeyboardSelectionBackspacesInternal(null);
+    }
+    /// Consumes a keyboard selection ending at the live cursor and optimistically replaces it in the rendered frame.
+    pub fn consumeKeyboardSelectionBackspacesWithPreview(self: *Terminal, replacement: []const u8) !usize {
+        return self.consumeKeyboardSelectionBackspacesInternal(replacement);
+    }
+    fn consumeKeyboardSelectionBackspacesInternal(self: *Terminal, preview_replacement: ?[]const u8) !usize {
         if (!self.kb_selection_active or !try self.hasSelection() or try self.isAlternateScreen()) return 0;
         const sb = try self.scrollbar();
         if (sb.offset +| sb.len < sb.total) return 0;
@@ -595,7 +614,15 @@ pub const Terminal = struct {
             if (cell.width != .tail) count += 1;
         }
         if (count == 0) return 0;
+        const start_row: u16 = @intCast(sel_min / cols_usize);
+        const start_col: usize = sel_min % cols_usize;
+        const end_row: u16 = @intCast((sel_max - 1) / cols_usize);
+        const end_col_on_start: usize = if (end_row == start_row) (sel_max - @as(usize, start_row) * cols_usize) else cols_usize;
+        const end_row_clear_cols: u16 = if (end_row > start_row) @intCast(sel_max - @as(usize, end_row) * cols_usize) else 0;
         try self.clearSelection(true);
+        if (preview_replacement) |replacement| {
+            self.optimistic_edit.begin(frame, start_row, start_col, end_col_on_start, end_row, end_row_clear_cols, replacement, sb.offset, self.status_clock.read());
+        }
         return count;
     }
     /// Line-editor keystrokes that delete a selection on the live cursor row.
@@ -612,6 +639,13 @@ pub const Terminal = struct {
     /// Converts a single-row primary-screen selection on the cursor row into caret moves and deletions, then clears it.
     /// Cells after the last visible character are never targeted, so cmd.exe never replays history on Right arrow.
     pub fn consumeSelectionEdit(self: *Terminal) !?SelectionEdit {
+        return self.consumeSelectionEditInternal(null);
+    }
+    /// Converts a single-row selection on the cursor row into caret moves/deletions and optimistically updates the rendered row.
+    pub fn consumeSelectionEditWithPreview(self: *Terminal, replacement: []const u8) !?SelectionEdit {
+        return self.consumeSelectionEditInternal(replacement);
+    }
+    fn consumeSelectionEditInternal(self: *Terminal, preview_replacement: ?[]const u8) !?SelectionEdit {
         if (!try self.hasSelection() or try self.isAlternateScreen()) return null;
         if (try self.mouseTrackingMode() != .none) return null;
         const sb = try self.scrollbar();
@@ -656,7 +690,29 @@ pub const Terminal = struct {
         }
         if (edit.forward + edit.backward == 0) return null;
         try self.clearSelection(true);
+        if (preview_replacement) |replacement| {
+            self.optimistic_edit.begin(frame, row, start, end, row, 0, replacement, sb.offset, self.status_clock.read());
+        }
         return edit;
+    }
+    /// Appends typed text to an in-flight optimistic selection replacement while waiting for the shell echo.
+    pub fn advanceOptimisticEdit(self: *Terminal, text: []const u8) bool {
+        if (!self.optimistic_edit.advance(text, self.status_clock.read())) return false;
+        self.frame_valid = false;
+        return true;
+    }
+    /// Applies a Backspace to an in-flight optimistic selection replacement while waiting for the shell echo.
+    pub fn backspaceOptimisticEdit(self: *Terminal) bool {
+        if (!self.optimistic_edit.backspace(self.status_clock.read())) return false;
+        self.frame_valid = false;
+        return true;
+    }
+    /// Cancels any active optimistic selection replacement so the next frame uses the emulator state directly.
+    pub fn cancelOptimisticEdit(self: *Terminal) bool {
+        if (!self.optimistic_edit.active) return false;
+        self.optimistic_edit.active = false;
+        self.frame_valid = false;
+        return true;
     }
     /// Formats the active selection as UTF-8 plain text with soft-wrap unwrapping; returns null when no selection is active.
     pub fn selectedTextAlloc(self: *const Terminal, allocator: std.mem.Allocator, trim: bool) !?[]u8 {
@@ -711,18 +767,21 @@ pub const Terminal = struct {
     pub fn scroll(self: *Terminal, delta: i32) void {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
         self.kb_selection_active = false;
+        self.optimistic_edit.active = false;
         self.frame_valid = false;
     }
     /// Scrolls the viewport to the oldest scrollback row and invalidates the cached snapshot.
     pub fn scrollToTop(self: *Terminal) void {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_TOP, .value = .{ .delta = 0 } });
         self.kb_selection_active = false;
+        self.optimistic_edit.active = false;
         self.frame_valid = false;
     }
     /// Scrolls the viewport back to the live bottom screen and invalidates the cached snapshot.
     pub fn scrollToBottom(self: *Terminal) void {
         self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_BOTTOM, .value = .{ .delta = 0 } });
         self.kb_selection_active = false;
+        self.optimistic_edit.active = false;
         self.frame_valid = false;
     }
     /// User input returns primary scrollback to the live cursor; output and mouse reports do not.
@@ -909,7 +968,19 @@ pub const Terminal = struct {
         try self.frame.graphics.update(self.allocator, self.api, self.handle, &self.graphics_iterator, dirty != c.GHOSTTY_RENDER_STATE_DIRTY_FALSE or !self.frame_valid);
         self.frame.cell_width_px = self.cell_width_px;
         self.frame.cell_height_px = self.cell_height_px;
-        if (dirty == c.GHOSTTY_RENDER_STATE_DIRTY_FALSE and self.frame_valid) return &self.frame;
+        if (dirty == c.GHOSTTY_RENDER_STATE_DIRTY_FALSE and self.frame_valid) {
+            if (self.optimistic_edit.active) {
+                const now_ns = self.status_clock.read();
+                if (!self.optimistic_edit.expired(now_ns)) {
+                    self.optimistic_edit.applyCursor(&self.frame.cursor);
+                    return &self.frame;
+                }
+                self.optimistic_edit.active = false;
+                self.frame_valid = false;
+            } else {
+                return &self.frame;
+            }
+        }
         if (dirty > c.GHOSTTY_RENDER_STATE_DIRTY_FULL) return error.InvalidTerminalDirtyState;
         self.frame_valid = false;
         var columns: u16 = 0;
@@ -976,6 +1047,16 @@ pub const Terminal = struct {
         try check(self.api.render_state_set(self.render_state, c.GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean));
         self.frame.columns = columns;
         self.frame.rows = rows;
+        if (self.optimistic_edit.active) {
+            const alt = try self.isAlternateScreen();
+            const sb = try self.scrollbar();
+            const now_ns = self.status_clock.read();
+            if (self.optimistic_edit.caughtUpOrExpired(&self.frame, alt, sb.offset, now_ns)) {
+                self.optimistic_edit.active = false;
+            } else {
+                try self.optimistic_edit.applyToFrame(self.allocator, &self.frame);
+            }
+        }
         self.frame.generation = try std.math.add(u64, self.frame.generation, 1);
         self.frame_valid = true;
         return &self.frame;
@@ -1381,6 +1462,311 @@ fn isWhitespaceOrEmptyCell(frame: *const TerminalFrame, row: u16, col: u16) bool
     if (cell.width == .tail) return false;
     const bytes = frame.cellText(cell);
     return std.mem.trim(u8, bytes, " \t\r\n\x0b\x0c").len == 0;
+}
+
+/// Holds a zero-latency local preview of a selection replacement on the active command line
+/// until the shell and ConPTY finish processing the arrow/delete/backspace sequence.
+const OptimisticEdit = struct {
+    const max_cols = 512;
+    const max_utf8 = 2048;
+    const pre_output_hold_ns: u64 = 500 * std.time.ns_per_ms;
+    const post_output_hold_ns: u64 = 120 * std.time.ns_per_ms;
+
+    active: bool = false,
+    had_output: bool = false,
+    row: u16 = 0,
+    end_row: u16 = 0,
+    end_row_clear_cols: u16 = 0,
+    start_col: u16 = 0,
+    cursor_col: u16 = 0,
+    end_check_col: u16 = 0,
+    cols: u16 = 0,
+    utf8_len: u16 = 0,
+    scroll_offset: u64 = 0,
+    started_ns: u64 = 0,
+    first_output_ns: u64 = 0,
+    blank_style: TextStyle = .{ .foreground = 0xe4e4e7, .background = 0x282c34 },
+    insert_style: TextStyle = .{ .foreground = 0xe4e4e7, .background = 0x282c34 },
+    cells: [max_cols]TerminalCell = undefined,
+    utf8: [max_utf8]u8 = undefined,
+
+    fn cellText(self: *const OptimisticEdit, cell: TerminalCell) []const u8 {
+        return self.utf8[cell.text_start..][0..cell.text_length];
+    }
+    fn expired(self: *const OptimisticEdit, now_ns: u64) bool {
+        if (now_ns -| self.started_ns >= pre_output_hold_ns) return true;
+        if (self.had_output and now_ns -| self.first_output_ns >= post_output_hold_ns) return true;
+        return false;
+    }
+    fn applyCursor(self: *const OptimisticEdit, cursor: *TerminalCursor) void {
+        if (self.cols == 0) return;
+        cursor.row = self.row;
+        cursor.column = @min(self.cursor_col, self.cols - 1);
+        cursor.wide_tail = false;
+    }
+    fn begin(
+        self: *OptimisticEdit,
+        frame: *const TerminalFrame,
+        row: u16,
+        start_col: usize,
+        end_col: usize,
+        end_row: u16,
+        end_row_clear_cols: u16,
+        replacement: []const u8,
+        scroll_offset: u64,
+        now_ns: u64,
+    ) void {
+        const cols: usize = frame.columns;
+        if (cols == 0 or cols > max_cols or row >= frame.rows or end_row >= frame.rows or start_col >= cols or start_col >= end_col or !isPrintableSingleLineUtf8(replacement)) {
+            self.active = false;
+            return;
+        }
+        const row_start = @as(usize, row) * cols;
+        if (row_start + cols > frame.cells.items.len) {
+            self.active = false;
+            return;
+        }
+        const line = frame.cells.items[row_start..][0..cols];
+        const blank_style: TextStyle = .{
+            .foreground = line[cols - 1].style.foreground,
+            .background = line[cols - 1].style.background,
+        };
+        const insert_style: TextStyle = .{
+            .foreground = line[start_col].style.foreground,
+            .background = blank_style.background,
+        };
+        var out_col: usize = 0;
+        var utf8_pos: usize = 0;
+        for (line[0..start_col]) |cell| {
+            const bytes = frame.cellText(cell);
+            if (utf8_pos + bytes.len > max_utf8) {
+                self.active = false;
+                return;
+            }
+            @memcpy(self.utf8[utf8_pos..][0..bytes.len], bytes);
+            var copy = cell;
+            copy.selected = false;
+            copy.text_start = @intCast(utf8_pos);
+            copy.text_length = @intCast(bytes.len);
+            self.cells[out_col] = copy;
+            out_col += 1;
+            utf8_pos += bytes.len;
+        }
+        if (!appendReplacementCells(&self.cells, cols, &out_col, &self.utf8, &utf8_pos, replacement, insert_style)) {
+            self.active = false;
+            return;
+        }
+        const cursor_col = out_col;
+        if (cursor_col >= cols) {
+            self.active = false;
+            return;
+        }
+        var text_end: usize = cols;
+        while (text_end > end_col and isWhitespaceOrEmptyCell(frame, row, @intCast(text_end - 1))) text_end -= 1;
+        var suffix_cols: usize = 0;
+        if (end_row == row and end_col < text_end) {
+            for (line[end_col..text_end]) |cell| {
+                if (out_col >= cols) break;
+                if (cell.width == .wide and out_col + 1 >= cols) break;
+                const bytes = frame.cellText(cell);
+                if (utf8_pos + bytes.len > max_utf8) {
+                    self.active = false;
+                    return;
+                }
+                @memcpy(self.utf8[utf8_pos..][0..bytes.len], bytes);
+                var copy = cell;
+                copy.selected = false;
+                copy.text_start = @intCast(utf8_pos);
+                copy.text_length = @intCast(bytes.len);
+                self.cells[out_col] = copy;
+                out_col += 1;
+                suffix_cols += 1;
+                utf8_pos += bytes.len;
+            }
+        }
+        while (out_col < cols) : (out_col += 1) {
+            self.cells[out_col] = .{ .width = .narrow, .style = blank_style, .text_start = 0, .text_length = 0, .selected = false };
+        }
+        self.active = true;
+        self.had_output = false;
+        self.row = row;
+        self.end_row = end_row;
+        self.end_row_clear_cols = end_row_clear_cols;
+        self.start_col = @intCast(start_col);
+        self.cursor_col = @intCast(cursor_col);
+        self.end_check_col = @intCast(@min(cols, @max(if (end_row == row) text_end else cols, cursor_col + suffix_cols)));
+        self.cols = @intCast(cols);
+        self.utf8_len = @intCast(utf8_pos);
+        self.scroll_offset = scroll_offset;
+        self.started_ns = now_ns;
+        self.first_output_ns = 0;
+        self.blank_style = blank_style;
+        self.insert_style = insert_style;
+    }
+    fn advance(self: *OptimisticEdit, text: []const u8, now_ns: u64) bool {
+        if (!self.active or text.len == 0 or !isPrintableSingleLineUtf8(text)) return false;
+        var inserted_cells: [64]TerminalCell = undefined;
+        var inserted_cols: usize = 0;
+        var utf8_pos: usize = self.utf8_len;
+        if (!appendReplacementCells(&inserted_cells, inserted_cells.len, &inserted_cols, &self.utf8, &utf8_pos, text, self.insert_style)) return false;
+        const cols: usize = self.cols;
+        const cur: usize = self.cursor_col;
+        if (inserted_cols == 0 or cur + inserted_cols >= cols) return false;
+        if (self.cells[cols - inserted_cols].width == .tail and cols > inserted_cols) {
+            self.cells[cols - inserted_cols - 1] = .{ .width = .narrow, .style = self.blank_style, .text_start = 0, .text_length = 0, .selected = false };
+        }
+        std.mem.copyBackwards(TerminalCell, self.cells[cur + inserted_cols .. cols], self.cells[cur .. cols - inserted_cols]);
+        @memcpy(self.cells[cur .. cur + inserted_cols], inserted_cells[0..inserted_cols]);
+        self.cursor_col = @intCast(cur + inserted_cols);
+        self.end_check_col = @intCast(@min(cols, @max(@as(usize, self.end_check_col) + inserted_cols, cur + inserted_cols)));
+        self.utf8_len = @intCast(utf8_pos);
+        self.started_ns = now_ns;
+        if (self.had_output) self.first_output_ns = now_ns;
+        return true;
+    }
+    fn backspace(self: *OptimisticEdit, now_ns: u64) bool {
+        if (!self.active or self.cursor_col == 0) return false;
+        const cols: usize = self.cols;
+        const cur: usize = self.cursor_col;
+        const step: usize = if (cur >= 2 and self.cells[cur - 1].width == .tail) 2 else 1;
+        std.mem.copyForwards(TerminalCell, self.cells[cur - step .. cols - step], self.cells[cur..cols]);
+        for (cols - step..cols) |col| {
+            self.cells[col] = .{ .width = .narrow, .style = self.blank_style, .text_start = 0, .text_length = 0, .selected = false };
+        }
+        self.cursor_col = @intCast(cur - step);
+        if (self.start_col > self.cursor_col) self.start_col = self.cursor_col;
+        self.started_ns = now_ns;
+        if (self.had_output) self.first_output_ns = now_ns;
+        return true;
+    }
+    fn caughtUpOrExpired(self: *const OptimisticEdit, frame: *const TerminalFrame, alt_screen: bool, scroll_offset: u64, now_ns: u64) bool {
+        if (!self.active or self.expired(now_ns)) return true;
+        if (alt_screen or frame.columns != self.cols or self.row >= frame.rows or self.end_row >= frame.rows or scroll_offset != self.scroll_offset) return true;
+        if (!frame.cursor.visible or frame.cursor.row < self.row or frame.cursor.row > self.end_row) return true;
+        if (frame.cursor.row != self.row or frame.cursor.caretColumn() != self.cursor_col) return false;
+        const cols: usize = self.cols;
+        const line = frame.cells.items[@as(usize, self.row) * cols ..][0..cols];
+        for (self.start_col..self.end_check_col) |col| {
+            const actual = normalizedCellText(frame.cellText(line[col]));
+            const expected = normalizedCellText(self.cellText(self.cells[col]));
+            if (!std.mem.eql(u8, actual, expected)) return false;
+        }
+        if (self.end_row > self.row) {
+            const end_line = frame.cells.items[@as(usize, self.end_row) * cols ..][0..cols];
+            for (0..@min(cols, self.end_row_clear_cols)) |col| {
+                if (normalizedCellText(frame.cellText(end_line[col])).len != 0) return false;
+            }
+        }
+        return true;
+    }
+    fn applyToFrame(self: *const OptimisticEdit, allocator: std.mem.Allocator, frame: *TerminalFrame) !void {
+        const cols: usize = self.cols;
+        if (!self.active or frame.columns != self.cols or self.row >= frame.rows or self.end_row >= frame.rows) return;
+        const base: u32 = @intCast(frame.utf8.items.len);
+        if (self.utf8_len > Terminal.max_frame_text_bytes - frame.utf8.items.len) return error.TerminalFrameTextLimit;
+        try frame.utf8.appendSlice(allocator, self.utf8[0..self.utf8_len]);
+        for (frame.cells.items) |*cell| cell.selected = false;
+        const line = frame.cells.items[@as(usize, self.row) * cols ..][0..cols];
+        for (self.cells[0..cols], 0..) |cell, col| {
+            var copy = cell;
+            if (copy.text_length > 0) copy.text_start += base else copy.text_start = 0;
+            line[col] = copy;
+        }
+        if (self.end_row > self.row) {
+            for ((self.row + 1)..(self.end_row + 1)) |r| {
+                const limit: usize = if (r == self.end_row) @min(cols, self.end_row_clear_cols) else cols;
+                const r_line = frame.cells.items[r * cols ..][0..cols];
+                for (0..limit) |c_idx| {
+                    r_line[c_idx] = .{ .width = .narrow, .style = self.blank_style, .text_start = 0, .text_length = 0, .selected = false };
+                }
+            }
+        }
+        self.applyCursor(&frame.cursor);
+    }
+};
+
+fn normalizedCellText(bytes: []const u8) []const u8 {
+    return if (std.mem.eql(u8, bytes, " ")) "" else bytes;
+}
+
+fn isPrintableSingleLineUtf8(bytes: []const u8) bool {
+    if (!std.unicode.utf8ValidateSlice(bytes)) return false;
+    var view = std.unicode.Utf8View.initUnchecked(bytes);
+    var it = view.iterator();
+    while (it.nextCodepoint()) |cp| {
+        if (cp < 0x20 or (cp >= 0x7f and cp <= 0x9f)) return false;
+    }
+    return true;
+}
+
+fn codepointCellWidth(cp: u21) u2 {
+    if ((cp >= 0x0300 and cp <= 0x036F) or
+        (cp >= 0x1AB0 and cp <= 0x1AFF) or
+        (cp >= 0x1DC0 and cp <= 0x1DFF) or
+        (cp >= 0x20D0 and cp <= 0x20FF) or
+        (cp >= 0xFE00 and cp <= 0xFE0F) or
+        (cp >= 0xFE20 and cp <= 0xFE2F) or
+        cp == 0x200D) return 0;
+    if ((cp >= 0x1100 and cp <= 0x115F) or
+        (cp >= 0x231A and cp <= 0x231B) or
+        (cp >= 0x2E80 and cp <= 0xA4CF and cp != 0x303F) or
+        (cp >= 0xAC00 and cp <= 0xD7A3) or
+        (cp >= 0xF900 and cp <= 0xFAFF) or
+        (cp >= 0xFE10 and cp <= 0xFE19) or
+        (cp >= 0xFE30 and cp <= 0xFE6F) or
+        (cp >= 0xFF01 and cp <= 0xFF60) or
+        (cp >= 0xFFE0 and cp <= 0xFFE6) or
+        (cp >= 0x1F000 and cp <= 0x1FAFF) or
+        (cp >= 0x20000 and cp <= 0x3FFFD)) return 2;
+    return 1;
+}
+
+fn appendReplacementCells(
+    cells: []TerminalCell,
+    max_col: usize,
+    out_col: *usize,
+    utf8: *[OptimisticEdit.max_utf8]u8,
+    utf8_pos: *usize,
+    replacement: []const u8,
+    style: TextStyle,
+) bool {
+    var view = std.unicode.Utf8View.initUnchecked(replacement);
+    var it = view.iterator();
+    while (it.nextCodepointSlice()) |slice| {
+        const cp = std.unicode.utf8Decode(slice) catch return false;
+        const width = codepointCellWidth(cp);
+        if (width == 0) {
+            if (out_col.* == 0) continue;
+            if (utf8_pos.* + slice.len > utf8.len) return false;
+            @memcpy(utf8[utf8_pos.*..][0..slice.len], slice);
+            const target = if (cells[out_col.* - 1].width == .tail and out_col.* >= 2) out_col.* - 2 else out_col.* - 1;
+            cells[target].text_length += @intCast(slice.len);
+            utf8_pos.* += slice.len;
+            continue;
+        }
+        if (out_col.* + width > max_col or utf8_pos.* + slice.len > utf8.len) return false;
+        @memcpy(utf8[utf8_pos.*..][0..slice.len], slice);
+        cells[out_col.*] = .{
+            .width = if (width == 2) .wide else .narrow,
+            .style = style,
+            .text_start = @intCast(utf8_pos.*),
+            .text_length = @intCast(slice.len),
+            .selected = false,
+        };
+        out_col.* += 1;
+        utf8_pos.* += slice.len;
+        if (width == 2) {
+            cells[out_col.*] = .{
+                .width = .tail,
+                .style = style,
+                .text_start = 0,
+                .text_length = 0,
+                .selected = false,
+            };
+            out_col.* += 1;
+        }
+    }
+    return true;
 }
 
 test "cell caches match full public API decoding across pages, graphemes, colors and snapshots" {
