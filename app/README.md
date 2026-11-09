@@ -8,20 +8,7 @@ Windows system libraries are linked directly from Zig's target toolchain;
 
 ## Build and run
 
-From the repository root on Linux/WSL:
-
-```sh
-nix develop
-cd app
-zig build
-zig build test-build
-```
-
-Copy `zig-out/bin/` to a local Windows directory. Run `vex-native.exe`, or
-`vex-native-tests.exe` with the adjacent DLLs and `vex-conpty-fixture.exe`.
-A Linux cross-build is not a Windows test pass.
-
-On Windows, from `app/` with the pinned Zig installed:
+On Windows, using `pixi` (see `../pixi.toml`) or the pinned Zig installed directly, from `app/`:
 
 ```powershell
 zig build

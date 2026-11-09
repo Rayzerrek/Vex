@@ -197,26 +197,28 @@ const pages: PageContent[] = [
         body: (
           <>
             <p>
-              Install <strong>Zig 0.15.2</strong>, clone the{" "}
+              Install <strong>Zig 0.15.2</strong> (or use{" "}
+              <a href="https://pixi.sh">Pixi</a> with the repository’s{" "}
+              <code>pixi.toml</code>), clone the{" "}
               <a href="https://github.com/Rayzerrek/Vex">repository</a>, and run
               on Windows:
             </p>
             <CodeBlock language="PowerShell">
               {"cd app\nzig build\nzig build test\nzig build run"}
             </CodeBlock>
-            <p>Linux and WSL can cross-compile using the pinned toolchain:</p>
-            <CodeBlock language="Shell">
+            <p>
+              Package and verify the portable release payload from{" "}
+              <code>app/</code>:
+            </p>
+            <CodeBlock language="PowerShell">
               {
-                "nix develop\ncd app\nzig build\nzig build test-build\npython3 -m unittest discover -s tests -p 'test_*.py' -v\npython3 tools/package.py"
+                "python -m unittest discover -s tests -p 'test_*.py' -v\npython tools/package.py"
               }
             </CodeBlock>
             <p>
-              Cross-compilation is not a Windows test pass. Run the compiled
-              tests with their adjacent DLLs and{" "}
-              <code>vex-conpty-fixture.exe</code> on Windows. The Python
-              packager produces a portable ZIP; MSI packaging uses the Windows{" "}
-              <code>app/tools/build-installer.ps1</code> script and its WiX/.NET
-              build tools.
+              The Python packager produces a portable ZIP; MSI packaging uses
+              the Windows <code>app/tools/build-installer.ps1</code> script and
+              its WiX/.NET build tools.
             </p>
             <p>
               See{" "}

@@ -2,6 +2,8 @@
 /publish/
 **/bin/
 **/obj/
+.zig-cache/
+.pixi/
 
 # Editor
 .vs/

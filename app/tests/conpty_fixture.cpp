@@ -6,6 +6,7 @@
 
 int testPtyInputQueue();
 int testShellCatalog();
+int testIconContrast();
 
 namespace {
 DWORD WINAPI copyOutput(void* context) {
@@ -116,6 +117,7 @@ int testUpdateInstallerRestarted();
 // Headless transport fixture: the Zig tests feed stdout through the real terminal parser.
 int main(int argc, char** argv) {
     if (argc == 1) return testUpdateInstallerRestarted();
+    if (argc == 2 && !strcmp(argv[1], "icon-contrast")) return testIconContrast();
     if (argc == 2 && !strcmp(argv[1], "pty-input-queue")) return testPtyInputQueue();
     if (argc == 2 && !strcmp(argv[1], "shell-catalog")) return testShellCatalog();
     if (argc == 2 && !strcmp(argv[1], "kitty-renderer")) return testKittyImageRenderer();

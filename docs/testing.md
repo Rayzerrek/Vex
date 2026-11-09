@@ -2,18 +2,17 @@
 
 ## Application
 
-From the repository root on Linux/WSL:
+From `app/` (using `pixi` or the pinned Zig toolchain):
 
-```sh
-nix develop
-cd app
+```powershell
 zig fmt --check build.zig src
 zig build test-portable
 zig build
 zig build test-build
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-python3 tools/package.py
-python3 tools/package.py --verify
+zig build test
+python -m unittest discover -s tests -p 'test_*.py' -v
+python tools/package.py
+python tools/package.py --verify
 ```
 
 Repeat application/test builds with `-Doptimize=Debug` when changing application

@@ -1,0 +1,17 @@
+[workspace]
+authors = ["Rayzerrek <rayserrek@gmail.com>"]
+channels = ['conda-forge']
+name = "Vex"
+platforms = ['win-64']
+version = "0.1.0"
+
+[tasks]
+fmt-check = { cmd = "zig fmt --check build.zig src", cwd = "app" }
+build = { cmd = "zig build", cwd = "app" }
+test-portable = { cmd = "zig build test-portable", cwd = "app" }
+test-build = { cmd = "zig build test-build", cwd = "app" }
+test = { cmd = "zig build test", cwd = "app" }
+run = { cmd = "zig build run", cwd = "app" }
+
+[dependencies]
+zig = "==0.15.2"

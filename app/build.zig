@@ -99,6 +99,7 @@ pub fn build(b: *std.Build) void {
     fixture_module.addCMacro("VEX_UPDATE_TEST", "1");
     fixture_module.addCSourceFile(.{ .file = b.path("tests/conpty_fixture.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/chrome_motion.cpp"), .flags = native_flags });
+    fixture_module.addCSourceFile(.{ .file = b.path("tests/icon_contrast.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/tab_rename_layout.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/update_system.cpp"), .flags = native_flags });
     fixture_module.addCSourceFile(.{ .file = b.path("tests/notification_surface.cpp"), .flags = native_flags });

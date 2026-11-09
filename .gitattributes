@@ -25,3 +25,4 @@
 
 # Lockfiles: generated, and merging them line by line is never meaningful.
 *pnpm-lock.yaml -diff
+pixi.lock -diff

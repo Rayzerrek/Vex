@@ -766,6 +766,19 @@ test "notification surfaces share compact geometry, exact close targets and boun
     try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
 }
 
+test "icon contrast preserves readable brand colors and adapts low-contrast marks" {
+    const allocator = std.testing.allocator;
+    const executable_directory = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(executable_directory);
+    const fixture = try std.fs.path.join(allocator, &.{ executable_directory, "vex-conpty-fixture.exe" });
+    defer allocator.free(fixture);
+    const output = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ fixture, "icon-contrast" }, .max_output_bytes = 4096 });
+    defer allocator.free(output.stdout);
+    defer allocator.free(output.stderr);
+    if (output.term != .Exited or output.term.Exited != 0) std.debug.print("{s}", .{output.stderr});
+    try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, output.term);
+}
+
 /// Tab index/count come from the bounded workspace model; empty title falls back to the shell display name.
 pub fn drawTab(index: usize, count: usize, active: bool, edit: ?TabEdit, title: []const u8, icons: []const app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32, attention: bool) void {
     var native_icons: [8]c.VexAppIcon = undefined;

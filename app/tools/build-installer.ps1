@@ -27,7 +27,7 @@ $msiPath = Join-Path $PublishDir "$baseName.msi"
 if (!$SkipBuild) {
     $zigVersion = & zig version
     if ($LASTEXITCODE -ne 0 -or $zigVersion.Trim() -ne (Get-Content "$AppDir/.zig-version" -Raw).Trim()) {
-        throw 'Use the pinned Zig version, or -SkipBuild with binaries cross-compiled in Nix/WSL.'
+        throw 'Use the pinned Zig version (pixi run), or -SkipBuild with prebuilt binaries.'
     }
     Push-Location $AppDir
     try {

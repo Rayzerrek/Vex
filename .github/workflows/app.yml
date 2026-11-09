@@ -5,8 +5,8 @@ on:
     branches: [main, "feat/**"]
     paths:
       - "app/**"
-      - "flake.nix"
-      - "flake.lock"
+      - "pixi.toml"
+      - "pixi.lock"
       - "LICENSE"
       - "THIRD-PARTY-NOTICES.md"
       - ".github/workflows/app.yml"
@@ -14,8 +14,8 @@ on:
   pull_request:
     paths:
       - "app/**"
-      - "flake.nix"
-      - "flake.lock"
+      - "pixi.toml"
+      - "pixi.lock"
       - "LICENSE"
       - "THIRD-PARTY-NOTICES.md"
       - ".github/workflows/app.yml"

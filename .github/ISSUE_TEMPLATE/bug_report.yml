@@ -85,6 +85,6 @@ body:
     attributes:
       label: Anything else
       description: |
-        Font in use, GPU, or a relevant `init.lua` / `init.shells.lua` excerpt (remove private data). For legacy WPF, include `settings.json` instead.
+        Font in use, GPU, or a relevant `init.lua` / `init.shells.lua` excerpt (remove private data).
     validations:
       required: false

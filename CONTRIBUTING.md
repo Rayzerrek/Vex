@@ -2,12 +2,12 @@
 
 ## Setup and checks
 
-- Application: Zig/Python from `nix develop` on Linux/WSL, or the pinned Zig
-  on Windows. See [app/README.md](app/README.md).
+- Application: pinned Zig via `pixi` (see `pixi.toml` and `app/.zig-version`)
+  and Python 3.11+. See [app/README.md](app/README.md).
 - Website: Node.js 24 and the pnpm version in `web/package.json`.
   See [web/README.md](web/README.md).
 - Run the relevant checks in [docs/testing.md](docs/testing.md). State explicitly
-  whether Windows runtime and desktop checks were performed; cross-compilation
+  whether Windows runtime and desktop checks were performed; compilation
   alone does not cover them.
 
 ## Changes

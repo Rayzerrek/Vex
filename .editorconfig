@@ -12,7 +12,7 @@ insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
 
-[*.{cs,csproj,props,targets,slnx,xaml,wxs,wixproj}]
+[*.{wxs,wixproj}]
 indent_size = 4
 
 [*.{json,jsonc,yml,yaml,ts,tsx,js,jsx,css,html}]

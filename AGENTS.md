@@ -6,22 +6,23 @@ has been removed and is available only in Git history.
 
 ## Build and verify application code
 
-Use `nix develop` on Linux/WSL for the pinned Zig/Python toolchain. From `app/`:
+Use `pixi` for the pinned Zig toolchain (or the pinned Zig version directly). From `app/`:
 
-```sh
+```powershell
 zig fmt --check build.zig src
 zig build
 zig build test-build
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-python3 tools/package.py
+zig build test
+python -m unittest discover -s tests -p 'test_*.py' -v
+python tools/package.py
 ```
 
 Run the compiled `vex-native-tests.exe` with its adjacent DLLs and
 `vex-conpty-fixture.exe` on Windows, or use `zig build test` on a Windows
-development machine. Linux compilation is not a Windows test pass. Interactive
+development machine. Cross-compilation alone is not a Windows test pass. Interactive
 desktop tests and benchmark tools are local, not repository scripts or hosted CI
-coverage. MSI packaging runs on Windows CI via `app/tools/build-installer.ps1`;
-local WSL ZIP packaging does not need .NET. See `app/README.md`.
+coverage. MSI packaging runs on Windows via `app/tools/build-installer.ps1`;
+portable ZIP packaging (`app/tools/package.py`) only needs Python. See `app/README.md`.
 
 ## Layout
 
