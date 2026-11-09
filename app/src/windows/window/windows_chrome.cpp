@@ -100,6 +100,7 @@ void beginWindowChromeFrame(const WindowChromeFrame& frame) {
     chromePalette = frame.palette;
     uiMetrics = frame.uiMetrics;
     if (uiMetrics.pane_gap == 0) {
+        chromePalette.window_bg = chromePalette.pane_bg;
         chromePalette.titlebar_bg = chromePalette.pane_bg;
         chromePalette.pane_header_bg = chromePalette.pane_bg;
     }

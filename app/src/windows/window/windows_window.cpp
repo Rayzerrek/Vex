@@ -593,9 +593,9 @@ static void renderScene(double timeMs, bool captureOpaque) {
         timeMs, animate,
         chromePointerX, chromePointerY, !tooltipSuppressed && trackingMouseLeave && pointerCaptureState == PointerCaptureState::none && GetForegroundWindow() == window && IsWindowEnabled(window) });
     beginTerminalDrawingFrame({ &renderer, drawingFactory, textFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, &terminalLigatures, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
-    target->Clear(rgb(chromePalette.window_bg, nativeMica ? (chromePalette.is_dark ? 0.36f : 0.44f) : 1.0f));
-    brush->SetColor(rgb(uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg, nativeMica ? (chromePalette.is_dark ? 0.18f : 0.24f) : 1.0f));
-    target->FillRectangle(D2D1::RectF(0.0f, 0.0f, clientWidth, 44.0f), brush);
+    const uint32_t chromeBg = uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg;
+    const float chromeAlpha = nativeMica ? (chromePalette.is_dark ? 0.18f : 0.24f) : 1.0f;
+    target->Clear(rgb(chromeBg, chromeAlpha));
     if (uiMetrics.pane_gap == 0) {
         brush->SetColor(rgb(chromePalette.border, chromePalette.is_dark ? 0.42f : 0.52f));
         target->FillRectangle(D2D1::RectF(0.0f, 43.0f, clientWidth, 44.0f), brush);

@@ -37,13 +37,13 @@ pub const ChromePalette = struct {
         const bg = theme.background;
         const fg = theme.foreground;
         const accent = theme.accent;
+        const titlebar_bg = mix(bg, accent, 0.035);
         if (theme.is_dark) {
             // Keep the structural layer close to the terminal; crushed black
             // gutters make tinted themes feel like unrelated floating panels.
-            const win_bg = darken(mix(bg, accent, 0.025), 0.18);
             return .{
-                .window_bg = win_bg,
-                .titlebar_bg = mix(bg, accent, 0.035),
+                .window_bg = titlebar_bg,
+                .titlebar_bg = titlebar_bg,
                 .border = mix(bg, fg, 0.18),
                 .pane_bg = bg,
                 .pane_header_bg = mix(bg, accent, 0.045),
@@ -56,10 +56,9 @@ pub const ChromePalette = struct {
                 .is_dark = true,
             };
         } else {
-            const win_bg = mix(mix(bg, accent, 0.025), fg, 0.045);
             return .{
-                .window_bg = win_bg,
-                .titlebar_bg = mix(bg, accent, 0.035),
+                .window_bg = titlebar_bg,
+                .titlebar_bg = titlebar_bg,
                 .border = mix(bg, fg, 0.18),
                 .pane_bg = bg,
                 .pane_header_bg = mix(bg, accent, 0.045),
@@ -323,6 +322,7 @@ fn contrast(a: u32, b: u32) f64 {
 test "bespoke materials retain readable text in both appearances" {
     for (themes) |theme| {
         const chrome = theme.chromePalette();
+        try std.testing.expectEqual(chrome.titlebar_bg, chrome.window_bg);
         try std.testing.expect(contrast(theme.foreground, theme.background) >= 7);
         try std.testing.expect(contrast(theme.foreground, theme.selection_background) >= 4.5);
         try std.testing.expect(contrast(theme.cursor, theme.background) >= 3);
