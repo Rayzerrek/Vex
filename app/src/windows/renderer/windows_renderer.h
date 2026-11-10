@@ -31,6 +31,8 @@ public:
     UiRenderer ui;
     UiRenderer* drawingTarget() { return &ui; }
     bool ready() const { return swapChain.Get() != nullptr; }
+    /// Non-blocking: lets the window stay responsive instead of joining the device worker on first paint.
+    bool devicePreparationFinished() const { return !deviceThread || WaitForSingleObject(deviceThread, 0) == WAIT_OBJECT_0; }
     bool software() const { return ready() && usesWarp; }
     bool composition() const { return ready() && dcompTarget.Get() != nullptr; }
     UINT width() const { return pixelWidth; }

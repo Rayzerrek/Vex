@@ -622,9 +622,40 @@ static void renderScene(double timeMs, bool captureOpaque) {
     if (uiVerificationMode) renderUiVerificationScene();
 }
 
+static constexpr UINT_PTR startupPollTimer = 11;
+static_assert(startupPollTimer != tooltipTimer && startupPollTimer != windowsUpdateNoticeTimer && startupPollTimer != windowsUpdateTimer);
+
+// Creating the GPU device takes hundreds of milliseconds; show a themed surface meanwhile so the
+// window appears immediately instead of the first paint blocking on the device worker.
+static void paintStartupPlaceholder() {
+    if (HDC dc = GetDC(window)) {
+        RECT bounds;
+        if (GetClientRect(window, &bounds)) {
+            const uint32_t rgb = chromePalette.titlebar_bg;
+            HBRUSH brush = CreateSolidBrush(RGB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255));
+            FillRect(dc, &bounds, brush);
+            DeleteObject(brush);
+        }
+        ReleaseDC(window, dc);
+    }
+    if (startupCloaked) {
+        DwmFlush();
+        const BOOL cloak = FALSE;
+        DwmSetWindowAttribute(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        startupCloaked = false;
+        startupMilestone("placeholder shown");
+    }
+    SetTimer(window, startupPollTimer, 8, nullptr);
+}
+
 static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
     RECT bounds;
     if (!IsWindow(window) || !refreshRenderVisibility() || !GetClientRect(window, &bounds) || bounds.right <= 0 || bounds.bottom <= 0) return false;
+    // Self-tests capture deterministic frames and must keep the synchronous first paint.
+    if (!renderer.ready() && !firstFrame && !pixels && !selftestEnabled() && !renderer.devicePreparationFinished()) {
+        paintStartupPlaceholder();
+        return false;
+    }
     HRESULT result = createRenderTarget();
     if (SUCCEEDED(result)) result = renderer.beginFrame();
     if (FAILED(result)) { rendererFault(result); return false; }
@@ -663,6 +694,8 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
             DwmSetWindowAttribute(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
             startupCloaked = false;
         }
+        // Still discovered promptly, but only once the window is visible.
+        checkWindowsUpdatesAutomatically();
     }
     return SUCCEEDED(result);
 }
@@ -1338,6 +1371,11 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         clipboardUpdated();
         return 0;
     case WM_TIMER:
+        if (wparam == startupPollTimer) {
+            KillTimer(hwnd, startupPollTimer);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (wparam == tooltipTimer) {
             KillTimer(hwnd, tooltipTimer); tooltipDeadline = 0;
             vex_window_invalidate();

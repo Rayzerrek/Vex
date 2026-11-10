@@ -191,10 +191,9 @@ void initializeWindowsUpdates(HWND window, bool selftest) {
         workerStop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!workerStop) disabled = true;
         else {
+            // The first check is issued by the window after its first frame: TLS and proxy
+            // discovery would otherwise compete with GPU device creation on the startup path.
             SetTimer(window, windowsUpdateTimer, 6 * 60 * 60 * 1000, nullptr);
-            // HTTP stays on the worker; do not make an available update wait
-            // behind an artificial startup delay before it can be discovered.
-            checkWindowsUpdatesAutomatically();
         }
     }
 }
