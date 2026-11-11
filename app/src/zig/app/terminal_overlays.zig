@@ -264,7 +264,13 @@ pub fn handleOverlayPointer(self: *Application, event: platform.PointerEvent, x:
         return if (hit != null) .link else .normal;
     }
     if (self.overlay != .path_completion) return .normal;
-    const layout = self.pathCompletionPopup() orelse return .normal;
+    const layout = self.pathCompletionPopup() orelse {
+        if (event == .begin) {
+            self.overlay = .none;
+            platform.invalidateWindow();
+        }
+        return .normal;
+    };
     const pane_id = self.overlay.path_completion.pane_id;
     const popup = layout.bounds;
     const total = self.path_completion.matches.items.len;

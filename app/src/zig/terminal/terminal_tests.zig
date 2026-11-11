@@ -697,6 +697,14 @@ test "viewport scroll shortcuts move primary scrollback, yield on alternate scre
     try std.testing.expectEqualStrings("\x7f", (try terminal.encodeKey(0x08, 0, &encoded)).?);
     try std.testing.expectEqualStrings("\x7f", (try terminal.encodeKey(0x08, 1, &encoded)).?);
     try std.testing.expectError(error.InvalidTerminalBufferLength, terminal.encodeKey(0x08, 0, encoded[0..0]));
+    for ([_]u32{ 0, 1, 2, 3 }) |mods| {
+        try std.testing.expectEqualStrings("\x1b", (try terminal.encodeKey(0x1b, mods, &encoded)).?);
+    }
+    for ([_]u32{ 4, 5, 6, 7 }) |mods| {
+        try std.testing.expectEqualStrings("\x1b\x1b", (try terminal.encodeKey(0x1b, mods, &encoded)).?);
+    }
+    try std.testing.expectError(error.InvalidTerminalBufferLength, terminal.encodeKey(0x1b, 0, encoded[0..0]));
+    try std.testing.expectError(error.InvalidTerminalBufferLength, terminal.encodeKey(0x1b, 4, encoded[0..1]));
 }
 
 test "input reveal returns primary history to the cursor, is idle at bottom and leaves alternate screen alone" {

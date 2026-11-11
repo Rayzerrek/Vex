@@ -1120,6 +1120,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         chromePointerX = chromePointerY = -1;
         notificationPointer(-1, -1, false);
         trackingMouseLeave = false;
+        if (pointerCaptureState == PointerCaptureState::armed && !(GetKeyState(VK_LBUTTON) < 0)) cancelPointerGesture();
         if (hoveredCaptionButton != 0 || pressedCaptionButton != 0 || hoveredNewTab || hoveredShellPicker || hoveredTabIndex != -1 || hoveredTabClose) {
             hoveredCaptionButton = 0;
             pressedCaptionButton = 0;
@@ -1418,6 +1419,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         hideChromeTooltip();
         nextOutputFrame = 0;
         if (terminalNotificationKey((uint32_t)wparam, currentModifiers()) || windowsUpdateKey((uint32_t)wparam, currentModifiers())) { refreshHoverCursor(hwnd); return 1; }
+        if (pointerCaptureState == PointerCaptureState::armed && !(GetKeyState(VK_LBUTTON) < 0)) cancelPointerGesture();
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
         return handleKey((uint32_t)wparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);

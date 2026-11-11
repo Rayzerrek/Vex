@@ -944,6 +944,14 @@ pub const Terminal = struct {
             output[1] = 0x7f;
             return output[0..2];
         }
+        if (virtual_key == 0x1b) {
+            const count: usize = if ((mods & 4) != 0) 2 else 1;
+            if (output.len < count) return error.InvalidTerminalBufferLength;
+            // Consume Escape on keydown so dead-key cancellation or modifier chords never swallow it before WM_CHAR.
+            output[0] = 0x1b;
+            if (count == 2) output[1] = 0x1b;
+            return output[0..count];
+        }
         const key = physicalTerminalKey(virtual_key) orelse return null;
         self.api.key_encoder_setopt_from_terminal(self.key_encoder, self.handle);
         // ConPTY's input parser cannot carry Kitty CSI-u or modifyOtherKeys state-2 sequences.

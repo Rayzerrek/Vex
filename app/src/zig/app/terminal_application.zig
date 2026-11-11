@@ -422,6 +422,9 @@ pub const TerminalApplication = struct {
     }
     fn beginTabRename(self: *TerminalApplication, index: usize) void {
         self.commitTabRename();
+        if (self.overlay == .path_completion or self.overlay == .tab_peek) {
+            self.overlay = .none;
+        }
         const model = if (self.model) |*model| model else return;
         if (index >= model.tabs.items.len) return;
         _ = model.selectTab(index);
@@ -1379,6 +1382,9 @@ pub const TerminalApplication = struct {
             else => {},
         }
         const model = if (self.model) |*model| model else return;
+        if (self.overlay == .path_completion or self.overlay == .tab_peek) {
+            self.overlay = .none;
+        }
         if (action != .select_tab) {
             self.commitTabRename();
         } else if (self.editing_tab) |edit| {
@@ -2262,4 +2268,42 @@ test "split close releases the session immediately and owns its last visual fram
         try std.testing.expectEqual(@as(usize, 0), app.closing_panes.items.len);
         try std.testing.expectEqual(@as(usize, 0), app.layout_motion.previous.items.len);
     }
+}
+
+test "Escape key routes to the active terminal session on keydown while respecting overlays and tab rename" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    app.settings.confirm_close = false;
+    const session = try app.addSession(app.startup_directory);
+    app.model = try workspace.WorkspaceModel.init(app.allocator, session.id);
+    app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
+    try app.updateLayout();
+
+    // Tab rename consumes Escape first to cancel editing, then subsequent Escape reaches the terminal session.
+    app.onAction(.rename_tab, 0);
+    try std.testing.expect(app.editing_tab != null);
+    try std.testing.expect(app.onKey(0x1B, 0));
+    try std.testing.expect(app.editing_tab == null);
+
+    // Path completion overlay consumes Escape to close, and workspace navigation also dismisses stale path completion.
+    try app.openPathCompletion();
+    try std.testing.expect(app.overlay == .path_completion);
+    try std.testing.expect(app.onKey(0x1B, 0));
+    try std.testing.expect(app.overlay == .none);
+
+    try app.openPathCompletion();
+    try std.testing.expect(app.overlay == .path_completion);
+    try app.applyAction(.new_tab, 0);
+    try std.testing.expect(app.overlay == .none);
+
+    const active = app.activeSession().?;
+    try active.terminal.feedOutput("line1\r\nline2\r\nline3\r\nline4\r\nline5");
+    try active.terminal.setKeyboardSelection(0, 0, 3, 0);
+    try std.testing.expect(try active.terminal.hasSelection());
+
+    // Pressing Escape on keydown clears selection and writes ESC to the running session.
+    try std.testing.expect(app.onKey(0x1B, 0));
+    try std.testing.expect(!try active.terminal.hasSelection());
+    try std.testing.expect(app.onKey(0x1B, 4));
+    try std.testing.expect(app.health == .running);
 }
