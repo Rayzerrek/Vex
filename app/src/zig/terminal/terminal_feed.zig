@@ -112,20 +112,25 @@ pub const TerminalFeedFilter = struct {
                     }
                 },
                 .csi => {
-                    var parameter = byte;
-                    while (true) {
+                    const start = index - 1;
+                    var scan = start;
+                    while (scan < bytes.len) : (scan += 1) {
+                        const parameter = bytes[scan];
                         if (parameter == 0x1b) {
+                            if (scan > start) try writer.appendSlice(bytes[start..scan]);
                             self.state = .escape;
+                            index = scan + 1;
                             break;
                         }
-                        try writer.append(parameter);
                         if ((parameter >= 0x40 and parameter <= 0x7e) or parameter == 0x18 or parameter == 0x1a) {
+                            try writer.appendSlice(bytes[start .. scan + 1]);
                             self.state = .normal;
+                            index = scan + 1;
                             break;
                         }
-                        if (index == bytes.len) break;
-                        parameter = bytes[index];
-                        index += 1;
+                    } else {
+                        try writer.appendSlice(bytes[start..]);
+                        index = bytes.len;
                     }
                 },
                 .string => {
@@ -237,24 +242,40 @@ const stripped_xtgettcap_caps = [_][]const u8{
     "436F",
 };
 // Keep the vector preflight out of the control-state dispatch's hot instruction footprint.
+fn isInterceptedEscapeTarget(byte: u8) bool {
+    return switch (byte) {
+        ']', 'c', 'P', 'X', '^', '_', 0x1b => true,
+        else => false,
+    };
+}
+
 noinline fn needsSlowPath(bytes: []const u8) bool {
     if (bytes.len == 0) return false;
-    if (bytes[bytes.len - 1] == '+' or bytes[bytes.len - 1] == '$') return true;
+    const last = bytes[bytes.len - 1];
+    if (last == 0x1b or last == '+' or last == '$') return true;
     const Vector = @Vector(16, u8);
     var index: usize = 0;
-    // Look for query pairs, not every '+'/'$': ordinary shell text often contains both.
-    // The overlapping load includes the next byte without crossing the borrowed slice.
+    // Bypass slow path for ordinary CSI/SGR traffic; only inspect 2-byte prefixes
+    // that start OSC/string/reset interception or ConPTY-stripped queries.
     while (bytes.len - index > 16) : (index += 16) {
         const block: Vector = bytes[index..][0..16].*;
         const following: Vector = bytes[index + 1 ..][0..16].*;
+        const esc_target = (following == @as(Vector, @splat(']'))) |
+            (following == @as(Vector, @splat('c'))) |
+            (following == @as(Vector, @splat('P'))) |
+            (following == @as(Vector, @splat('X'))) |
+            (following == @as(Vector, @splat('^'))) |
+            (following == @as(Vector, @splat('_'))) |
+            (following == @as(Vector, @splat(0x1b)));
         const query_start = (block == @as(Vector, @splat('+'))) | (block == @as(Vector, @splat('$')));
-        const matches = (block == @as(Vector, @splat(0x1b))) | (query_start & (following == @as(Vector, @splat('q'))));
+        const matches = ((block == @as(Vector, @splat(0x1b))) & esc_target) | (query_start & (following == @as(Vector, @splat('q'))));
         if (@reduce(.Or, matches)) return true;
     }
-    while (index < bytes.len) : (index += 1) {
+    while (index + 1 < bytes.len) : (index += 1) {
         const byte = bytes[index];
-        if (byte == 0x1b) return true;
-        if ((byte == '+' or byte == '$') and index + 1 < bytes.len and bytes[index + 1] == 'q') return true;
+        const next = bytes[index + 1];
+        if (byte == 0x1b and isInterceptedEscapeTarget(next)) return true;
+        if ((byte == '+' or byte == '$') and next == 'q') return true;
     }
     return false;
 }
@@ -317,16 +338,17 @@ test "vector interception scan matches scalar detection at every short slice and
     const Scalar = struct {
         fn needs(bytes: []const u8) bool {
             if (bytes.len == 0) return false;
-            if (bytes[bytes.len - 1] == '+' or bytes[bytes.len - 1] == '$') return true;
-            for (bytes, 0..) |byte, index| {
-                if (byte == 0x1b) return true;
-                if ((byte == '+' or byte == '$') and index + 1 < bytes.len and bytes[index + 1] == 'q') return true;
+            const last = bytes[bytes.len - 1];
+            if (last == 0x1b or last == '+' or last == '$') return true;
+            for (bytes[0 .. bytes.len - 1], bytes[1..]) |byte, next| {
+                if (byte == 0x1b and isInterceptedEscapeTarget(next)) return true;
+                if ((byte == '+' or byte == '$') and next == 'q') return true;
             }
             return false;
         }
     };
-    var bytes: [97]u8 = @splat('x');
-    for ([_]u8{ 'x', 'q' }) |following| {
+    var bytes: [65]u8 = @splat('x');
+    for ([_]u8{ 'x', 'q', '[', ']', 'c', 'P', 'X', '^', '_', 0x1b }) |following| {
         for ([_]u8{ 0x1b, '+', '$' }) |control| {
             for (0..bytes.len) |position| {
                 bytes[position] = control;
@@ -343,6 +365,7 @@ test "vector interception scan matches scalar detection at every short slice and
         }
     }
     try std.testing.expect(!needsSlowPath(&bytes));
+    try std.testing.expect(!needsSlowPath("\x1b[38;2;255;0;0mhello\x1b[0m"));
 }
 
 test "oversized unrelated OSC is forwarded verbatim, including repeated escapes at capacity" {

@@ -7,7 +7,7 @@ own licenses.
 
 | Component | Files | License / source |
 | --- | --- | --- |
-| libghostty-vt | `app/vendor/libghostty/ghostty-vt.dll`, `app/vendor/include/ghostty/` | MIT — [Ghostty](https://github.com/ghostty-org/ghostty) |
+| libghostty-vt 1.0.1 | `app/vendor/libghostty/ghostty-vt.dll`, `app/vendor/include/ghostty/` | MIT — [Ghostty](https://github.com/ghostty-org/ghostty) |
 | Microsoft Windows Console ConPTY 1.24.261001001 | `app/vendor/conpty/conpty.dll`, `OpenConsole.exe` | MIT — [Microsoft Terminal](https://github.com/microsoft/terminal) |
 | Lua 5.4.8 | `app/vendor/lua/src/`, statically linked | MIT — [Lua](https://www.lua.org/ftp/lua-5.4.8.tar.gz) |
 

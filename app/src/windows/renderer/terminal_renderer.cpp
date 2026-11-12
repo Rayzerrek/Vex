@@ -215,17 +215,36 @@ void TerminalRenderer::bindTexture(ID3D12DescriptorHeap* heap) {
 HRESULT TerminalRenderer::appendQuad(const Quad& quad) {
     if (quad.kind != 5) bindTexture(descriptors.Get());
     UINT page, offset;
-    HRESULT result = allocateUpload(sizeof(quad), 4, page, offset);
-    if (FAILED(result)) return result;
-    if (pendingQuads && (page != pendingPage || offset != pendingOffset + pendingQuads * sizeof(Quad))) flushQuads();
-    if (!pendingQuads) { pendingPage = page; pendingOffset = offset; }
-    Quad transformed = quad;
-    // Scale cached atlas quads, not fonts: animation must never populate a new atlas per frame.
-    transformed.bounds[0] = quad.bounds[0] * previewScale + previewX * scale;
-    transformed.bounds[1] = quad.bounds[1] * previewScale + previewY * scale;
-    transformed.bounds[2] = quad.bounds[2] * previewScale + previewX * scale;
-    transformed.bounds[3] = quad.bounds[3] * previewScale + previewY * scale;
-    memcpy(frames[frameIndex].pages[page].mapped + offset, &transformed, sizeof(transformed));
+    if (pendingQuads) {
+        auto& upload = frames[frameIndex].pages[pendingPage];
+        const UINT nextOffset = pendingOffset + pendingQuads * (UINT)sizeof(Quad);
+        if (upload.used == nextOffset && nextOffset <= pageBytes - (UINT)sizeof(Quad)) {
+            page = pendingPage;
+            offset = nextOffset;
+            upload.used = nextOffset + (UINT)sizeof(Quad);
+            upload.lastUsedMs = frameTimeMs;
+        } else {
+            HRESULT result = allocateUpload(sizeof(quad), 4, page, offset);
+            if (FAILED(result)) return result;
+            flushQuads();
+            pendingPage = page; pendingOffset = offset;
+        }
+    } else {
+        HRESULT result = allocateUpload(sizeof(quad), 4, page, offset);
+        if (FAILED(result)) return result;
+        pendingPage = page; pendingOffset = offset;
+    }
+    if (previewScale == 1 && previewX == 0 && previewY == 0) {
+        memcpy(frames[frameIndex].pages[page].mapped + offset, &quad, sizeof(quad));
+    } else {
+        Quad transformed = quad;
+        // Scale cached atlas quads, not fonts: animation must never populate a new atlas per frame.
+        transformed.bounds[0] = quad.bounds[0] * previewScale + previewX * scale;
+        transformed.bounds[1] = quad.bounds[1] * previewScale + previewY * scale;
+        transformed.bounds[2] = quad.bounds[2] * previewScale + previewX * scale;
+        transformed.bounds[3] = quad.bounds[3] * previewScale + previewY * scale;
+        memcpy(frames[frameIndex].pages[page].mapped + offset, &transformed, sizeof(transformed));
+    }
     pendingQuads++;
     if (recording) recordQuad(quad);
     return S_OK;
@@ -520,12 +539,12 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
     hash ^= ((UINT64)widthBits << 32) | heightBits;
     hash = (hash ^ ((phase << 2) | style)) * 1099511628211ull;
     UINT slot = (UINT)(hash % cacheSlots);
-    while (glyphs[slot].text) {
+    while (glyphs[slot].occupied) {
         const auto& candidate = glyphs[slot];
-        if (candidate.hash == hash && candidate.length == length && candidate.layoutWidth == rasterWidth && candidate.layoutHeight == rasterHeight && candidate.style == style && candidate.phase == phase && memcmp(candidate.text, text, length) == 0) break;
+        if (candidate.hash == hash && candidate.length == length && candidate.layoutWidth == rasterWidth && candidate.layoutHeight == rasterHeight && candidate.style == style && candidate.phase == phase && memcmp(candidate.bytes(), text, length) == 0) break;
         slot = (slot + 1) % cacheSlots;
     }
-    if (!glyphs[slot].text) {
+    if (!glyphs[slot].occupied) {
         float offsetX = 0, offsetY = 0;
         float bitmapWidth = ceilf(rasterWidth) + 1, bitmapHeight = ceilf(rasterHeight) + 1;
         if (measurer) {
@@ -549,11 +568,16 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
             flushQuads(); clearGlyphCache();
             nextX = 0; nextY = 0; nextHeight = 0; slot = (UINT)(hash % cacheSlots);
         }
-        auto key = static_cast<uint8_t*>(HeapAlloc(GetProcessHeap(), 0, length));
-        if (!key) return E_OUTOFMEMORY;
-        memcpy(key, text, length);
         Glyph glyph;
-        glyph.text = key; glyph.length = (UINT)length; glyph.hash = hash; glyph.width = w; glyph.height = h;
+        if (length <= sizeof(glyph.inlineText)) {
+            memcpy(glyph.inlineText, text, length);
+        } else {
+            auto key = static_cast<uint8_t*>(HeapAlloc(GetProcessHeap(), 0, length));
+            if (!key) return E_OUTOFMEMORY;
+            memcpy(key, text, length);
+            glyph.text = key;
+        }
+        glyph.occupied = true; glyph.length = (UINT)length; glyph.hash = hash; glyph.width = w; glyph.height = h;
         glyph.x = nextX + 1; glyph.y = nextY + 1; glyph.style = style; glyph.phase = phase;
         glyph.layoutWidth = rasterWidth; glyph.layoutHeight = rasterHeight; glyph.offsetX = offsetX; glyph.offsetY = offsetY;
         rasterTarget->BeginDraw();
@@ -566,7 +590,7 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
         const HRESULT ended = rasterTarget->EndDraw();
         if (SUCCEEDED(result)) result = ended;
         if (SUCCEEDED(result)) result = uploadGlyph(glyph);
-        if (FAILED(result)) { HeapFree(GetProcessHeap(), 0, key); return result; }
+        if (FAILED(result)) { if (glyph.text) HeapFree(GetProcessHeap(), 0, glyph.text); return result; }
         glyphs[slot] = glyph;
         shelfX = nextX + w + 2; shelfY = nextY; shelfHeight = nextHeight > h + 2 ? nextHeight : h + 2;
         glyphCount++; keyBytes += (UINT)length; glyphMisses++;
@@ -590,9 +614,11 @@ HRESULT TerminalRenderer::endPass(ID3D12CommandQueue* queue) {
 }
 
 void TerminalRenderer::clearGlyphCache() {
-    for (auto& glyph : glyphs) {
-        if (glyph.text) HeapFree(GetProcessHeap(), 0, glyph.text);
-        glyph = {};
+    if (glyphCount) {
+        for (auto& glyph : glyphs) {
+            if (glyph.text) HeapFree(GetProcessHeap(), 0, glyph.text);
+            glyph = {};
+        }
     }
     shelfX = shelfY = shelfHeight = glyphCount = keyBytes = 0;
     atlasResets++;

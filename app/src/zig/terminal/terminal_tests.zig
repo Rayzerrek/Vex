@@ -599,6 +599,31 @@ test "default cursor is bar, DECSCUSR updates and resets shape, and encodeKey st
     var encoded: [64]u8 = undefined;
     try std.testing.expectEqualStrings("\x1b[A", (try terminal.encodeKey(0x26, 0, &encoded)).?);
     try std.testing.expectEqualStrings("\x1b[1;2A", (try terminal.encodeKey(0x26, 1, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[27u", (try terminal.encodeKey(0x1b, 0, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[27;3u", (try terminal.encodeKey(0x1b, 4, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[9;2u", (try terminal.encodeKey(0x09, 1, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[13;2u", (try terminal.encodeKey(0x0d, 1, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[13;5u", (try terminal.encodeKey(0x0d, 2, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[32;5u", (try terminal.encodeKey(0x20, 2, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[127;5u", (try terminal.encodeKey(0x08, 2, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[47;5u", (try terminal.encodeKey(0xbf, 2, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[97;3u", (try terminal.encodeKey('A', 4, &encoded)).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKey('A', 0, &encoded));
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKey(0x20, 4, &encoded));
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKeyEvent(0x1b, 0, .release, 0, &encoded));
+
+    // Kitty REPORT_EVENTS and REPORT_ALL modes encode repeat/release and printable base keys.
+    try terminal.feedOutput("\x1b[>3u");
+    try std.testing.expectEqualStrings("\x1b[27;1:2u", (try terminal.encodeKeyEvent(0x1b, 0, .repeat, 0, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[27;1:3u", (try terminal.encodeKeyEvent(0x1b, 0, .release, 0, &encoded)).?);
+    try terminal.feedOutput("\x1b[<u\x1b[>8u");
+    try std.testing.expectEqualStrings("\x1b[97u", (try terminal.encodeKeyEvent('A', 0, .press, 'A', &encoded)).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKeyEvent('A', 0, .press, 0x0105, &encoded));
+
+    // Pop back to modifyOtherKeys state 2 with Kitty disabled.
+    try terminal.feedOutput("\x1b[<2u");
+    try std.testing.expectEqualStrings("\x1b[27;2;9~", (try terminal.encodeKey(0x09, 1, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[27;2;13~", (try terminal.encodeKey(0x0d, 1, &encoded)).?);
 }
 
 test "hidden TUI cursor retains its viewport position on both screens" {
@@ -703,6 +728,22 @@ test "viewport scroll shortcuts move primary scrollback, yield on alternate scre
     }
     try std.testing.expectError(error.InvalidTerminalBufferLength, terminal.encodeKey(0x1b, 0, encoded[0..0]));
     try std.testing.expectError(error.InvalidTerminalBufferLength, terminal.encodeKey(0x1b, 4, encoded[0..1]));
+    try std.testing.expectEqualStrings("\t", (try terminal.encodeKey(0x09, 0, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[Z", (try terminal.encodeKey(0x09, 1, &encoded)).?);
+    try std.testing.expectEqualStrings("\r", (try terminal.encodeKey(0x0d, 0, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[27;2;13~", (try terminal.encodeKey(0x0d, 1, &encoded)).?);
+    try std.testing.expectEqualStrings("\x00", (try terminal.encodeKey(0x20, 2, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1f", (try terminal.encodeKey(0xbf, 2, &encoded)).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKey('A', 4, &encoded));
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeKey(0x20, 4, &encoded));
+
+    // DEC 1004 focus reporting encodes CSI I / CSI O only while enabled.
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeFocusEvent(true, &encoded));
+    try terminal.feedOutput("\x1b[?1004h");
+    try std.testing.expectEqualStrings("\x1b[I", (try terminal.encodeFocusEvent(true, &encoded)).?);
+    try std.testing.expectEqualStrings("\x1b[O", (try terminal.encodeFocusEvent(false, &encoded)).?);
+    try terminal.feedOutput("\x1b[?1004l");
+    try std.testing.expectEqual(@as(?[]const u8, null), try terminal.encodeFocusEvent(true, &encoded));
 }
 
 test "input reveal returns primary history to the cursor, is idle at bottom and leaves alternate screen alone" {
@@ -1317,4 +1358,71 @@ test "fractional scroll guard retains an image just below the viewport and relea
     try terminal.feedOutput("\x1b_Ga=d,d=I,i=42\x1b\\");
     const cleared = (try terminal.readScrollGuard()).?;
     try std.testing.expectEqual(@as(usize, 0), cleared.graphics.images.items.len);
+}
+
+test "OSC 8 hyperlinks resolve span, URL, wide characters, and reject unsafe schemes" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(40, 4, 8, 16);
+    try terminal.feedOutput(
+        "\x1b]8;;https://ziglang.org/docs\x07Docs\x1b]8;;\x07 " ++
+            "\x1b]8;;javascript:alert(1)\x07Bad\x1b]8;;\x07 " ++
+            "\x1b]8;;file:///C:/repo/a.txt\x07界\x1b]8;;\x07",
+    );
+    const frame = try terminal.readFrame();
+
+    var url_buf: [2048]u8 = undefined;
+    const match = (try terminal.osc8LinkAt(0, 1, frame, &url_buf)).?;
+    try std.testing.expectEqual(@as(u16, 0), match.start_col);
+    try std.testing.expectEqual(@as(u16, 3), match.end_col);
+    try std.testing.expectEqualStrings("https://ziglang.org/docs", url_buf[0..match.url_len]);
+
+    // Space between links and unsafe scheme must not resolve as clickable hyperlinks.
+    try std.testing.expect((try terminal.osc8LinkAt(0, 4, frame, &url_buf)) == null);
+    try std.testing.expect((try terminal.osc8LinkAt(0, 6, frame, &url_buf)) == null);
+
+    // Wide CJK glyph tail cell (col 10) still maps back to the wide OSC 8 span (cols 9..10).
+    const wide_match = (try terminal.osc8LinkAt(0, 10, frame, &url_buf)).?;
+    try std.testing.expectEqual(@as(u16, 9), wide_match.start_col);
+    try std.testing.expectEqual(@as(u16, 10), wide_match.end_col);
+    try std.testing.expectEqualStrings("file:///C:/repo/a.txt", url_buf[0..wide_match.url_len]);
+}
+
+test "OSC 9 and OSC 777 desktop notifications raise attention while OSC 9;4 only reports progress" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(40, 4, 8, 16);
+
+    try terminal.feedOutput("\x1b]9;4;1;50\x07");
+    try std.testing.expect(!terminal.program_status.takeAttention());
+    try std.testing.expectEqual(.working, terminal.program_status.shellActivityState());
+    try std.testing.expectEqual(.none, terminal.program_status.programStatus().state);
+
+    try terminal.feedOutput("\x1b]9;Build finished\x07");
+    try std.testing.expect(terminal.program_status.takeAttention());
+    try std.testing.expect(!terminal.program_status.takeAttention());
+
+    try terminal.feedOutput("\x1b]777;notify;Tests;All green\x07");
+    try std.testing.expect(terminal.program_status.takeAttention());
+}
+
+test "XTVERSION, XTWINOPS size reports, and OSC 22 mouse shapes reflect terminal state" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var replies: StatusReplyLog = .{};
+    defer replies.bytes.deinit(std.testing.allocator);
+    try terminal.attachResponseSink(.{ .context = &replies, .write = StatusReplyLog.write });
+    try terminal.resize(90, 30, 10, 20);
+
+    try terminal.feedOutput("\x1b[>q\x1b[18t\x1b[16t");
+    try std.testing.expectEqualStrings("\x1bP>|Vex\x1b\\\x1b[8;30;90t\x1b[6;20;10t", replies.bytes.items);
+
+    try std.testing.expectEqual(Terminal.PointerMouseShape.text, try terminal.mouseShape());
+    try terminal.feedOutput("\x1b]22;pointer\x07");
+    try std.testing.expectEqual(Terminal.PointerMouseShape.pointer, try terminal.mouseShape());
+    try terminal.feedOutput("\x1b]22;\x07");
+    try std.testing.expectEqual(Terminal.PointerMouseShape.text, try terminal.mouseShape());
 }

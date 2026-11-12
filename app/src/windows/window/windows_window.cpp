@@ -825,10 +825,23 @@ static void clipboardUpdated() {
 static uint32_t currentModifiers() {
     return (GetKeyState(VK_SHIFT) < 0 ? 1u : 0u) | (GetKeyState(VK_CONTROL) < 0 ? 2u : 0u) | (GetKeyState(VK_MENU) < 0 ? 4u : 0u);
 }
-static bool handleKey(uint32_t key) {
+static bool isAltGrTextChord(uint32_t key, LPARAM lparam, uint32_t mods) {
+    if ((mods & 6u) != 6u || !(GetKeyState(VK_RMENU) < 0)) return false;
+    // AltGr on international layouts synthesizes Ctrl+Alt; let TranslateMessage emit localized glyphs.
+    BYTE state[256];
+    if (!GetKeyboardState(state)) return false;
+    WCHAR out[8];
+    UINT scan = (UINT)((lparam >> 16) & 0xff);
+    int rc = ToUnicodeEx((UINT)key, scan, state, out, 8, 0x4, GetKeyboardLayout(0));
+    return rc < 0 || (rc > 0 && out[0] >= 0x20);
+}
+static bool handleKey(uint32_t key, uint32_t action, LPARAM lparam) {
     uint32_t mods = currentModifiers();
-    if ((key == 'V' && mods == 3) || (key == VK_INSERT && mods == 1)) { pasteClipboard(); return true; }
-    return callbacks.key(callbacks.context, key, mods);
+    if (action != 0 && ((key == 'V' && mods == 3) || (key == VK_INSERT && mods == 1))) { pasteClipboard(); return true; }
+    if (action != 0 && isAltGrTextChord(key, lparam, mods)) return false;
+    UINT mapped = MapVirtualKeyW((UINT)key, MAPVK_VK_TO_CHAR);
+    uint32_t codepoint = (mapped & 0x80000000u) ? 0u : (uint32_t)(mapped & 0xffffu);
+    return callbacks.key(callbacks.context, key, mods, action, codepoint);
 }
 static void updateTopChromeHover(float x, float y);
 static void setPointerCursor(uint32_t response) {
@@ -1110,6 +1123,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         updateChromeTooltipPointer(x, y);
+        if (pointerCaptureState == PointerCaptureState::cancelled && !(wparam & MK_LBUTTON)) pointerCaptureState = PointerCaptureState::none;
         if (pointerCaptureState == PointerCaptureState::none) {
             const auto notice = notificationPointer(x, y, false);
             if (notice != NotificationHit::none) { hideChromeTooltip(); setNotificationCursor(notice); return 0; }
@@ -1428,10 +1442,10 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (pointerCaptureState == PointerCaptureState::armed && !(GetKeyState(VK_LBUTTON) < 0)) cancelPointerGesture();
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
-        return handleKey((uint32_t)wparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
+        return handleKey((uint32_t)wparam, (lparam & (1LL << 30)) ? 2u : 1u, lparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
     case WM_KEYUP: case WM_SYSKEYUP:
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
-        return DefWindowProcW(hwnd, message, wparam, lparam);
+        return handleKey((uint32_t)wparam, 0u, lparam) ? 1 : DefWindowProcW(hwnd, message, wparam, lparam);
     case WM_SETFOCUS:
         if (window) refreshRenderVisibility(true);
         callbacks.cursor_activity(callbacks.context, !renderingSuspended && IsWindowVisible(hwnd) && !IsIconic(hwnd));
@@ -1444,6 +1458,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         hideChromeTooltip();
         notificationMouseButtons = 0;
         cancelPointerGesture(); pendingSurrogate = 0;
+        if (pointerCaptureState == PointerCaptureState::cancelled && !(GetKeyState(VK_LBUTTON) < 0)) pointerCaptureState = PointerCaptureState::none;
         callbacks.cursor_activity(callbacks.context, false);
         return 0;
     case WM_CHAR: case WM_SYSCHAR: {

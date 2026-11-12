@@ -82,7 +82,7 @@ typedef struct {
     bool (*output)(void*, uint32_t, const uint8_t*, size_t);
     void (*resize)(void*, float, float, float, float, float);
     void (*paint)(void*);
-    bool (*key)(void*, uint32_t, uint32_t);
+    bool (*key)(void*, uint32_t, uint32_t, uint32_t, uint32_t);
     void (*text)(void*, const uint8_t*, size_t);
     void (*paste)(void*, const uint8_t*, size_t);
     /* External text writes only. Token 0 means the owner could not be attributed to a PTY job. */

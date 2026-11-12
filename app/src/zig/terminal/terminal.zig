@@ -5,6 +5,7 @@ const check = binding.checkResult;
 const status = @import("program_status.zig");
 const feed = @import("terminal_feed.zig");
 const title_mod = @import("terminal_title.zig");
+const url_detector = @import("url_detector.zig");
 pub const kitty = @import("kitty_graphics.zig");
 pub const TerminalTitle = title_mod.TerminalTitle;
 
@@ -75,6 +76,12 @@ pub const MouseFormat = enum(c.GhosttyMouseFormat) {
     urxvt = c.GHOSTTY_MOUSE_FORMAT_URXVT,
     sgr_pixels = c.GHOSTTY_MOUSE_FORMAT_SGR_PIXELS,
 };
+/// Normalized keyboard event phase for terminal key protocol encoding.
+pub const KeyAction = enum(c.GhosttyKeyAction) {
+    release = c.GHOSTTY_KEY_ACTION_RELEASE,
+    press = c.GHOSTTY_KEY_ACTION_PRESS,
+    repeat = c.GHOSTTY_KEY_ACTION_REPEAT,
+};
 /// Normalized pointer action for terminal mouse protocol encoding.
 pub const MouseAction = enum(c.GhosttyMouseAction) {
     press = c.GHOSTTY_MOUSE_ACTION_PRESS,
@@ -127,6 +134,9 @@ pub const Terminal = struct {
     key_event: std.meta.Child(c.GhosttyKeyEvent),
     mouse_encoder: std.meta.Child(c.GhosttyMouseEncoder),
     mouse_event: std.meta.Child(c.GhosttyMouseEvent),
+    formatter: std.meta.Child(c.GhosttyFormatter),
+    grid_columns: u16 = 80,
+    grid_rows: u16 = 24,
     cell_width_px: u32 = 9,
     cell_height_px: u32 = 17,
     kb_selection_active: bool = false,
@@ -229,6 +239,10 @@ pub const Terminal = struct {
         try check(api.mouse_event_new(null, &m_event));
         const mouse_event = m_event orelse return error.TerminalNullHandle;
         errdefer api.mouse_event_free(mouse_event);
+        var fmt_handle: c.GhosttyFormatter = null;
+        try check(api.formatter_terminal_new(null, &fmt_handle, handle));
+        const formatter = fmt_handle orelse return error.TerminalNullHandle;
+        errdefer api.formatter_free(formatter);
         var owner: Terminal = .{
             .allocator = allocator,
             .api = api,
@@ -244,6 +258,7 @@ pub const Terminal = struct {
             .key_event = key_event,
             .mouse_encoder = mouse_encoder,
             .mouse_event = mouse_event,
+            .formatter = formatter,
             .program_status = .{ .allocator = allocator },
             .status_clock = try std.time.Timer.start(),
         };
@@ -252,6 +267,7 @@ pub const Terminal = struct {
     }
     /// Consumes this owner after all output callbacks have stopped; no worker owns these handles.
     pub fn deinit(self: *Terminal) void {
+        self.api.formatter_free(self.formatter);
         self.api.mouse_event_free(self.mouse_event);
         self.api.mouse_encoder_free(self.mouse_encoder);
         self.api.key_event_free(self.key_event);
@@ -391,6 +407,8 @@ pub const Terminal = struct {
         if (self.callback_error) |err| return err;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_USERDATA, self));
         try check(self.api.terminal_resize(self.handle, columns, rows, width_px, height_px));
+        self.grid_columns = columns;
+        self.grid_rows = rows;
         self.cell_width_px = width_px;
         self.cell_height_px = height_px;
         self.updateMouseEncoderSize(columns, rows, width_px, height_px);
@@ -738,17 +756,10 @@ pub const Terminal = struct {
         const selection_result = self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_SELECTION, &selection);
         if (selection_result == c.GHOSTTY_NO_VALUE) return null;
         try check(selection_result);
-        var formatter: c.GhosttyFormatter = null;
-        try check(self.api.formatter_terminal_new(null, &formatter, self.handle));
-        defer self.api.formatter_free(formatter);
-        const emit: c.GhosttyFormatterFormat = c.GHOSTTY_FORMATTER_FORMAT_PLAIN;
-        const unwrap = true;
-        try check(self.api.formatter_set(formatter, c.GHOSTTY_FORMATTER_OPT_EMIT, &emit));
-        try check(self.api.formatter_set(formatter, c.GHOSTTY_FORMATTER_OPT_UNWRAP, &unwrap));
-        try check(self.api.formatter_set(formatter, c.GHOSTTY_FORMATTER_OPT_TRIM, &trim));
-        try check(self.api.formatter_set(formatter, c.GHOSTTY_FORMATTER_OPT_SELECTION, &selection));
+        try check(self.api.formatter_set(self.formatter, c.GHOSTTY_FORMATTER_OPT_TRIM, &trim));
+        try check(self.api.formatter_set(self.formatter, c.GHOSTTY_FORMATTER_OPT_SELECTION, &selection));
         var required: usize = 0;
-        const probe = self.api.formatter_format_buf(formatter, null, 0, &required);
+        const probe = self.api.formatter_format_buf(self.formatter, null, 0, &required);
         if (probe != c.GHOSTTY_OUT_OF_SPACE and probe != c.GHOSTTY_SUCCESS) {
             try check(probe);
         }
@@ -757,7 +768,7 @@ pub const Terminal = struct {
         errdefer allocator.free(buffer);
         if (required == 0) return buffer;
         var written: usize = 0;
-        try check(self.api.formatter_format_buf(formatter, buffer.ptr, buffer.len, &written));
+        try check(self.api.formatter_format_buf(self.formatter, buffer.ptr, buffer.len, &written));
         if (written != buffer.len) return error.InvalidTerminalBufferLength;
         return buffer;
     }
@@ -884,6 +895,92 @@ pub const Terminal = struct {
     pub fn isMouseTracking(self: *const Terminal) !bool {
         return (try self.mouseTrackingMode()) != .none;
     }
+    /// Mouse pointer shape requested by the application via OSC 22.
+    pub const PointerMouseShape = enum { default, pointer, text, grab, grabbing, col_resize, row_resize };
+    pub fn mouseShape(self: *const Terminal) !PointerMouseShape {
+        var shape: c.GhosttyMouseShape = c.GHOSTTY_MOUSE_SHAPE_TEXT;
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, &shape));
+        return switch (shape) {
+            c.GHOSTTY_MOUSE_SHAPE_TEXT, c.GHOSTTY_MOUSE_SHAPE_VERTICAL_TEXT => .text,
+            c.GHOSTTY_MOUSE_SHAPE_POINTER => .pointer,
+            c.GHOSTTY_MOUSE_SHAPE_GRAB => .grab,
+            c.GHOSTTY_MOUSE_SHAPE_GRABBING => .grabbing,
+            c.GHOSTTY_MOUSE_SHAPE_COL_RESIZE, c.GHOSTTY_MOUSE_SHAPE_EW_RESIZE, c.GHOSTTY_MOUSE_SHAPE_E_RESIZE, c.GHOSTTY_MOUSE_SHAPE_W_RESIZE => .col_resize,
+            c.GHOSTTY_MOUSE_SHAPE_ROW_RESIZE, c.GHOSTTY_MOUSE_SHAPE_NS_RESIZE, c.GHOSTTY_MOUSE_SHAPE_N_RESIZE, c.GHOSTTY_MOUSE_SHAPE_S_RESIZE => .row_resize,
+            else => .default,
+        };
+    }
+    /// Returns the OSC 8 hyperlink span covering `(row, column)` when its URI uses a supported scheme.
+    pub fn osc8LinkAt(
+        self: *const Terminal,
+        row: u16,
+        column: u16,
+        frame: *const TerminalFrame,
+        out_url: ?[]u8,
+    ) !?url_detector.RowLinkMatch {
+        if (row >= frame.rows or column >= frame.columns or frame.columns == 0) return null;
+        const row_offset = @as(usize, row) * @as(usize, frame.columns);
+        if (row_offset + frame.columns > frame.cells.items.len) return null;
+        const cells = frame.cells.items[row_offset .. row_offset + frame.columns];
+
+        var probe_col = column;
+        var raw_buf: [2048]u8 = undefined;
+        var raw_uri = try self.cellHyperlinkUri(row, probe_col, &raw_buf);
+        if (raw_uri == null and cells[column].width == .tail and column > 0 and cells[column - 1].width == .wide) {
+            probe_col = column - 1;
+            raw_uri = try self.cellHyperlinkUri(row, probe_col, &raw_buf);
+        }
+        const uri = raw_uri orelse return null;
+
+        var normalized_buf: [2048]u8 = undefined;
+        const normalized = url_detector.normalizeUrl(uri, &normalized_buf) orelse return null;
+        var url_len: usize = 0;
+        if (out_url) |buf| {
+            if (normalized.len > buf.len) return null;
+            @memcpy(buf[0..normalized.len], normalized);
+            url_len = normalized.len;
+        }
+
+        var start_col = probe_col;
+        var scan_buf: [2048]u8 = undefined;
+        while (start_col > 0) {
+            const prev_col = start_col - 1;
+            const prev_uri = try self.cellHyperlinkUri(row, prev_col, &scan_buf) orelse break;
+            if (!std.mem.eql(u8, prev_uri, uri)) break;
+            start_col = prev_col;
+        }
+
+        var end_col = probe_col;
+        while (end_col + 1 < frame.columns) {
+            const next_col = end_col + 1;
+            const next_uri = try self.cellHyperlinkUri(row, next_col, &scan_buf) orelse break;
+            if (!std.mem.eql(u8, next_uri, uri)) break;
+            end_col = next_col;
+        }
+        if (cells[end_col].width == .wide and end_col + 1 < frame.columns) {
+            end_col += 1;
+        }
+        return .{
+            .start_col = start_col,
+            .end_col = end_col,
+            .url_len = url_len,
+        };
+    }
+    fn cellHyperlinkUri(self: *const Terminal, row: u16, column: u16, uri_buf: []u8) !?[]const u8 {
+        var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
+        const point: c.GhosttyPoint = .{
+            .tag = c.GHOSTTY_POINT_TAG_VIEWPORT,
+            .value = .{ .coordinate = .{ .x = column, .y = row } },
+        };
+        const ref_result = self.api.terminal_grid_ref(self.handle, point, &grid_ref);
+        if (ref_result == c.GHOSTTY_INVALID_VALUE or ref_result == c.GHOSTTY_NO_VALUE) return null;
+        try check(ref_result);
+        var written: usize = 0;
+        const uri_result = self.api.grid_ref_hyperlink_uri(&grid_ref, uri_buf.ptr, uri_buf.len, &written);
+        if (uri_result == c.GHOSTTY_OUT_OF_SPACE or written == 0 or written > uri_buf.len) return null;
+        try check(uri_result);
+        return uri_buf[0..written];
+    }
     /// Resets the mouse encoder's motion cell deduplication state.
     pub fn resetMouseEncoder(self: *Terminal) void {
         _ = self.api.mouse_encoder_reset(self.mouse_encoder);
@@ -950,45 +1047,94 @@ pub const Terminal = struct {
         if (bracketed) encoded.appendSliceAssumeCapacity("\x1b[201~");
         return encoded.toOwnedSlice(allocator);
     }
-    /// Encode navigation/function keys with the terminal's currently negotiated ConPTY-compatible modes.
+    /// Returns active Kitty keyboard protocol flags reported by the terminal state.
+    pub fn kittyFlags(self: *const Terminal) !c.GhosttyKittyKeyFlags {
+        var flags: c.GhosttyKittyKeyFlags = c.GHOSTTY_KITTY_KEY_DISABLED;
+        try check(self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_KITTY_KEYBOARD_FLAGS, &flags));
+        return flags;
+    }
+    /// Encodes a DEC 1004 focus-in or focus-out sequence when focus reporting is active.
+    pub fn encodeFocusEvent(self: *const Terminal, focused: bool, output: []u8) !?[]const u8 {
+        if (!try self.decMode(1004)) return null;
+        var length: usize = 0;
+        const event: c.GhosttyFocusEvent = if (focused) c.GHOSTTY_FOCUS_GAINED else c.GHOSTTY_FOCUS_LOST;
+        const result = self.api.focus_encode(event, output.ptr, output.len, &length);
+        if (result == c.GHOSTTY_OUT_OF_SPACE) return error.InvalidTerminalBufferLength;
+        try check(result);
+        if (length > output.len) return error.InvalidTerminalBufferLength;
+        return if (length == 0) null else output[0..length];
+    }
+    /// Encode key press events with the terminal's active legacy, modifyOtherKeys, or Kitty modes.
     pub fn encodeKey(self: *Terminal, virtual_key: u32, mods: u32, output: []u8) !?[]const u8 {
+        return self.encodeKeyEvent(virtual_key, mods, .press, 0, output);
+    }
+    /// Encode key press, repeat, or release events with layout-derived unshifted codepoint hints.
+    pub fn encodeKeyEvent(self: *Terminal, virtual_key: u32, mods: u32, action: KeyAction, unshifted_hint: u32, output: []u8) !?[]const u8 {
         if (mods > 7) return error.InvalidKeyModifiers;
-        if (virtual_key == 0x08 and mods <= 2) {
-            if (output.len == 0) return error.InvalidTerminalBufferLength;
-            // Consume Backspace before WM_CHAR emits BS, which ConPTY treats as Ctrl+H.
-            // DEL represents a plain Backspace for both Windows shells and Unix line editors.
-            output[0] = if (mods == 2) 0x17 else 0x7f;
-            return output[0..1];
+        const kitty_flags = try self.kittyFlags();
+        if (action == .release and (kitty_flags & c.GHOSTTY_KITTY_KEY_REPORT_EVENTS) == 0) return null;
+
+        if (kitty_flags == c.GHOSTTY_KITTY_KEY_DISABLED) {
+            if (virtual_key == 0x08 and mods <= 2) {
+                if (output.len == 0) return error.InvalidTerminalBufferLength;
+                // Consume Backspace before WM_CHAR emits BS, which ConPTY treats as Ctrl+H.
+                // DEL represents a plain Backspace for both Windows shells and Unix line editors.
+                output[0] = if (mods == 2) 0x17 else 0x7f;
+                return output[0..1];
+            }
+            if (virtual_key == 0x08 and (mods == 4 or mods == 5)) {
+                if (output.len < 2) return error.InvalidTerminalBufferLength;
+                // Alt+Backspace is meta-DEL (backward-kill-word in readline, PSReadLine and most TUIs).
+                output[0] = 0x1b;
+                output[1] = 0x7f;
+                return output[0..2];
+            }
+            if (virtual_key == 0x1b) {
+                const count: usize = if ((mods & 4) != 0) 2 else 1;
+                if (output.len < count) return error.InvalidTerminalBufferLength;
+                // Consume Escape on keydown when Kitty is off so dead keys or Alt chords never swallow it.
+                output[0] = 0x1b;
+                if (count == 2) output[1] = 0x1b;
+                return output[0..count];
+            }
         }
-        if (virtual_key == 0x08 and (mods == 4 or mods == 5)) {
-            if (output.len < 2) return error.InvalidTerminalBufferLength;
-            // Alt+Backspace is meta-DEL (backward-kill-word in readline, PSReadLine and most TUIs).
-            output[0] = 0x1b;
-            output[1] = 0x7f;
-            return output[0..2];
-        }
-        if (virtual_key == 0x1b) {
-            const count: usize = if ((mods & 4) != 0) 2 else 1;
-            if (output.len < count) return error.InvalidTerminalBufferLength;
-            // Consume Escape on keydown so dead-key cancellation or modifier chords never swallow it before WM_CHAR.
-            output[0] = 0x1b;
-            if (count == 2) output[1] = 0x1b;
-            return output[0..count];
-        }
+
         const key = physicalTerminalKey(virtual_key) orelse return null;
+        // Keep Alt+Space for the Windows system menu, and let WM_CHAR/WM_SYSCHAR handle
+        // layout-translated text, dead keys, IME, and legacy Alt+char chords.
+        if (virtual_key == 0x20 and (mods & 4) != 0 and (mods & 2) == 0) return null;
+        const normalized_cp: u32 = if (isPrintableVirtualKey(virtual_key)) normalizeUnshiftedCodepoint(virtual_key, unshifted_hint) else 0;
+        if (isPrintableVirtualKey(virtual_key) and action != .release) {
+            if (kitty_flags == c.GHOSTTY_KITTY_KEY_DISABLED) {
+                if ((mods & 2) == 0) return null;
+            } else if ((mods & 6) == 0) {
+                if ((kitty_flags & c.GHOSTTY_KITTY_KEY_REPORT_ALL) == 0) return null;
+                if (normalized_cp == 0 or normalized_cp >= 0x80) return null;
+            }
+        }
+
         try check(self.api.key_encoder_set_from_terminal(self.key_encoder, self.handle));
-        // ConPTY's input parser cannot carry Kitty CSI-u or modifyOtherKeys state-2 sequences.
-        const kitty_flags: c.GhosttyKittyKeyFlags = c.GHOSTTY_KITTY_KEY_DISABLED;
-        const modify_other_keys = false;
-        try check(self.api.key_encoder_set(self.key_encoder, c.GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &kitty_flags));
-        try check(self.api.key_encoder_set(self.key_encoder, c.GHOSTTY_KEY_ENCODER_OPT_MODIFY_OTHER_KEYS_STATE_2, &modify_other_keys));
-        try check(self.api.key_event_set_action(self.key_event, c.GHOSTTY_KEY_ACTION_PRESS));
+        try check(self.api.key_event_set_action(self.key_event, @intFromEnum(action)));
         try check(self.api.key_event_set_key(self.key_event, key));
         try check(self.api.key_event_set_mods(self.key_event, @intCast(mods)));
+        try check(self.api.key_event_set_consumed_mods(self.key_event, 0));
+        try check(self.api.key_event_set_unshifted_codepoint(self.key_event, normalized_cp));
+        var associated_byte: [1]u8 = undefined;
+        const utf8_slice: []const u8 = if (action != .release and (mods & 6) == 0 and (kitty_flags & c.GHOSTTY_KITTY_KEY_REPORT_ASSOCIATED) != 0 and normalized_cp >= 0x20 and normalized_cp < 0x80) blk: {
+            associated_byte[0] = if ((mods & 1) != 0 and normalized_cp >= 'a' and normalized_cp <= 'z')
+                @as(u8, @intCast(normalized_cp - 32))
+            else
+                @as(u8, @intCast(normalized_cp));
+            break :blk associated_byte[0..1];
+        } else "";
+        try check(self.api.key_event_set_utf8(self.key_event, .{ .ptr = if (utf8_slice.len == 0) null else utf8_slice.ptr, .len = utf8_slice.len }));
+
         var length: usize = 0;
-        try check(self.api.key_encoder_encode(self.key_encoder, self.key_event, output.ptr, output.len, &length));
+        const result = self.api.key_encoder_encode(self.key_encoder, self.key_event, output.ptr, output.len, &length);
+        if (result == c.GHOSTTY_OUT_OF_SPACE) return error.InvalidTerminalBufferLength;
+        try check(result);
         if (length > output.len) return error.InvalidTerminalBufferLength;
-        return output[0..length];
+        return if (length == 0) null else output[0..length];
     }
     /// Clean frames reuse buffers. Dirty frames re-read every row to avoid Ghostty scroll under-reporting.
     pub fn readFrame(self: *Terminal) !*const TerminalFrame {
@@ -1019,13 +1165,17 @@ pub const Terminal = struct {
         var foreground: c.GhosttyColorRgb = undefined;
         var background: c.GhosttyColorRgb = undefined;
         var iterator: c.GhosttyRenderStateRowIterator = self.row_iterator;
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLS, &columns);
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_ROWS, &rows);
+        const state_fields = [_]c.GhosttyRenderStateData{
+            c.GHOSTTY_RENDER_STATE_DATA_COLS,
+            c.GHOSTTY_RENDER_STATE_DATA_ROWS,
+            c.GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND,
+            c.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND,
+            c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+        };
+        var state_values = [_]?*anyopaque{ &columns, &rows, &foreground, &background, @ptrCast(&iterator) };
+        try check(self.api.render_state_get_multi(self.render_state, state_fields.len, &state_fields, &state_values, null));
         const count = try std.math.mul(usize, columns, rows);
         if (columns == 0 or rows == 0 or count > max_frame_cells) return error.TerminalFrameLimit;
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND, &foreground);
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND, &background);
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, @ptrCast(&iterator));
         const fg_packed = packedRgb(foreground);
         const bg_packed = packedRgb(background);
         const can_reuse = self.prev_valid and
@@ -1063,7 +1213,7 @@ pub const Terminal = struct {
             var row_id: c.GhosttyRenderStateRowId = .{ .bits = .{ 0, 0 } };
             var has_row_selection = false;
             var row_cells_needed = true;
-            var cells: c.GhosttyRenderStateRowCells = self.row_cells;
+            var raw_cells: c.GhosttyCellsView = .{ .ptr = null, .len = 0 };
             var raw_row: c.GhosttyRow = undefined;
             if (can_reuse) {
                 var row_dirty = true;
@@ -1103,21 +1253,21 @@ pub const Terminal = struct {
                 } else {
                     const row_fields = [_]c.GhosttyRenderStateRowData{
                         c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
-                        c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                        c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS_RAW,
                     };
-                    var row_values = [_]?*anyopaque{ &raw_row, @ptrCast(&cells) };
+                    var row_values = [_]?*anyopaque{ &raw_row, &raw_cells };
                     try check(self.api.render_state_row_get_multi(self.row_iterator, row_fields.len, &row_fields, &row_values, null));
                 }
             } else {
                 const fields = [_]c.GhosttyRenderStateRowData{
                     c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
-                    c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                    c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS_RAW,
                     c.GHOSTTY_RENDER_STATE_ROW_DATA_ID,
                     c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
                 };
-                var values = [_]?*anyopaque{ &raw_row, @ptrCast(&cells), &row_id, &row_selection };
+                var values = [_]?*anyopaque{ &raw_row, &raw_cells, &row_id, &row_selection };
                 var written: usize = 0;
-                // Optional selection is last: NO_VALUE must not hide an unread row or cell iterator.
+                // Optional selection is last: NO_VALUE must not hide an unread row or cell view.
                 const result = self.api.render_state_row_get_multi(self.row_iterator, fields.len, &fields, &values, &written);
                 has_row_selection = if (result == c.GHOSTTY_NO_VALUE and written == 3) false else blk: {
                     try check(result);
@@ -1126,7 +1276,7 @@ pub const Terminal = struct {
                 };
             }
             if (row_cells_needed) {
-                try self.readRowCells(raw_row, self.row_cells, columns, foreground, background, &plain_cache, has_row_selection, row_selection, &self.frame.cells, &self.frame.utf8, row_utf8_start);
+                try self.readRowCells(self.row_iterator, raw_row, raw_cells, self.row_cells, columns, foreground, background, &plain_cache, has_row_selection, row_selection, &self.frame.cells, &self.frame.utf8, row_utf8_start);
                 self.row_meta.appendAssumeCapacity(.{
                     .id = row_id,
                     .utf8_start = row_utf8_start,
@@ -1201,11 +1351,15 @@ pub const Terminal = struct {
         var foreground: c.GhosttyColorRgb = undefined;
         var background: c.GhosttyColorRgb = undefined;
         var row_iterator = self.guard_row_iterator.?;
-        try check(self.api.render_state_get(guard_state, c.GHOSTTY_RENDER_STATE_DATA_COLS, &columns));
+        const guard_fields = [_]c.GhosttyRenderStateData{
+            c.GHOSTTY_RENDER_STATE_DATA_COLS,
+            c.GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND,
+            c.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND,
+            c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+        };
+        var guard_values = [_]?*anyopaque{ &columns, &foreground, &background, @ptrCast(&row_iterator) };
+        try check(self.api.render_state_get_multi(guard_state, guard_fields.len, &guard_fields, &guard_values, null));
         if (columns == 0 or columns != base.columns) return error.InvalidTerminalColumnCount;
-        try check(self.api.render_state_get(guard_state, c.GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND, &foreground));
-        try check(self.api.render_state_get(guard_state, c.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND, &background));
-        try check(self.api.render_state_get(guard_state, c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, @ptrCast(&row_iterator)));
         const target_y: i32 = @intCast(base.rows);
         try self.scroll_guard.cells.ensureTotalCapacity(self.allocator, columns);
         self.scroll_guard.cells.clearRetainingCapacity();
@@ -1216,7 +1370,7 @@ pub const Terminal = struct {
             try check(self.api.render_state_row_get(row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_VIEWPORT_Y, &viewport_y));
             if (viewport_y != target_y) continue;
             var raw_row: c.GhosttyRow = undefined;
-            var cells = self.guard_row_cells.?;
+            var raw_cells: c.GhosttyCellsView = .{ .ptr = null, .len = 0 };
             var row_selection: c.GhosttyRenderStateRowSelection = .{
                 .size = @sizeOf(c.GhosttyRenderStateRowSelection),
                 .start_x = 0,
@@ -1224,10 +1378,10 @@ pub const Terminal = struct {
             };
             const fields = [_]c.GhosttyRenderStateRowData{
                 c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
-                c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS_RAW,
                 c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
             };
-            var values = [_]?*anyopaque{ &raw_row, @ptrCast(&cells), &row_selection };
+            var values = [_]?*anyopaque{ &raw_row, &raw_cells, &row_selection };
             var written: usize = 0;
             const result = self.api.render_state_row_get_multi(row_iterator, fields.len, &fields, &values, &written);
             const has_row_selection = if (result == c.GHOSTTY_NO_VALUE and written == 2) false else blk: {
@@ -1236,7 +1390,7 @@ pub const Terminal = struct {
                 break :blk true;
             };
             var plain_cache: CellCache = @splat(null);
-            try self.readRowCells(raw_row, self.guard_row_cells.?, columns, foreground, background, &plain_cache, has_row_selection, row_selection, &self.scroll_guard.cells, &self.scroll_guard.utf8, 0);
+            try self.readRowCells(row_iterator, raw_row, raw_cells, self.guard_row_cells.?, columns, foreground, background, &plain_cache, has_row_selection, row_selection, &self.scroll_guard.cells, &self.scroll_guard.utf8, 0);
             found = true;
             break;
         }
@@ -1299,7 +1453,9 @@ pub const Terminal = struct {
 
     fn readRowCells(
         self: *Terminal,
+        row_iterator: c.GhosttyRenderStateRowIterator,
         raw_row: c.GhosttyRow,
+        raw_cells: c.GhosttyCellsView,
         row_cells: c.GhosttyRenderStateRowCells,
         columns: u16,
         default_fg: c.GhosttyColorRgb,
@@ -1311,24 +1467,75 @@ pub const Terminal = struct {
         target_utf8: *std.ArrayList(u8),
         row_utf8_start: usize,
     ) !void {
+        if (raw_cells.ptr == null or raw_cells.len != columns) return error.InvalidTerminalColumnCount;
         var styled = true;
         try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_STYLED, &styled));
         // Styled cells remain page-local, even when the opaque raw values match.
         var cell_cache: CellCache = if (styled) @splat(null) else undefined;
         const cache = if (styled) &cell_cache else plain_cache;
         var style_cache: StyleCache = if (styled) @splat(null) else undefined;
-        var column: usize = 0;
-        while (self.api.render_state_row_cells_next(row_cells)) : (column += 1) {
-            if (column >= columns) return error.InvalidTerminalColumnCount;
-            var cell = try self.readCachedCell(row_cells, target_utf8, row_utf8_start, default_fg, default_bg, cache, if (styled) &style_cache else null);
+        var row_cells_loaded = false;
+        var has_last_raw = false;
+        var last_raw: c.GhosttyCell = 0;
+        var last_cell: TerminalCell = undefined;
+        const cells_slice = raw_cells.ptr[0..columns];
+        for (cells_slice, 0..) |raw, column| {
+            var cell: TerminalCell = if (has_last_raw and raw == last_raw)
+                last_cell
+            else
+                try self.readCachedCellFromRaw(
+                    row_iterator,
+                    row_cells,
+                    &row_cells_loaded,
+                    @intCast(column),
+                    raw,
+                    styled,
+                    target_utf8,
+                    row_utf8_start,
+                    default_fg,
+                    default_bg,
+                    cache,
+                    if (styled) &style_cache else null,
+                    &has_last_raw,
+                    &last_raw,
+                    &last_cell,
+                );
             cell.selected = has_row_selection and column >= row_selection.start_x and column <= row_selection.end_x;
             target_cells.appendAssumeCapacity(cell);
         }
-        if (column != columns) return error.InvalidTerminalColumnCount;
     }
-    fn readCachedCell(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, target_utf8: *std.ArrayList(u8), row_utf8_start: usize, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *CellCache, style_cache: ?*StyleCache) !TerminalCell {
-        var raw: c.GhosttyCell = undefined;
-        try check(self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
+    fn selectRowCell(
+        self: *Terminal,
+        row_iterator: c.GhosttyRenderStateRowIterator,
+        row_cells: c.GhosttyRenderStateRowCells,
+        row_cells_loaded: *bool,
+        column: u16,
+    ) !void {
+        if (!row_cells_loaded.*) {
+            var cells_handle = row_cells;
+            try check(self.api.render_state_row_get(row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, @ptrCast(&cells_handle)));
+            row_cells_loaded.* = true;
+        }
+        try check(self.api.render_state_row_cells_select(row_cells, column));
+    }
+    fn readCachedCellFromRaw(
+        self: *Terminal,
+        row_iterator: c.GhosttyRenderStateRowIterator,
+        row_cells: c.GhosttyRenderStateRowCells,
+        row_cells_loaded: *bool,
+        column: u16,
+        raw: c.GhosttyCell,
+        styled: bool,
+        target_utf8: *std.ArrayList(u8),
+        row_utf8_start: usize,
+        default_fg: c.GhosttyColorRgb,
+        default_bg: c.GhosttyColorRgb,
+        cache: *CellCache,
+        style_cache: ?*StyleCache,
+        has_last_raw: *bool,
+        last_raw: *c.GhosttyCell,
+        last_cell: *TerminalCell,
+    ) !TerminalCell {
         // This direct-mapped cache needs only a slot, not full avalanche hashing.
         const slot = &cache[(raw *% 0x9e3779b97f4a7c15) >> (@bitSizeOf(c.GhosttyCell) - cell_cache_bits)];
         if (slot.*) |cached| {
@@ -1346,14 +1553,83 @@ pub const Terminal = struct {
                     cell.text_start = @intCast(start);
                     slot.*.?.cell.text_start = cell.text_start;
                 }
+                has_last_raw.* = true;
+                last_raw.* = raw;
+                last_cell.* = cell;
                 return cell;
             }
         }
-        const cell = try self.readCell(row_cells, target_utf8, raw, default_fg, default_bg, style_cache);
+        var wide: c.GhosttyCellWide = undefined;
         var tag: c.GhosttyCellContentTag = undefined;
-        try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_CONTENT_TAG, &tag));
+        var codepoint: u32 = 0;
+        var style_id: u16 = 0;
+        const cell_fields = [_]c.GhosttyCellData{
+            c.GHOSTTY_CELL_DATA_WIDE,
+            c.GHOSTTY_CELL_DATA_CONTENT_TAG,
+            c.GHOSTTY_CELL_DATA_CODEPOINT,
+            c.GHOSTTY_CELL_DATA_STYLE_ID,
+        };
+        var cell_values = [_]?*anyopaque{ &wide, &tag, &codepoint, &style_id };
+        try check(self.api.cell_get_multi(raw, if (styled) 4 else 3, &cell_fields, &cell_values, null));
+        const width: CellWidth = switch (wide) {
+            0 => .narrow,
+            1 => .wide,
+            2 => .tail,
+            3 => .head,
+            else => return error.InvalidTerminalCellWidth,
+        };
+        var selected_col = false;
+        const style: TextStyle = if (style_id != 0) blk: {
+            try self.selectRowCell(row_iterator, row_cells, row_cells_loaded, column);
+            selected_col = true;
+            break :blk try self.readCachedStyleWithId(row_cells, style_id, default_fg, default_bg, style_cache.?);
+        } else switch (tag) {
+            c.GHOSTTY_CELL_CONTENT_CODEPOINT, c.GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME => .{
+                .foreground = packedRgb(default_fg),
+                .background = packedRgb(default_bg),
+            },
+            c.GHOSTTY_CELL_CONTENT_BG_COLOR_RGB => blk: {
+                var bg = default_bg;
+                try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_COLOR_RGB, &bg));
+                break :blk .{ .foreground = packedRgb(default_fg), .background = packedRgb(bg) };
+            },
+            else => blk: {
+                try self.selectRowCell(row_iterator, row_cells, row_cells_loaded, column);
+                selected_col = true;
+                break :blk try self.readUnstyledCellStyle(row_cells, default_fg, default_bg);
+            },
+        };
+        const cell: TerminalCell = switch (tag) {
+            c.GHOSTTY_CELL_CONTENT_CODEPOINT => blk: {
+                if (codepoint == 0) break :blk .{ .width = width, .style = style, .text_start = 0, .text_length = 0 };
+                const start = target_utf8.items.len;
+                if (codepoint < 0x80) {
+                    if (1 > max_frame_text_bytes - start) return error.TerminalFrameTextLimit;
+                    try target_utf8.append(self.allocator, @intCast(codepoint));
+                    break :blk .{ .width = width, .style = style, .text_start = @intCast(start), .text_length = 1 };
+                }
+                const scalar = std.math.cast(u21, codepoint) orelse return error.InvalidTerminalUtf8;
+                var utf8_buf: [4]u8 = undefined;
+                const utf8_len = std.unicode.utf8Encode(scalar, &utf8_buf) catch return error.InvalidTerminalUtf8;
+                if (utf8_len > max_frame_text_bytes - start) return error.TerminalFrameTextLimit;
+                try target_utf8.appendSlice(self.allocator, utf8_buf[0..utf8_len]);
+                break :blk .{ .width = width, .style = style, .text_start = @intCast(start), .text_length = @intCast(utf8_len) };
+            },
+            c.GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME => blk: {
+                if (!selected_col) try self.selectRowCell(row_iterator, row_cells, row_cells_loaded, column);
+                break :blk try self.readGraphemeCellText(row_cells, target_utf8, width, style);
+            },
+            else => .{ .width = width, .style = style, .text_start = 0, .text_length = 0 },
+        };
         // Grapheme extras live outside the opaque raw value and may differ for equal raw cells.
-        if (tag != c.GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME) slot.* = .{ .raw = raw, .cell = cell };
+        if (tag != c.GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME) {
+            slot.* = .{ .raw = raw, .cell = cell };
+            has_last_raw.* = true;
+            last_raw.* = raw;
+            last_cell.* = cell;
+        } else {
+            has_last_raw.* = false;
+        }
         return cell;
     }
     fn readCell(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, target_utf8: *std.ArrayList(u8), raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, style_cache: ?*StyleCache) !TerminalCell {
@@ -1370,6 +1646,9 @@ pub const Terminal = struct {
             try self.readCachedStyle(row_cells, raw, default_fg, default_bg, cache)
         else
             try self.readUnstyledCellStyle(row_cells, default_fg, default_bg);
+        return self.readGraphemeCellText(row_cells, target_utf8, width, style);
+    }
+    fn readGraphemeCellText(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, target_utf8: *std.ArrayList(u8), width: CellWidth, style: TextStyle) !TerminalCell {
         var scratch: [128]u8 = undefined;
         var text: c.GhosttyBuffer = .{ .ptr = &scratch, .cap = scratch.len, .len = 0 };
         const result = self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text);
@@ -1396,6 +1675,9 @@ pub const Terminal = struct {
     fn readCachedStyle(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *StyleCache) !TextStyle {
         var id: u16 = 0;
         try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_STYLE_ID, &id));
+        return self.readCachedStyleWithId(row_cells, id, default_fg, default_bg, cache);
+    }
+    fn readCachedStyleWithId(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, id: u16, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *StyleCache) !TextStyle {
         const slot = &cache[id % cache.len];
         if (slot.* == null or slot.*.?.id != id) {
             var foreground = default_fg;
@@ -1494,11 +1776,21 @@ pub const Terminal = struct {
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_BELL, @ptrCast(bell_callback)));
         const title_callback: c.GhosttyTerminalTitleChangedFn = titleChanged;
         try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, @ptrCast(title_callback)));
+        const notification_callback: c.GhosttyTerminalDesktopNotificationFn = terminalDesktopNotification;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION, @ptrCast(notification_callback)));
+        const xtversion_callback: c.GhosttyTerminalXtversionFn = terminalXtversion;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_XTVERSION, @ptrCast(xtversion_callback)));
+        const size_callback: c.GhosttyTerminalSizeFn = terminalSize;
+        try check(self.api.terminal_set(self.handle, c.GHOSTTY_TERMINAL_OPT_SIZE, @ptrCast(size_callback)));
         const ansi = [_]u32{ 0x282c34, 0xff5a5a, 0x5af05a, 0xf0d25a, 0x5a5aff, 0xf05af0, 0x5af0f0, 0xe4e4e7, 0x3d4354, 0xff8c8c, 0x8cff8c, 0xffe68c, 0x8c8cff, 0xff8cff, 0x8cffff, 0xffffff };
         try self.applyPalette(0xe4e4e7, 0x282c34, 0xe4e4e7, &ansi);
         const track_last_cell = true;
         try check(self.api.mouse_encoder_set(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL, &track_last_cell));
         self.updateMouseEncoderSize(80, 24, self.cell_width_px, self.cell_height_px);
+        const emit: c.GhosttyFormatterFormat = c.GHOSTTY_FORMATTER_FORMAT_PLAIN;
+        const unwrap = true;
+        try check(self.api.formatter_set(self.formatter, c.GHOSTTY_FORMATTER_OPT_EMIT, &emit));
+        try check(self.api.formatter_set(self.formatter, c.GHOSTTY_FORMATTER_OPT_UNWRAP, &unwrap));
     }
     fn updateMouseEncoderSize(self: *Terminal, columns: u16, rows: u16, cell_width_px: u32, cell_height_px: u32) void {
         const cw = @max(1, cell_width_px);
@@ -1517,6 +1809,34 @@ fn terminalBell(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) void {
     const context = userdata orelse return;
     const self: *Terminal = @ptrCast(@alignCast(context));
     self.program_status.onBell();
+}
+
+fn terminalDesktopNotification(
+    _: c.GhosttyTerminal,
+    userdata: ?*anyopaque,
+    _: [*c]const c.GhosttyTerminalDesktopNotification,
+) callconv(.c) void {
+    const context = userdata orelse return;
+    const self: *Terminal = @ptrCast(@alignCast(context));
+    self.program_status.onBell();
+}
+
+fn terminalXtversion(_: c.GhosttyTerminal, _: ?*anyopaque) callconv(.c) c.GhosttyString {
+    const version = "Vex";
+    return .{ .ptr = version.ptr, .len = version.len };
+}
+
+fn terminalSize(_: c.GhosttyTerminal, userdata: ?*anyopaque, out_size: [*c]c.GhosttySizeReportSize) callconv(.c) bool {
+    const context = userdata orelse return false;
+    if (out_size == null) return false;
+    const self: *const Terminal = @ptrCast(@alignCast(context));
+    out_size.* = .{
+        .rows = self.grid_rows,
+        .columns = self.grid_columns,
+        .cell_width = @max(1, self.cell_width_px),
+        .cell_height = @max(1, self.cell_height_px),
+    };
+    return true;
 }
 
 fn titleChanged(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) void {
@@ -1646,6 +1966,11 @@ fn packedRgb(color: c.GhosttyColorRgb) u32 {
 }
 fn physicalTerminalKey(virtual_key: u32) ?c.GhosttyKey {
     return switch (virtual_key) {
+        0x08 => c.GHOSTTY_KEY_BACKSPACE,
+        0x09 => c.GHOSTTY_KEY_TAB,
+        0x0d => c.GHOSTTY_KEY_ENTER,
+        0x1b => c.GHOSTTY_KEY_ESCAPE,
+        0x20 => c.GHOSTTY_KEY_SPACE,
         0x21 => c.GHOSTTY_KEY_PAGE_UP,
         0x22 => c.GHOSTTY_KEY_PAGE_DOWN,
         0x23 => c.GHOSTTY_KEY_END,
@@ -1656,8 +1981,64 @@ fn physicalTerminalKey(virtual_key: u32) ?c.GhosttyKey {
         0x28 => c.GHOSTTY_KEY_ARROW_DOWN,
         0x2d => c.GHOSTTY_KEY_INSERT,
         0x2e => c.GHOSTTY_KEY_DELETE,
+        '0'...'9' => @as(c.GhosttyKey, c.GHOSTTY_KEY_DIGIT_0) + virtual_key - '0',
+        'A'...'Z' => @as(c.GhosttyKey, c.GHOSTTY_KEY_A) + virtual_key - 'A',
+        0x60...0x69 => @as(c.GhosttyKey, c.GHOSTTY_KEY_NUMPAD_0) + virtual_key - 0x60,
+        0x6a => c.GHOSTTY_KEY_NUMPAD_MULTIPLY,
+        0x6b => c.GHOSTTY_KEY_NUMPAD_ADD,
+        0x6c => c.GHOSTTY_KEY_NUMPAD_SEPARATOR,
+        0x6d => c.GHOSTTY_KEY_NUMPAD_SUBTRACT,
+        0x6e => c.GHOSTTY_KEY_NUMPAD_DECIMAL,
+        0x6f => c.GHOSTTY_KEY_NUMPAD_DIVIDE,
         0x70...0x87 => @as(c.GhosttyKey, c.GHOSTTY_KEY_F1) + virtual_key - 0x70,
+        0xba => c.GHOSTTY_KEY_SEMICOLON,
+        0xbb => c.GHOSTTY_KEY_EQUAL,
+        0xbc => c.GHOSTTY_KEY_COMMA,
+        0xbd => c.GHOSTTY_KEY_MINUS,
+        0xbe => c.GHOSTTY_KEY_PERIOD,
+        0xbf => c.GHOSTTY_KEY_SLASH,
+        0xc0 => c.GHOSTTY_KEY_BACKQUOTE,
+        0xdb => c.GHOSTTY_KEY_BRACKET_LEFT,
+        0xdc => c.GHOSTTY_KEY_BACKSLASH,
+        0xdd => c.GHOSTTY_KEY_BRACKET_RIGHT,
+        0xde => c.GHOSTTY_KEY_QUOTE,
+        0xe2 => c.GHOSTTY_KEY_INTL_BACKSLASH,
         else => null,
+    };
+}
+fn isPrintableVirtualKey(virtual_key: u32) bool {
+    return switch (virtual_key) {
+        0x20, '0'...'9', 'A'...'Z', 0x60...0x6f, 0xba...0xc0, 0xdb...0xde, 0xe2 => true,
+        else => false,
+    };
+}
+fn normalizeUnshiftedCodepoint(virtual_key: u32, hint: u32) u32 {
+    if (hint >= 'A' and hint <= 'Z') return hint + 32;
+    if (hint != 0) return hint;
+    return switch (virtual_key) {
+        0x20 => ' ',
+        '0'...'9' => virtual_key,
+        'A'...'Z' => virtual_key + 32,
+        0x60...0x69 => '0' + (virtual_key - 0x60),
+        0x6a => '*',
+        0x6b => '+',
+        0x6c => ',',
+        0x6d => '-',
+        0x6e => '.',
+        0x6f => '/',
+        0xba => ';',
+        0xbb => '=',
+        0xbc => ',',
+        0xbd => '-',
+        0xbe => '.',
+        0xbf => '/',
+        0xc0 => '`',
+        0xdb => '[',
+        0xdc => '\\',
+        0xdd => ']',
+        0xde => '\'',
+        0xe2 => '\\',
+        else => 0,
     };
 }
 fn editorCharacters(cells: []const TerminalCell) usize {

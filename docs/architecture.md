@@ -45,14 +45,16 @@ A pending query cannot enqueue duplicates, and late events for closed panes are
 ignored. The startup delay still avoids spawning probes for short-lived WSL tabs.
 These are scheduling intervals, not guaranteed end-to-end detection latencies.
 
-Dirty snapshots read every row to compensate for Ghostty scroll dirty-state
-under-reporting. Within one snapshot, rows reported as unstyled share decoded
-non-grapheme cells; styled rows retain page-local cell and style-ID caches.
-Style IDs never cross rows or snapshots. Background colors still come from the
-public API per decoded cell because equal style IDs can carry different content
-backgrounds; inverse and faint colors are applied only after that lookup.
-The shared cache is discarded between snapshots, including palette changes.
-Cursor drawing and workspace transitions reuse cached geometry.
+Partial dirty snapshots reuse clean rows whose render-state row IDs and palette
+endpoints match the previous frame, updating only row-local selection bounds.
+Decoded rows read contiguous raw cell views; within one snapshot, rows reported
+as unstyled share decoded non-grapheme cells, while styled rows retain page-local
+cell and style-ID caches. Style IDs never cross rows or snapshots. Background
+colors still come from the public API per decoded styled cell because equal style
+IDs can carry different content backgrounds; inverse and faint colors are applied
+only after that lookup. The shared cache is discarded between snapshots,
+including palette changes. Cursor drawing and workspace transitions reuse cached
+geometry.
 One D3D12 device and command queue serve the application's window, including
 terminal panes, UI and capture. All terminal panes share one bounded 1024×1024
 glyph atlas; UI fonts use a separate atlas and share the terminal pipeline state.

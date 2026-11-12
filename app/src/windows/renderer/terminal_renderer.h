@@ -92,10 +92,13 @@ private:
     UINT64 geometryClock = 0;
     struct Glyph {
         uint8_t* text = nullptr;
+        uint8_t inlineText[8] = {};
         UINT length = 0, x = 0, y = 0, width = 0, height = 0;
         float layoutWidth = 0, layoutHeight = 0, offsetX = 0, offsetY = 0;
         uint32_t style = 0, phase = 0;
         UINT64 hash = 0;
+        bool occupied = false;
+        const uint8_t* bytes() const { return length <= sizeof(inlineText) ? inlineText : text; }
     };
     ComPtr<ID3D12Device> deviceOwner;
     ComPtr<ID3D12RootSignature> root;

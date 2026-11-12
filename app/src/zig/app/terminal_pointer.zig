@@ -267,7 +267,9 @@ fn updateHoverState(self: *Application, can_focus: bool, x: f32, y: f32, modifie
                         if (self.metrics) |metrics| {
                             if (try metrics.viewportPoint(placement.bounds, x, y, false)) |vp| {
                                 const frame = try session.terminal.readFrame();
-                                if (url_detector.findLinkInFrameRow(frame, vp.row, vp.column, null)) |match| {
+                                const link = (try session.terminal.osc8LinkAt(vp.row, vp.column, frame, null)) orelse
+                                    url_detector.findLinkInFrameRow(frame, vp.row, vp.column, null);
+                                if (link) |match| {
                                     next_link = .{
                                         .pane_id = placement.id,
                                         .row = vp.row,
@@ -435,7 +437,9 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                             if ((modifiers & 2) != 0) {
                                 const frame = try session.terminal.readFrame();
                                 var url_buf: [2048]u8 = undefined;
-                                if (url_detector.findLinkInFrameRow(frame, vp.row, vp.column, &url_buf)) |match| {
+                                const link = (try session.terminal.osc8LinkAt(vp.row, vp.column, frame, &url_buf)) orelse
+                                    url_detector.findLinkInFrameRow(frame, vp.row, vp.column, &url_buf);
+                                if (link) |match| {
                                     if (match.url_len > 0) {
                                         _ = model.focusPane(placement.id);
                                         try self.clearOtherSelections(placement.id);
@@ -633,10 +637,31 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
     }
     if (event == .hover and self.pointer_drag == .none) {
         for (self.placements.items) |placement| {
-            if (placement.bounds.contains(x, y) and try metrics.viewportPoint(placement.bounds, x, y, false) != null) return .text;
+            if (placement.bounds.contains(x, y) and try metrics.viewportPoint(placement.bounds, x, y, false) != null) {
+                if ((modifiers & 1) == 0) {
+                    if (self.findSession(placement.id)) |session| {
+                        if (try session.terminal.isMouseTracking()) {
+                            return pointerResponseForMouseShape(try session.terminal.mouseShape());
+                        }
+                    }
+                }
+                return .text;
+            }
         }
     }
     return .normal;
+}
+
+fn pointerResponseForMouseShape(shape: terminal.Terminal.PointerMouseShape) platform.PointerResponse {
+    return switch (shape) {
+        .text => .text,
+        .pointer => .link,
+        .grab => .tab_armed,
+        .grabbing => .tab_dragging,
+        .col_resize => .right,
+        .row_resize => .down,
+        .default => .normal,
+    };
 }
 
 fn reportMouseEvent(

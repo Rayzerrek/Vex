@@ -44,6 +44,7 @@ pub const TerminalApplication = struct {
     pub const onProbe = diagnostics.onProbe;
     pub const onDialogEvent = modals.onDialogEvent;
     pub const onKey = keyboard.onKey;
+    pub const onKeyEvent = keyboard.onKeyEvent;
     pub const onText = keyboard.onText;
     pub const onPaste = keyboard.onPaste;
     pub const onScroll = pointer.onScroll;
@@ -273,6 +274,12 @@ pub const TerminalApplication = struct {
     pub fn onCursorActivity(self: *TerminalApplication, active: bool) void {
         if (self.health == .failed or self.cursor_window_active == active) return;
         self.cursor_window_active = active;
+        if (self.activeSession()) |session| if (session.state == .running) {
+            var focus_bytes: [16]u8 = undefined;
+            if (session.terminal.encodeFocusEvent(active, &focus_bytes) catch null) |bytes| {
+                session.writePty(bytes) catch {};
+            }
+        };
         if (!active) for (self.sessions.items) |session| session.cancelApplicationCopy();
         self.cursor_blink.synchronize(null, self.cursorNowMs());
         self.syncAnimationWake() catch |err| {
@@ -2313,5 +2320,13 @@ test "Escape key routes to the active terminal session on keydown while respecti
     try std.testing.expect(app.onKey(0x1B, 0));
     try std.testing.expect(!try active.terminal.hasSelection());
     try std.testing.expect(app.onKey(0x1B, 4));
+    try std.testing.expect(!app.onKeyEvent(0x1B, 0, .release, 0));
+
+    // Under Kitty disambiguate + event reporting, Escape keyup is also routed while focus stays intact.
+    try active.terminal.feedOutput("\x1b[>3u\x1b[?1004h");
+    try std.testing.expect(app.onKeyEvent(0x1B, 0, .press, 0));
+    try std.testing.expect(app.onKeyEvent(0x1B, 0, .release, 0));
+    app.onCursorActivity(false);
+    app.onCursorActivity(true);
     try std.testing.expect(app.health == .running);
 }

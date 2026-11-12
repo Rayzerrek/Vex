@@ -4,10 +4,33 @@ const platform = @import("../windows/windows_ffi.zig");
 pub const TabRename = @import("../workspace/tab_rename.zig").TabRename;
 const TerminalSession = @import("terminal_session.zig").TerminalSession;
 const overlays = @import("terminal_overlays.zig");
+const terminal = @import("../terminal/terminal.zig");
 
 pub fn onKey(self: *Application, key: u32, modifiers: u32) bool {
-    if (self.health == .failed) return true;
+    return onKeyEvent(self, key, modifiers, .press, 0);
+}
+
+pub fn onKeyEvent(self: *Application, key: u32, modifiers: u32, key_action: terminal.KeyAction, codepoint: u32) bool {
+    if (self.health == .failed) return key_action != .release;
     if (isModifierKey(key)) return false;
+    if (key_action == .release) {
+        if (self.overlay != .none or self.editing_tab != null) return false;
+        const session = self.activeSession() orelse return false;
+        if (session.state != .running) return false;
+        var buffer: [256]u8 = undefined;
+        const encoded = session.terminal.encodeKeyEvent(key, modifiers, .release, codepoint, &buffer) catch |err| {
+            self.fail(err);
+            return false;
+        };
+        if (encoded) |bytes| {
+            session.writePty(bytes) catch |err| {
+                self.fail(err);
+                return false;
+            };
+            return true;
+        }
+        return false;
+    }
     self.resetCursorOnInput() catch |err| {
         self.fail(err);
         return true;
@@ -97,13 +120,13 @@ pub fn onKey(self: *Application, key: u32, modifiers: u32) bool {
         }
     }
     const session = self.activeSession() orelse return false;
-    return handleSessionKey(self, session, key, modifiers) catch |err| {
+    return handleSessionKey(self, session, key, modifiers, key_action, codepoint) catch |err| {
         self.fail(err);
         return true;
     };
 }
 
-fn handleSessionKey(self: *Application, session: *TerminalSession, key: u32, modifiers: u32) !bool {
+fn handleSessionKey(self: *Application, session: *TerminalSession, key: u32, modifiers: u32, action: terminal.KeyAction, codepoint: u32) !bool {
     if (try session.terminal.scrollViewportShortcut(key, modifiers)) {
         session.scrollbar_visibility.reveal(self.cursorNowMs());
         platform.invalidateWindow();
@@ -147,7 +170,7 @@ fn handleSessionKey(self: *Application, session: *TerminalSession, key: u32, mod
         return true;
     }
     var buffer: [256]u8 = undefined;
-    const encoded = try session.terminal.encodeKey(key, modifiers, &buffer);
+    const encoded = try session.terminal.encodeKeyEvent(key, modifiers, action, codepoint, &buffer);
     if (encoded) |bytes| {
         if (try session.terminal.hasSelection()) {
             try session.terminal.clearSelection(true);

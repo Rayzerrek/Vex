@@ -343,9 +343,14 @@ pub fn runWindow(owner: anytype) !void {
         fn paint(context: ?*anyopaque) callconv(.c) void {
             if (recover(context)) |app| app.onPaint();
         }
-        fn key(context: ?*anyopaque, virtual_key: u32, modifiers: u32) callconv(.c) bool {
+        fn key(context: ?*anyopaque, virtual_key: u32, modifiers: u32, action_code: u32, codepoint: u32) callconv(.c) bool {
             const app = recover(context) orelse return false;
-            return app.onKey(virtual_key, modifiers);
+            const parsed_action: terminal.KeyAction = switch (action_code) {
+                0 => .release,
+                2 => .repeat,
+                else => .press,
+            };
+            return app.onKeyEvent(virtual_key, modifiers, parsed_action, codepoint);
         }
         fn text(context: ?*anyopaque, bytes: [*c]const u8, length: usize) callconv(.c) void {
             const app = recover(context) orelse return;
@@ -1066,10 +1071,14 @@ fn drawTerminalGeometry(pane_id: panes.PaneId, frame: *const terminal.TerminalFr
         if (layer == 0) {
             // Keep both passes in one cache entry; later backgrounds must not erase overhanging ink.
             c.vex_terminal_cell_layer(1);
-            try drawTerminalCells(frame, link, theme, correction);
+            try drawTerminalBackgrounds(frame, theme, correction);
             c.vex_terminal_cell_layer(2);
+            try drawTerminalCells(frame, link, theme, correction);
+        } else if (layer == 1) {
+            try drawTerminalBackgrounds(frame, theme, correction);
+        } else {
+            try drawTerminalCells(frame, link, theme, correction);
         }
-        try drawTerminalCells(frame, link, theme, correction);
         complete = true;
     }
 }
@@ -1258,6 +1267,7 @@ const AppearanceCorrection = struct {
 // Reverse-video and explicit TUI highlights are surfaces, not text. Mapping them
 // all the way to the foreground endpoint produces black/white selection bars.
 fn softenHighlight(style: terminal.TextStyle, theme: terminal_theme.TerminalTheme) terminal.TextStyle {
+    if (style.background == theme.background or style.background == theme.selection_background) return style;
     const surface = srgbToOklab(style.background);
     if (surface.a * surface.a + surface.b * surface.b > 0.0144) return style;
     const base = srgbToOklab(theme.background);
@@ -1291,6 +1301,50 @@ fn surfaceStyle(
         cell_style = highlight_style.*;
     }
     return cell_style;
+}
+
+fn drawTerminalBackgrounds(frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme, appearance: *?AppearanceCorrection) !void {
+    var highlight_source: ?terminal.TextStyle = null;
+    var highlight_style: terminal.TextStyle = undefined;
+    const has_appearance = appearance.* != null;
+    for (0..frame.rows) |row| {
+        const cells = frame.cells.items[row * frame.columns ..][0..frame.columns];
+        var start: usize = 0;
+        var run_cells: usize = 0;
+        var run_bg: u32 = theme.background;
+        for (cells, 0..) |cell, column| {
+            if (cell.width == .tail) continue;
+            const width: usize = if (cell.width == .wide) 2 else 1;
+            const bg: u32 = if (cell.selected)
+                theme.selection_background
+            else if (!has_appearance and cell.style.background == theme.background)
+                theme.background
+            else
+                surfaceStyle(cell, frame.cellText(cell), theme, appearance, &highlight_source, &highlight_style).background;
+            if (bg == theme.background) {
+                if (run_cells != 0) {
+                    if (c.vex_draw_run(@intCast(start), @intCast(row), @intCast(run_cells), null, 0, 0, run_bg, 0) != 0) return error.NativeTextRenderingFailed;
+                    run_cells = 0;
+                }
+                continue;
+            }
+            if (run_cells == 0) {
+                start = column;
+                run_cells = width;
+                run_bg = bg;
+            } else if (bg == run_bg and start + run_cells == column) {
+                run_cells += width;
+            } else {
+                if (c.vex_draw_run(@intCast(start), @intCast(row), @intCast(run_cells), null, 0, 0, run_bg, 0) != 0) return error.NativeTextRenderingFailed;
+                start = column;
+                run_cells = width;
+                run_bg = bg;
+            }
+        }
+        if (run_cells != 0) {
+            if (c.vex_draw_run(@intCast(start), @intCast(row), @intCast(run_cells), null, 0, 0, run_bg, 0) != 0) return error.NativeTextRenderingFailed;
+        }
+    }
 }
 
 fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme, appearance: *?AppearanceCorrection) !void {
@@ -1333,7 +1387,7 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
             const cursor_boundary = frame.cursor.visible and row == frame.cursor.row and
                 (column == frame.cursor.column or column == @as(usize, frame.cursor.column) + 1);
             if (!ascii or cursor_boundary or !std.meta.eql(style, cell_style) or length == buffer.len) {
-                try drawRun(start, row, run_cells, buffer[0..length], style, theme.background);
+                try drawTextRun(start, row, run_cells, buffer[0..length], style);
                 run_cells = 0;
                 length = 0;
                 start = column;
@@ -1341,7 +1395,7 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
             }
             if (!ascii) {
                 const width: usize = if (cell.width == .wide) 2 else 1;
-                try drawRun(column, row, width, text, cell_style, theme.background);
+                try drawTextRun(column, row, width, text, cell_style);
                 start = column + width;
             } else {
                 buffer[length] = if (text.len == 0) ' ' else text[0];
@@ -1349,7 +1403,7 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
                 run_cells += 1;
             }
         }
-        try drawRun(start, row, run_cells, buffer[0..length], style, theme.background);
+        try drawTextRun(start, row, run_cells, buffer[0..length], style);
     }
 }
 
@@ -1442,9 +1496,10 @@ pub fn isBlockGraphic(text: []const u8) bool {
 pub fn ensureMinimumContrast(fg_rgb: u32, bg_rgb: u32) u32 {
     if (fg_rgb == bg_rgb) return fg_rgb;
     const minimum_ratio: f32 = 4.5;
-    if (contrastRatio(fg_rgb, bg_rgb) >= minimum_ratio) return fg_rgb;
+    const bg_lum = relativeLuminance(bg_rgb);
+    if (contrastRatioWithBgLuminance(fg_rgb, bg_lum) >= minimum_ratio) return fg_rgb;
     const lab = srgbToOklab(fg_rgb);
-    const towards_white = contrastRatio(0xffffff, bg_rgb) > contrastRatio(0, bg_rgb);
+    const towards_white = contrastRatioWithBgLuminance(0xffffff, bg_lum) > contrastRatioWithBgLuminance(0, bg_lum);
     const endpoint: f32 = if (towards_white) 1 else 0;
     var low: f32 = 0;
     var high: f32 = 1;
@@ -1454,7 +1509,7 @@ pub fn ensureMinimumContrast(fg_rgb: u32, bg_rgb: u32) u32 {
     for (0..16) |_| {
         const amount = (low + high) * 0.5;
         const candidate = oklabToSrgb(lab.l + (endpoint - lab.l) * amount, lab.a * (1 - amount), lab.b * (1 - amount));
-        if (contrastRatio(candidate, bg_rgb) >= minimum_ratio) {
+        if (contrastRatioWithBgLuminance(candidate, bg_lum) >= minimum_ratio) {
             corrected = candidate;
             high = amount;
         } else low = amount;
@@ -1464,9 +1519,18 @@ pub fn ensureMinimumContrast(fg_rgb: u32, bg_rgb: u32) u32 {
 
 const Oklab = struct { l: f32, a: f32, b: f32 };
 
+const srgb_to_linear_lut: [256]f32 = blk: {
+    @setEvalBranchQuota(100_000);
+    var table: [256]f32 = undefined;
+    for (0..256) |i| {
+        const v = @as(f32, @floatFromInt(i)) / 255.0;
+        table[i] = if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4);
+    }
+    break :blk table;
+};
+
 fn srgbChannelToLinear(c_val: u32) f32 {
-    const v = @as(f32, @floatFromInt(c_val & 0xFF)) / 255.0;
-    return if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4);
+    return srgb_to_linear_lut[c_val & 0xFF];
 }
 
 fn linearChannelToSrgb(v: f32) u32 {
@@ -1479,10 +1543,13 @@ fn relativeLuminance(rgb_val: u32) f32 {
     return 0.2126 * srgbChannelToLinear(rgb_val >> 16) + 0.7152 * srgbChannelToLinear(rgb_val >> 8) + 0.0722 * srgbChannelToLinear(rgb_val);
 }
 
-fn contrastRatio(foreground: u32, background: u32) f32 {
+fn contrastRatioWithBgLuminance(foreground: u32, bg: f32) f32 {
     const fg = relativeLuminance(foreground);
-    const bg = relativeLuminance(background);
     return (@max(fg, bg) + 0.05) / (@min(fg, bg) + 0.05);
+}
+
+fn contrastRatio(foreground: u32, background: u32) f32 {
+    return contrastRatioWithBgLuminance(foreground, relativeLuminance(background));
 }
 
 fn srgbToOklab(rgb_val: u32) Oklab {
@@ -1513,6 +1580,16 @@ fn oklabToSrgb(l_val: f32, a_val: f32, b_val: f32) u32 {
     const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
     const b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
     return (linearChannelToSrgb(r) << 16) | (linearChannelToSrgb(g) << 8) | linearChannelToSrgb(b);
+}
+
+fn drawTextRun(column: usize, row: usize, cells: usize, text: []const u8, style: terminal.TextStyle) !void {
+    if (cells == 0 or style.invisible) return;
+    if (!style.underline and !style.strikethrough) {
+        if (std.mem.indexOfNonePos(u8, text, 0, " ") == null) return;
+    }
+    const flags = @as(u32, @intFromBool(style.bold)) | (@as(u32, @intFromBool(style.italic)) << 1) |
+        (@as(u32, @intFromBool(style.underline)) << 2) | (@as(u32, @intFromBool(style.strikethrough)) << 3) | (@as(u32, @intFromBool(style.invisible)) << 4);
+    if (c.vex_draw_run(@intCast(column), @intCast(row), @intCast(cells), text.ptr, text.len, style.foreground, style.background, flags) != 0) return error.NativeTextRenderingFailed;
 }
 
 fn drawRun(column: usize, row: usize, cells: usize, text: []const u8, style: terminal.TextStyle, default_bg: u32) !void {
