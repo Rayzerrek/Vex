@@ -15,20 +15,40 @@ bool WindowsRenderer::deviceLost(HRESULT result) {
 DWORD WINAPI WindowsRenderer::prepareDeviceWorker(void* context) {
     auto* renderer = static_cast<WindowsRenderer*>(context);
     renderer->devicePreparationResult = renderer->initializeAdapter(renderer->deviceForceWarp);
+    InterlockedExchange(&renderer->devicePreparationComplete, 1);
+    if (HWND notify = static_cast<HWND>(InterlockedCompareExchangePointer(&renderer->deviceNotifyWindow, nullptr, nullptr))) {
+        PostMessageW(notify, renderer->deviceNotifyMessage, 0, 0);
+    }
     return 0;
+}
+
+void WindowsRenderer::setDeviceReadyNotification(HWND hwnd, UINT message) {
+    deviceNotifyMessage = message;
+    InterlockedExchangePointer(&deviceNotifyWindow, hwnd);
+    if (hwnd && InterlockedCompareExchange(&devicePreparationComplete, 0, 0) != 0) {
+        PostMessageW(hwnd, message, 0, 0);
+    }
 }
 
 HRESULT WindowsRenderer::prepareDeviceAsync(bool forceWarp) {
     if (devicePreparationRequested || dxgiFactory || device) return E_UNEXPECTED;
     devicePreparationRequested = true;
     deviceForceWarp = forceWarp;
+    InterlockedExchange(&devicePreparationComplete, 0);
     deviceThread = CreateThread(nullptr, 0, prepareDeviceWorker, this, 0, nullptr);
     // Thread creation is an optimization, not a new startup prerequisite.
-    if (!deviceThread) devicePreparationResult = initializeAdapter(forceWarp);
+    if (!deviceThread) {
+        devicePreparationResult = initializeAdapter(forceWarp);
+        InterlockedExchange(&devicePreparationComplete, 1);
+        if (HWND notify = static_cast<HWND>(InterlockedCompareExchangePointer(&deviceNotifyWindow, nullptr, nullptr))) {
+            PostMessageW(notify, deviceNotifyMessage, 0, 0);
+        }
+    }
     return deviceThread ? S_OK : devicePreparationResult;
 }
 
 HRESULT WindowsRenderer::finishDevicePreparation() {
+    InterlockedExchangePointer(&deviceNotifyWindow, nullptr);
     if (deviceThread) {
         // Join even when startup fails before the first paint: the worker borrows this owner.
         if (WaitForSingleObject(deviceThread, INFINITE) != WAIT_OBJECT_0) RaiseFailFastException(nullptr, nullptr, 0);
@@ -416,6 +436,9 @@ void WindowsRenderer::releaseDevice() {
     if (fenceEvent) { CloseHandle(fenceEvent); fenceEvent = nullptr; }
     pixelWidth = 0; pixelHeight = 0; nextFence = 1; phase = FramePhase::none;
     devicePreparationRequested = false; devicePreparationResult = S_OK; deviceForceWarp = false;
+    InterlockedExchange(&devicePreparationComplete, 0);
+    InterlockedExchangePointer(&deviceNotifyWindow, nullptr);
+    deviceNotifyMessage = 0;
 }
 
 HRESULT WindowsRenderer::shutdown() {

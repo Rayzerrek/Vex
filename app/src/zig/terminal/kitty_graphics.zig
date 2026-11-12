@@ -60,21 +60,12 @@ pub const Snapshot = struct {
     }
 
     pub fn update(self: *Snapshot, allocator: std.mem.Allocator, api: *const binding.Api, terminal: c.GhosttyTerminal, iterator_ptr: *c.GhosttyKittyGraphicsPlacementIterator, geometry_dirty: bool) !void {
-        return self.updateClipped(allocator, api, terminal, iterator_ptr, geometry_dirty, null, 1);
-    }
-    /// The guard owns only images crossing the one extra row, not a second full viewport.
-    pub fn updateRow(self: *Snapshot, allocator: std.mem.Allocator, api: *const binding.Api, terminal: c.GhosttyTerminal, iterator_ptr: *c.GhosttyKittyGraphicsPlacementIterator, row: i32, cell_height: u32) !void {
-        return self.updateClipped(allocator, api, terminal, iterator_ptr, true, row, @max(1, cell_height));
-    }
-    fn updateClipped(self: *Snapshot, allocator: std.mem.Allocator, api: *const binding.Api, terminal: c.GhosttyTerminal, iterator_ptr: *c.GhosttyKittyGraphicsPlacementIterator, geometry_dirty: bool, clip_row: ?i32, cell_height: u32) !void {
         var graphics: c.GhosttyKittyGraphics = null;
         try check(api.terminal_get(terminal, c.GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, @ptrCast(&graphics)));
         var generation: u64 = 0;
         try check(api.kitty_graphics_get(graphics, c.GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION, &generation));
         if (self.valid and self.generation == generation and !geometry_dirty) return;
-        self.valid = false;
-        self.placements.clearRetainingCapacity();
-        for (self.images.items) |*image| image.used = false;
+        self.resetForUpdate();
         if (generation == 0 and self.images.items.len == 0) {
             self.generation = generation;
             self.valid = true;
@@ -97,41 +88,16 @@ pub const Snapshot = struct {
             if (!info.viewport_visible or info.pixel_width == 0 or info.pixel_height == 0) continue;
             var y_offset: u32 = 0;
             try check(api.kitty_graphics_placement_get(iterator, c.GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, &y_offset));
-            if (clip_row) |row| {
-                const top = @as(i64, info.viewport_row) * cell_height + y_offset;
-                const edge = @as(i64, row) * cell_height;
-                if (top >= edge + cell_height or top + info.pixel_height <= edge) continue;
-            }
             var image_generation: u64 = 0;
-            try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_IMAGE_DATA_GENERATION, &image_generation));
-            var image: ?*Image = null;
-            for (self.images.items) |*cached| {
-                if (cached.generation == image_generation) {
-                    image = cached;
-                    break;
-                }
-            }
-            if (image == null) {
-                // Reject a full working set before copying pixels, including repeated placements of an uncached image.
-                if (!self.makeRoom(allocator, 0)) continue;
-                const decoded = try readImage(allocator, api, handle, image_generation) orelse continue;
-                errdefer allocator.free(decoded.rgba);
-                // Old snapshots may coexist briefly with replacements, but never grow unbounded.
-                if (!self.makeRoom(allocator, decoded.rgba.len)) {
-                    allocator.free(decoded.rgba);
-                    continue;
-                }
-                try self.images.append(allocator, decoded);
-                image = &self.images.items[self.images.items.len - 1];
-            }
-            image.?.used = true;
+            try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_GENERATION, &image_generation));
+            _ = (try self.acquireImage(allocator, api, handle, image_generation)) orelse continue;
             var placement: Placement = .{
                 .generation = image_generation,
                 .image_id = image_id,
                 .placement_id = 0,
                 .z = 0,
                 .column = info.viewport_col,
-                .row = info.viewport_row - (clip_row orelse 0),
+                .row = info.viewport_row,
                 .x_offset = 0,
                 .y_offset = y_offset,
                 .width = info.pixel_width,
@@ -146,6 +112,129 @@ pub const Snapshot = struct {
             try check(api.kitty_graphics_placement_get(iterator, c.GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET, &placement.x_offset));
             try self.placements.append(allocator, placement);
         }
+        self.finalizePlacements(allocator, generation);
+    }
+    /// The guard owns only images crossing the one extra overscan row, not a second full viewport.
+    pub fn updateRowFromRenderState(self: *Snapshot, allocator: std.mem.Allocator, api: *const binding.Api, terminal: c.GhosttyTerminal, render_state: c.GhosttyRenderState, iterator: c.GhosttyRenderStateImageIterator, row: i32, cell_height: u32) !void {
+        var graphics: c.GhosttyKittyGraphics = null;
+        try check(api.terminal_get(terminal, c.GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, @ptrCast(&graphics)));
+        var generation: u64 = 0;
+        try check(api.kitty_graphics_get(graphics, c.GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION, &generation));
+        self.resetForUpdate();
+        if (generation == 0 and self.images.items.len == 0) {
+            self.generation = generation;
+            self.valid = true;
+            return;
+        }
+        var image_iterator = iterator;
+        try check(api.render_state_get(render_state, c.GHOSTTY_RENDER_STATE_DATA_IMAGE_ITERATOR, @ptrCast(&image_iterator)));
+        const row_height = @max(1, cell_height);
+        const edge = @as(i64, row) * row_height;
+        var visited: usize = 0;
+        while (api.render_state_image_iterator_next(iterator)) {
+            visited += 1;
+            if (visited > 4096) break;
+            var protocol: c.GhosttyImageProtocol = 0;
+            try check(api.render_state_image_get(iterator, c.GHOSTTY_RENDER_STATE_IMAGE_DATA_PROTOCOL, &protocol));
+            if (protocol != c.GHOSTTY_IMAGE_PROTOCOL_KITTY) continue;
+            var image_id: u32 = 0;
+            var image_generation: u64 = 0;
+            var z: i32 = 0;
+            var column: i32 = 0;
+            var viewport_row: i32 = 0;
+            var x_offset: u32 = 0;
+            var y_offset: u32 = 0;
+            var width: u32 = 0;
+            var height: u32 = 0;
+            var source_x: u32 = 0;
+            var source_y: u32 = 0;
+            var source_width: u32 = 0;
+            var source_height: u32 = 0;
+            var placement_id: u32 = 0;
+            const fields = [_]c.GhosttyRenderStateImageData{
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_IMAGE_ID,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_IMAGE_GENERATION,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_Z,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_VIEWPORT_COL,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_VIEWPORT_ROW,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_CELL_OFFSET_X,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_CELL_OFFSET_Y,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_PIXEL_WIDTH,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_PIXEL_HEIGHT,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_X,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_Y,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_WIDTH,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_HEIGHT,
+                c.GHOSTTY_RENDER_STATE_IMAGE_DATA_KITTY_PLACEMENT_ID,
+            };
+            var values = [_]?*anyopaque{
+                &image_id,
+                &image_generation,
+                &z,
+                &column,
+                &viewport_row,
+                &x_offset,
+                &y_offset,
+                &width,
+                &height,
+                &source_x,
+                &source_y,
+                &source_width,
+                &source_height,
+                &placement_id,
+            };
+            try check(api.render_state_image_get_multi(iterator, fields.len, &fields, &values, null));
+            if (width == 0 or height == 0) continue;
+            const top = @as(i64, viewport_row) * row_height + y_offset;
+            if (top >= edge + row_height or top + height <= edge) continue;
+            const handle = api.kitty_graphics_image(graphics, image_id) orelse continue;
+            _ = (try self.acquireImage(allocator, api, handle, image_generation)) orelse continue;
+            try self.placements.append(allocator, .{
+                .generation = image_generation,
+                .image_id = image_id,
+                .placement_id = placement_id,
+                .z = z,
+                .column = column,
+                .row = viewport_row - row,
+                .x_offset = x_offset,
+                .y_offset = y_offset,
+                .width = width,
+                .height = height,
+                .source_x = source_x,
+                .source_y = source_y,
+                .source_width = source_width,
+                .source_height = source_height,
+            });
+        }
+        self.finalizePlacements(allocator, generation);
+    }
+    fn resetForUpdate(self: *Snapshot) void {
+        self.valid = false;
+        self.placements.clearRetainingCapacity();
+        for (self.images.items) |*image| image.used = false;
+    }
+    fn acquireImage(self: *Snapshot, allocator: std.mem.Allocator, api: *const binding.Api, handle: c.GhosttyKittyGraphicsImage, image_generation: u64) !?*Image {
+        for (self.images.items) |*cached| {
+            if (cached.generation == image_generation) {
+                cached.used = true;
+                return cached;
+            }
+        }
+        // Reject a full working set before copying pixels, including repeated placements of an uncached image.
+        if (!self.makeRoom(allocator, 0)) return null;
+        const decoded = try readImage(allocator, api, handle, image_generation) orelse return null;
+        errdefer allocator.free(decoded.rgba);
+        // Old snapshots may coexist briefly with replacements, but never grow unbounded.
+        if (!self.makeRoom(allocator, decoded.rgba.len)) {
+            allocator.free(decoded.rgba);
+            return null;
+        }
+        try self.images.append(allocator, decoded);
+        const image = &self.images.items[self.images.items.len - 1];
+        image.used = true;
+        return image;
+    }
+    fn finalizePlacements(self: *Snapshot, allocator: std.mem.Allocator, generation: u64) void {
         var index: usize = 0;
         while (index < self.images.items.len) {
             if (self.images.items[index].used) {
@@ -171,13 +260,15 @@ fn readImage(allocator: std.mem.Allocator, api: *const binding.Api, handle: c.Gh
     var width: u32 = 0;
     var height: u32 = 0;
     var format: c.GhosttyKittyImageFormat = 0;
-    var length: usize = 0;
-    var data: [*c]const u8 = null;
-    try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_IMAGE_DATA_WIDTH, &width));
-    try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, &height));
-    try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_IMAGE_DATA_FORMAT, &format));
-    try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &length));
-    try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, @ptrCast(&data)));
+    var pixels: c.GhosttyString = .{ .ptr = null, .len = 0 };
+    try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH, &width));
+    try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT, &height));
+    try check(api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT, &format));
+    const pixel_res = api.kitty_graphics_image_get(handle, c.GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_PIXELS, &pixels);
+    if (pixel_res == c.GHOSTTY_NO_VALUE) return null;
+    try check(pixel_res);
+    const length = pixels.len;
+    const data = pixels.ptr;
     if (width == 0 or height == 0 or width > 8192 or height > 8192 or data == null) return null;
     const count = @as(usize, width) * height;
     if (count > storage_limit / 4) return null;

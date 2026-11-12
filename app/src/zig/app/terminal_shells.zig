@@ -8,30 +8,38 @@ const custom_profiles = @import("../shell/custom_profiles.zig");
 /// Refresh at startup, when opening shell-selection UI or validating an external configuration change.
 /// Modal updates reuse the snapshot so sliders and theme previews never scan PATH.
 pub fn discoverAvailableShells(self: *TerminalApplication) void {
+    defer self.shells_discovered = true;
     const system_directory = platform.systemDirectoryAlloc(self.allocator) catch null;
     defer if (system_directory) |dir| self.allocator.free(dir);
     var environment = platform.shellEnvironment(self.allocator) catch null;
     defer if (environment) |*env| env.deinit();
+
+    var programs: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (programs.items) |program| self.allocator.free(program);
+        programs.deinit(self.allocator);
+    }
+    var builtin_available = [_]bool{false} ** @typeInfo(shell.BuiltinShellProfile).@"enum".fields.len;
     if (system_directory) |sys_dir| if (environment) |*env| {
-        refreshShellCatalog(self, sys_dir, env) catch |err| self.fail(err);
+        resolveAndRefreshShellCatalog(self, sys_dir, env, &programs, &builtin_available) catch |err| self.fail(err);
     };
 
     const candidates = [_]shell.ShellKind{ .pwsh, .powershell, .cmd, .nu, .gitbash, .wsl };
     var count: u8 = 0;
     for (candidates) |candidate| {
         var available = candidate == self.launch.kind;
-        if (!available) if (system_directory) |sys_dir| if (environment) |*env_ptr| {
+        if (!available) {
             if (candidate == .wsl) {
-                if (shell.isWslLauncherAvailable(self.allocator, sys_dir) catch false) {
+                if (system_directory) |sys_dir| if (shell.isWslLauncherAvailable(self.allocator, sys_dir) catch false) {
                     if (wsl_registry.readDefaultWslDistributionAlloc(self.allocator)) |distro| {
                         self.allocator.free(distro.bytes);
                         available = true;
                     } else |_| {}
-                }
+                };
             } else if (candidate.builtinProfile()) |profile| {
-                available = shell.isBuiltinShellAvailable(self.allocator, profile, sys_dir, env_ptr) catch false;
+                available = builtin_available[@intFromEnum(profile)];
             }
-        };
+        }
         if (available and count < self.available_shells.len) {
             self.available_shells[count] = candidate;
             count += 1;
@@ -52,19 +60,22 @@ pub fn discoverAvailableShells(self: *TerminalApplication) void {
     self.available_shell_count = count;
 }
 
-fn refreshShellCatalog(self: *TerminalApplication, system_directory: []const u8, environment: *const std.process.EnvMap) !void {
-    var programs: std.ArrayList([]const u8) = .empty;
-    defer {
-        for (programs.items) |program| self.allocator.free(program);
-        programs.deinit(self.allocator);
-    }
+fn resolveAndRefreshShellCatalog(
+    self: *TerminalApplication,
+    system_directory: []const u8,
+    environment: *const std.process.EnvMap,
+    programs: *std.ArrayList([]const u8),
+    builtin_available: *[@typeInfo(shell.BuiltinShellProfile).@"enum".fields.len]bool,
+) !void {
     // Reserve the chooser's complete catalog so appending a resolved path cannot leak it.
     try programs.ensureTotalCapacity(self.allocator, 64);
     if (self.launch.isDeclaredShell()) programs.appendAssumeCapacity(try self.allocator.dupe(u8, self.launch.program));
     for (std.enums.values(shell.BuiltinShellProfile)) |profile| {
         if (profile == .system) continue;
-        if (try shell.resolveBuiltinProgram(self.allocator, profile, system_directory, environment)) |program|
+        if (try shell.resolveBuiltinProgram(self.allocator, profile, system_directory, environment)) |program| {
+            builtin_available[@intFromEnum(profile)] = true;
             programs.appendAssumeCapacity(program);
+        }
     }
     for (self.custom_shells.profiles.items) |profile| {
         // Linux executable roles come from the per-session WSL process probe.

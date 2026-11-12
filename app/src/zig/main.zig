@@ -6,6 +6,7 @@ const platform = @import("windows/windows_ffi.zig");
 pub fn main() void {
     platform.beginStartup();
     if (!platform.updateStartupAllowed()) return;
+    platform.prepareRenderer();
     // Keep leak diagnostics in development without paying their per-allocation cost in production.
     if (@import("builtin").mode != .Debug) {
         application.runApplication(std.heap.smp_allocator) catch |err| {

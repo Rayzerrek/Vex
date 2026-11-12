@@ -9,6 +9,7 @@ const shell = @import("../shell/shell_launch.zig");
 
 /// Builds a synchronous, copied presentation; terminal/session storage never escapes into native controls.
 pub fn presentTerminalModal(self: *Application) !void {
+    if (self.overlay == .settings or self.overlay == .shell_picker) self.ensureShellsDiscovered();
     var items: [64]native.DialogItem = undefined;
     var shells: [64]native.DialogItem = undefined;
     var count: usize = 0;

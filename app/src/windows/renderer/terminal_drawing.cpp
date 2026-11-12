@@ -353,6 +353,30 @@ static bool drawCustomGlyph(uint32_t cp, float x, float y, float w, float h, uin
     return false;
 }
 
+namespace {
+struct MeasuredAtlasLayout {
+    TerminalTextLayout layout;
+    IDWriteFactory* factory = nullptr;
+    IDWriteTextFormat* font = nullptr;
+    uint8_t text[256];
+    size_t length = 0;
+    float width = 0, height = 0;
+
+    bool matches(const uint8_t* utf8, size_t len, uint32_t flags, float w, float h) const {
+        return length && length == len && width == w && height == h &&
+            factory == textFactory && font == terminalFonts[flags & 3] &&
+            memcmp(text, utf8, len) == 0;
+    }
+    void reset() {
+        layout.reset();
+        factory = nullptr;
+        font = nullptr;
+        length = 0;
+    }
+};
+MeasuredAtlasLayout measuredAtlasLayout;
+}
+
 static HRESULT paintAtlasGlyph(ID2D1RenderTarget* raster, ID2D1SolidColorBrush* rasterBrush, const uint8_t* utf8, size_t length, uint32_t flags, float x, float y, float width, float height) {
     glyphTarget = raster; glyphBrush = rasterBrush;
     bool custom = false;
@@ -361,7 +385,13 @@ static HRESULT paintAtlasGlyph(ID2D1RenderTarget* raster, ID2D1SolidColorBrush* 
         custom = drawCustomGlyph(cp, x, y, width, height, 0xffffff);
     }
     glyphTarget = nullptr; glyphBrush = nullptr;
-    if (custom) return S_OK;
+    if (custom) { measuredAtlasLayout.reset(); return S_OK; }
+    if (measuredAtlasLayout.matches(utf8, length, flags, width, height)) {
+        rasterBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+        measuredAtlasLayout.layout.draw(raster, rasterBrush, x, y);
+        measuredAtlasLayout.reset();
+        return S_OK;
+    }
     TerminalTextLayout layout;
     const HRESULT result = layout.initialize(textFactory, terminalFonts[flags & 3], utf8, length, width, height);
     if (SUCCEEDED(result)) {
@@ -371,6 +401,20 @@ static HRESULT paintAtlasGlyph(ID2D1RenderTarget* raster, ID2D1SolidColorBrush* 
     return result;
 }
 static HRESULT measureAtlasGlyph(const uint8_t* utf8, size_t length, uint32_t flags, float width, float height, D2D1_RECT_F& bounds) {
+    if (length <= sizeof(measuredAtlasLayout.text)) {
+        measuredAtlasLayout.reset();
+        const HRESULT result = measuredAtlasLayout.layout.initialize(textFactory, terminalFonts[flags & 3], utf8, length, width, height);
+        if (SUCCEEDED(result)) {
+            bounds = measuredAtlasLayout.layout.bounds();
+            measuredAtlasLayout.factory = textFactory;
+            measuredAtlasLayout.font = terminalFonts[flags & 3];
+            measuredAtlasLayout.length = length;
+            measuredAtlasLayout.width = width;
+            measuredAtlasLayout.height = height;
+            memcpy(measuredAtlasLayout.text, utf8, length);
+        }
+        return result;
+    }
     TerminalTextLayout layout;
     const HRESULT result = layout.initialize(textFactory, terminalFonts[flags & 3], utf8, length, width, height);
     if (SUCCEEDED(result)) bounds = layout.bounds();
@@ -462,8 +506,10 @@ HRESULT drawLigature(float x, float y, const uint8_t* text, size_t length, uint3
 }
 }
 void clearTerminalDrawingFontCache() {
+    measuredAtlasLayout.reset();
     for (auto& entry : longLayouts) { entry.layout.reset(); entry.length = 0; entry.used = 0; }
     layoutClock = 0;
+    clearTerminalTypographyCache();
 }
 extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const uint8_t* utf8, size_t length, uint32_t foreground, uint32_t background, uint32_t flags) {
     const float x = gridLeft + column * cellWidth, y = gridTop + row * cellHeight, width = cells * cellWidth;
@@ -487,7 +533,10 @@ extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const
             if (end > start && SUCCEEDED(result)) result = drawLigature(x + (float)(i + start) * cellWidth, y, utf8 + i + start, end - start, flags, foreground);
             i += end;
         }
-    } else if (trimmed) result = renderer->terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph, 255, terminalCellGlyph(utf8, trimmed), terminalCellGlyph(utf8, trimmed) ? nullptr : measureAtlasGlyph);
+    } else if (trimmed) {
+        const bool cellAligned = terminalCellGlyph(utf8, trimmed);
+        result = renderer->terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph, 255, cellAligned, cellAligned ? nullptr : measureAtlasGlyph);
+    }
     if (SUCCEEDED(result) && (flags & 4)) result = renderer->terminal.drawSolid(x, y + cellHeight - 2, x + width, y + cellHeight - 1, foreground);
     if (SUCCEEDED(result) && (flags & 8)) result = renderer->terminal.drawSolid(x, y + cellHeight * 0.55f, x + width, y + cellHeight * 0.55f + 1, foreground);
     return (int)renderer->terminalResult(result);

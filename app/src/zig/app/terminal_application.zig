@@ -65,6 +65,7 @@ pub const TerminalApplication = struct {
     custom_shell_load_error: ?anyerror = null,
     available_shells: [63]shell.ShellKind = undefined,
     available_shell_count: u8 = 0,
+    shells_discovered: bool = false,
     sessions: std.ArrayList(*TerminalSession) = .empty,
     model: ?workspace.WorkspaceModel = null,
     placements: std.ArrayList(panes.PanePlacement) = .empty,
@@ -366,7 +367,7 @@ pub const TerminalApplication = struct {
         try settings.validate();
         const kind: shell.ShellKind = if (settings.default_shell == .startup) self.launch.kind else @enumFromInt(@intFromEnum(settings.default_shell));
         if (settings.default_shell != .startup and settings.default_shell != self.settings.default_shell) {
-            if (source == .lua or self.available_shell_count == 0) self.discoverAvailableShells();
+            if (source == .lua or !self.shells_discovered or self.available_shell_count == 0) self.discoverAvailableShells();
             var available = false;
             for (self.available_shells[0..self.available_shell_count]) |candidate| if (candidate == kind) {
                 available = true;
@@ -472,6 +473,9 @@ pub const TerminalApplication = struct {
     pub fn discoverAvailableShells(self: *TerminalApplication) void {
         terminal_shells.discoverAvailableShells(self);
     }
+    pub fn ensureShellsDiscovered(self: *TerminalApplication) void {
+        if (!self.shells_discovered) self.discoverAvailableShells();
+    }
     pub fn shellLabel(self: *const TerminalApplication, kind: shell.ShellKind) []const u8 {
         return terminal_shells.shellLabel(self, kind);
     }
@@ -557,7 +561,10 @@ pub const TerminalApplication = struct {
         };
     }
     fn initializeWorkspace(self: *TerminalApplication) !void {
-        self.discoverAvailableShells();
+        // Seed only the startup shell so workspace initialization avoids blocking on PATH/WSL probes.
+        self.available_shells[0] = self.default_shell_kind;
+        self.available_shell_count = 1;
+        self.shells_discovered = false;
         const first = try self.addHomeSessionWithKind(self.default_shell_kind);
         errdefer self.removeSession(first.id);
         self.model = try workspace.WorkspaceModel.init(self.allocator, first.id);
@@ -742,6 +749,7 @@ pub const TerminalApplication = struct {
             self.startup_preferences = .applied;
             dialogs.showSettingsLoadFailure(err, &self.settings_diagnostic, .startup);
         }
+        if (platform.paintCount() > 0) self.ensureShellsDiscovered();
         self.syncPathIndex() catch |err| {
             self.fail(err);
             return;

@@ -265,10 +265,19 @@ static bool forceWarpEnabled() {
     wchar_t warp[2];
     return selftestEnabled() && GetEnvironmentVariableW(L"VEX_NATIVE_WARP", warp, 2) == 1 && warp[0] == L'1';
 }
+static bool rendererPrepareStarted = false;
+static HRESULT rendererPrepareResult = S_OK;
+extern "C" void vex_window_prepare_renderer() {
+    if (rendererPrepareStarted) return;
+    rendererPrepareStarted = true;
+    rendererPrepareResult = renderer.prepareDeviceAsync(forceWarpEnabled());
+}
 static HRESULT releaseRenderer() {
     renderer.finishDevicePreparation();
     target = nullptr;
     rendererDebugMessages += renderer.debugErrorCount();
+    rendererPrepareStarted = false;
+    rendererPrepareResult = S_OK;
     return renderer.shutdown();
 }
 static void rendererFault(HRESULT result) {
@@ -622,8 +631,7 @@ static void renderScene(double timeMs, bool captureOpaque) {
     if (uiVerificationMode) renderUiVerificationScene();
 }
 
-static constexpr UINT_PTR startupPollTimer = 11;
-static_assert(startupPollTimer != tooltipTimer && startupPollTimer != windowsUpdateNoticeTimer && startupPollTimer != windowsUpdateTimer);
+static constexpr UINT rendererReadyMessage = WM_APP + 14;
 
 // Creating the GPU device takes hundreds of milliseconds; show a themed surface meanwhile so the
 // window appears immediately instead of the first paint blocking on the device worker.
@@ -645,7 +653,6 @@ static void paintStartupPlaceholder() {
         startupCloaked = false;
         startupMilestone("placeholder shown");
     }
-    SetTimer(window, startupPollTimer, 8, nullptr);
 }
 
 static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
@@ -696,6 +703,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
         }
         // Still discovered promptly, but only once the window is visible.
         checkWindowsUpdatesAutomatically();
+        vex_window_schedule_copy_check(20);
     }
     return SUCCEEDED(result);
 }
@@ -1367,16 +1375,14 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         if (wparam == 1) callbacks.action(callbacks.context, 20, 0);
         else if (refreshWindowsUpdate()) callbacks.action(callbacks.context, 20, 0);
         return 0;
+    case rendererReadyMessage:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
     case WM_CLIPBOARDUPDATE:
         clipboardRetries = 0;
         clipboardUpdated();
         return 0;
     case WM_TIMER:
-        if (wparam == startupPollTimer) {
-            KillTimer(hwnd, startupPollTimer);
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
         if (wparam == tooltipTimer) {
             KillTimer(hwnd, tooltipTimer); tooltipDeadline = 0;
             vex_window_invalidate();
@@ -1567,7 +1573,8 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
     callbacks = value;
     startupMilestone("application ready");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    HRESULT result = renderer.prepareDeviceAsync(forceWarpEnabled());
+    vex_window_prepare_renderer();
+    HRESULT result = rendererPrepareResult;
     if (SUCCEEDED(result)) result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &drawingFactory);
     if (FAILED(result)) { releaseRenderer(); return (int)result; }
     result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&textFactory);
@@ -1600,14 +1607,13 @@ extern "C" int vex_window_run(VexWindowCallbacks value) {
                 CW_USEDEFAULT, CW_USEDEFAULT, (int)(1120 * initialScale), (int)(700 * initialScale), nullptr, nullptr, klass.hInstance, nullptr);
             if (!window) platformError = (int)GetLastError();
             else {
+                renderer.setDeviceReadyNotification(window, rendererReadyMessage);
                 clipboardSequence = GetClipboardSequenceNumber();
                 clipboardListening = AddClipboardFormatListener(window) != FALSE;
                 initializeTerminalDialogs(window, callbacks);
                 initializeWindowsUpdates(window, selftestEnabled());
                 if (iconBig) SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconBig));
                 if (iconSmall) SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
-                MARGINS margins = { 0, 0, 0, 1 };
-                DwmExtendFrameIntoClientArea(window, &margins);
                 DWORD corner = 2; DwmSetWindowAttribute(window, 33, &corner, sizeof(corner));
                 applyWindowFrameTheme();
                 SetWindowPos(window, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);

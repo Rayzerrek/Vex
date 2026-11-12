@@ -38,15 +38,13 @@ test "Kitty direct RGB chunks survive every feed boundary and deletion releases 
         const image = api.kitty_graphics_image(graphics, 42) orelse return error.MissingKittyImage;
         var width: u32 = 0;
         var height: u32 = 0;
-        var length: usize = 0;
-        var pixels: [*c]const u8 = null;
-        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_IMAGE_DATA_WIDTH, &width));
-        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, &height));
-        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &length));
-        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, @ptrCast(&pixels)));
+        var pixels: c.GhosttyString = .{ .ptr = null, .len = 0 };
+        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH, &width));
+        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT, &height));
+        try binding.checkResult(api.kitty_graphics_image_get(image, c.GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_PIXELS, &pixels));
         try std.testing.expectEqual(@as(u32, 2), width);
         try std.testing.expectEqual(@as(u32, 1), height);
-        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 0, 255, 0 }, pixels[0..length]);
+        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 0, 255, 0 }, pixels.ptr[0..pixels.len]);
         // Uppercase I deletes both placements and the underlying image data.
         try terminal.feedOutput("\x1b_Ga=d,d=I,i=42\x1b\\");
         try binding.checkResult(api.terminal_get(terminal.handle, c.GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, @ptrCast(&graphics)));
@@ -72,7 +70,7 @@ test "Kitty snapshots reuse pixels, replace same-sized images, isolate screens a
     try std.testing.expectEqual(@as(usize, 1), frame.graphics.images.items.len);
     try std.testing.expectEqual(generation, frame.graphics.images.items[0].generation);
     try std.testing.expectEqual(pixels, frame.graphics.images.items[0].rgba.ptr);
-    try terminal.feedOutput("\x1b_Ga=t,f=24,s=2,v=1,i=42;AAAA////\x1b\\");
+    try terminal.feedOutput("\x1b_Ga=T,f=24,s=2,v=1,i=42,c=2,r=1;AAAA////\x1b\\");
     _ = try terminal.readFrame();
     try std.testing.expectEqual(@as(usize, 1), frame.graphics.images.items.len);
     try std.testing.expect(frame.graphics.images.items[0].generation != generation);
@@ -161,7 +159,7 @@ test "Kitty PNG decodes through WIC with straight alpha and malformed data stays
 }
 
 test "pinned sized structs and UTF-8/color/wide cells match the actual DLL" {
-    try std.testing.expectEqual(@as(usize, 72), @sizeOf(c.GhosttyStyle));
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(c.GhosttyStyle));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(c.GhosttyBuffer));
     try std.testing.expectEqual(@as(usize, 3), @sizeOf(c.GhosttyColorRgb));
     const api = try binding.Api.load();

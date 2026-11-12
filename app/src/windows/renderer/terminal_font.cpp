@@ -38,37 +38,68 @@ HRESULT createTerminalFonts(IDWriteFactory* factory, const wchar_t* family, floa
     return S_OK;
 }
 
+namespace {
+RendererComPtr<IDWriteTypography> cachedTypography;
+IDWriteFactory* cachedTypographyFactory = nullptr;
+
+bool isAscii7(const uint8_t* utf8, size_t length) {
+    for (size_t i = 0; i < length; ++i) {
+        if (utf8[i] >= 0x80) return false;
+    }
+    return true;
+}
+}
+
+void clearTerminalTypographyCache() {
+    cachedTypography.Reset();
+    cachedTypographyFactory = nullptr;
+}
+
 HRESULT TerminalTextLayout::initialize(IDWriteFactory* factory, IDWriteTextFormat* font, const uint8_t* utf8,
     size_t length, float width, float height) {
     if (!factory || !font || !utf8 || !length || length > 65536 || !isfinite(width) || !isfinite(height) || width <= 0 || height <= 0)
         return E_INVALIDARG;
     layout.Reset();
-    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(utf8), (int)length, nullptr, 0);
-    if (count <= 0) return HRESULT_FROM_WIN32(GetLastError());
     wchar_t scratch[4096];
-    auto text = count <= 4096 ? scratch : static_cast<wchar_t*>(HeapAlloc(GetProcessHeap(), 0, (size_t)count * sizeof(wchar_t)));
-    if (!text) return E_OUTOFMEMORY;
+    wchar_t* text = scratch;
+    int count = 0;
     HRESULT result = S_OK;
     uint32_t first = 0;
-    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(utf8), (int)length, text, count)) result = HRESULT_FROM_WIN32(GetLastError());
-    else {
+    if (length <= 4096 && isAscii7(utf8, length)) {
+        count = (int)length;
+        for (int i = 0; i < count; ++i) text[i] = utf8[i];
         first = text[0];
-        if (count > 1 && first >= 0xd800 && first <= 0xdbff && text[1] >= 0xdc00 && text[1] <= 0xdfff)
-            first = 0x10000 + ((first - 0xd800) << 10) + text[1] - 0xdc00;
         result = factory->CreateTextLayout(text, count, font, width, height, &layout);
+    } else {
+        count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(utf8), (int)length, nullptr, 0);
+        if (count <= 0) return HRESULT_FROM_WIN32(GetLastError());
+        text = count <= 4096 ? scratch : static_cast<wchar_t*>(HeapAlloc(GetProcessHeap(), 0, (size_t)count * sizeof(wchar_t)));
+        if (!text) return E_OUTOFMEMORY;
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(utf8), (int)length, text, count)) result = HRESULT_FROM_WIN32(GetLastError());
+        else {
+            first = text[0];
+            if (count > 1 && first >= 0xd800 && first <= 0xdbff && text[1] >= 0xdc00 && text[1] <= 0xdfff)
+                first = 0x10000 + ((first - 0xd800) << 10) + text[1] - 0xdc00;
+            result = factory->CreateTextLayout(text, count, font, width, height, &layout);
+        }
+        if (text != scratch) HeapFree(GetProcessHeap(), 0, text);
     }
-    if (text != scratch) HeapFree(GetProcessHeap(), 0, text);
     if (SUCCEEDED(result)) {
-        RendererComPtr<IDWriteTypography> typography;
-        result = factory->CreateTypography(&typography);
-        const DWRITE_FONT_FEATURE features[] = {
-            { DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES, 1 },
-            { DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_LIGATURES, 1 },
-            { DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES, 1 },
-            { DWRITE_FONT_FEATURE_TAG_KERNING, 0 },
-        };
-        for (const auto& feature : features) if (SUCCEEDED(result)) result = typography->AddFontFeature(feature);
-        if (SUCCEEDED(result)) result = layout->SetTypography(typography.Get(), { 0, (UINT32)count });
+        if (!cachedTypography || cachedTypographyFactory != factory) {
+            cachedTypography.Reset();
+            cachedTypographyFactory = nullptr;
+            result = factory->CreateTypography(&cachedTypography);
+            const DWRITE_FONT_FEATURE features[] = {
+                { DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES, 1 },
+                { DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_LIGATURES, 1 },
+                { DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES, 1 },
+                { DWRITE_FONT_FEATURE_TAG_KERNING, 0 },
+            };
+            for (const auto& feature : features) if (SUCCEEDED(result)) result = cachedTypography->AddFontFeature(feature);
+            if (SUCCEEDED(result)) cachedTypographyFactory = factory;
+            else cachedTypography.Reset();
+        }
+        if (SUCCEEDED(result)) result = layout->SetTypography(cachedTypography.Get(), { 0, (UINT32)count });
     }
     DWRITE_OVERHANG_METRICS overhang = {};
     if (SUCCEEDED(result)) result = layout->GetOverhangMetrics(&overhang);
@@ -280,24 +311,40 @@ struct SubstitutionCoverage {
 
 HRESULT TerminalLigatureMap::initialize(IDWriteFactory* factory, IDWriteTextFormat* const (&fonts)[4]) {
     TerminalLigatureMap next;
+    RendererComPtr<IDWriteFontCollection> systemCollection;
+    IDWriteFontCollection* cachedCollection = nullptr;
+    RendererComPtr<IDWriteFontFamily> cachedFamily;
+    wchar_t cachedFamilyName[128] = {};
+    BOOL cachedExists = FALSE;
+    UINT32 codepoints[95];
+    for (unsigned i = 0; i < 95; ++i) codepoints[i] = i + 32;
     for (unsigned style = 0; style < 4; ++style) {
-        RendererComPtr<IDWriteFontCollection> collection;
-        HRESULT result = fonts[style]->GetFontCollection(&collection);
-        if (SUCCEEDED(result) && !collection) result = factory->GetSystemFontCollection(&collection);
+        RendererComPtr<IDWriteFontCollection> fontCollection;
+        HRESULT result = fonts[style]->GetFontCollection(&fontCollection);
+        IDWriteFontCollection* activeCollection = fontCollection.Get();
+        if (SUCCEEDED(result) && !activeCollection) {
+            if (!systemCollection) result = factory->GetSystemFontCollection(&systemCollection);
+            activeCollection = systemCollection.Get();
+        }
         wchar_t familyName[128];
         if (SUCCEEDED(result)) result = fonts[style]->GetFontFamilyName(familyName, 128);
-        UINT32 familyIndex = 0; BOOL exists = FALSE;
-        if (SUCCEEDED(result)) result = collection->FindFamilyName(familyName, &familyIndex, &exists);
         if (FAILED(result)) return result;
-        if (!exists) { for (unsigned c = 32; c < 127; ++c) next.characters[style][c] = true; continue; }
-        RendererComPtr<IDWriteFontFamily> family;
+        if (!cachedFamily || activeCollection != cachedCollection || wcscmp(familyName, cachedFamilyName) != 0) {
+            UINT32 familyIndex = 0;
+            cachedExists = FALSE;
+            cachedFamily.Reset();
+            result = activeCollection->FindFamilyName(familyName, &familyIndex, &cachedExists);
+            if (SUCCEEDED(result) && cachedExists) result = activeCollection->GetFontFamily(familyIndex, &cachedFamily);
+            if (FAILED(result)) return result;
+            cachedCollection = activeCollection;
+            wcscpy_s(cachedFamilyName, familyName);
+        }
+        if (!cachedExists) { for (unsigned c = 32; c < 127; ++c) next.characters[style][c] = true; continue; }
         RendererComPtr<IDWriteFont> font;
         RendererComPtr<IDWriteFontFace> face;
-        result = collection->GetFontFamily(familyIndex, &family);
-        if (SUCCEEDED(result)) result = family->GetFirstMatchingFont(fonts[style]->GetFontWeight(), fonts[style]->GetFontStretch(), fonts[style]->GetFontStyle(), &font);
+        result = cachedFamily->GetFirstMatchingFont(fonts[style]->GetFontWeight(), fonts[style]->GetFontStretch(), fonts[style]->GetFontStyle(), &font);
         if (SUCCEEDED(result)) result = font->CreateFontFace(&face);
-        UINT32 codepoints[95]; UINT16 glyphs[95];
-        for (unsigned i = 0; i < 95; ++i) codepoints[i] = i + 32;
+        UINT16 glyphs[95];
         if (SUCCEEDED(result)) result = face->GetGlyphIndices(codepoints, 95, glyphs);
         const void* table = nullptr; UINT32 bytes = 0; void* context = nullptr; BOOL found = FALSE;
         if (SUCCEEDED(result)) result = face->TryGetFontTable(DWRITE_MAKE_OPENTYPE_TAG('G', 'S', 'U', 'B'), &table, &bytes, &context, &found);

@@ -29,3 +29,5 @@ private:
     D2D1_RECT_F ink = {};
     float factor = 1, stretchX = 1, offsetX = 0, offsetY = 0;
 };
+
+void clearTerminalTypographyCache();

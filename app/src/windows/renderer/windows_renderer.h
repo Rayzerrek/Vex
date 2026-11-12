@@ -17,6 +17,7 @@ public:
 
     // Only adapter/device/queue creation runs off-thread; HWND and D2D resources stay on the window thread.
     HRESULT prepareDeviceAsync(bool forceWarp);
+    void setDeviceReadyNotification(HWND hwnd, UINT message);
     HRESULT finishDevicePreparation();
     HRESULT initialize(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*) = nullptr, bool allowComposition = false);
     HRESULT resize(UINT width, UINT height, float dpi);
@@ -32,7 +33,7 @@ public:
     UiRenderer* drawingTarget() { return &ui; }
     bool ready() const { return swapChain.Get() != nullptr; }
     /// Non-blocking: lets the window stay responsive instead of joining the device worker on first paint.
-    bool devicePreparationFinished() const { return !deviceThread || WaitForSingleObject(deviceThread, 0) == WAIT_OBJECT_0; }
+    bool devicePreparationFinished() const { return !deviceThread || InterlockedCompareExchange(&devicePreparationComplete, 0, 0) != 0; }
     bool software() const { return ready() && usesWarp; }
     bool composition() const { return ready() && dcompTarget.Get() != nullptr; }
     UINT width() const { return pixelWidth; }
@@ -64,6 +65,9 @@ private:
     Frame frames[bufferCount];
     HANDLE fenceEvent = nullptr;
     HANDLE deviceThread = nullptr;
+    void* volatile deviceNotifyWindow = nullptr;
+    UINT deviceNotifyMessage = 0;
+    mutable volatile LONG devicePreparationComplete = 0;
     HRESULT devicePreparationResult = S_OK;
     bool devicePreparationRequested = false;
     bool deviceForceWarp = false;

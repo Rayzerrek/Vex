@@ -139,9 +139,22 @@ pub const Terminal = struct {
     scroll_guard: TerminalFrame = .{},
     scroll_guard_generation: ?u64 = null,
     scroll_guard_graphics_generation: u64 = 0,
+    guard_render_state: c.GhosttyRenderState = null,
+    guard_row_iterator: c.GhosttyRenderStateRowIterator = null,
+    guard_row_cells: c.GhosttyRenderStateRowCells = null,
+    guard_image_iterator: c.GhosttyRenderStateImageIterator = null,
     graphics_iterator: c.GhosttyKittyGraphicsPlacementIterator = null,
     grapheme: std.ArrayList(u8) = .empty,
     search_row: std.ArrayList(u8) = .empty,
+    prev_cells: std.ArrayList(TerminalCell) = .empty,
+    prev_utf8: std.ArrayList(u8) = .empty,
+    row_meta: std.ArrayList(CachedRowMeta) = .empty,
+    prev_row_meta: std.ArrayList(CachedRowMeta) = .empty,
+    prev_columns: u16 = 0,
+    prev_rows: u16 = 0,
+    prev_fg: u32 = 0,
+    prev_bg: u32 = 0,
+    prev_valid: bool = false,
     frame_valid: bool = false,
     feed_filter: feed.TerminalFeedFilter = .{},
     program_status: status.ProgramStatusTracker,
@@ -250,9 +263,17 @@ pub const Terminal = struct {
         self.api.render_state_row_cells_free(self.row_cells);
         self.api.render_state_row_iterator_free(self.row_iterator);
         self.api.render_state_free(self.render_state);
+        if (self.guard_image_iterator != null) self.api.render_state_image_iterator_free(self.guard_image_iterator);
+        if (self.guard_row_cells != null) self.api.render_state_row_cells_free(self.guard_row_cells);
+        if (self.guard_row_iterator != null) self.api.render_state_row_iterator_free(self.guard_row_iterator);
+        if (self.guard_render_state != null) self.api.render_state_free(self.guard_render_state);
         if (self.graphics_iterator != null) self.api.kitty_graphics_placement_iterator_free(self.graphics_iterator);
         self.api.terminal_free(self.handle);
         self.frame.deinit(self.allocator);
+        self.prev_cells.deinit(self.allocator);
+        self.prev_utf8.deinit(self.allocator);
+        self.row_meta.deinit(self.allocator);
+        self.prev_row_meta.deinit(self.allocator);
         self.scroll_guard.deinit(self.allocator);
         self.grapheme.deinit(self.allocator);
         self.search_row.deinit(self.allocator);
@@ -399,7 +420,6 @@ pub const Terminal = struct {
         self.kb_selection_active = false;
         self.optimistic_edit.active = false;
         var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
-        grid_ref.size = @sizeOf(c.GhosttyGridRef);
         const point: c.GhosttyPoint = .{
             .tag = c.GHOSTTY_POINT_TAG_VIEWPORT,
             .value = .{ .coordinate = .{ .x = column, .y = row } },
@@ -430,7 +450,6 @@ pub const Terminal = struct {
     /// Updates an active pointer selection gesture during mouse drag.
     pub fn selectionDrag(self: *Terminal, column: u16, row: u16, x_px: f64, y_px: f64) !void {
         var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
-        grid_ref.size = @sizeOf(c.GhosttyGridRef);
         const point: c.GhosttyPoint = .{
             .tag = c.GHOSTTY_POINT_TAG_VIEWPORT,
             .value = .{ .coordinate = .{ .x = column, .y = row } },
@@ -464,7 +483,6 @@ pub const Terminal = struct {
     /// Completes the active pointer selection gesture on mouse button release.
     pub fn selectionRelease(self: *Terminal, column: u16, row: u16) !void {
         var grid_ref = std.mem.zeroes(c.GhosttyGridRef);
-        grid_ref.size = @sizeOf(c.GhosttyGridRef);
         const point: c.GhosttyPoint = .{
             .tag = c.GHOSTTY_POINT_TAG_VIEWPORT,
             .value = .{ .coordinate = .{ .x = column, .y = row } },
@@ -716,16 +734,21 @@ pub const Terminal = struct {
     }
     /// Formats the active selection as UTF-8 plain text with soft-wrap unwrapping; returns null when no selection is active.
     pub fn selectedTextAlloc(self: *const Terminal, allocator: std.mem.Allocator, trim: bool) !?[]u8 {
-        const options: c.GhosttyTerminalSelectionFormatOptions = .{
-            .size = @sizeOf(c.GhosttyTerminalSelectionFormatOptions),
-            .emit = c.GHOSTTY_FORMATTER_FORMAT_PLAIN,
-            .unwrap = true,
-            .trim = trim,
-            .selection = null,
-        };
+        var selection = emptySelection();
+        const selection_result = self.api.terminal_get(self.handle, c.GHOSTTY_TERMINAL_DATA_SELECTION, &selection);
+        if (selection_result == c.GHOSTTY_NO_VALUE) return null;
+        try check(selection_result);
+        var formatter: c.GhosttyFormatter = null;
+        try check(self.api.formatter_terminal_new(null, &formatter, self.handle));
+        defer self.api.formatter_free(formatter);
+        const emit: c.GhosttyFormatterFormat = c.GHOSTTY_FORMATTER_FORMAT_PLAIN;
+        const unwrap = true;
+        try check(self.api.formatter_set(formatter, c.GHOSTTY_FORMATTER_OPT_EMIT, &emit));
+        try check(self.api.formatter_set(formatter, c.GHOSTTY_FORMATTER_OPT_UNWRAP, &unwrap));
+        try check(self.api.formatter_set(formatter, c.GHOSTTY_FORMATTER_OPT_TRIM, &trim));
+        try check(self.api.formatter_set(formatter, c.GHOSTTY_FORMATTER_OPT_SELECTION, &selection));
         var required: usize = 0;
-        const probe = self.api.terminal_selection_format_buf(self.handle, options, null, 0, &required);
-        if (probe == c.GHOSTTY_NO_VALUE) return null;
+        const probe = self.api.formatter_format_buf(formatter, null, 0, &required);
         if (probe != c.GHOSTTY_OUT_OF_SPACE and probe != c.GHOSTTY_SUCCESS) {
             try check(probe);
         }
@@ -734,7 +757,7 @@ pub const Terminal = struct {
         errdefer allocator.free(buffer);
         if (required == 0) return buffer;
         var written: usize = 0;
-        try check(self.api.terminal_selection_format_buf(self.handle, options, buffer.ptr, buffer.len, &written));
+        try check(self.api.formatter_format_buf(formatter, buffer.ptr, buffer.len, &written));
         if (written != buffer.len) return error.InvalidTerminalBufferLength;
         return buffer;
     }
@@ -765,21 +788,21 @@ pub const Terminal = struct {
     }
     /// Scroll changes invalidate the cached viewport without changing the live shell cursor.
     pub fn scroll(self: *Terminal, delta: i32) void {
-        self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
+        _ = self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA, .value = .{ .delta = delta } });
         self.kb_selection_active = false;
         self.optimistic_edit.active = false;
         self.frame_valid = false;
     }
     /// Scrolls the viewport to the oldest scrollback row and invalidates the cached snapshot.
     pub fn scrollToTop(self: *Terminal) void {
-        self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_TOP, .value = .{ .delta = 0 } });
+        _ = self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_TERMINAL_SCROLL_VIEWPORT_TOP, .value = .{ .delta = 0 } });
         self.kb_selection_active = false;
         self.optimistic_edit.active = false;
         self.frame_valid = false;
     }
     /// Scrolls the viewport back to the live bottom screen and invalidates the cached snapshot.
     pub fn scrollToBottom(self: *Terminal) void {
-        self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_SCROLL_VIEWPORT_BOTTOM, .value = .{ .delta = 0 } });
+        _ = self.api.terminal_scroll_viewport(self.handle, .{ .tag = c.GHOSTTY_TERMINAL_SCROLL_VIEWPORT_BOTTOM, .value = .{ .delta = 0 } });
         self.kb_selection_active = false;
         self.optimistic_edit.active = false;
         self.frame_valid = false;
@@ -863,7 +886,7 @@ pub const Terminal = struct {
     }
     /// Resets the mouse encoder's motion cell deduplication state.
     pub fn resetMouseEncoder(self: *Terminal) void {
-        self.api.mouse_encoder_reset(self.mouse_encoder);
+        _ = self.api.mouse_encoder_reset(self.mouse_encoder);
     }
     /// Encodes a pointer event into the active mouse protocol format; returns an empty slice when filtered out.
     pub fn encodeMouse(
@@ -880,17 +903,17 @@ pub const Terminal = struct {
         const tracking_mode: c.GhosttyMouseTrackingMode = @intFromEnum(try self.mouseTrackingMode());
         if (tracking_mode == c.GHOSTTY_MOUSE_TRACKING_NONE) return output[0..0];
         const format: c.GhosttyMouseFormat = @intFromEnum(try self.mouseFormat());
-        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_EVENT, &tracking_mode);
-        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_FORMAT, &format);
-        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &any_button_pressed);
-        self.api.mouse_event_set_action(self.mouse_event, @intFromEnum(action));
+        try check(self.api.mouse_encoder_set(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_EVENT, &tracking_mode));
+        try check(self.api.mouse_encoder_set(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_FORMAT, &format));
+        try check(self.api.mouse_encoder_set(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &any_button_pressed));
+        try check(self.api.mouse_event_set_action(self.mouse_event, @intFromEnum(action)));
         if (button == .none) {
-            self.api.mouse_event_clear_button(self.mouse_event);
+            try check(self.api.mouse_event_clear_button(self.mouse_event));
         } else {
-            self.api.mouse_event_set_button(self.mouse_event, @intFromEnum(button));
+            try check(self.api.mouse_event_set_button(self.mouse_event, @intFromEnum(button)));
         }
-        self.api.mouse_event_set_mods(self.mouse_event, @intCast(mods));
-        self.api.mouse_event_set_position(self.mouse_event, .{ .x = @max(0.0, x_px), .y = @max(0.0, y_px) });
+        try check(self.api.mouse_event_set_mods(self.mouse_event, @intCast(mods)));
+        try check(self.api.mouse_event_set_position(self.mouse_event, .{ .x = @max(0.0, x_px), .y = @max(0.0, y_px) }));
         var length: usize = 0;
         try check(self.api.mouse_encoder_encode(self.mouse_encoder, self.mouse_event, output.ptr, output.len, &length));
         if (length > output.len) return error.InvalidTerminalBufferLength;
@@ -953,15 +976,15 @@ pub const Terminal = struct {
             return output[0..count];
         }
         const key = physicalTerminalKey(virtual_key) orelse return null;
-        self.api.key_encoder_setopt_from_terminal(self.key_encoder, self.handle);
+        try check(self.api.key_encoder_set_from_terminal(self.key_encoder, self.handle));
         // ConPTY's input parser cannot carry Kitty CSI-u or modifyOtherKeys state-2 sequences.
         const kitty_flags: c.GhosttyKittyKeyFlags = c.GHOSTTY_KITTY_KEY_DISABLED;
         const modify_other_keys = false;
-        self.api.key_encoder_setopt(self.key_encoder, c.GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &kitty_flags);
-        self.api.key_encoder_setopt(self.key_encoder, c.GHOSTTY_KEY_ENCODER_OPT_MODIFY_OTHER_KEYS_STATE_2, &modify_other_keys);
-        self.api.key_event_set_action(self.key_event, c.GHOSTTY_KEY_ACTION_PRESS);
-        self.api.key_event_set_key(self.key_event, key);
-        self.api.key_event_set_mods(self.key_event, @intCast(mods));
+        try check(self.api.key_encoder_set(self.key_encoder, c.GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &kitty_flags));
+        try check(self.api.key_encoder_set(self.key_encoder, c.GHOSTTY_KEY_ENCODER_OPT_MODIFY_OTHER_KEYS_STATE_2, &modify_other_keys));
+        try check(self.api.key_event_set_action(self.key_event, c.GHOSTTY_KEY_ACTION_PRESS));
+        try check(self.api.key_event_set_key(self.key_event, key));
+        try check(self.api.key_event_set_mods(self.key_event, @intCast(mods)));
         var length: usize = 0;
         try check(self.api.key_encoder_encode(self.key_encoder, self.key_event, output.ptr, output.len, &length));
         if (length > output.len) return error.InvalidTerminalBufferLength;
@@ -993,68 +1016,129 @@ pub const Terminal = struct {
         self.frame_valid = false;
         var columns: u16 = 0;
         var rows: u16 = 0;
+        var foreground: c.GhosttyColorRgb = undefined;
+        var background: c.GhosttyColorRgb = undefined;
+        var iterator: c.GhosttyRenderStateRowIterator = self.row_iterator;
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLS, &columns);
         try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_ROWS, &rows);
         const count = try std.math.mul(usize, columns, rows);
         if (columns == 0 or rows == 0 or count > max_frame_cells) return error.TerminalFrameLimit;
+        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND, &foreground);
+        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND, &background);
+        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, @ptrCast(&iterator));
+        const fg_packed = packedRgb(foreground);
+        const bg_packed = packedRgb(background);
+        const can_reuse = self.prev_valid and
+            dirty == c.GHOSTTY_RENDER_STATE_DIRTY_PARTIAL and
+            columns == self.prev_columns and
+            rows == self.prev_rows and
+            fg_packed == self.prev_fg and
+            bg_packed == self.prev_bg and
+            self.prev_cells.items.len == count and
+            self.prev_row_meta.items.len == rows;
+        // Invalidate prev_valid before swapping/cleaning so any OOM mid-frame forces a full rebuild next time.
+        self.prev_valid = false;
+        if (can_reuse) {
+            std.mem.swap(std.ArrayList(TerminalCell), &self.frame.cells, &self.prev_cells);
+            std.mem.swap(std.ArrayList(u8), &self.frame.utf8, &self.prev_utf8);
+            std.mem.swap(std.ArrayList(CachedRowMeta), &self.row_meta, &self.prev_row_meta);
+        }
         try self.frame.cells.ensureTotalCapacity(self.allocator, count);
         self.frame.cells.clearRetainingCapacity();
         self.frame.utf8.clearRetainingCapacity();
-        var foreground: c.GhosttyColorRgb = undefined;
-        var background: c.GhosttyColorRgb = undefined;
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND, &foreground);
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND, &background);
-        var iterator: c.GhosttyRenderStateRowIterator = self.row_iterator;
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, @ptrCast(&iterator));
+        try self.row_meta.ensureTotalCapacity(self.allocator, rows);
+        self.row_meta.clearRetainingCapacity();
         // Unstyled, non-grapheme cells have no page-local style/grapheme references.
         // Share only these across rows, and discard the cache before the next snapshot.
         var plain_cache: CellCache = @splat(null);
         var row: usize = 0;
         while (self.api.render_state_row_iterator_next(self.row_iterator)) : (row += 1) {
             if (row >= rows) return error.InvalidTerminalRowCount;
+            const row_utf8_start = self.frame.utf8.items.len;
             var row_selection: c.GhosttyRenderStateRowSelection = .{
                 .size = @sizeOf(c.GhosttyRenderStateRowSelection),
                 .start_x = 0,
                 .end_x = 0,
             };
+            var row_id: c.GhosttyRenderStateRowId = .{ .bits = .{ 0, 0 } };
+            var has_row_selection = false;
+            var row_cells_needed = true;
             var cells: c.GhosttyRenderStateRowCells = self.row_cells;
             var raw_row: c.GhosttyRow = undefined;
-            const fields = [_]c.GhosttyRenderStateRowData{
-                c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
-                c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
-                c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
-            };
-            var values = [_]?*anyopaque{ &raw_row, @ptrCast(&cells), &row_selection };
-            var written: usize = 0;
-            // Optional selection is last: NO_VALUE must not hide an unread row or cell iterator.
-            const result = self.api.render_state_row_get_multi(self.row_iterator, fields.len, &fields, &values, &written);
-            const has_row_selection = if (result == c.GHOSTTY_NO_VALUE and written == 2) false else blk: {
-                try check(result);
-                if (written != fields.len) return error.InvalidTerminalRowData;
-                break :blk true;
-            };
-            var styled = true;
-            try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_STYLED, &styled));
-            // Styled cells remain page-local, even when the opaque raw values match.
-            var cell_cache: CellCache = if (styled) @splat(null) else undefined;
-            const cache = if (styled) &cell_cache else &plain_cache;
-            var style_cache: StyleCache = if (styled) @splat(null) else undefined;
-            var column: usize = 0;
-            while (self.api.render_state_row_cells_next(self.row_cells)) : (column += 1) {
-                if (column >= columns) return error.InvalidTerminalColumnCount;
-                var cell = try self.readCachedCell(foreground, background, cache, if (styled) &style_cache else null);
-                cell.selected = has_row_selection and column >= row_selection.start_x and column <= row_selection.end_x;
-                self.frame.cells.appendAssumeCapacity(cell);
+            if (can_reuse) {
+                var row_dirty = true;
+                const check_fields = [_]c.GhosttyRenderStateRowData{
+                    c.GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
+                    c.GHOSTTY_RENDER_STATE_ROW_DATA_ID,
+                    c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
+                };
+                var check_values = [_]?*anyopaque{ &row_dirty, &row_id, &row_selection };
+                var written: usize = 0;
+                const check_result = self.api.render_state_row_get_multi(self.row_iterator, check_fields.len, &check_fields, &check_values, &written);
+                has_row_selection = if (check_result == c.GHOSTTY_NO_VALUE and written == 2) false else blk: {
+                    try check(check_result);
+                    if (written != check_fields.len) return error.InvalidTerminalRowData;
+                    break :blk true;
+                };
+                const prev_meta = self.prev_row_meta.items[row];
+                if (!row_dirty and row_id.bits[0] == prev_meta.id.bits[0] and row_id.bits[1] == prev_meta.id.bits[1]) {
+                    if (prev_meta.utf8_len > max_frame_text_bytes - row_utf8_start) return error.TerminalFrameTextLimit;
+                    try self.frame.utf8.appendSlice(self.allocator, self.prev_utf8.items[prev_meta.utf8_start .. prev_meta.utf8_start + prev_meta.utf8_len]);
+                    const src_cells_start = row * columns;
+                    const dst_cells_start = self.frame.cells.items.len;
+                    self.frame.cells.appendSliceAssumeCapacity(self.prev_cells.items[src_cells_start .. src_cells_start + columns]);
+                    const copied = self.frame.cells.items[dst_cells_start .. dst_cells_start + columns];
+                    for (copied, 0..) |*cell, col| {
+                        if (cell.text_length > 0) {
+                            cell.text_start = @intCast(row_utf8_start + (@as(usize, cell.text_start) - prev_meta.utf8_start));
+                        }
+                        cell.selected = has_row_selection and col >= row_selection.start_x and col <= row_selection.end_x;
+                    }
+                    self.row_meta.appendAssumeCapacity(.{
+                        .id = row_id,
+                        .utf8_start = row_utf8_start,
+                        .utf8_len = self.frame.utf8.items.len - row_utf8_start,
+                    });
+                    row_cells_needed = false;
+                } else {
+                    const row_fields = [_]c.GhosttyRenderStateRowData{
+                        c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                        c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                    };
+                    var row_values = [_]?*anyopaque{ &raw_row, @ptrCast(&cells) };
+                    try check(self.api.render_state_row_get_multi(self.row_iterator, row_fields.len, &row_fields, &row_values, null));
+                }
+            } else {
+                const fields = [_]c.GhosttyRenderStateRowData{
+                    c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                    c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                    c.GHOSTTY_RENDER_STATE_ROW_DATA_ID,
+                    c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
+                };
+                var values = [_]?*anyopaque{ &raw_row, @ptrCast(&cells), &row_id, &row_selection };
+                var written: usize = 0;
+                // Optional selection is last: NO_VALUE must not hide an unread row or cell iterator.
+                const result = self.api.render_state_row_get_multi(self.row_iterator, fields.len, &fields, &values, &written);
+                has_row_selection = if (result == c.GHOSTTY_NO_VALUE and written == 3) false else blk: {
+                    try check(result);
+                    if (written != fields.len) return error.InvalidTerminalRowData;
+                    break :blk true;
+                };
             }
-            if (column != columns) return error.InvalidTerminalColumnCount;
-            const clean = false;
-            try check(self.api.render_state_row_set(self.row_iterator, c.GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &clean));
+            if (row_cells_needed) {
+                try self.readRowCells(raw_row, self.row_cells, columns, foreground, background, &plain_cache, has_row_selection, row_selection, &self.frame.cells, &self.frame.utf8, row_utf8_start);
+                self.row_meta.appendAssumeCapacity(.{
+                    .id = row_id,
+                    .utf8_start = row_utf8_start,
+                    .utf8_len = self.frame.utf8.items.len - row_utf8_start,
+                });
+            }
         }
         if (row != rows or self.frame.cells.items.len != count) return error.InvalidTerminalRowCount;
-        const clean: c.GhosttyRenderStateDirty = c.GHOSTTY_RENDER_STATE_DIRTY_FALSE;
-        try check(self.api.render_state_set(self.render_state, c.GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean));
+        try check(self.api.render_state_clean(self.render_state));
         self.frame.columns = columns;
         self.frame.rows = rows;
+        var applied_optimistic_edit = false;
         if (self.optimistic_edit.active) {
             const alt = try self.isAlternateScreen();
             const sb = try self.scrollbar();
@@ -1063,46 +1147,108 @@ pub const Terminal = struct {
                 self.optimistic_edit.active = false;
             } else {
                 try self.optimistic_edit.applyToFrame(self.allocator, &self.frame);
+                applied_optimistic_edit = true;
             }
         }
+        self.prev_columns = columns;
+        self.prev_rows = rows;
+        self.prev_fg = fg_packed;
+        self.prev_bg = bg_packed;
+        self.prev_valid = !applied_optimistic_edit;
         self.frame.generation = try std.math.add(u64, self.frame.generation, 1);
         self.frame_valid = true;
         return &self.frame;
     }
-    /// One extra row fills the exposed bottom edge of a fractional scroll. Cache it
-    /// until the viewport snapshot changes, not once per animation frame.
+    fn ensureGuardRenderState(self: *Terminal) !void {
+        if (self.guard_render_state == null) {
+            var state: c.GhosttyRenderState = null;
+            try check(self.api.render_state_new(null, &state));
+            const handle = state orelse return error.TerminalNullHandle;
+            errdefer self.api.render_state_free(handle);
+            const overscan: c.GhosttyRenderStateOverscan = .{ .above = 0, .below = 1 };
+            try check(self.api.render_state_set(handle, c.GHOSTTY_RENDER_STATE_OPT_OVERSCAN, &overscan));
+            self.guard_render_state = handle;
+        }
+        if (self.guard_row_iterator == null) {
+            var iter: c.GhosttyRenderStateRowIterator = null;
+            try check(self.api.render_state_row_iterator_new(null, &iter));
+            self.guard_row_iterator = iter orelse return error.TerminalNullHandle;
+        }
+        if (self.guard_row_cells == null) {
+            var cells: c.GhosttyRenderStateRowCells = null;
+            try check(self.api.render_state_row_cells_new(null, &cells));
+            self.guard_row_cells = cells orelse return error.TerminalNullHandle;
+        }
+        if (self.guard_image_iterator == null) {
+            var iter: c.GhosttyRenderStateImageIterator = null;
+            try check(self.api.render_state_image_iterator_new(null, &iter));
+            self.guard_image_iterator = iter orelse return error.TerminalNullHandle;
+        }
+    }
+    /// One extra row fills the exposed bottom edge of a fractional scroll. Read only the overscan row
+    /// below the viewport and cache until the viewport snapshot changes.
     pub fn readScrollGuard(self: *Terminal) !?*const TerminalFrame {
         const base = try self.readFrame();
         const info = try self.scrollbar();
         if (info.offset >= info.scrollable()) return null;
         if (self.scroll_guard_generation == base.generation and self.scroll_guard_graphics_generation == base.graphics.generation) return &self.scroll_guard;
         self.scroll_guard_generation = null;
-        const keyboard_selection = self.kb_selection_active;
-        defer self.kb_selection_active = keyboard_selection;
-        errdefer self.scrollToRow(info.offset) catch {};
-        try self.scrollToRow(info.offset + 1);
-        const next = try self.readFrame();
-        const columns = next.columns;
-        const cells = next.cells.items[(@as(usize, next.rows) - 1) * columns ..][0..columns];
+        try self.ensureGuardRenderState();
+        const guard_state = self.guard_render_state.?;
+        try check(self.api.render_state_update(guard_state, self.handle));
+        defer _ = self.api.render_state_clean(guard_state);
+        var columns: u16 = 0;
+        var foreground: c.GhosttyColorRgb = undefined;
+        var background: c.GhosttyColorRgb = undefined;
+        var row_iterator = self.guard_row_iterator.?;
+        try check(self.api.render_state_get(guard_state, c.GHOSTTY_RENDER_STATE_DATA_COLS, &columns));
+        if (columns == 0 or columns != base.columns) return error.InvalidTerminalColumnCount;
+        try check(self.api.render_state_get(guard_state, c.GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND, &foreground));
+        try check(self.api.render_state_get(guard_state, c.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND, &background));
+        try check(self.api.render_state_get(guard_state, c.GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, @ptrCast(&row_iterator)));
+        const target_y: i32 = @intCast(base.rows);
         try self.scroll_guard.cells.ensureTotalCapacity(self.allocator, columns);
         self.scroll_guard.cells.clearRetainingCapacity();
         self.scroll_guard.utf8.clearRetainingCapacity();
-        for (cells) |cell| {
-            var copy = cell;
-            copy.text_start = @intCast(self.scroll_guard.utf8.items.len);
-            try self.scroll_guard.utf8.appendSlice(self.allocator, next.cellText(cell));
-            self.scroll_guard.cells.appendAssumeCapacity(copy);
+        var found = false;
+        while (self.api.render_state_row_iterator_next(row_iterator)) {
+            var viewport_y: i32 = -1;
+            try check(self.api.render_state_row_get(row_iterator, c.GHOSTTY_RENDER_STATE_ROW_DATA_VIEWPORT_Y, &viewport_y));
+            if (viewport_y != target_y) continue;
+            var raw_row: c.GhosttyRow = undefined;
+            var cells = self.guard_row_cells.?;
+            var row_selection: c.GhosttyRenderStateRowSelection = .{
+                .size = @sizeOf(c.GhosttyRenderStateRowSelection),
+                .start_x = 0,
+                .end_x = 0,
+            };
+            const fields = [_]c.GhosttyRenderStateRowData{
+                c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                c.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                c.GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
+            };
+            var values = [_]?*anyopaque{ &raw_row, @ptrCast(&cells), &row_selection };
+            var written: usize = 0;
+            const result = self.api.render_state_row_get_multi(row_iterator, fields.len, &fields, &values, &written);
+            const has_row_selection = if (result == c.GHOSTTY_NO_VALUE and written == 2) false else blk: {
+                try check(result);
+                if (written != fields.len) return error.InvalidTerminalRowData;
+                break :blk true;
+            };
+            var plain_cache: CellCache = @splat(null);
+            try self.readRowCells(raw_row, self.guard_row_cells.?, columns, foreground, background, &plain_cache, has_row_selection, row_selection, &self.scroll_guard.cells, &self.scroll_guard.utf8, 0);
+            found = true;
+            break;
         }
-        try self.scroll_guard.graphics.updateRow(self.allocator, self.api, self.handle, &self.graphics_iterator, @as(i32, next.rows) - 1, self.cell_height_px);
+        if (!found or self.scroll_guard.cells.items.len != columns) return error.InvalidTerminalRowCount;
+        try self.scroll_guard.graphics.updateRowFromRenderState(self.allocator, self.api, self.handle, guard_state, self.guard_image_iterator.?, target_y, self.cell_height_px);
         self.scroll_guard.columns = columns;
         self.scroll_guard.rows = 1;
-        self.scroll_guard.cell_width_px = next.cell_width_px;
-        self.scroll_guard.cell_height_px = next.cell_height_px;
+        self.scroll_guard.cell_width_px = base.cell_width_px;
+        self.scroll_guard.cell_height_px = base.cell_height_px;
         self.scroll_guard.generation +|= 1;
-        try self.scrollToRow(info.offset);
-        const restored = try self.readFrame();
-        self.scroll_guard_generation = restored.generation;
-        self.scroll_guard_graphics_generation = restored.graphics.generation;
+        self.scroll_guard_generation = base.generation;
+        self.scroll_guard_graphics_generation = base.graphics.generation;
         return &self.scroll_guard;
     }
     /// Viewport search is for diagnostics; it shares the renderer's parsed snapshot, not raw PTY bytes.
@@ -1124,51 +1270,93 @@ pub const Terminal = struct {
         try check(self.api.render_state_get(self.render_state, field, output));
     }
     fn readCursor(self: *Terminal) !TerminalCursor {
+        var raw_cursor: c.GhosttyRenderStateCursor = .{ .size = @sizeOf(c.GhosttyRenderStateCursor) };
+        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR, &raw_cursor);
         var cursor: TerminalCursor = .{};
-        var in_viewport = false;
-        var shape: c.GhosttyRenderStateCursorVisualStyle = 0;
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE, &cursor.visible);
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING, &cursor.blinking);
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE, &in_viewport);
-        try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, &shape);
-        cursor.shape = switch (shape) {
-            0 => .bar,
-            1 => .block,
-            2 => .underline,
-            3 => .hollow,
+        cursor.shape = switch (raw_cursor.visual_style) {
+            c.GHOSTTY_CURSOR_STYLE_BAR => .bar,
+            c.GHOSTTY_CURSOR_STYLE_BLOCK => .block,
+            c.GHOSTTY_CURSOR_STYLE_UNDERLINE => .underline,
+            c.GHOSTTY_CURSOR_STYLE_BLOCK_HOLLOW => .hollow,
             else => return error.InvalidTerminalCursorShape,
         };
-        cursor.in_viewport = in_viewport;
-        cursor.visible = cursor.visible and in_viewport;
-        if (in_viewport) {
-            try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, &cursor.column);
-            try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, &cursor.row);
-            try self.getRender(c.GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL, &cursor.wide_tail);
+        cursor.blinking = raw_cursor.blinking;
+        cursor.in_viewport = raw_cursor.viewport_has_value;
+        cursor.visible = raw_cursor.visible and raw_cursor.viewport_has_value;
+        if (raw_cursor.viewport_has_value) {
+            cursor.column = raw_cursor.viewport_x;
+            cursor.row = raw_cursor.viewport_y;
+            cursor.wide_tail = raw_cursor.wide_tail;
         }
         return cursor;
     }
     const cell_cache_bits = 6;
     const CellCache = [1 << cell_cache_bits]?CachedRenderCell;
     const CachedRenderCell = struct { raw: c.GhosttyCell, cell: TerminalCell };
+    const CachedRowMeta = struct { id: c.GhosttyRenderStateRowId, utf8_start: usize, utf8_len: usize };
     const CachedStyle = struct { id: u16, style: TextStyle, inverse: bool, faint: bool };
     const StyleCache = [32]?CachedStyle;
 
-    fn readCachedCell(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *CellCache, style_cache: ?*StyleCache) !TerminalCell {
+    fn readRowCells(
+        self: *Terminal,
+        raw_row: c.GhosttyRow,
+        row_cells: c.GhosttyRenderStateRowCells,
+        columns: u16,
+        default_fg: c.GhosttyColorRgb,
+        default_bg: c.GhosttyColorRgb,
+        plain_cache: *CellCache,
+        has_row_selection: bool,
+        row_selection: c.GhosttyRenderStateRowSelection,
+        target_cells: *std.ArrayList(TerminalCell),
+        target_utf8: *std.ArrayList(u8),
+        row_utf8_start: usize,
+    ) !void {
+        var styled = true;
+        try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_STYLED, &styled));
+        // Styled cells remain page-local, even when the opaque raw values match.
+        var cell_cache: CellCache = if (styled) @splat(null) else undefined;
+        const cache = if (styled) &cell_cache else plain_cache;
+        var style_cache: StyleCache = if (styled) @splat(null) else undefined;
+        var column: usize = 0;
+        while (self.api.render_state_row_cells_next(row_cells)) : (column += 1) {
+            if (column >= columns) return error.InvalidTerminalColumnCount;
+            var cell = try self.readCachedCell(row_cells, target_utf8, row_utf8_start, default_fg, default_bg, cache, if (styled) &style_cache else null);
+            cell.selected = has_row_selection and column >= row_selection.start_x and column <= row_selection.end_x;
+            target_cells.appendAssumeCapacity(cell);
+        }
+        if (column != columns) return error.InvalidTerminalColumnCount;
+    }
+    fn readCachedCell(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, target_utf8: *std.ArrayList(u8), row_utf8_start: usize, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *CellCache, style_cache: ?*StyleCache) !TerminalCell {
         var raw: c.GhosttyCell = undefined;
-        try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
+        try check(self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
         // This direct-mapped cache needs only a slot, not full avalanche hashing.
         const slot = &cache[(raw *% 0x9e3779b97f4a7c15) >> (@bitSizeOf(c.GhosttyCell) - cell_cache_bits)];
         if (slot.*) |cached| {
-            if (cached.raw == raw) return cached.cell;
+            if (cached.raw == raw) {
+                var cell = cached.cell;
+                if (cell.text_length > 0 and cell.text_start < row_utf8_start) {
+                    // Keep each row's UTF-8 slice self-contained so clean rows can be copied on partial updates.
+                    const start = target_utf8.items.len;
+                    const len: usize = cell.text_length;
+                    if (len > max_frame_text_bytes - start) return error.TerminalFrameTextLimit;
+                    const src_start: usize = cell.text_start;
+                    try target_utf8.ensureUnusedCapacity(self.allocator, len);
+                    const src = target_utf8.items[src_start .. src_start + len];
+                    target_utf8.appendSliceAssumeCapacity(src);
+                    cell.text_start = @intCast(start);
+                    slot.*.?.cell.text_start = cell.text_start;
+                }
+                return cell;
+            }
         }
-        const cell = try self.readCell(raw, default_fg, default_bg, style_cache);
+        const cell = try self.readCell(row_cells, target_utf8, raw, default_fg, default_bg, style_cache);
         var tag: c.GhosttyCellContentTag = undefined;
         try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_CONTENT_TAG, &tag));
         // Grapheme extras live outside the opaque raw value and may differ for equal raw cells.
         if (tag != c.GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME) slot.* = .{ .raw = raw, .cell = cell };
         return cell;
     }
-    fn readCell(self: *Terminal, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, style_cache: ?*StyleCache) !TerminalCell {
+    fn readCell(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, target_utf8: *std.ArrayList(u8), raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, style_cache: ?*StyleCache) !TerminalCell {
         var wide: c.GhosttyCellWide = undefined;
         try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_WIDE, &wide));
         const width: CellWidth = switch (wide) {
@@ -1179,18 +1367,18 @@ pub const Terminal = struct {
             else => return error.InvalidTerminalCellWidth,
         };
         const style = if (style_cache) |cache|
-            try self.readCachedStyle(raw, default_fg, default_bg, cache)
+            try self.readCachedStyle(row_cells, raw, default_fg, default_bg, cache)
         else
-            try self.readUnstyledCellStyle(default_fg, default_bg);
+            try self.readUnstyledCellStyle(row_cells, default_fg, default_bg);
         var scratch: [128]u8 = undefined;
         var text: c.GhosttyBuffer = .{ .ptr = &scratch, .cap = scratch.len, .len = 0 };
-        const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text);
+        const result = self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text);
         const bytes: []const u8 = if (result == c.GHOSTTY_OUT_OF_SPACE) blk: {
             if (text.len > max_grapheme_bytes) return error.TerminalGraphemeLimit;
             try self.grapheme.resize(self.allocator, text.len);
             text.ptr = self.grapheme.items.ptr;
             text.cap = self.grapheme.items.len;
-            try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text));
+            try check(self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &text));
             if (text.len > self.grapheme.items.len) return error.InvalidTerminalBufferLength;
             break :blk self.grapheme.items[0..text.len];
         } else blk: {
@@ -1199,27 +1387,35 @@ pub const Terminal = struct {
             break :blk scratch[0..text.len];
         };
         if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidTerminalUtf8;
-        const start = self.frame.utf8.items.len;
+        if (bytes.len == 0) return .{ .width = width, .style = style, .text_start = 0, .text_length = 0 };
+        const start = target_utf8.items.len;
         if (bytes.len > max_frame_text_bytes - start) return error.TerminalFrameTextLimit;
-        try self.frame.utf8.appendSlice(self.allocator, bytes);
+        try target_utf8.appendSlice(self.allocator, bytes);
         return .{ .width = width, .style = style, .text_start = @intCast(start), .text_length = @intCast(bytes.len) };
     }
-    fn readCachedStyle(self: *Terminal, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *StyleCache) !TextStyle {
+    fn readCachedStyle(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, raw: c.GhosttyCell, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb, cache: *StyleCache) !TextStyle {
         var id: u16 = 0;
         try check(self.api.cell_get(raw, c.GHOSTTY_CELL_DATA_STYLE_ID, &id));
         const slot = &cache[id % cache.len];
         if (slot.* == null or slot.*.?.id != id) {
             var foreground = default_fg;
-            const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &foreground);
-            if (result == c.GHOSTTY_INVALID_VALUE) foreground = default_fg else try check(result);
+            const result = self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &foreground);
+            if (result == c.GHOSTTY_NO_VALUE) foreground = default_fg else try check(result);
             var style = std.mem.zeroes(c.GhosttyStyle);
-            style.size = @sizeOf(c.GhosttyStyle);
-            try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style));
+            try check(self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style));
             slot.* = .{
                 .id = id,
-                .style = .{ .foreground = packedRgb(foreground), .background = 0, .bold = style.bold, .italic = style.italic, .underline = style.underline != 0, .strikethrough = style.strikethrough, .invisible = style.invisible },
-                .inverse = style.inverse,
-                .faint = style.faint,
+                .style = .{
+                    .foreground = packedRgb(foreground),
+                    .background = 0,
+                    .bold = (style.flags & c.GHOSTTY_STYLE_FLAG_BOLD) != 0,
+                    .italic = (style.flags & c.GHOSTTY_STYLE_FLAG_ITALIC) != 0,
+                    .underline = (style.flags & c.GHOSTTY_STYLE_UNDERLINE_MASK) != 0,
+                    .strikethrough = (style.flags & c.GHOSTTY_STYLE_FLAG_STRIKETHROUGH) != 0,
+                    .invisible = (style.flags & c.GHOSTTY_STYLE_FLAG_INVISIBLE) != 0,
+                },
+                .inverse = (style.flags & c.GHOSTTY_STYLE_FLAG_INVERSE) != 0,
+                .faint = (style.flags & c.GHOSTTY_STYLE_FLAG_FAINT) != 0,
             };
         }
         const cached = slot.*.?;
@@ -1227,8 +1423,8 @@ pub const Terminal = struct {
         // Content backgrounds can differ for equal style IDs. Resolve them per cell,
         // and apply inverse/faint only afterwards; the cache never crosses a row.
         var background = default_bg;
-        const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
-        if (result == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(result);
+        const result = self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
+        if (result == c.GHOSTTY_NO_VALUE) background = default_bg else try check(result);
         if (cached.inverse) std.mem.swap(c.GhosttyColorRgb, &foreground, &background);
         if (cached.faint) {
             foreground.r = @intCast((@as(u16, foreground.r) + background.r) / 2);
@@ -1240,12 +1436,12 @@ pub const Terminal = struct {
         style.background = packedRgb(background);
         return style;
     }
-    fn readUnstyledCellStyle(self: *Terminal, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TextStyle {
+    fn readUnstyledCellStyle(self: *Terminal, row_cells: c.GhosttyRenderStateRowCells, default_fg: c.GhosttyColorRgb, default_bg: c.GhosttyColorRgb) !TextStyle {
         // Erased cells can carry a background in their content even without a style.
         // Only foreground and decorations are implied by the public unstyled flag.
         var background = default_bg;
-        const result = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
-        if (result == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(result);
+        const result = self.api.render_state_row_cells_get(row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
+        if (result == c.GHOSTTY_NO_VALUE) background = default_bg else try check(result);
         return .{ .foreground = packedRgb(default_fg), .background = packedRgb(background) };
     }
     pub fn applyPalette(self: *Terminal, foreground_rgb: u32, background_rgb: u32, cursor_rgb: u32, ansi: *const [16]u32) !void {
@@ -1273,7 +1469,7 @@ pub const Terminal = struct {
         self.api.terminal_vt_write(self.handle, reset_colors.ptr, reset_colors.len);
         // Palette changes must refresh resolved colors even when the PTY is idle.
         const dirty: c.GhosttyRenderStateDirty = c.GHOSTTY_RENDER_STATE_DIRTY_FULL;
-        try check(self.api.render_state_set(self.render_state, c.GHOSTTY_RENDER_STATE_OPTION_DIRTY, &dirty));
+        try check(self.api.render_state_set(self.render_state, c.GHOSTTY_RENDER_STATE_OPT_DIRTY, &dirty));
         self.frame_valid = false;
     }
     fn configureDefaults(self: *Terminal) !void {
@@ -1287,7 +1483,7 @@ pub const Terminal = struct {
         try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_BEHAVIORS, &behaviors));
         try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_INTERVAL_NS, &repeat_interval_ns));
         try check(self.api.selection_gesture_event_set(self.press_event, c.GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_DISTANCE, &repeat_distance));
-        const cursor_style: c.GhosttyTerminalCursorStyle = c.GHOSTTY_TERMINAL_CURSOR_STYLE_BAR;
+        const cursor_style: c.GhosttyCursorStyle = c.GHOSTTY_CURSOR_STYLE_BAR;
         const cursor_blink = true;
         // ConPTY maintains no scrollback buffer and leaves newly grown rows blank on resize.
         const pull_scrollback = false;
@@ -1301,7 +1497,7 @@ pub const Terminal = struct {
         const ansi = [_]u32{ 0x282c34, 0xff5a5a, 0x5af05a, 0xf0d25a, 0x5a5aff, 0xf05af0, 0x5af0f0, 0xe4e4e7, 0x3d4354, 0xff8c8c, 0x8cff8c, 0xffe68c, 0x8c8cff, 0xff8cff, 0x8cffff, 0xffffff };
         try self.applyPalette(0xe4e4e7, 0x282c34, 0xe4e4e7, &ansi);
         const track_last_cell = true;
-        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL, &track_last_cell);
+        try check(self.api.mouse_encoder_set(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL, &track_last_cell));
         self.updateMouseEncoderSize(80, 24, self.cell_width_px, self.cell_height_px);
     }
     fn updateMouseEncoderSize(self: *Terminal, columns: u16, rows: u16, cell_width_px: u32, cell_height_px: u32) void {
@@ -1313,7 +1509,7 @@ pub const Terminal = struct {
         size.screen_height = @max(1, @as(u32, rows) * ch);
         size.cell_width = cw;
         size.cell_height = ch;
-        self.api.mouse_encoder_setopt(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
+        _ = self.api.mouse_encoder_set(self.mouse_encoder, c.GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
     }
 };
 
@@ -1372,55 +1568,75 @@ fn directoryChanged(_: c.GhosttyTerminal, userdata: ?*anyopaque) callconv(.c) vo
         self.callback_error = err;
     };
 }
-fn clipboardWrite(_: c.GhosttyTerminal, userdata: ?*anyopaque, write_ptr: ?*const c.GhosttyClipboardWrite) callconv(.c) c.GhosttyClipboardWriteResult {
-    const context = userdata orelse return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED;
-    const self: *Terminal = @ptrCast(@alignCast(context));
-    if (self.callback_error != null) return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
-    const sink = self.clipboard_sink orelse return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED;
-    const write = write_ptr orelse {
-        self.callback_error = error.InvalidTerminalClipboardWrite;
-        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+fn clipboardReply(write: *const c.GhosttyClipboardWrite, result: c.GhosttyClipboardWriteResult) void {
+    const reply_fn = write.reply orelse return;
+    const reply: c.GhosttyClipboardWriteReply = .{
+        .size = @sizeOf(c.GhosttyClipboardWriteReply),
+        .result = result,
+        .remember = false,
     };
-    if (write.size < @sizeOf(c.GhosttyClipboardWrite) or (write.contents_len != 0 and write.contents == null)) {
+    reply_fn(write, &reply);
+}
+fn clipboardWrite(_: c.GhosttyTerminal, userdata: ?*anyopaque, write_ptr: [*c]const c.GhosttyClipboardWrite) callconv(.c) void {
+    const context = userdata orelse return;
+    const self: *Terminal = @ptrCast(@alignCast(context));
+    if (write_ptr == null) {
         self.callback_error = error.InvalidTerminalClipboardWrite;
-        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        return;
+    }
+    const write: *const c.GhosttyClipboardWrite = @ptrCast(write_ptr);
+    if (self.callback_error != null) {
+        clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR);
+        return;
+    }
+    const sink = self.clipboard_sink orelse {
+        clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED);
+        return;
+    };
+    if (write.contents_len != 0 and write.contents == null) {
+        self.callback_error = error.InvalidTerminalClipboardWrite;
+        clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA);
+        return;
     }
     if (write.location != c.GHOSTTY_CLIPBOARD_LOCATION_STANDARD and write.location != c.GHOSTTY_CLIPBOARD_LOCATION_SELECTION) {
-        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
+        clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED);
+        return;
     }
     if (write.contents_len == 0) {
         sink.on_write(sink.context, &.{}) catch |err| {
             if (err != error.ClipboardWriteFailed) self.callback_error = err;
-            return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+            clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR);
+            return;
         };
-        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
+        clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS);
+        return;
     }
     for (write.contents[0..write.contents_len]) |entry| {
         if ((entry.mime.len != 0 and entry.mime.ptr == null) or (entry.data.len != 0 and entry.data.ptr == null)) {
             self.callback_error = error.InvalidTerminalClipboardWrite;
-            return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+            clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA);
+            return;
         }
         const mime: []const u8 = if (entry.mime.len == 0) &.{} else entry.mime.ptr[0..entry.mime.len];
         if (!std.mem.eql(u8, mime, "text/plain") and !std.mem.startsWith(u8, mime, "text/plain;")) continue;
         const bytes: []const u8 = if (entry.data.len == 0) &.{} else entry.data.ptr[0..entry.data.len];
         if (bytes.len > Terminal.max_clipboard_bytes or std.mem.indexOfScalar(u8, bytes, 0) != null or !std.unicode.utf8ValidateSlice(bytes)) {
-            return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+            clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA);
+            return;
         }
         sink.on_write(sink.context, bytes) catch |err| {
             if (err != error.ClipboardWriteFailed) self.callback_error = err;
-            return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+            clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR);
+            return;
         };
-        return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
+        clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS);
+        return;
     }
-    return c.GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
+    clipboardReply(write, c.GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED);
 }
 
 fn emptySelection() c.GhosttySelection {
-    var selection = std.mem.zeroes(c.GhosttySelection);
-    selection.size = @sizeOf(c.GhosttySelection);
-    selection.start.size = @sizeOf(c.GhosttyGridRef);
-    selection.end.size = @sizeOf(c.GhosttyGridRef);
-    return selection;
+    return std.mem.zeroes(c.GhosttySelection);
 }
 fn colorRgb(color: u32) c.GhosttyColorRgb {
     return .{ .r = @truncate(color >> 16), .g = @truncate(color >> 8), .b = @truncate(color) };
@@ -1787,19 +2003,26 @@ test "cell caches match full public API decoding across pages, graphemes, colors
             var foreground = default_fg;
             var background = default_bg;
             const fg = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &foreground);
-            if (fg == c.GHOSTTY_INVALID_VALUE) foreground = default_fg else try check(fg);
+            if (fg == c.GHOSTTY_NO_VALUE) foreground = default_fg else try check(fg);
             const bg = self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &background);
-            if (bg == c.GHOSTTY_INVALID_VALUE) background = default_bg else try check(bg);
+            if (bg == c.GHOSTTY_NO_VALUE) background = default_bg else try check(bg);
             var style = std.mem.zeroes(c.GhosttyStyle);
-            style.size = @sizeOf(c.GhosttyStyle);
             try check(self.api.render_state_row_cells_get(self.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style));
-            if (style.inverse) std.mem.swap(c.GhosttyColorRgb, &foreground, &background);
-            if (style.faint) {
+            if ((style.flags & c.GHOSTTY_STYLE_FLAG_INVERSE) != 0) std.mem.swap(c.GhosttyColorRgb, &foreground, &background);
+            if ((style.flags & c.GHOSTTY_STYLE_FLAG_FAINT) != 0) {
                 foreground.r = @intCast((@as(u16, foreground.r) + background.r) / 2);
                 foreground.g = @intCast((@as(u16, foreground.g) + background.g) / 2);
                 foreground.b = @intCast((@as(u16, foreground.b) + background.b) / 2);
             }
-            return .{ .foreground = packedRgb(foreground), .background = packedRgb(background), .bold = style.bold, .italic = style.italic, .underline = style.underline != 0, .strikethrough = style.strikethrough, .invisible = style.invisible };
+            return .{
+                .foreground = packedRgb(foreground),
+                .background = packedRgb(background),
+                .bold = (style.flags & c.GHOSTTY_STYLE_FLAG_BOLD) != 0,
+                .italic = (style.flags & c.GHOSTTY_STYLE_FLAG_ITALIC) != 0,
+                .underline = (style.flags & c.GHOSTTY_STYLE_UNDERLINE_MASK) != 0,
+                .strikethrough = (style.flags & c.GHOSTTY_STYLE_FLAG_STRIKETHROUGH) != 0,
+                .invisible = (style.flags & c.GHOSTTY_STYLE_FLAG_INVISIBLE) != 0,
+            };
         }
         fn snapshot(owner: *Terminal) !void {
             const frame = try owner.readFrame();
@@ -1818,7 +2041,7 @@ test "cell caches match full public API decoding across pages, graphemes, colors
                     try check(owner.api.render_state_row_cells_get(owner.row_cells, c.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw));
                     const cached = frame.cells.items[index];
                     // Force the original full-style decoder as an independent oracle.
-                    var uncached = try owner.readCell(raw, foreground, background, null);
+                    var uncached = try owner.readCell(owner.row_cells, &owner.frame.utf8, raw, foreground, background, null);
                     uncached.style = try readStyle(owner, foreground, background);
                     try std.testing.expectEqual(cached.width, uncached.width);
                     try std.testing.expectEqualDeep(cached.style, uncached.style);

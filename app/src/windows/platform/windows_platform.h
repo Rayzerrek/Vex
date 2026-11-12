@@ -109,6 +109,7 @@ typedef struct {
 /* Zero is success; nonzero values are Win32/HRESULT error codes. */
 int vex_window_run(VexWindowCallbacks callbacks);
 void vex_startup_begin(void);
+void vex_window_prepare_renderer(void);
 void vex_window_invalidate(void);
 /* Paint-only continuation, paced to the monitor; stops when paint no longer requests it. */
 void vex_window_request_animation_frame(void);

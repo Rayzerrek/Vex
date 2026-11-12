@@ -600,6 +600,10 @@ pub fn openUrl(url: []const u8) !void {
 pub fn beginStartup() void {
     c.vex_startup_begin();
 }
+/// Overlaps DXGI/D3D12 adapter creation with application and font startup.
+pub fn prepareRenderer() void {
+    c.vex_window_prepare_renderer();
+}
 /// Declines startup before loading terminal DLLs if this installation is being replaced.
 pub fn updateStartupAllowed() bool {
     return c.vex_update_can_start();
@@ -944,20 +948,36 @@ pub fn drawTabPreviewCard(bounds: panes.PaneRect, title: []const u8, selected: b
     c.vex_draw_tab_preview_card(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, title.ptr, title.len, selected);
 }
 
+const LazyAppearance = struct {
+    frame: *const terminal.TerminalFrame,
+    theme: terminal_theme.TerminalTheme,
+    computed: bool = false,
+    value: ?AppearanceCorrection = null,
+
+    fn get(self: *LazyAppearance) *?AppearanceCorrection {
+        if (!self.computed) {
+            self.value = AppearanceCorrection.init(self.frame, self.theme);
+            self.computed = true;
+        }
+        return &self.value;
+    }
+};
+
 /// Draws a borrowed parsed snapshot; no C handles or pointers enter the application model.
 pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalFrame, focused: bool, cursor_shown: bool, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
     const cursor = frame.cursor;
     const cursor_visible = focused and cursor_shown and cursor.visible and cursor.column < frame.columns and cursor.row < frame.rows;
     const block_cursor = cursor_visible and cursor.shape == .block;
-    try drawEdgeExtension(frame, theme);
+    var appearance: LazyAppearance = .{ .frame = frame, .theme = theme };
+    try drawEdgeExtension(frame, theme, &appearance);
     if (frame.graphics.placements.items.len == 0 or frame.graphics.placements.items[0].z >= 0) {
-        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 0);
+        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 0, &appearance);
         try drawTerminalImages(frame, 0, std.math.maxInt(i32));
     } else {
         try drawTerminalImages(frame, std.math.minInt(i32), -1073741825);
-        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 1);
+        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 1, &appearance);
         try drawTerminalImages(frame, -1073741824, -1);
-        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 2);
+        try drawTerminalGeometry(pane_id, frame, hovered_link, theme, 2, &appearance);
         try drawTerminalImages(frame, 0, std.math.maxInt(i32));
     }
     if (block_cursor) {
@@ -974,13 +994,13 @@ pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalF
 const EdgeSurface = struct {
     frame: *const terminal.TerminalFrame,
     theme: terminal_theme.TerminalTheme,
-    appearance: ?AppearanceCorrection,
+    appearance: *?AppearanceCorrection,
     highlight_source: ?terminal.TextStyle = null,
     highlight_style: terminal.TextStyle = undefined,
 
     fn background(self: *EdgeSurface, row: usize, column: usize) u32 {
         const cell = self.frame.cells.items[row * self.frame.columns + column];
-        return surfaceStyle(cell, self.frame.cellText(cell), self.theme, &self.appearance, &self.highlight_source, &self.highlight_style).background;
+        return surfaceStyle(cell, self.frame.cellText(cell), self.theme, self.appearance, &self.highlight_source, &self.highlight_style).background;
     }
 };
 
@@ -990,14 +1010,14 @@ fn fillEdge(frame: *const terminal.TerminalFrame, edge: u32, first: usize, count
 
 /// Extends edge cells into the padding around the grid, so a colored status line or highlighted row reaches the
 /// pane edge. It runs outside the geometry cache because the padding follows pane bounds, not terminal content.
-fn drawEdgeExtension(frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme) !void {
+fn drawEdgeExtension(frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme, appearance: *LazyAppearance) !void {
     const columns: usize = frame.columns;
     const rows: usize = frame.rows;
     if (columns == 0 or rows == 0 or frame.cells.items.len < columns * rows) return;
     const sides = c.vex_terminal_edge_begin();
     if (sides == 0) return;
     defer c.vex_terminal_edge_end();
-    var surface: EdgeSurface = .{ .frame = frame, .theme = theme, .appearance = AppearanceCorrection.init(frame, theme) };
+    var surface: EdgeSurface = .{ .frame = frame, .theme = theme, .appearance = appearance.get() };
     // Equal neighbours coalesce into one rectangle, so a uniform edge costs a single draw.
     for ([_]struct { edge: u32, column: usize }{ .{ .edge = 0, .column = 0 }, .{ .edge = 1, .column = columns - 1 } }) |side| {
         var row: usize = 0;
@@ -1031,7 +1051,7 @@ fn drawEdgeExtension(frame: *const terminal.TerminalFrame, theme: terminal_theme
     }
 }
 
-fn drawTerminalGeometry(pane_id: panes.PaneId, frame: *const terminal.TerminalFrame, link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme, layer: u32) !void {
+fn drawTerminalGeometry(pane_id: panes.PaneId, frame: *const terminal.TerminalFrame, link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme, layer: u32, appearance: *LazyAppearance) !void {
     var key = terminalGeometryKey(pane_id, frame, link, theme);
     // Independent cached background/text layers keep images out of glyph geometry replay.
     key.is_dark |= layer << 1;
@@ -1042,13 +1062,14 @@ fn drawTerminalGeometry(pane_id: panes.PaneId, frame: *const terminal.TerminalFr
     if (!reused) {
         var complete = false;
         defer c.vex_terminal_geometry_end(complete);
+        const correction = appearance.get();
         if (layer == 0) {
             // Keep both passes in one cache entry; later backgrounds must not erase overhanging ink.
             c.vex_terminal_cell_layer(1);
-            try drawTerminalCells(frame, link, theme);
+            try drawTerminalCells(frame, link, theme, correction);
             c.vex_terminal_cell_layer(2);
         }
-        try drawTerminalCells(frame, link, theme);
+        try drawTerminalCells(frame, link, theme, correction);
         complete = true;
     }
 }
@@ -1168,17 +1189,26 @@ const AppearanceCorrection = struct {
 
     fn init(frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme) ?AppearanceCorrection {
         if (frame.cells.items.len == 0) return null;
-        var candidate: u32 = 0;
+        const first = frame.cells.items[0].style.background;
+        var first_count: usize = 0;
+        var candidate: u32 = first;
         var votes: usize = 0;
         for (frame.cells.items) |cell| {
-            if (votes == 0) candidate = cell.style.background;
-            if (cell.style.background == candidate) votes += 1 else votes -= 1;
+            const bg = cell.style.background;
+            if (bg == first) first_count += 1;
+            if (votes == 0) candidate = bg;
+            if (bg == candidate) votes += 1 else votes -= 1;
         }
-        var count: usize = 0;
-        for (frame.cells.items) |cell| {
-            if (cell.style.background == candidate) count += 1;
+        if (first_count > frame.cells.items.len / 2) {
+            candidate = first;
+        } else {
+            if (candidate == first) return null;
+            var count: usize = 0;
+            for (frame.cells.items) |cell| {
+                if (cell.style.background == candidate) count += 1;
+            }
+            if (count <= frame.cells.items.len / 2) return null;
         }
-        if (count <= frame.cells.items.len / 2) return null;
         const source_lab = srgbToOklab(candidate);
         const opposite = if (theme.is_dark) source_lab.l > 0.72 else source_lab.l < 0.48;
         if (!opposite or source_lab.a * source_lab.a + source_lab.b * source_lab.b > 0.0144) return null;
@@ -1263,8 +1293,7 @@ fn surfaceStyle(
     return cell_style;
 }
 
-fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme) !void {
-    var appearance = AppearanceCorrection.init(frame, theme);
+fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme, appearance: *?AppearanceCorrection) !void {
     var highlight_source: ?terminal.TextStyle = null;
     var highlight_style: terminal.TextStyle = undefined;
     var cached_fg: u32 = theme.foreground;
@@ -1282,7 +1311,7 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
             if (cell.width == .tail) continue;
             const text = frame.cellText(cell);
             const in_link = if (row_link) |hl| (column >= hl.start_col and column <= hl.end_col) else false;
-            var cell_style = surfaceStyle(cell, text, theme, &appearance, &highlight_source, &highlight_style);
+            var cell_style = surfaceStyle(cell, text, theme, appearance, &highlight_source, &highlight_style);
             if (in_link) {
                 cell_style.underline = true;
             }
