@@ -4,11 +4,27 @@
 HRESULT createTerminalFonts(IDWriteFactory* factory, const wchar_t* family, float size,
     IDWriteTextFormat* (&fonts)[4], float& cellWidth, float& cellHeight) {
     if (!factory || !family || !isfinite(size) || size <= 0) return E_INVALIDARG;
+    RendererComPtr<IDWriteFontCollection> collection;
+    HRESULT result = factory->GetSystemFontCollection(&collection);
+    UINT32 familyIndex = 0;
+    BOOL exists = FALSE;
+    if (SUCCEEDED(result)) result = collection->FindFamilyName(family, &familyIndex, &exists);
+    if (FAILED(result)) return result;
+    // DirectWrite accepts missing families and may silently substitute a proportional
+    // font. A terminal must retain a monospace grid even without Cascadia installed.
+    if (!exists) {
+        const wchar_t* fallbacks[] = { L"Consolas", L"Cascadia Mono", L"Lucida Console", L"Courier New" };
+        for (const auto fallback : fallbacks) {
+            result = collection->FindFamilyName(fallback, &familyIndex, &exists);
+            if (FAILED(result)) return result;
+            if (exists) { family = fallback; break; }
+        }
+        if (!exists) return DWRITE_E_NOFONT;
+    }
     IDWriteTextFormat* created[4] = {};
     float width = 0, ascent = 0, descent = 0;
-    HRESULT result = S_OK;
     for (int i = 0; i < 4 && SUCCEEDED(result); ++i) {
-        result = factory->CreateTextFormat(family, nullptr, (i & 1) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        result = factory->CreateTextFormat(family, collection.Get(), (i & 1) ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
             (i & 2) ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"en-us", &created[i]);
         if (SUCCEEDED(result)) result = created[i]->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         RendererComPtr<IDWriteTextLayout> measure;

@@ -1,5 +1,6 @@
 #pragma once
 #include "windows_com.h"
+#include "terminal_text_rendering.h"
 #include <d3d12.h>
 #include <d2d1.h>
 #include <wincodec.h>
@@ -21,7 +22,7 @@ public:
     HRESULT drawImage(uint64_t generation, const uint8_t* rgba, UINT width, UINT height, const float (&bounds)[4], const float (&uv)[4]);
     UINT64 imageHits = 0, imageUploads = 0;
     HRESULT drawSolid(float left, float top, float right, float bottom, uint32_t color, uint8_t alpha = 255);
-    HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha = 255, bool cellAligned = false, TerminalGlyphMeasurer measurer = nullptr);
+    HRESULT drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha = 255, bool cellAligned = false, TerminalGlyphMeasurer measurer = nullptr, bool textMask = false);
     HRESULT drawRounded(float left, float top, float right, float bottom, float radius, float stroke, uint32_t color, uint8_t alpha);
     HRESULT drawRoundedGradient(float left, float top, float right, float bottom, float radius, uint32_t topColor, uint32_t bottomColor, uint8_t alpha);
     HRESULT drawLine(float x1, float y1, float x2, float y2, float stroke, bool roundCaps, uint32_t color, uint8_t alpha);
@@ -110,6 +111,7 @@ private:
     ComPtr<IWICBitmap> rasterBitmap;
     ComPtr<ID2D1RenderTarget> rasterTarget;
     ComPtr<ID2D1SolidColorBrush> rasterBrush;
+    TerminalTextRendering textRendering;
     Frame frames[frameCount];
     Glyph glyphs[cacheSlots];
     UINT frameIndex = 0, shelfX = 0, shelfY = 0, shelfHeight = 0, glyphCount = 0, keyBytes = 0;

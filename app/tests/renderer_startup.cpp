@@ -6,6 +6,122 @@
 #include <stdio.h>
 
 namespace {
+TerminalTextLayout* blendLayout;
+HRESULT paintBlendText(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const uint8_t*, size_t, uint32_t,
+    float x, float y, float, float) {
+    brush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+    blendLayout->draw(target, brush, x, y);
+    return S_OK;
+}
+HRESULT measureBlendText(const uint8_t*, size_t, uint32_t, float, float, D2D1_RECT_F& bounds) {
+    bounds = blendLayout->bounds();
+    return S_OK;
+}
+
+int testTerminalTextBlend(WindowsRenderer& renderer, ID2D1Factory* d2d) {
+    constexpr UINT width = 192, height = 96;
+    RendererComPtr<IDWriteFactory> factory;
+    RendererComPtr<IWICImagingFactory> imaging;
+    RendererComPtr<IWICBitmap> bitmap;
+    RendererComPtr<ID2D1RenderTarget> target;
+    RendererComPtr<ID2D1SolidColorBrush> brush;
+    HRESULT result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&factory));
+    if (SUCCEEDED(result)) result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&imaging));
+    if (SUCCEEDED(result)) result = imaging->CreateBitmap(width, height, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap);
+    if (SUCCEEDED(result)) result = d2d->CreateWicBitmapRenderTarget(bitmap.Get(), D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &target);
+    if (SUCCEEDED(result)) result = target->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &brush);
+    if (FAILED(result)) return 40;
+    target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    uint8_t pixels[width * height * 4], previous[sizeof(pixels)];
+    const uint8_t text[] = "AgjMW09";
+    const float scales[] = { 1, 1.25f, 1.5f, 2 };
+    const uint32_t colors[][2] = { { 0xe4e4e7, 0x282c34 }, { 0x202020, 0xfafafa },
+        { 0x5096d8, 0x181818 }, { 0x706050, 0xf0f0f0 } };
+    const wchar_t* families[] = { L"Cascadia Mono", L"Consolas" };
+    bool sawColorCorrection = false;
+    for (const auto family : families) {
+        IDWriteTextFormat* fonts[4] = {};
+        float cellWidth = 0, cellHeight = 0;
+        if (FAILED(createTerminalFonts(factory.Get(), family, 14, fonts, cellWidth, cellHeight))) return 41;
+        int failure = 0;
+        for (unsigned style = 0; style < 4 && !failure; ++style) {
+            renderer.terminal.clearGlyphCache();
+            TerminalTextLayout layout;
+            result = layout.initialize(factory.Get(), fonts[style], text, sizeof(text) - 1, 7 * cellWidth, cellHeight);
+            if (FAILED(result)) { failure = 42; break; }
+            blendLayout = &layout;
+            for (float scale : scales) {
+                if (failure) break;
+                if (FAILED(renderer.resize(width, height, 96 * scale))) { failure = 43; break; }
+                target->SetDpi(96 * scale, 96 * scale);
+                for (const auto& pair : colors) {
+                    if (failure) break;
+                    target->BeginDraw();
+                    target->Clear(D2D1::ColorF(pair[1]));
+                    brush->SetColor(D2D1::ColorF(pair[0]));
+                    layout.draw(target.Get(), brush.Get(), 16 / scale, 16 / scale);
+                    if (FAILED(target->EndDraw())) { failure = 44; break; }
+                    UINT64 misses = 0;
+                    for (unsigned pass = 0; pass < 3; ++pass) {
+                        if (FAILED(renderer.beginFrame())) { failure = 45; break; }
+                        renderer.ui.Clear(D2D1::ColorF(pair[1]));
+                        result = renderer.beginTerminalPass({ 0, 0, width, height });
+                        if (SUCCEEDED(result)) result = renderer.terminal.drawGlyph(16 / scale, 16 / scale, 7 * cellWidth, cellHeight,
+                            text, sizeof(text) - 1, style, pair[0], paintBlendText, 255, false, measureBlendText, pass != 1);
+                        if (SUCCEEDED(result)) result = renderer.endTerminalPass();
+                        if (SUCCEEDED(result)) result = renderer.endFrame(pixels, width * 4);
+                        if (FAILED(result)) { failure = 46; break; }
+                        if (!pass) {
+                            memcpy(previous, pixels, sizeof(pixels));
+                        } else if (pass == 1) {
+                            // The legacy white mask is a negative control and must not
+                            // alias the linear text entry, even for identical glyph keys.
+                            sawColorCorrection |= memcmp(previous, pixels, sizeof(pixels)) != 0;
+                            misses = renderer.terminal.glyphMisses;
+                        } else if (memcmp(previous, pixels, sizeof(pixels)) || misses != renderer.terminal.glyphMisses) {
+                            failure = 47; break;
+                        }
+                    }
+                    if (failure) break;
+                    RendererComPtr<IWICBitmapLock> lock;
+                    WICRect rect = { 0, 0, width, height };
+                    UINT stride = 0, bytes = 0; BYTE* reference = nullptr;
+                    result = bitmap->Lock(&rect, WICBitmapLockRead, &lock);
+                    if (SUCCEEDED(result)) result = lock->GetStride(&stride);
+                    if (SUCCEEDED(result)) result = lock->GetDataPointer(&bytes, &reference);
+                    if (FAILED(result)) { failure = 48; break; }
+                    unsigned covered = 0, error = 0, large = 0;
+                    for (UINT y = 0; y < height; ++y) for (UINT x = 0; x < width; ++x) {
+                        const auto actual = pixels + ((height - y - 1) * width + x) * 4;
+                        const auto expected = reference + y * stride + x * 4;
+                        for (unsigned channel = 0; channel < 3; ++channel) {
+                            const unsigned background = (pair[1] >> (channel * 8)) & 255;
+                            if (actual[channel] == background && expected[channel] == background) continue;
+                            ++covered;
+                            const unsigned delta = (unsigned)abs((int)actual[channel] - expected[channel]);
+                            error += delta;
+                            if (delta > 12) ++large;
+                        }
+                    }
+                    // The DirectWrite gamma polynomial and 8-bit atlas round differently.
+                    // Compare actual colored, opaque D2D text, not another white alpha mask.
+                    if (!covered || error > covered * 3 || large > covered / 20 + 4) {
+                        fprintf(stderr, "text blend: %ls style=%u dpi=%.0f fg=%06x error=%u/%u large=%u\n",
+                            family, style, scale * 96, pair[0], error, covered, large);
+                        failure = 49;
+                    }
+                }
+            }
+        }
+        blendLayout = nullptr;
+        for (auto font : fonts) font->Release();
+        if (failure) return failure;
+    }
+    renderer.terminal.clearGlyphCache();
+    return sawColorCorrection ? 0 : 50;
+}
+
 int testTerminalTextTiles(WindowsRenderer& renderer, ID2D1Factory* d2d) {
     RendererComPtr<IDWriteFactory> factory;
     if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&factory)))) return 30;
@@ -127,6 +243,7 @@ int testRendererStartup() {
         }
     }
     if (!failure) failure = testTerminalTextTiles(renderer, factory.Get());
+    if (!failure) failure = testTerminalTextBlend(renderer, factory.Get());
     if (FAILED(renderer.shutdown()) && !failure) failure = 18;
     // Recovery still supports synchronous initialization without an earlier warmup request.
     if (!failure && FAILED(renderer.initialize(window, factory.Get(), true))) failure = 19;

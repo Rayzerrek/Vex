@@ -314,7 +314,10 @@ pub const TerminalSession = struct {
         if (self.size) |previous| if (std.meta.eql(previous, size)) return;
         self.cancelApplicationCopy();
         self.smooth_scroll.clear();
-        if (self.state == .running) try self.pty.resize(size);
+        // ConPTY knows only rows/columns. Pixel-only updates still belong to the
+        // emulator and DEC 2048 clients, but must not trigger another host resize.
+        const grid_changed = if (self.size) |previous| !previous.sameGrid(size) else true;
+        if (self.state == .running and grid_changed) try self.pty.resize(size);
         try self.terminal.resize(size.columns, size.rows, size.cell_width_px, size.cell_height_px);
         self.size = size;
         if (self.state == .running and try self.terminal.inBandResize()) {

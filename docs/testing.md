@@ -52,11 +52,25 @@ DPI. They exercise system fonts and additionally check Cascadia Mono, Ioskeley
 Mono/Nerd Font and JetBrains Mono when installed. WARP readback verifies that
 glyph overhangs survive atlas uploads and cache reuse. These are offscreen checks;
 they do not establish interactive desktop appearance for every installed font.
+Missing-family regressions require an explicitly resolved monospace fallback
+and check actual Latin advances in all four styles.
 Programming-font samples compare segmented ligatures against DirectWrite's
 shaped reference; synthetic faces with nonuniform advances compare operator
 spans on the terminal grid. A hidden WARP test covers long-run tiling and exact
 pixel reuse on subsequent frames, including Windows images without an installed
 programming ligature font.
+The WARP text-blending regression compares linear-atlas compositing against
+native opaque grayscale DirectWrite text for Cascadia Mono (or its fallback)
+and Consolas, all four styles, light/dark/colored samples and 100–200% DPI.
+It checks pixel error and exact cache reuse, not subjective desktop smoothness
+or parity with Ghostty screenshots.
+The OpenCode surface regression parses explicit RGB input-panel backgrounds
+and half-block borders through the real terminal DLL. It checks that matching
+surface colors remain equal across text, blanks, block ink and edge padding
+in every theme, without treating neutral application backgrounds as selections.
+Contrast regressions preserve foreground RGB exactly on dark and midtone cell
+backgrounds and require WCAG AA on light backgrounds, including both sides of
+the relative-luminance threshold. Intentionally hidden text remains hidden.
 
 ## Desktop validation
 
@@ -64,6 +78,8 @@ Use a real Windows desktop for rendering, mixed DPI, clipboard/TUI behavior,
 tabs/splits, shell selection, overlays and disabled animations. Check both themes.
 Opening tab overview must not resize PTYs. Copy checks should include Unicode,
 blank/wrapped lines, repeated copies, cuts/deletes and background applications.
+See [terminal rendering](terminal-rendering.md) for the remaining rasterization,
+resize-ordering and compatibility work; source-level risks are not desktop passes.
 
 Use isolated settings for desktop validation. Verify tab churn, pane-local
 transport failures, stale events, notifications, renderer recovery and delayed

@@ -29,6 +29,8 @@ HRESULT TerminalRenderer::initialize(ID3D12Device* device, ID2D1Factory* factory
     result = factory->CreateWicBitmapRenderTarget(rasterBitmap.Get(), properties, &rasterTarget);
     if (FAILED(result)) return result;
     rasterTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    result = textRendering.initialize();
+    if (FAILED(result)) return result;
     result = rasterTarget->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &rasterBrush);
     if (FAILED(result)) return result;
     return createPipeline(sharedPipeline);
@@ -39,8 +41,8 @@ HRESULT TerminalRenderer::createPipelineState() {
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; range.NumDescriptors = 1;
     D3D12_ROOT_PARAMETER parameters[2] = {};
     parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    parameters[0].Constants.Num32BitValues = 2;
-    parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    parameters[0].Constants.Num32BitValues = 12;
+    parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     parameters[1].DescriptorTable.NumDescriptorRanges = 1;
     parameters[1].DescriptorTable.pDescriptorRanges = &range;
@@ -152,8 +154,9 @@ HRESULT TerminalRenderer::beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR
     commands->SetDescriptorHeaps(1, heaps);
     commands->SetGraphicsRootDescriptorTable(1, descriptors->GetGPUDescriptorHandleForHeapStart());
     boundTexture = descriptors.Get();
-    const float viewportSize[] = { (float)width, (float)height };
-    commands->SetGraphicsRoot32BitConstants(0, 2, viewportSize, 0);
+    const float constants[] = { (float)width, (float)height, 0, 0,
+        textRendering.gamma[0], textRendering.gamma[1], textRendering.gamma[2], textRendering.gamma[3], textRendering.contrast, 0, 0, 0 };
+    commands->SetGraphicsRoot32BitConstants(0, 12, constants, 0);
     D3D12_VIEWPORT viewport = { 0, 0, (float)width, (float)height, 0, 1 };
     commands->RSSetViewports(1, &viewport); commands->RSSetScissorRects(1, &clip);
     commands->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
@@ -519,7 +522,7 @@ HRESULT TerminalRenderer::uploadGlyph(Glyph& glyph) {
     return S_OK;
 }
 
-HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha, bool cellAligned, TerminalGlyphMeasurer measurer) {
+HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height, const uint8_t* text, size_t length, uint32_t flags, uint32_t color, TerminalGlyphPainter painter, uint8_t alpha, bool cellAligned, TerminalGlyphMeasurer measurer, bool textMask) {
     if (!passOpen || !text || !length || length > 65536 || !painter || !isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) || width <= 0 || height <= 0) return E_INVALIDARG;
     // Cell graphics must share the background's rounded screen edges. Quantizing
     // their atlas-local phase independently can move an edge into the next cell.
@@ -530,7 +533,7 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
     const float rasterWidth = cellAligned ? roundf((x + width) * scale) - left : width * scale;
     const float rasterHeight = cellAligned ? roundf((y + height) * scale) - top : height * scale;
     if (rasterWidth <= 0 || rasterHeight <= 0) return S_OK;
-    const UINT phase = phaseX | (phaseY << 2) | (cellAligned ? 16u : 0u) | (measurer ? 32u : 0u), style = flags & 3;
+    const UINT phase = phaseX | (phaseY << 2) | (cellAligned ? 16u : 0u) | (measurer ? 32u : 0u) | (textMask ? 64u : 0u), style = flags & 3;
     UINT widthBits, heightBits;
     memcpy(&widthBits, &rasterWidth, sizeof(widthBits));
     memcpy(&heightBits, &rasterHeight, sizeof(heightBits));
@@ -581,6 +584,7 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
         glyph.x = nextX + 1; glyph.y = nextY + 1; glyph.style = style; glyph.phase = phase;
         glyph.layoutWidth = rasterWidth; glyph.layoutHeight = rasterHeight; glyph.offsetX = offsetX; glyph.offsetY = offsetY;
         rasterTarget->BeginDraw();
+        rasterTarget->SetTextRenderingParams(textMask ? textRendering.linear.Get() : nullptr);
         rasterTarget->PushAxisAlignedClip(D2D1::RectF(0, 0, w / scale, h / scale), D2D1_ANTIALIAS_MODE_ALIASED);
         rasterTarget->Clear(D2D1::ColorF(0, 0.0f));
         HRESULT result = painter(rasterTarget.Get(), rasterBrush.Get(), text, length, flags,
@@ -598,7 +602,7 @@ HRESULT TerminalRenderer::drawGlyph(float x, float y, float width, float height,
     const auto& glyph = glyphs[slot];
     Quad quad = { { left + glyph.offsetX, top + glyph.offsetY, left + glyph.offsetX + glyph.width, top + glyph.offsetY + glyph.height },
         { (float)glyph.x / atlasSize, (float)glyph.y / atlasSize, (float)(glyph.x + glyph.width) / atlasSize, (float)(glyph.y + glyph.height) / atlasSize },
-        ((UINT)alpha << 24) | ((color & 255) << 16) | (color & 0xff00) | ((color >> 16) & 255) };
+        ((UINT)alpha << 24) | ((color & 255) << 16) | (color & 0xff00) | ((color >> 16) & 255), textMask ? 7u : 0u };
     return appendQuad(quad);
 }
 
@@ -695,6 +699,7 @@ void TerminalRenderer::shutdown() {
     }
     commands.Reset(); atlas.Reset(); descriptors.Reset(); pipeline.Reset(); root.Reset();
     rasterBrush.Reset(); rasterTarget.Reset(); rasterBitmap.Reset(); imagingFactory.Reset(); deviceOwner.Reset();
+    textRendering.linear.Reset();
     if (apartmentOwned) { CoUninitialize(); apartmentOwned = false; }
     passOpen = false;
 }

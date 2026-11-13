@@ -5,6 +5,33 @@
 #include <string.h>
 
 namespace {
+int testMissingFamily(IDWriteFactory* factory) {
+    IDWriteTextFormat* fonts[4] = {};
+    float width = 0, height = 0;
+    if (FAILED(createTerminalFonts(factory, L"Vex nonexistent font regression 93062", 14, fonts, width, height))) return 25;
+    int failure = 0;
+    for (unsigned style = 0; style < 4 && !failure; ++style) {
+        wchar_t family[128] = {};
+        if (FAILED(fonts[style]->GetFontFamilyName(family, ARRAYSIZE(family)))) { failure = 26; break; }
+        const bool monospace = !wcscmp(family, L"Consolas") || !wcscmp(family, L"Cascadia Mono") ||
+            !wcscmp(family, L"Lucida Console") || !wcscmp(family, L"Courier New");
+        if (!monospace) { failure = 27; break; }
+        // Check the actual layout, not just the requested family name.
+        float advances[2] = {};
+        const wchar_t* samples[] = { L"iiii", L"WWWW" };
+        for (unsigned sample = 0; sample < 2; ++sample) {
+            RendererComPtr<IDWriteTextLayout> layout;
+            DWRITE_TEXT_METRICS metrics = {};
+            if (FAILED(factory->CreateTextLayout(samples[sample], 4, fonts[style], 1000, 1000, &layout)) ||
+                FAILED(layout->GetMetrics(&metrics))) { failure = 28; break; }
+            advances[sample] = metrics.width;
+        }
+        if (!failure && fabsf(advances[0] - advances[1]) > 0.001f) failure = 29;
+    }
+    for (auto font : fonts) font->Release();
+    return failure;
+}
+
 HRESULT drawPieces(IDWriteFactory* factory, IDWriteTextFormat* font, ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush,
     const TerminalLigatureMap& map, unsigned style, const char* text, float width, float height, bool individual) {
     const auto bytes = reinterpret_cast<const uint8_t*>(text);
@@ -106,6 +133,7 @@ int testTerminalFonts() {
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &target);
         if (SUCCEEDED(result)) result = target->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &brush);
         if (FAILED(result)) failure = 2;
+        if (!failure) failure = testMissingFamily(factory.Get());
         if (!failure) target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         bool sawOverhang = false, sawLigature = false, hadLigatureFont = false;
         RendererComPtr<IDWriteFontCollection> collection;

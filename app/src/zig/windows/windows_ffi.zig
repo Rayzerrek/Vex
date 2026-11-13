@@ -108,7 +108,29 @@ pub const WindowMetrics = struct {
     }
 };
 /// ConPTY-compatible grid dimensions and physical cell metrics.
-pub const TerminalSize = struct { columns: u16, rows: u16, cell_width_px: u32, cell_height_px: u32 };
+pub const TerminalSize = struct {
+    columns: u16,
+    rows: u16,
+    cell_width_px: u32,
+    cell_height_px: u32,
+
+    pub fn sameGrid(self: TerminalSize, other: TerminalSize) bool {
+        return self.columns == other.columns and self.rows == other.rows;
+    }
+};
+
+test "ConPTY grid equality ignores pixel-only font and DPI changes" {
+    const initial: TerminalSize = .{ .columns = 80, .rows = 24, .cell_width_px = 8, .cell_height_px = 16 };
+    var changed = initial;
+    changed.cell_width_px = 10;
+    changed.cell_height_px = 20;
+    try std.testing.expect(initial.sameGrid(changed));
+    changed.columns += 1;
+    try std.testing.expect(!initial.sameGrid(changed));
+    changed.columns = initial.columns;
+    changed.rows += 1;
+    try std.testing.expect(!initial.sameGrid(changed));
+}
 /// Null means Windows requests a page per wheel notch.
 pub fn wheelScrollLines() ?u32 {
     const lines = c.vex_window_wheel_scroll_lines();
@@ -998,14 +1020,11 @@ pub fn drawTerminalFrame(pane_id: panes.PaneId, frame: *const terminal.TerminalF
 /// Surface of one edge cell as drawn, ignoring selection and links so a transient highlight never bleeds into the padding.
 const EdgeSurface = struct {
     frame: *const terminal.TerminalFrame,
-    theme: terminal_theme.TerminalTheme,
     appearance: *?AppearanceCorrection,
-    highlight_source: ?terminal.TextStyle = null,
-    highlight_style: terminal.TextStyle = undefined,
 
     fn background(self: *EdgeSurface, row: usize, column: usize) u32 {
         const cell = self.frame.cells.items[row * self.frame.columns + column];
-        return surfaceStyle(cell, self.frame.cellText(cell), self.theme, self.appearance, &self.highlight_source, &self.highlight_style).background;
+        return surfaceStyle(cell, self.appearance).background;
     }
 };
 
@@ -1022,7 +1041,7 @@ fn drawEdgeExtension(frame: *const terminal.TerminalFrame, theme: terminal_theme
     const sides = c.vex_terminal_edge_begin();
     if (sides == 0) return;
     defer c.vex_terminal_edge_end();
-    var surface: EdgeSurface = .{ .frame = frame, .theme = theme, .appearance = appearance.get() };
+    var surface: EdgeSurface = .{ .frame = frame, .appearance = appearance.get() };
     // Equal neighbours coalesce into one rectangle, so a uniform edge costs a single draw.
     for ([_]struct { edge: u32, column: usize }{ .{ .edge = 0, .column = 0 }, .{ .edge = 1, .column = columns - 1 } }) |side| {
         var row: usize = 0;
@@ -1264,48 +1283,13 @@ const AppearanceCorrection = struct {
     }
 };
 
-// Reverse-video and explicit TUI highlights are surfaces, not text. Mapping them
-// all the way to the foreground endpoint produces black/white selection bars.
-fn softenHighlight(style: terminal.TextStyle, theme: terminal_theme.TerminalTheme) terminal.TextStyle {
-    if (style.background == theme.background or style.background == theme.selection_background) return style;
-    const surface = srgbToOklab(style.background);
-    if (surface.a * surface.a + surface.b * surface.b > 0.0144) return style;
-    const base = srgbToOklab(theme.background);
-    const selection = srgbToOklab(theme.selection_background);
-    const direction: f32 = if (theme.is_dark) 1 else -1;
-    if ((surface.l - selection.l) * direction <= 0 or (selection.l - base.l) * direction <= 0) return style;
-    var result = style;
-    result.background = theme.selection_background;
-    // Keep intentionally blank/hidden cells blank after changing their surface.
-    if (style.foreground == style.background) result.foreground = result.background;
-    return result;
-}
-
-/// Cell style after palette adaptation and highlight softening, before selection, link and contrast
-/// adjustments. Shared by the cell pass and the padding extension so both show the same surface.
-fn surfaceStyle(
-    cell: terminal.TerminalCell,
-    text: []const u8,
-    theme: terminal_theme.TerminalTheme,
-    appearance: *?AppearanceCorrection,
-    highlight_source: *?terminal.TextStyle,
-    highlight_style: *terminal.TextStyle,
-) terminal.TextStyle {
-    var cell_style = cell.style;
-    if (appearance.*) |*correction| cell_style = correction.apply(cell_style);
-    if (!isBlockGraphic(text)) {
-        if (highlight_source.* == null or !std.meta.eql(highlight_source.*.?, cell_style)) {
-            highlight_source.* = cell_style;
-            highlight_style.* = softenHighlight(cell_style, theme);
-        }
-        cell_style = highlight_style.*;
-    }
-    return cell_style;
+/// Explicit TUI backgrounds are not host selections. A surface can be painted
+/// with both cell backgrounds and block-glyph foregrounds; map both identically.
+fn surfaceStyle(cell: terminal.TerminalCell, appearance: *?AppearanceCorrection) terminal.TextStyle {
+    return if (appearance.*) |*correction| correction.apply(cell.style) else cell.style;
 }
 
 fn drawTerminalBackgrounds(frame: *const terminal.TerminalFrame, theme: terminal_theme.TerminalTheme, appearance: *?AppearanceCorrection) !void {
-    var highlight_source: ?terminal.TextStyle = null;
-    var highlight_style: terminal.TextStyle = undefined;
     const has_appearance = appearance.* != null;
     for (0..frame.rows) |row| {
         const cells = frame.cells.items[row * frame.columns ..][0..frame.columns];
@@ -1320,7 +1304,7 @@ fn drawTerminalBackgrounds(frame: *const terminal.TerminalFrame, theme: terminal
             else if (!has_appearance and cell.style.background == theme.background)
                 theme.background
             else
-                surfaceStyle(cell, frame.cellText(cell), theme, appearance, &highlight_source, &highlight_style).background;
+                surfaceStyle(cell, appearance).background;
             if (bg == theme.background) {
                 if (run_cells != 0) {
                     if (c.vex_draw_run(@intCast(start), @intCast(row), @intCast(run_cells), null, 0, 0, run_bg, 0) != 0) return error.NativeTextRenderingFailed;
@@ -1348,8 +1332,6 @@ fn drawTerminalBackgrounds(frame: *const terminal.TerminalFrame, theme: terminal
 }
 
 fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLinkSpan, theme: terminal_theme.TerminalTheme, appearance: *?AppearanceCorrection) !void {
-    var highlight_source: ?terminal.TextStyle = null;
-    var highlight_style: terminal.TextStyle = undefined;
     var cached_fg: u32 = theme.foreground;
     var cached_bg: u32 = theme.background;
     var cached_corrected_fg: u32 = theme.foreground;
@@ -1365,7 +1347,7 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
             if (cell.width == .tail) continue;
             const text = frame.cellText(cell);
             const in_link = if (row_link) |hl| (column >= hl.start_col and column <= hl.end_col) else false;
-            var cell_style = surfaceStyle(cell, text, theme, appearance, &highlight_source, &highlight_style);
+            var cell_style = surfaceStyle(cell, appearance);
             if (in_link) {
                 cell_style.underline = true;
             }
@@ -1497,6 +1479,9 @@ pub fn ensureMinimumContrast(fg_rgb: u32, bg_rgb: u32) u32 {
     if (fg_rgb == bg_rgb) return fg_rgb;
     const minimum_ratio: f32 = 4.5;
     const bg_lum = relativeLuminance(bg_rgb);
+    // Only rescue text on light surfaces. Dark TUI palettes intentionally use
+    // dim text; lifting it changes application styling rather than fixing legibility.
+    if (bg_lum < 0.5) return fg_rgb;
     if (contrastRatioWithBgLuminance(fg_rgb, bg_lum) >= minimum_ratio) return fg_rgb;
     const lab = srgbToOklab(fg_rgb);
     const towards_white = contrastRatioWithBgLuminance(0xffffff, bg_lum) > contrastRatioWithBgLuminance(0, bg_lum);
@@ -1819,7 +1804,7 @@ test "explicit RGB alternate-screen output follows host mode without program coo
     try std.testing.expectEqual(generation, (try emulator.readFrame()).generation);
 }
 
-test "TUI highlights use theme surfaces across dark light dark switches without mutating RGB output" {
+test "TUI reverse-video surfaces retain their palette across dark light dark switches without mutating RGB output" {
     for ([_]bool{ false, true }) |dark_source| {
         const background: u32 = if (dark_source) 0x181818 else 0xfafafa;
         const foreground: u32 = if (dark_source) 0xe6e6e6 else 0x202020;
@@ -1830,21 +1815,52 @@ test "TUI highlights use theme surfaces across dark light dark switches without 
         for ([_]usize{ terminal_theme.default_dark_index, terminal_theme.default_light_index, terminal_theme.default_dark_index }) |index| {
             const theme = terminal_theme.themes[index];
             var correction = AppearanceCorrection.init(&frame, theme);
-            const mapped = if (correction) |*value| value.apply(cells[0].style) else cells[0].style;
-            const highlight = softenHighlight(mapped, theme);
-            try std.testing.expectEqual(theme.selection_background, highlight.background);
+            const normal = surfaceStyle(cells[1], &correction);
+            const highlight = surfaceStyle(cells[0], &correction);
+            try std.testing.expectEqual(normal.foreground, highlight.background);
+            try std.testing.expectEqual(normal.background, highlight.foreground);
             try std.testing.expect(contrastRatio(ensureMinimumContrast(highlight.foreground, highlight.background), highlight.background) >= 4.5);
-            try std.testing.expectEqualDeep(highlight, softenHighlight(highlight, theme));
-            const normal = terminal.TextStyle{ .foreground = theme.foreground, .background = theme.background };
-            try std.testing.expectEqualDeep(normal, softenHighlight(normal, theme));
-            const hidden = softenHighlight(.{ .foreground = mapped.background, .background = mapped.background }, theme);
+            var hidden_cell = cells[0];
+            hidden_cell.style.foreground = hidden_cell.style.background;
+            const hidden = surfaceStyle(hidden_cell, &correction);
             try std.testing.expectEqual(hidden.foreground, hidden.background);
         }
         try std.testing.expectEqualDeep(original, cells);
     }
-    const theme = terminal_theme.themes[terminal_theme.default_dark_index];
-    const colored = terminal.TextStyle{ .foreground = 0, .background = 0xffff00 };
-    try std.testing.expectEqualDeep(colored, softenHighlight(colored, theme));
+}
+
+test "OpenCode gray input surfaces join half-block borders without becoming host selections" {
+    const binding = @import("../terminal/api.zig");
+    const api = try binding.Api.load();
+    var emulator = try terminal.Terminal.init(std.testing.allocator, &api);
+    defer emulator.deinit();
+    try emulator.resize(20, 6, 8, 16);
+    try emulator.feedOutput(
+        "\x1b[?1049h\x1b[48;2;63;63;63m\x1b[2J" ++
+            "\x1b[2;1H\x1b[38;2;220;220;220m\x1b[48;2;95;95;95mBuild auto          " ++
+            "\x1b[3;1H\x1b[38;2;95;95;95m\x1b[48;2;63;63;63m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀" ++
+            "\x1b[4;1H\x1b[38;2;220;220;220m\x1b[48;2;95;95;95m                    ",
+    );
+    const frame = try emulator.readFrame();
+    const body = frame.cells.items[20];
+    const border = frame.cells.items[40];
+    const blank = frame.cells.items[60];
+    try std.testing.expectEqualStrings("▀", frame.cellText(border));
+    for (terminal_theme.themes) |theme| {
+        var correction = AppearanceCorrection.init(frame, theme);
+        const rendered_body = surfaceStyle(body, &correction);
+        const rendered_border = surfaceStyle(border, &correction);
+        const rendered_blank = surfaceStyle(blank, &correction);
+        try std.testing.expectEqual(rendered_body.background, rendered_border.foreground);
+        try std.testing.expectEqual(rendered_body.background, rendered_blank.background);
+        try std.testing.expectEqual(surfaceStyle(frame.cells.items[0], &correction).background, rendered_border.background);
+        if (correction == null) try std.testing.expectEqual(@as(u32, 0x5f5f5f), rendered_body.background);
+        var edge: EdgeSurface = .{ .frame = frame, .appearance = &correction };
+        try std.testing.expectEqual(rendered_body.background, edge.background(1, 0));
+        try std.testing.expectEqual(rendered_border.background, edge.background(2, 0));
+    }
+    try std.testing.expectEqual(@as(u32, 0x5f5f5f), body.style.background);
+    try std.testing.expectEqual(@as(u32, 0x5f5f5f), border.style.foreground);
 }
 
 test "appearance correction ignores isolated opposite accents, split palettes and saturated surfaces" {
@@ -1859,27 +1875,32 @@ test "appearance correction ignores isolated opposite accents, split palettes an
     try std.testing.expect(AppearanceCorrection.init(&frame, theme) == null);
 }
 
-test "contrast correction meets WCAG AA after RGB conversion on dark, light and midtone backgrounds" {
-    for ([_]u32{ 0x000000, 0xffffff, 0xf5f0e8, 0x282c34, 0x777777, 0x808080, 0x00ff00, 0xff00ff }) |background| {
+test "contrast correction meets WCAG AA only on light surfaces and preserves dark and midtone palettes" {
+    for ([_]u32{ 0x000000, 0xffffff, 0xf5f0e8, 0x282c34, 0x5f5f5f, 0x777777, 0x808080, 0xbbbbbb, 0xbcbcbc, 0x00ff00, 0xff00ff }) |background| {
         for ([_]u32{ 0x111111, 0xeeeeee, 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0x808080, 0xf0e0d0 }) |foreground| {
             if (foreground == background) continue;
             const corrected = ensureMinimumContrast(foreground, background);
-            try std.testing.expect(contrastRatio(corrected, background) >= 4.5);
+            if (relativeLuminance(background) >= 0.5) {
+                try std.testing.expect(contrastRatio(corrected, background) >= 4.5);
+            } else {
+                try std.testing.expectEqual(foreground, corrected);
+            }
             if (contrastRatio(foreground, background) >= 4.5) try std.testing.expectEqual(foreground, corrected);
             try std.testing.expectEqual(corrected, ensureMinimumContrast(corrected, background));
         }
     }
 }
 
-test "ensureMinimumContrast preserves readable colors and boosts low-contrast foregrounds while exempting block graphics" {
+test "ensureMinimumContrast preserves dark backgrounds and hidden text and darkens unreadable text on light surfaces" {
     // High contrast default foreground on default background stays untouched.
     try std.testing.expectEqual(@as(u32, 0xe4e4e7), ensureMinimumContrast(0xe4e4e7, 0x282c34));
     // Identical fg and bg (intentionally hidden text) stays untouched.
     try std.testing.expectEqual(@as(u32, 0x282c34), ensureMinimumContrast(0x282c34, 0x282c34));
-    // Dark navy foreground on dark background gets lifted in lightness.
-    const boosted = ensureMinimumContrast(0x1f2430, 0x282c34);
-    try std.testing.expect(boosted != 0x1f2430);
-    try std.testing.expect(contrastRatio(boosted, 0x282c34) >= 4.5);
+    try std.testing.expectEqual(@as(u32, 0x1f2430), ensureMinimumContrast(0x1f2430, 0x282c34));
+    try std.testing.expectEqual(@as(u32, 0xfafafa), ensureMinimumContrast(0xfafafa, 0xfafafa));
+    const corrected = ensureMinimumContrast(0xeeeeee, 0xfafafa);
+    try std.testing.expect(corrected != 0xeeeeee);
+    try std.testing.expect(contrastRatio(corrected, 0xfafafa) >= 4.5);
     // Block elements and Powerline glyphs are recognized so their exact shade/separator colors are preserved.
     try std.testing.expect(isBlockGraphic("█"));
     try std.testing.expect(isBlockGraphic("░"));

@@ -1,4 +1,9 @@
-cbuffer Viewport : register(b0) { float2 viewportSize; };
+cbuffer Viewport : register(b0) {
+    float2 viewportSize;
+    float2 reserved;
+    float4 textGamma;
+    float textContrast;
+};
 Texture2D<float4> glyphAtlas : register(t0);
 SamplerState atlasSampler : register(s0);
 SamplerState imageSampler : register(s1);
@@ -45,9 +50,18 @@ float boxDistance(float2 local, float2 halfSize, float radius) {
 float4 terminalPixel(Fragment input) : SV_Target {
     if (input.kind == 5) return glyphAtlas.Sample(imageSampler, input.uv);
     float alpha = 1;
-    if (input.kind == 0) {
+    if (input.kind == 0 || input.kind == 7) {
         // Negative UV denotes a solid rectangle, without an atlas texture access.
         alpha = input.uv.x < 0 ? 1 : glyphAtlas.Sample(atlasSampler, input.uv).r;
+        if (input.kind == 7) {
+            // Microsoft Terminal / DirectWrite grayscale blending (MIT).
+            // Copyright (c) Microsoft Corporation; see THIRD-PARTY-NOTICES.md.
+            const float contrast = textContrast * saturate(3 - 4 * dot(input.color.rgb, float3(0.30, 0.59, 0.11)));
+            alpha = alpha * (contrast + 1) / (alpha * contrast + 1);
+            const float intensity = dot(input.color.rgb, float3(0.25, 0.5, 0.25));
+            alpha = saturate(alpha + alpha * (1 - alpha) *
+                ((textGamma.x * intensity + textGamma.y) * alpha + textGamma.z * intensity + textGamma.w));
+        }
     } else {
         const float2 center = (input.bounds.xy + input.bounds.zw) * 0.5;
         const float2 extent = (input.bounds.zw - input.bounds.xy) * 0.5;

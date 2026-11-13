@@ -486,7 +486,7 @@ HRESULT measureLigatureTile(const uint8_t* bytes, size_t length, uint32_t flags,
 HRESULT drawLigature(float x, float y, const uint8_t* text, size_t length, uint32_t flags, uint32_t color) {
     const float width = length * cellWidth;
     if (width * dpiScale <= 384)
-        return renderer->terminal.drawGlyph(x, y, width, cellHeight, text, length, flags, color, paintAtlasGlyph, 255, false, measureAtlasGlyph);
+        return renderer->terminal.drawGlyph(x, y, width, cellHeight, text, length, flags, color, paintAtlasGlyph, 255, false, measureAtlasGlyph, true);
     TerminalTextLayout* layout;
     HRESULT result = longLigatureLayout(text, length, flags, width, cellHeight, layout);
     if (FAILED(result)) return result;
@@ -500,7 +500,7 @@ HRESULT drawLigature(float x, float y, const uint8_t* text, size_t length, uint3
         const LigatureTile key = { width, left / dpiScale - x, (uint32_t)length };
         memcpy(keyBytes, &key, sizeof(key));
         result = renderer->terminal.drawGlyph(left / dpiScale, y, tileWidth, cellHeight, keyBytes, sizeof(key) + length,
-            flags, color, paintLigatureTile, 255, false, measureLigatureTile);
+            flags, color, paintLigatureTile, 255, false, measureLigatureTile, true);
     }
     return result;
 }
@@ -528,14 +528,14 @@ extern "C" int vex_draw_run(uint16_t column, uint16_t row, uint16_t cells, const
             for (size_t plain = 0; plain < start && SUCCEEDED(result); ++plain) {
                 const size_t column = i + plain;
                 if (utf8[column] != ' ') result = renderer->terminal.drawGlyph(x + (float)column * cellWidth, y, cellWidth, cellHeight,
-                    utf8 + column, 1, flags, foreground, paintAtlasGlyph, 255, false, measureAtlasGlyph);
+                    utf8 + column, 1, flags, foreground, paintAtlasGlyph, 255, false, measureAtlasGlyph, true);
             }
             if (end > start && SUCCEEDED(result)) result = drawLigature(x + (float)(i + start) * cellWidth, y, utf8 + i + start, end - start, flags, foreground);
             i += end;
         }
     } else if (trimmed) {
         const bool cellAligned = terminalCellGlyph(utf8, trimmed);
-        result = renderer->terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph, 255, cellAligned, cellAligned ? nullptr : measureAtlasGlyph);
+        result = renderer->terminal.drawGlyph(x, y, width, cellHeight, utf8, trimmed, flags, foreground, paintAtlasGlyph, 255, cellAligned, cellAligned ? nullptr : measureAtlasGlyph, !cellAligned);
     }
     if (SUCCEEDED(result) && (flags & 4)) result = renderer->terminal.drawSolid(x, y + cellHeight - 2, x + width, y + cellHeight - 1, foreground);
     if (SUCCEEDED(result) && (flags & 8)) result = renderer->terminal.drawSolid(x, y + cellHeight * 0.55f, x + width, y + cellHeight * 0.55f + 1, foreground);
