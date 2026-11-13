@@ -44,6 +44,7 @@ pub const TerminalFrame = struct {
     rows: u16 = 0,
     cells: std.ArrayList(TerminalCell) = .empty,
     utf8: std.ArrayList(u8) = .empty,
+    row_wraps: std.ArrayList(RowWrap) = .empty,
     cursor: TerminalCursor = .{},
     generation: u64 = 0,
     graphics: kitty.Snapshot = .{},
@@ -52,6 +53,7 @@ pub const TerminalFrame = struct {
     pub fn deinit(self: *TerminalFrame, allocator: std.mem.Allocator) void {
         self.cells.deinit(allocator);
         self.utf8.deinit(allocator);
+        self.row_wraps.deinit(allocator);
         self.graphics.deinit(allocator);
         self.* = .{};
     }
@@ -59,6 +61,10 @@ pub const TerminalFrame = struct {
     pub fn cellText(self: *const TerminalFrame, cell: TerminalCell) []const u8 {
         return self.utf8.items[cell.text_start..][0..cell.text_length];
     }
+};
+pub const RowWrap = struct {
+    wrap: bool = false,
+    continuation: bool = false,
 };
 /// Terminal mouse tracking mode negotiated via DEC private modes 9, 1000, 1002, 1003.
 pub const MouseTrackingMode = enum(c.GhosttyMouseTrackingMode) {
@@ -1196,6 +1202,7 @@ pub const Terminal = struct {
         try self.frame.cells.ensureTotalCapacity(self.allocator, count);
         self.frame.cells.clearRetainingCapacity();
         self.frame.utf8.clearRetainingCapacity();
+        try self.frame.row_wraps.resize(self.allocator, rows);
         try self.row_meta.ensureTotalCapacity(self.allocator, rows);
         self.row_meta.clearRetainingCapacity();
         // Unstyled, non-grapheme cells have no page-local style/grapheme references.
@@ -1248,8 +1255,10 @@ pub const Terminal = struct {
                         .id = row_id,
                         .utf8_start = row_utf8_start,
                         .utf8_len = self.frame.utf8.items.len - row_utf8_start,
+                        .wrap = prev_meta.wrap,
                     });
                     row_cells_needed = false;
+                    self.frame.row_wraps.items[row] = prev_meta.wrap;
                 } else {
                     const row_fields = [_]c.GhosttyRenderStateRowData{
                         c.GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
@@ -1276,11 +1285,16 @@ pub const Terminal = struct {
                 };
             }
             if (row_cells_needed) {
+                var wrap: RowWrap = .{};
+                try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_WRAP, &wrap.wrap));
+                try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_WRAP_CONTINUATION, &wrap.continuation));
+                self.frame.row_wraps.items[row] = wrap;
                 try self.readRowCells(self.row_iterator, raw_row, raw_cells, self.row_cells, columns, foreground, background, &plain_cache, has_row_selection, row_selection, &self.frame.cells, &self.frame.utf8, row_utf8_start);
                 self.row_meta.appendAssumeCapacity(.{
                     .id = row_id,
                     .utf8_start = row_utf8_start,
                     .utf8_len = self.frame.utf8.items.len - row_utf8_start,
+                    .wrap = wrap,
                 });
             }
         }
@@ -1447,7 +1461,7 @@ pub const Terminal = struct {
     const cell_cache_bits = 6;
     const CellCache = [1 << cell_cache_bits]?CachedRenderCell;
     const CachedRenderCell = struct { raw: c.GhosttyCell, cell: TerminalCell };
-    const CachedRowMeta = struct { id: c.GhosttyRenderStateRowId, utf8_start: usize, utf8_len: usize };
+    const CachedRowMeta = struct { id: c.GhosttyRenderStateRowId, utf8_start: usize, utf8_len: usize, wrap: RowWrap = .{} };
     const CachedStyle = struct { id: u16, style: TextStyle, inverse: bool, faint: bool };
     const StyleCache = [32]?CachedStyle;
 

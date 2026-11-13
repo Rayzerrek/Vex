@@ -1,6 +1,6 @@
 const std = @import("std");
 
-/// Half-open byte range `[start, end)` within a single row's UTF-8 text buffer.
+/// Half-open byte range `[start, end)` within a UTF-8 text buffer.
 pub const ByteSpan = struct {
     start: usize,
     end: usize,
@@ -140,52 +140,63 @@ pub fn normalizeUrl(raw: []const u8, out_buf: []u8) ?[]const u8 {
     return null;
 }
 
-/// Scans a single row in `frame` and returns the link covering `column`, optionally writing the normalized URL into `out_url`.
+/// Scans the logical line containing `row`, joining only soft-wrapped rows.
+/// The returned span covers the link's cells on the queried row.
 pub fn findLinkInFrameRow(frame: anytype, row: u16, column: u16, out_url: ?[]u8) ?RowLinkMatch {
     if (row >= frame.rows or column >= frame.columns or frame.columns == 0) return null;
-    const row_offset = @as(usize, row) * @as(usize, frame.columns);
-    if (row_offset + frame.columns > frame.cells.items.len) return null;
-    const cells = frame.cells.items[row_offset .. row_offset + frame.columns];
+    if (frame.row_wraps.items.len < frame.rows) return null;
+    var first: usize = row;
+    while (first > 0 and frame.row_wraps.items[first - 1].wrap) : (first -= 1) {}
+    var last: usize = row;
+    while (last + 1 < frame.rows and frame.row_wraps.items[last].wrap) : (last += 1) {}
+    // A clipped logical line cannot provide a complete URL. Never open a prefix
+    // that only looks valid because the rest is outside the snapshot.
+    if (frame.row_wraps.items[first].continuation or frame.row_wraps.items[last].wrap) return null;
+    const first_cell = first * frame.columns;
+    const end_cell = (last + 1) * frame.columns;
+    if (end_cell > frame.cells.items.len) return null;
 
-    var row_text: [4096]u8 = undefined;
-    var byte_to_col: [4096]u16 = undefined;
+    var line_text: [4096]u8 = undefined;
+    var byte_to_cell: [4096]usize = undefined;
     var len: usize = 0;
 
-    for (cells, 0..) |cell, col_idx| {
-        if (cell.width == .tail) continue;
+    for (frame.cells.items[first_cell..end_cell], first_cell..) |cell, cell_idx| {
+        if (cell.width == .tail or cell.width == .head) continue;
         const text = frame.cellText(cell);
         if (text.len == 0) {
-            if (len >= row_text.len) break;
-            row_text[len] = ' ';
-            byte_to_col[len] = @intCast(col_idx);
+            if (len >= line_text.len) return null;
+            line_text[len] = ' ';
+            byte_to_cell[len] = cell_idx;
             len += 1;
         } else {
-            if (len + text.len > row_text.len) break;
-            @memcpy(row_text[len .. len + text.len], text);
-            @memset(byte_to_col[len .. len + text.len], @intCast(col_idx));
+            if (text.len > line_text.len - len) return null;
+            @memcpy(line_text[len .. len + text.len], text);
+            @memset(byte_to_cell[len .. len + text.len], cell_idx);
             len += text.len;
         }
     }
 
     var spans: [32]ByteSpan = undefined;
-    const span_count = findUrlSpans(row_text[0..len], &spans);
+    const span_count = findUrlSpans(line_text[0..len], &spans);
+    const row_start = @as(usize, row) * frame.columns;
+    const target = row_start + column;
     for (spans[0..span_count]) |span| {
         if (span.start >= span.end or span.end > len) continue;
-        const start_col = byte_to_col[span.start];
-        const last_col = byte_to_col[span.end - 1];
-        const end_col: u16 = if (cells[last_col].width == .wide and last_col + 1 < frame.columns)
-            last_col + 1
+        const start = byte_to_cell[span.start];
+        const final = byte_to_cell[span.end - 1];
+        const end = if (frame.cells.items[final].width == .wide and final % frame.columns + 1 < frame.columns)
+            final + 1
         else
-            last_col;
-        if (column >= start_col and column <= end_col) {
+            final;
+        if (target >= start and target <= end) {
             var url_len: usize = 0;
             if (out_url) |buf| {
-                const normalized = normalizeUrl(row_text[span.start..span.end], buf) orelse return null;
+                const normalized = normalizeUrl(line_text[span.start..span.end], buf) orelse return null;
                 url_len = normalized.len;
             }
             return .{
-                .start_col = start_col,
-                .end_col = end_col,
+                .start_col = @intCast(@max(start, row_start) - row_start),
+                .end_col = @intCast(@min(end, row_start + frame.columns - 1) - row_start),
                 .url_len = url_len,
             };
         }

@@ -7,6 +7,80 @@ const Terminal = terminal_mod.Terminal;
 const CellWidth = terminal_mod.CellWidth;
 const MouseTrackingMode = terminal_mod.MouseTrackingMode;
 const MouseFormat = terminal_mod.MouseFormat;
+const url_detector = @import("url_detector.zig");
+
+test "plain URLs resolve every wrapped cell after reflow and cached row reuse" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    const url = "https://example.com/a/long/path?q=wrapping&lang=pl";
+    try terminal.resize(12, 12, 8, 16);
+    try terminal.feedOutput("See (" ++ url ++ ").");
+    var buffer: [2048]u8 = undefined;
+    for ([_]u16{ 12, 20, 80, 16 }) |columns| {
+        try terminal.resize(columns, 12, 8, 16);
+        terminal.scrollToTop();
+        // Dirty an unrelated row so the next read also exercises cached rows.
+        for (0..2) |pass| {
+            if (pass == 1) try terminal.feedOutput("\x1b[12;1Hx");
+            const frame = try terminal.readFrame();
+            for (0..url.len) |index| {
+                const pos = 5 + index;
+                const row: u16 = @intCast(pos / columns);
+                const col: u16 = @intCast(pos % columns);
+                const match = url_detector.findLinkInFrameRow(frame, row, col, &buffer) orelse {
+                    std.debug.print("missing URL: columns={d} pass={d} row={d} col={d} wraps={any}\n", .{ columns, pass, row, col, frame.row_wraps.items });
+                    return error.MissingWrappedUrl;
+                };
+                try std.testing.expectEqualStrings(url, buffer[0..match.url_len]);
+                try std.testing.expectEqual(@as(u16, if (row == 0) 5 else 0), match.start_col);
+                try std.testing.expectEqual(@as(u16, @intCast(@min(5 + url.len - 1, (@as(usize, row) + 1) * columns - 1) % columns)), match.end_col);
+                const hover = url_detector.findLinkInFrameRow(frame, row, col, null).?;
+                try std.testing.expectEqual(match.start_col, hover.start_col);
+                try std.testing.expectEqual(match.end_col, hover.end_col);
+            }
+            const after = 5 + url.len;
+            try std.testing.expect(url_detector.findLinkInFrameRow(frame, @intCast(after / columns), @intCast(after % columns), null) == null);
+            try std.testing.expect(url_detector.findLinkInFrameRow(frame, 0, 4, null) == null);
+            try std.testing.expect(url_detector.findLinkInFrameRow(frame, 0, 5, buffer[0..4]) == null);
+        }
+    }
+}
+
+test "URL detection respects hard newlines and wide glyph wrap spacers" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    var buffer: [2048]u8 = undefined;
+    try terminal.resize(20, 6, 8, 16);
+    try terminal.feedOutput("https://example.com/\r\nnot-part-of-the-url");
+    var frame = try terminal.readFrame();
+    const hard = url_detector.findLinkInFrameRow(frame, 0, 0, &buffer).?;
+    try std.testing.expectEqualStrings("https://example.com/", buffer[0..hard.url_len]);
+    try std.testing.expect(url_detector.findLinkInFrameRow(frame, 1, 0, null) == null);
+
+    try terminal.feedOutput("\x1b[2J\x1b[Hhttps://example.com/界/path");
+    frame = try terminal.readFrame();
+    for ([_]u16{ 0, 1 }) |column| {
+        const wide = url_detector.findLinkInFrameRow(frame, 1, column, &buffer).?;
+        try std.testing.expectEqualStrings("https://example.com/界/path", buffer[0..wide.url_len]);
+    }
+}
+
+test "wrapped www URLs normalize and clipped logical lines do not open partial URLs" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(10, 4, 8, 16);
+    try terminal.feedOutput("www.example.com/long/path");
+    var buffer: [2048]u8 = undefined;
+    const match = url_detector.findLinkInFrameRow(try terminal.readFrame(), 2, 0, &buffer).?;
+    try std.testing.expectEqualStrings("https://www.example.com/long/path", buffer[0..match.url_len]);
+    try terminal.feedOutput("/more/more/more/more/more/more/more");
+    try std.testing.expect(url_detector.findLinkInFrameRow(try terminal.readFrame(), 0, 0, &buffer) == null);
+    terminal.scrollToTop();
+    try std.testing.expect(url_detector.findLinkInFrameRow(try terminal.readFrame(), 0, 0, &buffer) == null);
+}
 
 test "Kitty graphics storage is bounded and filesystem media are disabled" {
     const api = try binding.Api.load();
