@@ -42,6 +42,8 @@ pub const UserSettings = struct {
     cursor_blink: bool = true,
     copy_on_select: bool = true,
     active_pane_border: bool = true,
+    show_tab_sidebar: bool = true,
+    horizontal_tabs: bool = false,
     confirm_close: bool = true,
     default_shell: DefaultShell = .startup,
     ui_density: UiDensity = .comfortable,
@@ -88,9 +90,11 @@ pub const UserSettings = struct {
             \\vex.config.copy_on_select = {s}
             \\vex.config.confirm_close = {s}
             \\vex.config.active_pane_border = {s}
+            \\vex.config.show_tab_sidebar = {s}
+            \\vex.config.horizontal_tabs = {s}
             \\vex.config.default_shell = "{s}"
             \\
-        , .{ theme, if (themes.themes[self.theme_index].is_dark) "dark" else "light", @tagName(self.ui_density), family, self.font_size, if (self.cursor_blink) "true" else "false", if (self.copy_on_select) "true" else "false", if (self.confirm_close) "true" else "false", if (self.active_pane_border) "true" else "false", shell_name });
+        , .{ theme, if (themes.themes[self.theme_index].is_dark) "dark" else "light", @tagName(self.ui_density), family, self.font_size, if (self.cursor_blink) "true" else "false", if (self.copy_on_select) "true" else "false", if (self.confirm_close) "true" else "false", if (self.active_pane_border) "true" else "false", if (self.show_tab_sidebar) "true" else "false", if (self.horizontal_tabs) "true" else "false", shell_name });
     }
 };
 
@@ -136,6 +140,8 @@ fn decodeLuaSettings(allocator: std.mem.Allocator, bytes: []const u8, path: []co
     raw.copy_on_select = defaults.copy_on_select;
     raw.confirm_close = defaults.confirm_close;
     raw.active_pane_border = defaults.active_pane_border;
+    raw.show_tab_sidebar = defaults.show_tab_sidebar;
+    raw.horizontal_tabs = defaults.horizontal_tabs;
     diagnostic.* = .{};
     const source = if (std.mem.startsWith(u8, bytes, "\xef\xbb\xbf")) bytes[3..] else bytes;
     switch (lua.vex_lua_settings_decode(source.ptr, source.len, source_path.ptr, &raw, &diagnostic.bytes, diagnostic.bytes.len)) {
@@ -161,6 +167,8 @@ fn decodeLuaSettings(allocator: std.mem.Allocator, bytes: []const u8, path: []co
         .copy_on_select = raw.copy_on_select,
         .confirm_close = raw.confirm_close,
         .active_pane_border = raw.active_pane_border,
+        .show_tab_sidebar = raw.show_tab_sidebar,
+        .horizontal_tabs = raw.horizontal_tabs,
         .default_shell = try DefaultShell.parse(std.mem.sliceTo(&raw.default_shell, 0)),
         .ui_density = std.meta.stringToEnum(UiDensity, std.mem.sliceTo(&raw.ui_density, 0)) orelse return error.InvalidUiDensity,
     };

@@ -72,6 +72,7 @@ pub const TerminalApplication = struct {
     placements: std.ArrayList(panes.PanePlacement) = .empty,
     preview_placements: std.ArrayList(panes.PanePlacement) = .empty,
     metrics: ?platform.WindowMetrics = null,
+    sidebar_collapsed: bool = false,
     pointer_drag: pointer.PointerDrag = .none,
     layout_motion: @import("../workspace/layout_motion.zig").LayoutMotion = .{},
     closing_panes: std.ArrayList(ClosingPane) = .empty,
@@ -174,6 +175,7 @@ pub const TerminalApplication = struct {
             .launch = launch,
             .default_shell_kind = default_kind,
             .settings = settings,
+            .sidebar_collapsed = !settings.show_tab_sidebar,
             .settings_path = settings_path,
             .custom_shells = custom_shells,
             .custom_shell_load_error = custom_shell_load_error,
@@ -239,10 +241,11 @@ pub const TerminalApplication = struct {
     fn anyAnimatedStatus(self: *TerminalApplication) bool {
         const model = if (self.model) |*model| model else return false;
         if (!self.cursor_window_active or self.overlay != .none or self.editing_tab != null or !platform.animationsEnabled()) return false;
-        for (model.tabs.items) |tab| {
+        if (self.settings.horizontal_tabs or !self.sidebar_collapsed) for (model.tabs.items) |tab| {
             const presentation = self.tabProgramStatus(tab.tree.root) catch return false;
             if (status_pulse.StatusPulse.animates(@intFromEnum(presentation.summary.state))) return true;
-        }
+        };
+        if (self.metrics) |metrics| if (metrics.single_pane) return false;
         for (self.placements.items) |placement| {
             if (self.findSession(placement.id)) |session| {
                 const summary = session.terminal.program_status.programStatus();
@@ -332,7 +335,11 @@ pub const TerminalApplication = struct {
     }
     /// Captures runtime values without serializing any live session or launch command.
     pub fn currentPreferences(self: *TerminalApplication) preferences.UserSettings {
-        return .{ .ui_density = self.settings.ui_density, .theme_index = @intCast(self.theme_index), .font_size = @intFromFloat(@round(platform.fontSize())), .cursor_blink = self.cursor_blink_enabled, .copy_on_select = self.settings.copy_on_select, .confirm_close = self.settings.confirm_close, .active_pane_border = self.settings.active_pane_border, .default_shell = self.settings.default_shell, .font_family = self.settings.font_family };
+        var settings = self.settings;
+        settings.theme_index = @intCast(self.theme_index);
+        settings.font_size = @intFromFloat(@round(platform.fontSize()));
+        settings.cursor_blink = self.cursor_blink_enabled;
+        return settings;
     }
     /// Writes GUI preferences only when changed; storage failure never closes running terminals.
     pub fn commitPreferences(self: *TerminalApplication, settings: preferences.UserSettings) !void {
@@ -384,28 +391,36 @@ pub const TerminalApplication = struct {
         }
         const previous = self.settings;
         const previous_kind = self.default_shell_kind;
-        self.applyPreferences(settings, kind) catch |err| {
-            self.applyPreferences(previous, previous_kind) catch |rollback| self.fail(rollback);
+        const previous_collapsed = self.sidebar_collapsed;
+        const sidebar_changed = previous.show_tab_sidebar != settings.show_tab_sidebar or previous.horizontal_tabs != settings.horizontal_tabs;
+        const collapsed = if (sidebar_changed) !settings.show_tab_sidebar else previous_collapsed;
+        self.applyPreferences(settings, kind, collapsed) catch |err| {
+            self.applyPreferences(previous, previous_kind, previous_collapsed) catch |rollback| self.fail(rollback);
             return err;
         };
         if (source == .gui and !std.meta.eql(previous, settings)) preferences.saveUserSettings(self.allocator, self.settings_path, settings) catch |err| {
-            self.applyPreferences(previous, previous_kind) catch |rollback| self.fail(rollback);
+            self.applyPreferences(previous, previous_kind, previous_collapsed) catch |rollback| self.fail(rollback);
             dialogs.showSettingsFailure(err);
             return;
         };
     }
-    fn applyPreferences(self: *TerminalApplication, settings: preferences.UserSettings, kind: shell.ShellKind) !void {
+    fn applyPreferences(self: *TerminalApplication, settings: preferences.UserSettings, kind: shell.ShellKind, collapsed: bool) !void {
         try platform.setFontPreferences(&settings.font_family, @floatFromInt(settings.font_size));
         const density_changed = self.settings.ui_density != settings.ui_density;
-        if (density_changed) {
+        const sidebar_changed = self.sidebar_collapsed != collapsed or self.settings.horizontal_tabs != settings.horizontal_tabs;
+        if (density_changed or sidebar_changed) {
             _ = try pointer.cancelPointerDrag(self);
             self.layout_motion.clear();
+        }
+        if (sidebar_changed) {
+            self.sidebar_collapsed = collapsed;
+            self.clearClosingPanes();
         }
         self.settings = settings;
         platform.setUiDensity(settings.ui_density);
         platform.setActivePaneBorder(settings.active_pane_border);
         if (self.metrics) |*metrics| metrics.ui_density = settings.ui_density;
-        if (density_changed) try self.updateLayout();
+        if (density_changed or sidebar_changed) try self.updateLayout();
         if (self.theme_index != settings.theme_index) try self.applyTheme(settings.theme_index);
         self.cursor_blink_enabled = settings.cursor_blink;
         self.cursor_blink.synchronize(null, self.cursorNowMs());
@@ -428,14 +443,20 @@ pub const TerminalApplication = struct {
         for (self.placements.items) |placement| if (placement.id == id) return placement;
         return null;
     }
-    fn beginTabRename(self: *TerminalApplication, index: usize) void {
+    fn beginTabRename(self: *TerminalApplication, index: usize) !void {
         self.commitTabRename();
         if (self.overlay == .path_completion or self.overlay == .tab_peek) {
             self.overlay = .none;
         }
         const model = if (self.model) |*model| model else return;
         if (index >= model.tabs.items.len) return;
-        _ = model.selectTab(index);
+        const changed_tab = index != model.selected_tab;
+        if (changed_tab) _ = model.selectTab(index);
+        if (!self.settings.horizontal_tabs and self.sidebar_collapsed) {
+            try self.setSidebarCollapsed(false);
+        } else if (changed_tab) {
+            try self.updateLayout();
+        }
         const tab = model.tabs.items[index];
         const active_session = self.findSession(tab.active_pane) orelse return;
         const reported = if (self.tabProgramStatus(tab.tree.root)) |presentation|
@@ -502,13 +523,18 @@ pub const TerminalApplication = struct {
         defer self.allocator.free(home);
         var path = try directory.DirectoryPath.parse(home);
         path.shell_home = launch_ptr.backend == .wsl;
-        return self.addSessionWithLaunch(path, launch_ptr);
+        const size = if (self.metrics) |window| blk: {
+            var metrics = window;
+            metrics.single_pane = !self.settings.horizontal_tabs;
+            break :blk try metrics.terminalSize(self.contentBounds(metrics));
+        } else null;
+        return self.addSessionWithLaunch(path, launch_ptr, size);
     }
     /// Ordinary splits keep the tab's original launch, even after its first pane is gone.
     pub fn addSplitSession(self: *TerminalApplication, target: *const TerminalSession) !*TerminalSession {
         const slot = if (self.model) |*model| model.activeTab().shell_launch_id else null;
         const launch = if (slot) |id| (if (id == 0) &self.launch else self.shell_launches.items[id - 1]) else target.shell_launch;
-        return self.addSessionWithLaunch(target.directory.current(), launch);
+        return self.addSessionWithLaunch(target.directory.current(), launch, null);
     }
     pub fn rememberTabShell(self: *TerminalApplication, session: *const TerminalSession) void {
         const tab = self.model.?.activeTab();
@@ -527,15 +553,15 @@ pub const TerminalApplication = struct {
     fn addSessionWithKind(self: *TerminalApplication, path: directory.DirectoryPath, kind: shell.ShellKind) !*TerminalSession {
         platform.resetPtyLaunchError();
         const launch_ptr = terminal_shells.resolveShellLaunch(self, kind) catch |err| return if (err == error.OutOfMemory) err else error.ShellStartFailed;
-        return self.addSessionWithLaunch(path, launch_ptr);
+        return self.addSessionWithLaunch(path, launch_ptr, null);
     }
-    fn addSessionWithLaunch(self: *TerminalApplication, path: directory.DirectoryPath, launch_ptr: *const shell.ShellLaunch) !*TerminalSession {
+    fn addSessionWithLaunch(self: *TerminalApplication, path: directory.DirectoryPath, launch_ptr: *const shell.ShellLaunch, size: ?platform.TerminalSize) !*TerminalSession {
         platform.resetPtyLaunchError();
         // Reserving first prevents an allocation failure from stranding a live process.
         try self.sessions.ensureUnusedCapacity(self.allocator, 1);
         const token = self.next_token;
         self.next_token = try std.math.add(u32, token, 1);
-        const session = TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, launch_ptr) catch |err| {
+        const session = TerminalSession.create(self.allocator, &self.api, @enumFromInt(token), path, self.machine_name, launch_ptr, size) catch |err| {
             if (@import("builtin").is_test) std.debug.print("Session creation failed: {s}; Win32={d}; program={s}; directory={s}\n", .{ @errorName(err), platform.lastPtyLaunchError(), launch_ptr.program, path.bytes });
             return if (err == error.OutOfMemory) err else error.ShellStartFailed;
         };
@@ -624,13 +650,31 @@ pub const TerminalApplication = struct {
         try self.layout_motion.captureFocus(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled());
         if (model.toggleFocusMode()) try self.updateLayout();
     }
+    pub fn tabLayout(self: *const TerminalApplication) !tab_strip.TabStripLayout {
+        const model = if (self.model) |*model| model else return error.MissingWorkspace;
+        const metrics = self.metrics orelse return error.MissingWindowMetrics;
+        if (self.settings.horizontal_tabs) return tab_strip.TabStripLayout.initHorizontal(metrics.width, model.tabs.items.len, model.selected_tab, self.settings.ui_density);
+        return tab_strip.TabStripLayout.init(metrics.width, model.tabs.items.len, model.selected_tab, self.settings.ui_density, self.sidebar_collapsed);
+    }
+
+    pub fn contentBounds(self: *const TerminalApplication, metrics: platform.WindowMetrics) panes.PaneRect {
+        const inset = metrics.ui_density.metrics().workspace_padding;
+        const sidebar = if (self.settings.horizontal_tabs or self.sidebar_collapsed) 0 else tab_strip.TabStripLayout.sidebarWidth(metrics.width, self.settings.ui_density);
+        const top = tab_strip.TabStripLayout.height;
+        return .{ .x = sidebar + inset, .y = top + inset, .width = @max(0, metrics.width - sidebar - inset * 2), .height = @max(0, metrics.height - top - inset * 2) };
+    }
+
     pub fn updateLayout(self: *TerminalApplication) !void {
         const model = if (self.model) |*model| model else return;
-        const metrics = self.metrics orelse return;
-        try platform.setTabStripLayout(try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density));
-        for (model.tabs.items) |*candidate| candidate.tree.ui_density = self.settings.ui_density;
+        if (self.metrics == null) return;
         const tab = model.activeTab();
-        const bounds = windowContentBounds(metrics);
+        self.metrics.?.single_pane = !self.settings.horizontal_tabs and tab.tree.paneCount() == 1;
+        const metrics = self.metrics.?;
+        var ids: [8]u32 = @splat(0);
+        for (model.tabs.items, 0..) |item, index| ids[index] = @intFromEnum(item.id);
+        platform.setTabStripLayout(try self.tabLayout(), metrics.single_pane, ids);
+        for (model.tabs.items) |*candidate| candidate.tree.ui_density = self.settings.ui_density;
+        const bounds = self.contentBounds(metrics);
         if (tab.is_focus_mode and tab.tree.paneCount() > 1) {
             try bounds.validate();
             try self.placements.ensureTotalCapacity(self.allocator, 1);
@@ -683,7 +727,9 @@ pub const TerminalApplication = struct {
         const session = self.findSession(id) orelse return false;
         // Natural process exit can precede its last queued output block.
         if (session.pty.handle == null) return false;
-        const previous = status_presentation.statusPresentationKey(session.terminal.program_status.programStatus());
+        const previous_summary = session.terminal.program_status.programStatus();
+        const previous_state = previous_summary.state;
+        const previous = status_presentation.statusPresentationKey(previous_summary);
         const previous_title = session.terminal.title.generation;
         const previous_attention = session.needs_attention;
         session.terminal.feedOutput(bytes) catch |err| {
@@ -700,11 +746,17 @@ pub const TerminalApplication = struct {
         const attention = session.terminal.program_status.takeAttention();
         session.needs_attention = !visible and (session.needs_attention or attention);
         const title_changed = previous_title != session.terminal.title.generation;
-        const status_changed = previous != status_presentation.statusPresentationKey(session.terminal.program_status.programStatus()) or previous_attention != session.needs_attention;
+        const summary = session.terminal.program_status.programStatus();
+        const status_changed = previous != status_presentation.statusPresentationKey(summary) or previous_attention != session.needs_attention;
         const chrome_changed = title_changed or status_changed;
         if (!visible) {
             if (chrome_changed) _ = session.refreshAppIcon(false);
             session.sync_defer_since_ms = null;
+            // With no row on screen, only changes to the static attention dot are visible.
+            if (!self.settings.horizontal_tabs and self.sidebar_collapsed and !overlays.peekContainsPane(self, id)) {
+                return previous_attention != session.needs_attention or
+                    (previous_state != summary.state and (previous_state.needsAttention() or summary.state.needsAttention()));
+            }
             return chrome_changed or overlays.peekContainsPane(self, id);
         }
         const now_probe = std.time.milliTimestamp();
@@ -1094,7 +1146,40 @@ pub const TerminalApplication = struct {
         self.syncAnimationWake() catch |err| self.fail(err);
         platform.invalidateWindow();
     }
+
+    fn setSidebarCollapsed(self: *TerminalApplication, collapsed: bool) !void {
+        if (self.settings.horizontal_tabs or self.sidebar_collapsed == collapsed) return;
+        self.commitTabRename();
+        if (self.overlay == .path_completion or self.overlay == .tab_peek) self.overlay = .none;
+        self.layout_motion.clear();
+        self.clearClosingPanes();
+        self.sidebar_collapsed = collapsed;
+        try self.updateLayout();
+    }
+
+    test "Tab Peek button and shortcut close without accepting a preview selection" {
+        var app = try recoveryTestApplication("unused-recovery-test.lua");
+        defer app.deinit();
+        try app.initializeWorkspace();
+        try app.applyAction(.new_tab, 0);
+        const selected = app.model.?.selected_tab;
+        try app.applyAction(.tab_peek, 0);
+        app.overlay.tab_peek.selected_index = 0;
+        try app.applyAction(.tab_peek, 0);
+        try std.testing.expect(app.overlay == .none);
+        try std.testing.expectEqual(selected, app.model.?.selected_tab);
+        try std.testing.expect(app.onKey(0x20, 3));
+        try std.testing.expect(app.overlay == .tab_peek);
+        try std.testing.expect(app.onKeyEvent(0x20, 3, .repeat, 0));
+        try std.testing.expect(app.overlay == .tab_peek);
+        try std.testing.expect(app.onKey(0x20, 3));
+        try std.testing.expect(app.overlay == .none);
+    }
     fn openShellPicker(self: *TerminalApplication, mode: overlays.ShellPickerMode) void {
+        if (mode == .new_tab) {
+            const model = if (self.model) |*model| model else return;
+            if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) return;
+        }
         self.commitTabRename();
         self.discoverAvailableShells();
         var selected: usize = 0;
@@ -1112,6 +1197,16 @@ pub const TerminalApplication = struct {
         modals.presentTerminalModal(self) catch |err| self.fail(err);
         platform.invalidateWindow();
     }
+    fn appendTab(self: *TerminalApplication, kind: shell.ShellKind) !bool {
+        const model = if (self.model) |*model| model else return false;
+        if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) return false;
+        const session = try self.addHomeSessionWithKind(kind);
+        errdefer self.removeSession(session.id);
+        try model.newTab(session.id);
+        self.rememberTabShell(session);
+        return true;
+    }
+
     pub fn executeShellPickerChoice(self: *TerminalApplication, mode: overlays.ShellPickerMode, kind: shell.ShellKind) !void {
         if (mode != .set_default) dialogs.closeDialog();
         self.overlay = .none;
@@ -1123,15 +1218,7 @@ pub const TerminalApplication = struct {
                 try self.commitPreferences(settings);
             },
             .new_tab => {
-                if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) {
-                    platform.invalidateWindow();
-                    return;
-                }
-                const session = try self.addHomeSessionWithKind(kind);
-                errdefer self.removeSession(session.id);
-                try model.newTab(session.id);
-                self.rememberTabShell(session);
-                try self.updateLayout();
+                if (try self.appendTab(kind)) try self.updateLayout() else platform.invalidateWindow();
             },
             .split_right, .split_down => {
                 const active = self.activeSession() orelse return error.MissingPaneSession;
@@ -1163,6 +1250,18 @@ pub const TerminalApplication = struct {
             .update_restart => self.requestUpdateRestart(),
             .toggle_dark_light => try self.toggleDarkLightTheme(),
             .open_tab_peek => self.openTabPeek(),
+            .toggle_sidebar => try self.applyAction(.toggle_sidebar, 0),
+            .show_sidebar, .hide_sidebar => {
+                if (try pointer.cancelPointerDrag(self)) try self.updateLayout();
+                try self.setSidebarCollapsed(id == .hide_sidebar);
+            },
+            .horizontal_tabs, .vertical_tabs => {
+                var settings = self.currentPreferences();
+                settings.horizontal_tabs = id == .horizontal_tabs;
+                if (!settings.horizontal_tabs) settings.show_tab_sidebar = true;
+                try self.commitPreferences(settings);
+                if (id == .vertical_tabs and std.meta.eql(settings, self.settings)) try self.setSidebarCollapsed(false);
+            },
             .new_tab => try self.applyAction(.new_tab, 0),
             .new_tab_with_shell => self.openShellPicker(.new_tab),
             .split_right => try self.applyAction(.split_right, 0),
@@ -1173,7 +1272,7 @@ pub const TerminalApplication = struct {
             .toggle_focus_mode => try self.applyAction(.toggle_focus_mode, 0),
             .rename_active_tab => {
                 if (self.model) |*model| {
-                    self.beginTabRename(model.selected_tab);
+                    try self.beginTabRename(model.selected_tab);
                 }
             },
             .zoom_in => try self.adjustFontZoom(1.0),
@@ -1258,11 +1357,15 @@ pub const TerminalApplication = struct {
         };
         const model = if (self.model) |*model| model else return false;
         const metrics = self.metrics orelse return false;
-        return model.hasPaneNeighbor(windowContentBounds(metrics), direction);
+        return model.hasPaneNeighbor(self.contentBounds(metrics), direction);
     }
     pub fn applyAction(self: *TerminalApplication, action: platform.WorkspaceAction, index: u32) !void {
         if (try pointer.cancelPointerDrag(self)) try self.updateLayout();
         switch (action) {
+            .toggle_sidebar => {
+                try self.setSidebarCollapsed(!self.sidebar_collapsed);
+                return;
+            },
             .update_restart => {
                 self.requestUpdateRestart();
                 return;
@@ -1305,6 +1408,10 @@ pub const TerminalApplication = struct {
                 return;
             },
             .tab_peek => {
+                if (self.overlay == .tab_peek) {
+                    try overlays.closePeek(self, false);
+                    return;
+                }
                 if (index > 0) {
                     dialogs.closeDialog();
                     self.overlay = .none;
@@ -1342,7 +1449,7 @@ pub const TerminalApplication = struct {
                 return;
             },
             .rename_tab => {
-                self.beginTabRename(index);
+                try self.beginTabRename(index);
                 return;
             },
             .request_close_tab => {
@@ -1409,11 +1516,10 @@ pub const TerminalApplication = struct {
         }
         switch (action) {
             .new_tab => {
-                if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) return;
-                const session = try self.addHomeSessionWithKind(self.default_shell_kind);
-                errdefer self.removeSession(session.id);
-                try model.newTab(session.id);
-                self.rememberTabShell(session);
+                if (!try self.appendTab(self.default_shell_kind)) {
+                    platform.invalidateWindow();
+                    return;
+                }
             },
             .split_right, .split_down => {
                 const active = self.activeSession() orelse return error.MissingPaneSession;
@@ -1437,7 +1543,7 @@ pub const TerminalApplication = struct {
                     .previous_pane => .previous,
                     else => unreachable,
                 };
-                if (!try model.navigatePane(windowContentBounds(metrics), direction)) return;
+                if (!try model.navigatePane(self.contentBounds(metrics), direction)) return;
             },
             .next_tab => {
                 model.cycleTab(true);
@@ -1459,7 +1565,7 @@ pub const TerminalApplication = struct {
                 } else try self.closeTab(model.selected_tab);
             },
             .close_tab => try self.closeTab(index),
-            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink, .shell_picker, .settings, .update_restart => unreachable,
+            .rename_tab, .command_palette, .theme_picker, .tab_peek, .path_completion, .zoom_in, .zoom_out, .zoom_reset, .request_close_tab, .toggle_cursor_blink, .shell_picker, .settings, .update_restart, .toggle_sidebar => unreachable,
         }
         for (self.sessions.items) |session| {
             if (model.activeTab().tree.containsPane(session.id)) session.needs_attention = false;
@@ -1548,12 +1654,6 @@ pub const TerminalApplication = struct {
         }
     }
 };
-
-/// Keeps workspace layout below the custom title bar.
-pub fn windowContentBounds(metrics: platform.WindowMetrics) panes.PaneRect {
-    const inset = metrics.ui_density.metrics().workspace_padding;
-    return .{ .x = inset, .y = 44 + inset, .width = @max(0, metrics.width - inset * 2), .height = @max(0, metrics.height - 44 - inset * 2) };
-}
 
 /// Retains the stable application/API owner until the window loop returns; teardown joins all session workers.
 pub fn runApplication(allocator: std.mem.Allocator) !void {
@@ -1647,6 +1747,22 @@ test "ordinary splits retain the tab launch across overrides, original pane remo
     try std.testing.expectEqual(@as(usize, 1), app.shell_launches.items.len);
 }
 
+test "workspace autorepeat cannot fill the tab bar or repeatedly resize the PTY" {
+    var app = try recoveryTestApplication("unused-recovery-test.lua");
+    defer app.deinit();
+    app.onResize(.{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 });
+    try std.testing.expect(app.onKeyEvent('T', 3, .press, 0));
+    const tab = app.activeSession().?;
+    for (0..10) |_| try std.testing.expect(app.onKeyEvent('T', 3, .repeat, 0));
+    try std.testing.expectEqual(@as(usize, 2), app.sessions.items.len);
+    try std.testing.expectEqual(tab.id, app.activeSession().?.id);
+    try std.testing.expect(app.onKeyEvent('B', 3, .press, 0));
+    const collapsed = tab.size.?;
+    for (0..10) |_| try std.testing.expect(app.onKeyEvent('B', 3, .repeat, 0));
+    try std.testing.expect(app.sidebar_collapsed);
+    try std.testing.expectEqualDeep(collapsed, tab.size.?);
+}
+
 test "installed PowerShell 7 launches in a new tab and its inherited splits" {
     var app = try recoveryTestApplication("unused-recovery-test.lua");
     defer app.deinit();
@@ -1681,13 +1797,16 @@ test "OSC identities bypass process polling in visible and hidden panes and late
     first.process_probe.last_probe_ms = future;
     hidden.process_probe.last_probe_ms = future;
     _ = app.onOutput(first.id, "\x1b]7501;state=working:app=node\x07");
-    _ = app.onOutput(hidden.id, "\x1b]7501;state=working:app=python\x07");
+    try app.applyAction(.toggle_sidebar, 0);
+    try std.testing.expect(!app.onOutput(hidden.id, "\x1b]7501;state=working:app=python\x07"));
     try std.testing.expectEqual(app_icon.GlyphId.nodedotjs, first.icon.glyph);
     try std.testing.expectEqual(app_icon.GlyphId.python, hidden.icon.glyph);
     try std.testing.expectEqual(future, first.process_probe.last_probe_ms);
     try std.testing.expectEqual(future, hidden.process_probe.last_probe_ms);
     app.onProcessChanged(hidden.id);
     try std.testing.expectEqual(app_icon.GlyphId.python, hidden.icon.glyph);
+    try std.testing.expect(app.onOutput(hidden.id, "\x1b]7501;state=blocked:kind=auth:app=python\x07"));
+    try std.testing.expect(!app.onOutput(hidden.id, "\x1b]7501;state=blocked:kind=auth:app=python:msg=TG9naW4=\x07"));
     app.onExited(hidden_id, 0);
     app.onProcessChanged(hidden_id);
     app.onProcessChanged(@enumFromInt(0xfffffff0));
@@ -1834,17 +1953,19 @@ test "pane drag crosses tabs, cancellation restores selection and detaching reta
     _ = app.model.?.selectTab(0);
     app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
     try app.updateLayout();
+    const layout = try app.tabLayout();
+    const other = layout.tabBounds(1).?;
     const source = app.placements.items[0].bounds;
     _ = app.onPointer(.begin, source.x + 40, source.y + 12, 0);
-    _ = app.onPointer(.move, 250, 20, 0);
+    _ = app.onPointer(.move, other.x + 10, other.y + 10, 0);
     try std.testing.expectEqual(@as(usize, 1), app.model.?.selected_tab);
-    _ = app.onPointer(.cancel, 250, 20, 0);
+    _ = app.onPointer(.cancel, other.x + 10, other.y + 10, 0);
     try std.testing.expectEqual(@as(usize, 0), app.model.?.selected_tab);
     try std.testing.expectEqual(@as(usize, 2), app.model.?.tabs.items[0].tree.paneCount());
     try first.terminal.feedOutput("pane transfer sentinel");
     const handle = first.pty.handle;
     _ = app.onPointer(.begin, source.x + 40, source.y + 12, 0);
-    _ = app.onPointer(.move, 250, 20, 0);
+    _ = app.onPointer(.move, other.x + 10, other.y + 10, 0);
     _ = app.onPointer(.move, 1090, 350, 0);
     _ = app.onPointer(.end, 1090, 350, 0);
     try std.testing.expect(app.health == .running);
@@ -1856,19 +1977,18 @@ test "pane drag crosses tabs, cancellation restores selection and detaching reta
     try std.testing.expect(try first.terminal.containsViewportText("pane transfer sentinel"));
     const moved = app.findPlacement(first.id).?.bounds;
     _ = app.onPointer(.begin, moved.x + 40, moved.y + 12, 0);
-    const layout = try tab_strip.TabStripLayout.init(1120, app.model.?.tabs.items.len);
-    try std.testing.expect(pointer.paneDetachAt(&app, first.id, .{ .x = layout.plusLeft() + 10, .y = 20 }) != null);
+    try std.testing.expect(pointer.paneDetachAt(&app, first.id, .{ .x = layout.plus_x + 10, .y = 20 }) != null);
     try std.testing.expect(pointer.paneDetachAt(&app, first.id, .{ .x = 1010, .y = 20 }) == null);
-    _ = app.onPointer(.move, 950, 20, 0);
+    _ = app.onPointer(.move, layout.plus_x + 10, 20, 0);
     const origin_bounds = app.findPlacement(first.id).?.bounds;
-    _ = app.onPointer(.end, 950, 20, 0);
+    _ = app.onPointer(.end, layout.plus_x + 10, 20, 0);
     try std.testing.expect(app.health == .running);
     try std.testing.expectEqual(@as(usize, 3), app.model.?.tabs.items.len);
     try std.testing.expectEqual(first.id, app.model.?.activeTab().active_pane);
     try std.testing.expectEqual(@as(usize, 3), app.sessions.items.len);
     try std.testing.expectEqual(handle, first.pty.handle);
     try std.testing.expectEqual(@as(?usize, 0), app.model.?.activeTab().shell_launch_id);
-    try std.testing.expect(pointer.paneDetachAt(&app, first.id, .{ .x = 950, .y = 20 }) == null);
+    try std.testing.expect(pointer.paneDetachAt(&app, first.id, .{ .x = layout.plus_x + 10, .y = 20 }) == null);
     if (platform.animationsEnabled()) {
         try std.testing.expectEqualDeep(origin_bounds, app.layout_motion.previous.items[0].bounds);
     }
@@ -1886,8 +2006,11 @@ test "tab drag merges the entire split group without replacing its terminals" {
     _ = app.model.?.selectTab(0);
     app.metrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 };
     try app.updateLayout();
-    _ = app.onPointer(.begin, 60, 20, 0);
-    _ = app.onPointer(.move, 250, 20, 0);
+    const layout = try app.tabLayout();
+    const first_row = layout.tabBounds(0).?;
+    const second_row = layout.tabBounds(1).?;
+    _ = app.onPointer(.begin, first_row.x + 10, first_row.y + 10, 0);
+    _ = app.onPointer(.move, second_row.x + 10, second_row.y + 10, 0);
     _ = app.onPointer(.move, 1090, 350, 0);
     _ = app.onPointer(.end, 1090, 350, 0);
     try std.testing.expect(app.health == .running);
@@ -2171,7 +2294,7 @@ test "density commands resize live grids without replacing sessions or terminal 
     try app.executeCommand(.density_compact);
     try std.testing.expectEqual(preferences.UiDensity.compact, app.settings.ui_density);
     try std.testing.expect(session.size.?.rows >= initial.rows);
-    try std.testing.expectEqual(initial.columns, session.size.?.columns);
+    try std.testing.expect(session.size.?.columns > initial.columns);
     try app.executeCommand(.density_spacious);
     try std.testing.expect(session.size.?.rows < initial.rows);
     try std.testing.expect(session.size.?.columns < initial.columns);
@@ -2198,13 +2321,21 @@ test "GUI and Lua stay synchronized, malformed reloads and failed saves retain c
     gui.font_size = 21;
     gui.ui_density = .spacious;
     gui.cursor_blink = false;
+    gui.show_tab_sidebar = false;
     try app.commitPreferences(gui);
     try std.testing.expectEqualDeep(gui, try preferences.loadUserSettings(app.allocator, path));
+    try std.testing.expect(app.sidebar_collapsed);
+    try app.executeCommand(.show_sidebar);
+    try std.testing.expect(!app.sidebar_collapsed);
+    try app.executeCommand(.hide_sidebar);
+    try std.testing.expect(app.sidebar_collapsed);
+    try std.testing.expect(!(try preferences.loadUserSettings(app.allocator, path)).show_tab_sidebar);
     try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = "-- edited by hand\nvex.config.font_size = 19" });
     app.reloadUserConfiguration();
     try std.testing.expectEqual(@as(u8, 19), app.settings.font_size);
     try std.testing.expectEqual(@as(f32, 19), platform.fontSize());
     try std.testing.expectEqual(preferences.UiDensity.comfortable, app.settings.ui_density);
+    try std.testing.expect(!app.sidebar_collapsed);
     const committed = app.settings;
     try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = "vex.config.font_size = " });
     app.reloadUserConfiguration();
@@ -2212,6 +2343,10 @@ test "GUI and Lua stay synchronized, malformed reloads and failed saves retain c
     try std.testing.expect(app.health == .running);
     // Backup replacement failure must prevent both disk replacement and live GUI changes.
     try temp.dir.makeDir("init.backup.lua");
+    try app.executeCommand(.hide_sidebar);
+    try app.executeCommand(.horizontal_tabs);
+    try std.testing.expectEqualDeep(committed, app.settings);
+    try std.testing.expect(app.sidebar_collapsed);
     gui.font_size = 23;
     try app.commitPreferences(gui);
     try std.testing.expectEqualDeep(committed, app.settings);

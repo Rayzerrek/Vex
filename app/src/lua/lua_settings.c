@@ -173,6 +173,8 @@ static int configExecute(lua_State* state) {
     lua_pushboolean(state, settings->copy_on_select); lua_setfield(state, -2, "copy_on_select");
     lua_pushboolean(state, settings->confirm_close); lua_setfield(state, -2, "confirm_close");
     lua_pushboolean(state, settings->active_pane_border); lua_setfield(state, -2, "active_pane_border");
+    lua_pushboolean(state, settings->show_tab_sidebar); lua_setfield(state, -2, "show_tab_sidebar");
+    lua_pushboolean(state, settings->horizontal_tabs); lua_setfield(state, -2, "horizontal_tabs");
     lua_setfield(state, -2, "config");
     lua_setglobal(state, "vex");
     lua_sethook(state, configInstructionHook, LUA_MASKCOUNT, 10000);
@@ -189,7 +191,7 @@ static int configExecute(lua_State* state) {
     while (lua_next(state, -2)) {
         size_t key_length = 0;
         const char* key = lua_type(state, -2) == LUA_TSTRING ? lua_tolstring(state, -2, &key_length) : NULL;
-        if (!key || strlen(key) != key_length || (strcmp(key, "ui_density") && strcmp(key, "theme") && strcmp(key, "appearance") && strcmp(key, "font_family") && strcmp(key, "default_shell") && strcmp(key, "font_size") && strcmp(key, "cursor_blink") && strcmp(key, "copy_on_select") && strcmp(key, "confirm_close") && strcmp(key, "active_pane_border")))
+        if (!key || strlen(key) != key_length || (strcmp(key, "ui_density") && strcmp(key, "theme") && strcmp(key, "appearance") && strcmp(key, "font_family") && strcmp(key, "default_shell") && strcmp(key, "font_size") && strcmp(key, "cursor_blink") && strcmp(key, "copy_on_select") && strcmp(key, "confirm_close") && strcmp(key, "active_pane_border") && strcmp(key, "show_tab_sidebar") && strcmp(key, "horizontal_tabs")))
             return luaL_error(state, "Vex configuration: unknown setting '%s'", key ? key : "non-string key");
         lua_pop(state, 1);
     }
@@ -218,6 +220,14 @@ static int configExecute(lua_State* state) {
     lua_pushliteral(state, "active_pane_border"); lua_rawget(state, -2);
     if (!lua_isboolean(state, -1)) return luaL_error(state, "Vex configuration: active_pane_border must be a boolean");
     settings->active_pane_border = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_pushliteral(state, "show_tab_sidebar"); lua_rawget(state, -2);
+    if (!lua_isboolean(state, -1)) return luaL_error(state, "Vex configuration: show_tab_sidebar must be a boolean");
+    settings->show_tab_sidebar = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_pushliteral(state, "horizontal_tabs"); lua_rawget(state, -2);
+    if (!lua_isboolean(state, -1)) return luaL_error(state, "Vex configuration: horizontal_tabs must be a boolean");
+    settings->horizontal_tabs = lua_toboolean(state, -1) != 0;
     return 0;
 }
 

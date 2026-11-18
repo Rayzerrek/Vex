@@ -341,6 +341,15 @@ INT_PTR CALLBACK dialogProcedure(HWND window, UINT message, WPARAM wparam, LPARA
             if (page != host.page) { const auto previousPage = host.page; host.page = page; showPage(previousPage); }
             return TRUE;
         }
+        if (LOWORD(wparam) == tabSidebarId && HIWORD(wparam) == CBN_SELCHANGE) {
+            uint32_t value;
+            if (comboSelection(tabSidebarId, value) && value <= 2 && value != tabLayoutChoice(host.draft)) {
+                host.draft.horizontal_tabs = value == 2;
+                if (value < 2) host.draft.show_tab_sidebar = value == 0;
+                notify(4, 0, nullptr, 0, host.draft);
+            }
+            return TRUE;
+        }
         if (LOWORD(wparam) == blinkId || LOWORD(wparam) == copyOnSelectId || LOWORD(wparam) == confirmCloseId || LOWORD(wparam) == activePaneBorderId) {
             const int id = LOWORD(wparam);
             if (id == blinkId) host.draft.cursor_blink = !host.draft.cursor_blink;
@@ -675,7 +684,7 @@ void repositionTerminalDialogs() {
             SendMessageW(c.window, LB_SETITEMHEIGHT, 0, px(host.model.kind == 1 || id == themeGridId ? themeRowHeight() : listRowHeight()));
             if (host.model.kind == 1 || id == themeGridId) SendMessageW(c.window, LB_SETCOLUMNWIDTH, px(themeColumnWidth()), 0);
         }
-        if (id == shellId || id == fontId || id == densityId) {
+        if (id == shellId || id == fontId || id == densityId || id == tabSidebarId) {
             SendMessageW(c.window, CB_SETITEMHEIGHT, (WPARAM)-1, px(30));
             SendMessageW(c.window, CB_SETITEMHEIGHT, 0, px(30));
         }
@@ -757,6 +766,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
             if (copyChanged) InvalidateRect(GetDlgItem(host.window, copyOnSelectId), nullptr, FALSE);
             if (confirmChanged) InvalidateRect(GetDlgItem(host.window, confirmCloseId), nullptr, FALSE);
             if (borderChanged) InvalidateRect(GetDlgItem(host.window, activePaneBorderId), nullptr, FALSE);
+            SendDlgItemMessageW(host.window, tabSidebarId, CB_SETCURSEL, tabLayoutChoice(host.draft), 0);
         }
         const int listControlId = host.model.kind == 4 ? themeGridId : listId;
         HWND list = GetDlgItem(host.window, listControlId);

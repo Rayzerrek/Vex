@@ -14,6 +14,11 @@ constexpr int closeId = 125, firstPageId = 130;
 constexpr int fontSizeLabelId = 121, shellLabelId = 122, shellDetailId = 123, fontSizeDetailId = 126;
 constexpr int customShellLabelId = 140, customShellDetailId = 141, fontDetailId = 142;
 constexpr int densityLabelId = 143, densityDetailId = 144, densityId = 145, activePaneBorderId = 146;
+constexpr int tabSidebarId = 147;
+constexpr int tabLayoutLabelId = 148;
+inline unsigned tabLayoutChoice(const VexUserSettings& settings) {
+    return settings.horizontal_tabs ? 2u : settings.show_tab_sidebar ? 0u : 1u;
+}
 enum class SettingsPage { general, appearance, terminal, about };
 constexpr size_t itemLimit = 64, shellLimit = 64;
 struct DialogItem {

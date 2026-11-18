@@ -77,14 +77,15 @@ pub const TerminalSession = struct {
     shell_program: []const u8 = "cmd.exe",
 
     /// Allocates at the final address before registering callbacks; startup failure releases every partial owner.
-    pub fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch) !*TerminalSession {
+    pub fn create(allocator: std.mem.Allocator, api: *const binding.Api, id: panes.PaneId, path: directory.DirectoryPath, machine_name: []const u8, launch: *const shell.ShellLaunch, size: ?platform.TerminalSize) !*TerminalSession {
         const session = try allocator.create(TerminalSession);
         errdefer allocator.destroy(session);
         var pane_directory = try directory.PaneDirectory.initForContext(allocator, path, launch.directoryContext());
         errdefer pane_directory.deinit();
         var terminal = try core.Terminal.init(allocator, api);
         errdefer terminal.deinit();
-        var pty = try platform.PtyOwner.init(allocator, id, pane_directory.current(), launch);
+        if (size) |grid| try terminal.resize(grid.columns, grid.rows, grid.cell_width_px, grid.cell_height_px);
+        var pty = try platform.PtyOwner.init(allocator, id, pane_directory.current(), launch, size orelse platform.TerminalSize.default_grid);
         errdefer pty.deinit();
         session.* = .{
             .id = id,
@@ -93,6 +94,7 @@ pub const TerminalSession = struct {
             .directory = pane_directory,
             .machine_name = machine_name,
             .shell_launch = launch,
+            .size = size,
             .shell_kind = launch.kind,
             .shell_name = launch.shellName(),
             .shell_program = launch.program,

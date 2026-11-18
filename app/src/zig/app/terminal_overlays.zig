@@ -40,7 +40,7 @@ pub fn peekAnimating(self: *Application) bool {
 }
 
 /// Committing never waits for a paint or an exit animation, so the next keystroke reaches the shell.
-pub fn closePeek(self: *Application, accept: bool) !void {
+pub fn closePeek(self: *Application, accept: bool) anyerror!void {
     if (self.overlay != .tab_peek) return;
     const selected = self.overlay.tab_peek.selected_index;
     self.overlay = .none;
@@ -146,6 +146,10 @@ pub fn drawActiveOverlay(self: *Application) !void {
 /// Native dialogs own keyboard navigation; the inline path popup still routes terminal-window keys.
 pub fn handleOverlayKey(self: *Application, key: u32, modifiers: u32) !bool {
     if (self.overlay == .tab_peek) {
+        if (platform.workspaceShortcut(key, modifiers) == .tab_peek) {
+            try closePeek(self, false);
+            return true;
+        }
         self.overlay.tab_peek.input.fromKeyboard();
         const model = if (self.model) |*model| model else return true;
         if (overview.closeShortcut(key, modifiers)) |shortcut| {

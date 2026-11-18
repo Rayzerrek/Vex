@@ -31,6 +31,11 @@ pub fn onKeyEvent(self: *Application, key: u32, modifiers: u32, key_action: term
         }
         return false;
     }
+    if (key_action == .repeat) {
+        if (platform.workspaceShortcut(key, modifiers)) |action| {
+            if (action == .new_tab or action == .toggle_sidebar or action == .tab_peek) return true;
+        }
+    }
     self.resetCursorOnInput() catch |err| {
         self.fail(err);
         return true;

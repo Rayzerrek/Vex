@@ -9,6 +9,13 @@ extern "C" {
 /* An opaque, uniquely owned session; close detaches it and queues native teardown. */
 typedef struct VexPty VexPty;
 typedef struct { float x, y, width, height; } VexPaneRect;
+typedef struct {
+    uint32_t count, selected;
+    uint32_t ids[8];
+    float sidebar_width, row_pitch, plus_x;
+    VexPaneRect first_row, toggle;
+    bool single_pane, horizontal;
+} VexTabStripLayout;
 /* State: none/idle/working/done/blocked/error. Kind: none/permission/question/auth. */
 /* Detail is borrowed only for the synchronous draw call; no native UI object retains it. */
 /* State: none/idle/working/done/blocked/error. Kind: none/permission/question/auth. Phase: 0..2 icon wave step. */
@@ -55,7 +62,7 @@ typedef enum { VEX_POINTER_NORMAL = 0, VEX_POINTER_RIGHT = 1, VEX_POINTER_DOWN =
 /* Owned dialog controls copy all request strings before returning to the caller. */
 typedef struct { const uint8_t* bytes; size_t length; } VexDialogText;
 typedef struct { uint32_t value; VexDialogText label, detail; uint32_t background, foreground, accent; uint32_t swatches[5]; VexAppIcon icon; } VexDialogItem;
-typedef struct { uint32_t theme, font_size, shell; bool cursor_blink, copy_on_select, confirm_close, active_pane_border; uint8_t font_family[128]; uint32_t ui_density; } VexUserSettings;
+typedef struct { uint32_t theme, font_size, shell; bool cursor_blink, copy_on_select, confirm_close, active_pane_border, show_tab_sidebar, horizontal_tabs; uint8_t font_family[128]; uint32_t ui_density; } VexUserSettings;
 /* Kind: appearance=1, commands=2, settings=4, shell=5, close=6, custom_shell=7, close_popover=8. */
 typedef struct {
     uint32_t kind, selected;
@@ -93,6 +100,7 @@ typedef struct {
     void (*mouse_button)(void*, uint32_t, bool, float, float, uint32_t);
     /* Event: hover/begin/move/end/cancel. DIP coordinates + modifiers. Result: cursor/armed-tab/captured-tab response. */
     uint32_t (*pointer)(void*, uint32_t, float, float, uint32_t);
+    bool (*tab_overview_open)(void*);
     void (*action)(void*, uint32_t, uint32_t);
     void (*exited)(void*, uint32_t, uint32_t);
     /* Transport failure affects only the owning pane, not the window. */
@@ -144,9 +152,14 @@ uint32_t vex_window_wheel_scroll_lines(void);
 int vex_window_cancel_pointer_capture(void);
 bool vex_window_has_pointer_capture(void);
 /* Parsed strip geometry comes from Zig, so paint/input never use a stale painted tab count. */
-int vex_window_tab_strip(uint32_t count, float tab_width);
+void vex_window_tab_strip(VexTabStripLayout layout);
+// -1 outside the visible tab rows; otherwise index * 2 + close flag.
+int vex_window_hit_tab(float x, float y);
 void vex_draw_tab_strip_background(uint32_t active_index);
-int vex_draw_tab_insertion_marker(float x);
+bool vex_begin_sidebar_rows(bool exiting);
+void vex_end_sidebar_rows(void);
+void vex_draw_tab_insertion_marker(VexPaneRect bounds);
+void vex_draw_sidebar_attention(uint32_t state);
 void vex_draw_tab_drag(VexPaneRect bounds, uint32_t source, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, bool valid_target);
 void vex_draw_pane_drag(VexPaneRect bounds, VexPaneRect detach_target, const uint8_t* title, size_t title_length, VexAppIcon icon, bool valid_target);
 void vex_window_error(const char* message);
@@ -183,7 +196,7 @@ bool vex_pty_borrow_output(uint32_t token, const uint8_t** bytes, size_t* length
 void vex_pty_ack_output(uint32_t token);
 bool vex_pty_exists(uint32_t token);
 void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTabEdit edit, const uint8_t* title, size_t title_length, const VexAppIcon* icons, size_t icon_count, VexProgramStatus status, bool attention);
-void vex_begin_pane(VexPaneRect bounds, VexPaneRect grid, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status, bool moving);
+void vex_begin_pane(VexPaneRect bounds, VexPaneRect grid, uint32_t pane_id, bool focused, bool hovered, bool can_focus, bool zoomed, uint8_t hovered_action, const uint8_t* title, size_t title_length, VexAppIcon icon, VexProgramStatus status, bool moving, bool single_pane);
 void vex_end_pane(void);
 void vex_draw_scrollbar(VexPaneRect bounds, float thumb_y, float thumb_height, bool active, float opacity);
 void vex_draw_copy_feedback(VexPaneRect grid, float cell_width, float cell_height, const VexCopySpan* spans, size_t span_count, float progress);

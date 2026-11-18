@@ -3,7 +3,7 @@ const TerminalApplication = @import("terminal_application.zig").TerminalApplicat
 const platform = @import("../windows/windows_ffi.zig");
 const app_icon = @import("../terminal/app_icon.zig");
 const status_presentation = @import("../terminal/status_presentation.zig");
-const tab_strip = @import("../workspace/tab_strip.zig");
+const ProgramStatusState = @import("../terminal/program_status.zig").ProgramStatusState;
 const cursor_blink = @import("../workspace/cursor_blink.zig");
 const overlays = @import("terminal_overlays.zig");
 const pointer = @import("terminal_pointer.zig");
@@ -13,33 +13,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     const model = if (self.model) |*model| model else return;
     const metrics = self.metrics orelse return;
     const active_theme = self.currentTheme();
-    platform.drawTabStripBackground(model.selected_tab);
-    for (model.tabs.items, 0..) |tab, index| {
-        const presentation = try self.tabProgramStatus(tab.tree.root);
-        const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
-        var tab_icons: [8]app_icon.AppIcon = undefined;
-        var icon_count: usize = 0;
-        try collectTabIcons(self, tab.tree.root, &tab_icons, &icon_count);
-        if (icon_count == 0) {
-            tab_icons[0] = active_session.icon;
-            icon_count = 1;
-        }
-        const reported_title = status_presentation.statusTitle(presentation.summary, active_session.displayTitle());
-        const default_title = tab.customTitle() orelse reported_title;
-        const tab_edit: ?platform.TabEdit = if (self.editing_tab) |*edit|
-            (if (edit.tab_id == tab.id) .{
-                .text = edit.slice(),
-                .placeholder = reported_title,
-                .cursor = edit.cursor,
-                .select_all = edit.select_all,
-            } else null)
-        else
-            null;
-        platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, tab_edit, default_title, tab_icons[0..icon_count], presentation.summary, self.status_pulse.phaseIndex(), presentation.attention);
-    }
-    if (self.pointer_drag == .tab) {
-        if (try self.pointer_drag.tab.markerX(model, try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density))) |x| try platform.drawTabInsertionMarker(x);
-    }
+    const layout = try self.tabLayout();
     const active_tab = model.activeTab();
     const can_focus = active_tab.tree.paneCount() > 1;
     var saw_active_pane = false;
@@ -51,15 +25,17 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     if (!self.layout_motion.active(paint_now) or
         (self.closing_panes.items.len > 0 and self.closing_panes.items[0].tab_id != active_tab.id)) self.clearClosingPanes();
     if (self.overlay != .tab_peek) for (self.closing_panes.items) |*closing| {
-        const grid = try metrics.terminalGrid(closing.placement.bounds);
-        platform.beginPane(closing.placement.bounds, grid, closing.placement.id, false, false, true, false, null, closing.title, closing.icon, closing.summary, self.status_pulse.phaseIndex(), false);
+        var closing_metrics = metrics;
+        closing_metrics.single_pane = false;
+        const grid = try closing_metrics.terminalGrid(closing.placement.bounds);
+        platform.beginPane(closing.placement.bounds, grid, closing.placement.id, false, false, true, false, null, closing.title, closing.icon, closing.summary, self.status_pulse.phaseIndex(), false, false);
         defer platform.endPane();
         try platform.drawTerminalFrame(closing.placement.id, &closing.frame, false, false, null, active_theme);
     };
     for (self.placements.items, 0..) |final_placement, placement_index| {
         const placement: panes.PanePlacement = .{ .id = final_placement.id, .bounds = self.layout_motion.bounds(final_placement, placement_index, paint_now, motion_enabled) };
         if (self.overlay == .tab_peek) break;
-        if (placement.bounds.width < 14 or placement.bounds.height < self.settings.ui_density.metrics().verticalInset() + 2) continue;
+        if (placement.bounds.width < 14 or placement.bounds.height < metrics.gridTop() + self.settings.ui_density.metrics().pane_padding + 2) continue;
         const grid = try metrics.terminalGrid(placement.bounds);
         const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
         const focused = active_tab.active_pane == placement.id and self.overlay == .none and self.editing_tab == null;
@@ -86,7 +62,7 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
         const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none and fraction == 0 and !session.smooth_scroll.pending(paint_now)) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
         {
             const summary = session.terminal.program_status.programStatus();
-            platform.beginPane(placement.bounds, grid, placement.id, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex(), !std.meta.eql(placement.bounds, final_placement.bounds));
+            platform.beginPane(placement.bounds, grid, placement.id, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex(), !std.meta.eql(placement.bounds, final_placement.bounds), metrics.single_pane);
             defer platform.endPane();
             if (fraction > 0) platform.setTerminalScrollOffset(-fraction, false, frame.rows);
             try platform.drawTerminalFrame(placement.id, frame, focused and session.state == .running, self.cursor_blink.isShown(), pane_link, active_theme);
@@ -141,13 +117,17 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     }
     if (!saw_active_pane) self.cursor_blink.synchronize(null, self.cursorNowMs());
     try self.syncAnimationWake();
+    try paintTabRows(self, layout, false);
+    try paintTabRows(self, layout, true);
+    if (self.pointer_drag == .tab) {
+        if (try self.pointer_drag.tab.marker(model, layout)) |marker| platform.drawTabInsertionMarker(marker);
+    }
     try overlays.drawActiveOverlay(self);
     if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) {
         const drag = &self.pointer_drag.tab;
         const index = model.tabIndex(drag.tabId().?) orelse return;
         const tab = &model.tabs.items[index];
         const session = self.findSession(tab.active_pane) orelse return;
-        const layout = try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density);
         if (drag.ghostBounds(layout, metrics.width, metrics.height)) |bounds| {
             var icons: [8]app_icon.AppIcon = undefined;
             var count: usize = 0;
@@ -160,6 +140,52 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
             platform.drawTabDrag(bounds, index, tab.customTitle() orelse status_presentation.statusTitle(summary.summary, session.displayTitle()), icons[0..count], drag.dragging.destination != null or drop.target != null);
         }
     }
+}
+
+fn paintTabRows(self: *TerminalApplication, layout: @import("../workspace/tab_strip.zig").TabStripLayout, exiting: bool) !void {
+    if (!platform.c.vex_begin_sidebar_rows(exiting)) return;
+    defer platform.c.vex_end_sidebar_rows();
+    const model = &self.model.?;
+    var hidden_attention: ProgramStatusState = .none;
+    platform.drawTabStripBackground(model.selected_tab);
+    for (model.tabs.items, 0..) |tab, index| {
+        const hidden = !exiting and layout.tabBounds(index) == null;
+        if (hidden and index == model.selected_tab) continue;
+        const presentation = try self.tabProgramStatus(tab.tree.root);
+        if (hidden) {
+            const state: ProgramStatusState = if (presentation.summary.state.needsAttention()) presentation.summary.state else if (presentation.attention) .idle else .none;
+            if (state.displayPriority() > hidden_attention.displayPriority()) hidden_attention = state;
+            continue;
+        }
+        const active_session = self.findSession(tab.active_pane) orelse return error.MissingPaneSession;
+        var tab_icons: [8]app_icon.AppIcon = undefined;
+        var icon_count: usize = 0;
+        if (presentation.origin_pane_id) |id| {
+            const origin = self.findSession(id) orelse return error.MissingPaneSession;
+            if (!origin.icon.is_shell) {
+                tab_icons[0] = origin.icon;
+                icon_count = 1;
+            }
+        }
+        try collectTabIcons(self, tab.tree.root, &tab_icons, &icon_count);
+        if (icon_count == 0) {
+            tab_icons[0] = active_session.icon;
+            icon_count = 1;
+        }
+        const reported_title = status_presentation.statusTitle(presentation.summary, active_session.displayTitle());
+        const default_title = tab.customTitle() orelse reported_title;
+        const tab_edit: ?platform.TabEdit = if (self.editing_tab) |*edit|
+            (if (edit.tab_id == tab.id) .{
+                .text = edit.slice(),
+                .placeholder = reported_title,
+                .cursor = edit.cursor,
+                .select_all = edit.select_all,
+            } else null)
+        else
+            null;
+        platform.drawTab(index, model.tabs.items.len, index == model.selected_tab, tab_edit, default_title, tab_icons[0..icon_count], presentation.summary, self.status_pulse.phaseIndex(), presentation.attention);
+    }
+    if (hidden_attention != .none) platform.drawSidebarAttention(hidden_attention);
 }
 
 fn collectTabIcons(self: *TerminalApplication, node: anytype, out: *[8]app_icon.AppIcon, count: *usize) anyerror!void {

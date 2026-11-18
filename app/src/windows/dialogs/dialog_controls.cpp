@@ -655,20 +655,20 @@ bool settingsRect(int id, float& x, float& y, float& w, float& h) {
     const auto terminal = settingsGeometry(SettingsPage::terminal);
     const auto appearance = settingsGeometry(SettingsPage::appearance);
     const bool compact = general.compact;
-    const float rowHeight = general.rowHeight, inner = 20;
-    const auto rowTop = [&](const SettingsGeometry& g, int card, int row) { return g.cards[card].top + (float)row * rowHeight; };
+    const float inner = 20;
+    const auto rowTop = [&](const SettingsGeometry& g, int card, int row) { return g.cards[card].top + (float)row * g.rowHeight; };
     // Labels end before the row's trailing control so long translations or fonts never overlap it.
     const auto label = [&](const SettingsGeometry& g, int card, int row, float trailingWidth, bool detail) {
         x = g.left + inner; w = g.right - inner - trailingWidth - 16 - x;
-        y = rowTop(g, card, row) + (compact ? (rowHeight - 22) / 2 : detail ? 31.0f : 10.0f);
+        y = rowTop(g, card, row) + (compact ? (g.rowHeight - 22) / 2 : detail ? 31.0f : 10.0f);
         h = detail ? 20.0f : 22.0f;
     };
     const auto trailing = [&](const SettingsGeometry& g, int card, int row, float width, float height, float closed, float reserve) {
-        w = width; h = height; x = g.right - inner - reserve - width; y = rowTop(g, card, row) + (rowHeight - closed) / 2;
+        w = width; h = height; x = g.right - inner - reserve - width; y = rowTop(g, card, row) + (g.rowHeight - closed) / 2;
     };
     // Toggle rows keep a gutter so their hit area never paints over the card's rounded corners or dividers.
     const auto toggle = [&](const SettingsGeometry& g, int card, int row) {
-        x = g.left + 8; y = rowTop(g, card, row) + 4; w = g.right - g.left - 16; h = rowHeight - 8;
+        x = g.left + 8; y = rowTop(g, card, row) + 4; w = g.right - g.left - 16; h = g.rowHeight - 8;
     };
     if (id >= firstPageId && id < firstPageId + 4) { x = (host.width - 448) / 2 + (float)(id - firstPageId) * 112; y = compact ? 44.0f : 56.0f; w = 108; h = compact ? 44.0f : 68.0f; return true; }
     switch (id) {
@@ -684,6 +684,8 @@ bool settingsRect(int id, float& x, float& y, float& w, float& h) {
     case customShellLabelId: label(general, 0, 1, 168, false); return true;
     case customShellDetailId: label(general, 0, 1, 168, true); return true;
     case addShellId: trailing(general, 0, 1, 168, 30, 30, 0); return true;
+    case tabLayoutLabelId: label(general, 0, 2, 208, false); return true;
+    case tabSidebarId: trailing(general, 0, 2, 208, 160, 30, 0); return true;
     case copyOnSelectId: toggle(general, 1, 0); return true;
     case confirmCloseId: toggle(general, 1, 1); return true;
     case fontLabelId: label(terminal, 0, 0, 288, false); return true;
@@ -713,6 +715,7 @@ void showPage(SettingsPage previousPage) {
     const struct PageControl { int id; bool visible; } controls[] = {
         { shellId, general }, { shellLabelId, general }, { shellDetailId, general && detail }, { customShellLabelId, general }, { customShellDetailId, general && detail },
         { addShellId, general }, { copyOnSelectId, general }, { confirmCloseId, general }, { themeGridId, appearance },
+        { tabSidebarId, general }, { tabLayoutLabelId, general },
         { densityId, appearance }, { densityLabelId, appearance }, { densityDetailId, appearance && detail },
         { sizeId, terminal }, { blinkId, terminal }, { activePaneBorderId, terminal }, { fontSizeLabelId, terminal }, { fontSizeDetailId, terminal && detail }, { fontId, terminal }, { fontLabelId, terminal }, { fontDetailId, terminal && detail },
     };
@@ -789,6 +792,17 @@ bool createControls(float width, float height) {
         HWND shell = place(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, shellId);
         ok = shell && ok;
         if (shell) fillCombo(shell, host.model.shells, host.model.shellCount, host.model.settings.shell);
+        ok = place(L"STATIC", L"Tab layout", SS_NOPREFIX | SS_ENDELLIPSIS, tabLayoutLabelId) && ok;
+        HWND tabLayout = place(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, tabSidebarId);
+        ok = tabLayout && ok;
+        if (tabLayout) {
+            const wchar_t* names[] = { L"Vertical sidebar", L"Vertical sidebar (hidden)", L"Horizontal tabs" };
+            for (int i = 0; i < 3; ++i) {
+                const auto row = SendMessageW(tabLayout, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(names[i]));
+                if (row >= 0) SendMessageW(tabLayout, CB_SETITEMDATA, row, i);
+            }
+            SendMessageW(tabLayout, CB_SETCURSEL, tabLayoutChoice(host.draft), 0);
+        }
         ok = place(L"STATIC", L"Custom shells", SS_NOPREFIX | SS_ENDELLIPSIS, customShellLabelId) && ok;
         ok = place(L"STATIC", L"Add a program or WSL command to the list", SS_NOPREFIX | SS_ENDELLIPSIS, customShellDetailId) && ok;
         ok = place(L"BUTTON", L"Add custom shell...", BS_OWNERDRAW | WS_TABSTOP, addShellId) && ok;

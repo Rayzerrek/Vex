@@ -13,6 +13,8 @@ typedef struct VexLuaSettings {
     bool copy_on_select;
     bool confirm_close;
     bool active_pane_border;
+    bool show_tab_sidebar;
+    bool horizontal_tabs;
 } VexLuaSettings;
 
 typedef int (*VexShellCallback)(void* context, unsigned id, const char* name, size_t name_length,

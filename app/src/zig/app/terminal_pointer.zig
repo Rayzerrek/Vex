@@ -61,22 +61,26 @@ pub const PointerDrag = union(enum) { none, divider: DividerDrag, tab: TabDrag, 
 
 pub const PaneDrop = struct { target: ?panes.PaneId = null, zone: panes.DropZone = .none };
 
+fn hitTab(point: tab_strip.TabPointer) ?tab_strip.TabStripLayout.TabHit {
+    const hit = platform.c.vex_window_hit_tab(point.x, point.y);
+    if (hit < 0) return null;
+    return .{ .index = @intCast(hit >> 1), .part = if (hit & 1 == 1) .close else .body };
+}
+
 pub fn paneDetachAt(self: *Application, source: panes.PaneId, point: tab_strip.TabPointer) ?panes.PaneRect {
     const model = if (self.model) |*model| model else return null;
-    const metrics = self.metrics orelse return null;
     if (model.tabs.items.len >= workspace.WorkspaceModel.max_tabs) return null;
     const from = model.paneTabIndex(source) orelse return null;
     if (model.tabs.items[from].tree.paneCount() <= 1) return null;
-    const layout = tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density) catch return null;
-    return drag_preview.detachTarget(layout, point, metrics.width);
+    const layout = self.tabLayout() catch return null;
+    return drag_preview.detachTarget(layout, point);
 }
 
 pub fn paneDropAt(self: *Application, source: panes.PaneId, x: f32, y: f32) PaneDrop {
     const model = if (self.model) |*model| model else return .{};
     if (model.paneTabIndex(source) == null) return .{};
-    if (self.metrics) |metrics| {
-        const layout = tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density) catch return .{};
-        if (layout.hitTab(.{ .x = x, .y = y }) catch null) |hit| {
+    if (self.metrics != null) {
+        if (hitTab(.{ .x = x, .y = y })) |hit| {
             const target = model.tabs.items[hit.index].active_pane;
             if (hit.part == .body and target != source and hit.index == model.selected_tab) return .{ .target = target, .zone = .right };
         }
@@ -98,9 +102,9 @@ pub fn tabDropAt(self: *Application, id: workspace.TabId, source: panes.PaneId, 
     return paneDropAt(self, source, x, y);
 }
 
-fn hoverDragTab(self: *Application, layout: tab_strip.TabStripLayout, point: tab_strip.TabPointer) !void {
+fn hoverDragTab(self: *Application, point: tab_strip.TabPointer) !void {
     const model = if (self.model) |*model| model else return;
-    const hit = try layout.hitTab(point) orelse return;
+    const hit = hitTab(point) orelse return;
     if (hit.part != .body or hit.index == model.selected_tab) return;
     _ = model.selectTab(hit.index);
     try self.updateLayout();
@@ -178,7 +182,7 @@ fn handleMouseButton(self: *Application, button: terminal.MouseButton, pressed: 
     if (pressed) {
         self.commitTabRename();
         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
-            if (placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) != null) return;
+            if (!metrics.single_pane and placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) != null) return;
             const vp = (try metrics.viewportPoint(placement.bounds, x, y, false)) orelse return;
             const session = self.findSession(placement.id) orelse return error.MissingPaneSession;
             _ = model.focusPane(placement.id);
@@ -219,7 +223,7 @@ fn handleClick(self: *Application, x: f32, y: f32) !void {
     const model = if (self.model) |*model| model else return;
     const can_focus = model.activeTab().tree.paneCount() > 1;
     for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
-        if (placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density)) |header_action| {
+        if (if (can_focus or self.settings.horizontal_tabs) placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) else null) |header_action| {
             switch (header_action) {
                 .focus_toggle => {
                     _ = model.focusPane(placement.id);
@@ -252,7 +256,7 @@ fn updateHoverState(self: *Application, can_focus: bool, x: f32, y: f32, modifie
     if (self.pointer_drag == .none) {
         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
             next_pane = placement.id;
-            next_action = placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density);
+            if (can_focus or self.settings.horizontal_tabs) next_action = placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density);
             if (next_action == null) {
                 if (self.findSession(placement.id)) |session| {
                     if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {
@@ -349,9 +353,9 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
     }
     const model = if (self.model) |*model| model else return .normal;
     const metrics = self.metrics orelse return .normal;
-    const layout = try tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density);
+    const layout = try self.tabLayout();
     const point: tab_strip.TabPointer = .{ .x = x, .y = y };
-    const bounds = application.windowContentBounds(metrics);
+    const bounds = self.contentBounds(metrics);
     const can_focus = model.activeTab().tree.paneCount() > 1;
     switch (event) {
         .hover => {
@@ -371,7 +375,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
             }
         },
         .begin => {
-            if (try layout.hitTab(point)) |hit| {
+            if (hitTab(point)) |hit| {
                 if (hit.part == .close) {
                     self.commitTabRename();
                     return .normal;
@@ -394,8 +398,8 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                 }
                 if (self.pointer_drag == .none) {
                     for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
-                        if (placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) != null) break;
-                        if (placement.bounds.isHeaderDragAreaWithDensity(can_focus, x, y, self.settings.ui_density)) {
+                        if (!metrics.single_pane and placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) != null) break;
+                        if (can_focus and placement.bounds.isHeaderDragAreaWithDensity(can_focus, x, y, self.settings.ui_density)) {
                             _ = model.focusPane(placement.id);
                             try self.clearOtherSelections(placement.id);
                             self.pointer_drag = .{ .pane = .{
@@ -483,8 +487,8 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                 .tab => |*drag| {
                     if (event != .end) {
                         if (try drag.move(model, layout, point)) platform.invalidateWindow();
-                        if (drag.* == .dragging) try hoverDragTab(self, layout, point);
-                    } else if (drag.* == .dragging and y >= tab_strip.TabStripLayout.height) {
+                        if (drag.* == .dragging) try hoverDragTab(self, point);
+                    } else if (drag.* == .dragging and x >= layout.sidebar_width and y >= tab_strip.TabStripLayout.height) {
                         const index = model.tabIndex(drag.tabId().?) orelse return .normal;
                         const source = model.tabs.items[index].active_pane;
                         const drop = tabDropAt(self, drag.tabId().?, source, x, y);
@@ -515,7 +519,7 @@ fn handlePointer(self: *Application, event: platform.PointerEvent, x: f32, y: f3
                     if (pdrag.dragging) {
                         const point_moved = pdrag.point.x != point.x or pdrag.point.y != point.y;
                         pdrag.point = point;
-                        if (event != .end) try hoverDragTab(self, layout, point);
+                        if (event != .end) try hoverDragTab(self, point);
                         const drop = paneDropAt(self, pdrag.pane_id, x, y);
                         const target = drop.target;
                         const next_zone = drop.zone;

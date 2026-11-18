@@ -18,12 +18,10 @@ pub fn bounds(source: panes.PaneRect, start: strip.TabPointer, point: strip.TabP
     };
 }
 
-/// Empty caption space and the plus button share one explicit new-tab drop target.
-pub fn detachTarget(layout: strip.TabStripLayout, point: strip.TabPointer, width: f32) ?panes.PaneRect {
-    if (!std.math.isFinite(point.x) or !std.math.isFinite(point.y)) return null;
-    const right = width - 120;
-    if (point.y < 0 or point.y >= strip.TabStripLayout.height or point.x < layout.plusLeft() or point.x >= right) return null;
-    return .{ .x = layout.plusLeft(), .y = 5, .width = @min(200, right - layout.plusLeft()), .height = 34 };
+/// A pane can be detached onto the new-tab control in either sidebar mode.
+pub fn detachTarget(layout: strip.TabStripLayout, point: strip.TabPointer) ?panes.PaneRect {
+    const target: panes.PaneRect = .{ .x = layout.plus_x, .y = 7, .width = 24, .height = 30 };
+    return if (target.contains(point.x, point.y)) target else null;
 }
 
 test "pane ghost preserves its grab anchor, tracks directly and fits resized clients" {
@@ -41,12 +39,11 @@ test "pane ghost preserves its grab anchor, tracks directly and fits resized cli
     try std.testing.expect(small.y >= 4 and small.y + small.height <= 116);
 }
 
-test "new tab target accepts empty caption space but excludes tabs and window controls" {
-    const layout = try strip.TabStripLayout.init(1120, 2);
-    for ([_]f32{ layout.plusLeft(), layout.plusLeft() + 10, 950 }) |x| {
-        try std.testing.expect(detachTarget(layout, .{ .x = x, .y = 20 }, 1120) != null);
-    }
-    for ([_]strip.TabPointer{ .{ .x = 100, .y = 20 }, .{ .x = 1000, .y = 20 }, .{ .x = 800, .y = 44 }, .{ .x = 800, .y = -1 }, .{ .x = std.math.nan(f32), .y = 20 } }) |point| {
-        try std.testing.expect(detachTarget(layout, point, 1120) == null);
+test "pane detach shares the plus button and excludes the adjacent profile picker" {
+    for ([_]bool{ false, true }) |collapsed| {
+        const layout = try strip.TabStripLayout.init(1120, 2, 0, .comfortable, collapsed);
+        try std.testing.expect(detachTarget(layout, .{ .x = layout.plus_x + 23, .y = 20 }) != null);
+        try std.testing.expect(detachTarget(layout, .{ .x = layout.plus_x + 24, .y = 20 }) == null);
+        try std.testing.expect(detachTarget(layout, .{ .x = layout.plus_x, .y = 37 }) == null);
     }
 }

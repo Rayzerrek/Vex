@@ -13,6 +13,8 @@ vex.config.cursor_blink = true
 vex.config.copy_on_select = true
 vex.config.confirm_close = true
 vex.config.active_pane_border = true -- accent ring around the focused pane
+vex.config.show_tab_sidebar = true -- default sidebar visibility
+vex.config.horizontal_tabs = false -- true restores the original top tab strip
 vex.config.default_shell = "startup"
 ```
 
@@ -55,13 +57,13 @@ Interface density is available in **Settings → Appearance** and through the
 pane-header spacing and joins split edges with thin separators; Comfortable is
 the default; Spacious adds room around the workspace. Every density keeps the
 same 6.5 DIP minimum left, right and bottom terminal padding. Whole cells rarely
-fill a pane exactly, so the leftover height is split between the gap under the
-pane header and the bottom margin, and the background of edge cells extends into
-the padding so colored status lines reach the pane edge. The presets only differ
-in header, tab and workspace chrome. Changes apply immediately and are saved with
-other preferences. They do
-not change terminal font size or Windows caption-button sizes. Existing terminal
-sessions and scrollback remain open.
+fill a pane exactly, so the leftover height is split between the top and bottom
+margins. A single pane uses the window caption instead of a separate pane header.
+Colored edge cells extend into the padding so status lines reach the pane edge.
+The presets only differ in header, tab and workspace chrome. Changes apply
+immediately and are saved with other preferences. They do not change terminal
+font size or Windows caption-button sizes. Existing sessions and scrollback
+remain open.
 
 ## Save and reload
 

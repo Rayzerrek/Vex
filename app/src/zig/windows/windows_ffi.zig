@@ -16,7 +16,7 @@ pub const c = @cImport({
     @cInclude("windows_platform.h");
 });
 /// Workspace controls use explicit actions, not terminal key escape sequences.
-pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18, settings = 19, update_restart = 20, focus_left = 21, focus_right = 22, focus_up = 23, focus_down = 24, next_pane = 25, previous_pane = 26, toggle_focus_mode = 27 };
+pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down = 2, close_active = 3, next_tab = 4, previous_tab = 5, select_tab = 6, close_tab = 7, rename_tab = 8, command_palette = 9, theme_picker = 10, tab_peek = 11, path_completion = 12, zoom_in = 13, zoom_out = 14, zoom_reset = 15, request_close_tab = 16, toggle_cursor_blink = 17, shell_picker = 18, settings = 19, update_restart = 20, focus_left = 21, focus_right = 22, focus_up = 23, focus_down = 24, next_pane = 25, previous_pane = 26, toggle_focus_mode = 27, toggle_sidebar = 28 };
 /// Pointer events are checked at the Win32 seam; their coordinates remain DIPs even during capture outside the window.
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
@@ -27,6 +27,7 @@ pub const HoveredLinkSpan = struct { row: u16, start_col: u16, end_col: u16 };
 pub const ViewportPoint = struct { column: u16, row: u16, x_px: f64, y_px: f64 };
 /// Window sizes/font metrics are in DIPs; only cell pixel metrics multiply by scale.
 pub const WindowMetrics = struct {
+    single_pane: bool = false,
     width: f32,
     height: f32,
     cell_width: f32,
@@ -58,11 +59,15 @@ pub const WindowMetrics = struct {
         const style = self.ui_density.metrics();
         return .{
             .columns = fittedCellCount(bounds.width, 0, self.cell_width, style.pane_padding, density.UiDensity.terminal_min_padding, 2, 1000),
-            .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - style.verticalInset()) / self.cell_height), 1, 1000)),
+            .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - self.gridTop() - style.pane_padding) / self.cell_height), 1, 1000)),
             .cell_width_px = @intFromFloat(std.math.clamp(@round(self.cell_width * self.scale), 1, 65536)),
             .cell_height_px = @intFromFloat(std.math.clamp(@round(self.cell_height * self.scale), 1, 65536)),
         };
     }
+    pub fn gridTop(self: WindowMetrics) f32 {
+        return if (self.single_pane) self.ui_density.metrics().pane_padding else self.ui_density.metrics().terminalTop();
+    }
+
     /// Integral cell area inside a pane. Left and right share a fixed 6.5 DIP
     /// target margin. Vertically the grid keeps 6.5 DIP at the bottom and starts
     /// at the pane header; the sub-row remainder is split evenly between the gap
@@ -74,10 +79,11 @@ pub const WindowMetrics = struct {
         const width = @as(f32, @floatFromInt(size.columns)) * self.cell_width;
         const height = @as(f32, @floatFromInt(size.rows)) * self.cell_height;
         // Rows are clamped to at least one, so a tiny pane can have no slack at all.
-        const spare = @max(0, bounds.height - style.verticalInset() - height);
+        const top = self.gridTop();
+        const spare = @max(0, bounds.height - top - style.pane_padding - height);
         return .{
             .x = bounds.x + @max(0, (bounds.width - width) / 2),
-            .y = bounds.y + style.terminalTop() + spare / 2,
+            .y = bounds.y + top + spare / 2,
             .width = width,
             .height = height,
         };
@@ -113,6 +119,8 @@ pub const TerminalSize = struct {
     rows: u16,
     cell_width_px: u32,
     cell_height_px: u32,
+
+    pub const default_grid: TerminalSize = .{ .columns = 80, .rows = 24, .cell_width_px = 8, .cell_height_px = 16 };
 
     pub fn sameGrid(self: TerminalSize, other: TerminalSize) bool {
         return self.columns == other.columns and self.rows == other.rows;
@@ -207,7 +215,7 @@ pub fn resetPtyLaunchError() void {
 pub const PtyOwner = struct {
     handle: ?*c.VexPty,
     /// Tokens must be fresh, nonzero pane IDs; failed startup releases all partial resources.
-    pub fn init(allocator: std.mem.Allocator, id: panes.PaneId, path: directory.DirectoryPath, launch: *const shell.ShellLaunch) !PtyOwner {
+    pub fn init(allocator: std.mem.Allocator, id: panes.PaneId, path: directory.DirectoryPath, launch: *const shell.ShellLaunch, size: TerminalSize) !PtyOwner {
         const program = try std.unicode.utf8ToUtf16LeAllocZ(allocator, launch.program);
         defer allocator.free(program);
         const wsl_process = @import("../shell/wsl_process.zig");
@@ -228,7 +236,7 @@ pub const PtyOwner = struct {
         defer if (probe) |owned| allocator.free(owned);
         var pointer: ?*c.VexPty = null;
         const native_launch: c.VexPtyLaunch = .{ .program = program.ptr, .program_length = program.len, .command = command.ptr, .command_length = command.len, .directory = working_directory.ptr, .directory_length = working_directory.len, .environment = launch.environment.ptr, .environment_length = launch.environment.len, .declared_shell = launch.isDeclaredShell(), .app_execution_alias = launch.app_execution_alias, .wsl_probe_command = if (probe) |value| value.ptr else null, .wsl_probe_command_length = if (probe) |value| value.len else 0 };
-        const result = c.vex_pty_open(@intFromEnum(id), 80, 24, native_launch, &pointer);
+        const result = c.vex_pty_open(@intFromEnum(id), size.columns, size.rows, native_launch, &pointer);
         last_pty_launch_error = @bitCast(result);
         if (result != 0) return error.PtyLaunchFailed;
         return .{ .handle = pointer orelse return error.PtyNullHandle };
@@ -316,6 +324,7 @@ pub fn workspaceShortcut(key: u32, modifiers: u32) ?WorkspaceAction {
         'R' => .split_right,
         'D' => .split_down,
         'E' => .toggle_focus_mode,
+        'B' => .toggle_sidebar,
         'W' => .close_active,
         'P' => .command_palette,
         'M' => .theme_picker,
@@ -442,6 +451,10 @@ pub fn runWindow(owner: anytype) !void {
             }
             return @intFromEnum(app.onPointer(event, x, y, modifiers));
         }
+        fn tabOverviewOpen(context: ?*anyopaque) callconv(.c) bool {
+            const app = recover(context) orelse return false;
+            return app.overlay == .tab_peek;
+        }
         fn action(context: ?*anyopaque, value: u32, index: u32) callconv(.c) void {
             const app = recover(context) orelse return;
             const parsed = std.meta.intToEnum(WorkspaceAction, value) catch {
@@ -489,7 +502,7 @@ pub fn runWindow(owner: anytype) !void {
             return app.onProbe(query);
         }
     };
-    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .clipboard = Adapter.clipboard, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .action = Adapter.action, .exited = Adapter.exited, .session_error = Adapter.sessionError, .process_changed = Adapter.processChanged, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
+    const code = c.vex_window_run(.{ .context = owner, .output = Adapter.output, .resize = Adapter.resize, .paint = Adapter.paint, .key = Adapter.key, .text = Adapter.text, .paste = Adapter.paste, .clipboard = Adapter.clipboard, .scroll = Adapter.scroll, .click = Adapter.click, .mouse_button = Adapter.mouseButton, .pointer = Adapter.pointerInput, .tab_overview_open = Adapter.tabOverviewOpen, .action = Adapter.action, .exited = Adapter.exited, .session_error = Adapter.sessionError, .process_changed = Adapter.processChanged, .tick = Adapter.tick, .cursor_wake = Adapter.cursorWake, .cursor_activity = Adapter.cursorActivity, .close_requested = Adapter.closeRequested, .probe = Adapter.probe, .dialog = Adapter.dialog });
     if (code != 0) return error.WindowsPlatformFailed;
 }
 
@@ -507,12 +520,31 @@ pub fn drawTabStripBackground(active_index: usize) void {
 }
 
 /// Publishes parsed tab-strip geometry before paint or hit testing; the bridge copies scalars, not model pointers.
-pub fn setTabStripLayout(layout: tab_strip.TabStripLayout) !void {
-    if (c.vex_window_tab_strip(@intCast(layout.count), layout.tab_width) != 0) return error.InvalidTabStripGeometry;
+pub fn setTabStripLayout(layout: tab_strip.TabStripLayout, single_pane: bool, ids: [8]u32) void {
+    c.vex_window_tab_strip(.{
+        .count = @intCast(layout.count),
+        .selected = @intCast(layout.selected),
+        .ids = ids,
+        .sidebar_width = layout.sidebar_width,
+        .row_pitch = layout.row_pitch,
+        .plus_x = layout.plus_x,
+        .first_row = tabRect(layout.first_row),
+        .toggle = if (layout.horizontal) std.mem.zeroes(c.VexPaneRect) else tabRect(tab_strip.TabStripLayout.toggle),
+        .single_pane = single_pane,
+        .horizontal = layout.horizontal,
+    });
 }
-/// Draws a finite DIP insertion marker only during the current frame.
-pub fn drawTabInsertionMarker(x: f32) !void {
-    if (c.vex_draw_tab_insertion_marker(x) != 0) return error.TabMarkerRenderingFailed;
+
+fn tabRect(bounds: panes.PaneRect) c.VexPaneRect {
+    return .{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height };
+}
+
+pub fn drawTabInsertionMarker(bounds: panes.PaneRect) void {
+    c.vex_draw_tab_insertion_marker(tabRect(bounds));
+}
+
+pub fn drawSidebarAttention(state: status.ProgramStatusState) void {
+    c.vex_draw_sidebar_attention(@intFromEnum(state));
 }
 
 /// Returns the actual local machine name, not a spoofable environment variable; caller owns the UTF-8 copy.
@@ -938,9 +970,9 @@ pub fn fontSize() f32 {
     return c.vex_window_font_size();
 }
 /// Begins a pane clip; every successful call must be paired with endPane, including errors.
-pub fn beginPane(bounds: panes.PaneRect, grid: panes.PaneRect, pane_id: panes.PaneId, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32, moving: bool) void {
+pub fn beginPane(bounds: panes.PaneRect, grid: panes.PaneRect, pane_id: panes.PaneId, focused: bool, hovered: bool, can_focus: bool, zoomed: bool, hovered_action: ?panes.PaneHeaderAction, title: []const u8, icon: app_icon.AppIcon, summary: status.ProgramStatusSummary, phase: u32, moving: bool, single_pane: bool) void {
     const action_code: u8 = if (hovered_action) |action| @intFromEnum(action) else 0;
-    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, .{ .x = grid.x, .y = grid.y, .width = grid.width, .height = grid.height }, @intFromEnum(pane_id), focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary, phase), moving);
+    c.vex_begin_pane(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = bounds.height }, .{ .x = grid.x, .y = grid.y, .width = grid.width, .height = grid.height }, @intFromEnum(pane_id), focused, hovered, can_focus, zoomed, action_code, if (title.len == 0) null else title.ptr, title.len, nativeAppIcon(icon), nativeProgramStatus(summary, phase), moving, single_pane);
 }
 /// Ends the current pane clip before drawing another pane or returning to chrome.
 pub fn endPane() void {

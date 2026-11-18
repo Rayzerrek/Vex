@@ -15,7 +15,7 @@ pub fn compute(viewport: Rect, pane: Rect, grid: Rect, cell_width: f32, cell_hei
     grid.validate() catch return null;
     if (!std.math.isFinite(cell_width) or !std.math.isFinite(cell_height) or cell_width <= 0 or cell_height <= 0) return null;
     const left = @max(viewport.x + 8, pane.x + 6);
-    const top = @max(viewport.y + 8, pane.y + 30);
+    const top = @max(viewport.y + 8, pane.y + 6, grid.y);
     const right = @min(viewport.x + viewport.width - 8, pane.x + pane.width - 6);
     const bottom = @min(viewport.y + viewport.height - 8, pane.y + pane.height - 6);
     const minimum_height = list_top + row_height + footer;
@@ -33,8 +33,8 @@ pub fn compute(viewport: Rect, pane: Rect, grid: Rect, cell_width: f32, cell_hei
         const cursor_bottom = cursor_top + cell_height;
         // The popup's safety margin can clip the last grid row by a few pixels;
         // that does not make the terminal cursor invalid or justify centering.
-        if (cursor_x < pane.x + 6 or cursor_x > pane.x + pane.width - 6 or
-            cursor_top < pane.y + 30 or cursor_top >= pane.y + pane.height - 6) return null;
+        if (cursor_x < pane.x or cursor_x >= pane.x + pane.width or
+            cursor_top < pane.y or cursor_top >= pane.y + pane.height - 6) return null;
         x = std.math.clamp(cursor_x, left, right - width);
         const below_space = bottom - cursor_bottom - 4;
         const above_space = cursor_top - top - 4;

@@ -97,11 +97,12 @@ pub fn presentTerminalModal(self: *Application) !void {
                     } else null,
                 };
                 if (owner) |index| {
-                    if (index != model.selected_tab) {
-                        request.kind = .close_popover;
-                        if (self.metrics) |metrics| {
-                            const strip = try @import("../workspace/tab_strip.zig").TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density);
-                            request.anchor_x = @TypeOf(strip).left + @as(f32, @floatFromInt(index)) * strip.slotWidth();
+                    if (index != model.selected_tab and self.metrics != null) {
+                        const strip = try self.tabLayout();
+                        if (strip.tabBounds(index)) |row| {
+                            request.kind = .close_popover;
+                            request.anchor_x = row.x;
+                            request.anchor_y = row.y + row.height;
                         }
                     }
                 }

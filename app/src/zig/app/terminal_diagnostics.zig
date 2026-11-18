@@ -3,7 +3,6 @@ const Application = @import("terminal_application.zig").TerminalApplication;
 const std = @import("std");
 const platform = @import("../windows/windows_ffi.zig");
 const status = @import("../terminal/program_status.zig");
-const tab_strip = @import("../workspace/tab_strip.zig");
 const commands = @import("terminal_commands.zig");
 const dialogs = @import("../windows/windows_dialog.zig");
 
@@ -149,9 +148,8 @@ pub fn onProbe(self: *Application, query: u32) u64 {
         46 => return @intFromEnum(model.activeTab().id),
         47 => return model.selected_tab,
         48 => {
-            const metrics = self.metrics orelse return 0;
-            const layout = tab_strip.TabStripLayout.initWithDensity(metrics.width, model.tabs.items.len, self.settings.ui_density) catch return 0;
-            return @intFromFloat(@round(layout.tab_width * 1000));
+            const layout = self.tabLayout() catch return 0;
+            return @intFromFloat(@round((layout.tabBounds(model.selected_tab) orelse return 0).width * 1000));
         },
         49 => return if (self.pointer_drag == .tab and self.pointer_drag.tab == .dragging) if (self.pointer_drag.tab.dragging.destination) |index| index + 1 else 0 else 0,
         50 => return @intFromBool(model.activeTab().is_focus_mode),

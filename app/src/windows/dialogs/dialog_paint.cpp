@@ -34,7 +34,7 @@ SettingsGeometry settingsGeometry(SettingsPage page) {
     const float top = g.compact ? 98.0f : 140.0f, headerGap = 28.0f, sectionGap = g.compact ? 14.0f : 24.0f;
     int rows[2] = {};
     switch (page) {
-    case SettingsPage::general: g.cardCount = 2; rows[0] = 2; rows[1] = 2; g.headers[0] = L"Sessions"; g.headers[1] = L"Behavior"; break;
+    case SettingsPage::general: g.cardCount = 2; rows[0] = 3; rows[1] = 2; g.headers[0] = L"Sessions"; g.headers[1] = L"Behavior"; if (g.compact) g.rowHeight = 38; break;
     case SettingsPage::terminal: g.cardCount = 2; rows[0] = 2; rows[1] = 2; g.headers[0] = L"Text"; g.headers[1] = L"Cursor and focus"; break;
     case SettingsPage::appearance: g.headers[0] = host.model.palette.is_dark ? L"Dark themes" : L"Light themes"; break;
     case SettingsPage::about: g.cardCount = 1; rows[0] = 3; g.headers[0] = L"Vex"; break;
