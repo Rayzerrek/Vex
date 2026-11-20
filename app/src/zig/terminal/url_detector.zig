@@ -6,12 +6,20 @@ pub const ByteSpan = struct {
     end: usize,
 };
 
-/// Inclusive cell column range `[start_col, end_col]` for a detected link on a terminal row.
-pub const RowLinkMatch = struct {
+/// Inclusive viewport range in row-major order.
+pub const LinkSpan = struct {
+    start_row: u16,
     start_col: u16,
+    end_row: u16,
     end_col: u16,
-    url_len: usize,
+
+    pub fn contains(self: LinkSpan, row: usize, column: usize) bool {
+        return (row > self.start_row or (row == self.start_row and column >= self.start_col)) and
+            (row < self.end_row or (row == self.end_row and column <= self.end_col));
+    }
 };
+
+pub const LinkMatch = struct { span: LinkSpan, url_len: usize };
 
 /// Fast scan for `https://`, `http://`, `file://`, and `www.` URLs within a UTF-8 line.
 pub fn findUrlSpans(text: []const u8, out: []ByteSpan) usize {
@@ -141,10 +149,13 @@ pub fn normalizeUrl(raw: []const u8, out_buf: []u8) ?[]const u8 {
 }
 
 /// Scans the logical line containing `row`, joining only soft-wrapped rows.
-/// The returned span covers the link's cells on the queried row.
-pub fn findLinkInFrameRow(frame: anytype, row: u16, column: u16, out_url: ?[]u8) ?RowLinkMatch {
+pub fn findLinkInFrameRow(frame: anytype, row: u16, column: u16, out_url: ?[]u8) ?LinkMatch {
     if (row >= frame.rows or column >= frame.columns or frame.columns == 0) return null;
     if (frame.row_wraps.items.len < frame.rows) return null;
+    const target = @as(usize, row) * frame.columns + column;
+    if (target >= frame.cells.items.len) return null;
+    const pointed = frame.cells.items[target];
+    if (pointed.text_length == 0 and pointed.width == .narrow) return null;
     var first: usize = row;
     while (first > 0 and frame.row_wraps.items[first - 1].wrap) : (first -= 1) {}
     var last: usize = row;
@@ -157,7 +168,8 @@ pub fn findLinkInFrameRow(frame: anytype, row: u16, column: u16, out_url: ?[]u8)
     if (end_cell > frame.cells.items.len) return null;
 
     var line_text: [4096]u8 = undefined;
-    var byte_to_cell: [4096]usize = undefined;
+    // Offsets are relative to this line and bounded by the frame cell limit.
+    var byte_to_cell: [4096]u32 = undefined;
     var len: usize = 0;
 
     for (frame.cells.items[first_cell..end_cell], first_cell..) |cell, cell_idx| {
@@ -166,24 +178,22 @@ pub fn findLinkInFrameRow(frame: anytype, row: u16, column: u16, out_url: ?[]u8)
         if (text.len == 0) {
             if (len >= line_text.len) return null;
             line_text[len] = ' ';
-            byte_to_cell[len] = cell_idx;
+            byte_to_cell[len] = @intCast(cell_idx - first_cell);
             len += 1;
         } else {
             if (text.len > line_text.len - len) return null;
             @memcpy(line_text[len .. len + text.len], text);
-            @memset(byte_to_cell[len .. len + text.len], cell_idx);
+            @memset(byte_to_cell[len .. len + text.len], @intCast(cell_idx - first_cell));
             len += text.len;
         }
     }
 
     var spans: [32]ByteSpan = undefined;
     const span_count = findUrlSpans(line_text[0..len], &spans);
-    const row_start = @as(usize, row) * frame.columns;
-    const target = row_start + column;
     for (spans[0..span_count]) |span| {
         if (span.start >= span.end or span.end > len) continue;
-        const start = byte_to_cell[span.start];
-        const final = byte_to_cell[span.end - 1];
+        const start = first_cell + byte_to_cell[span.start];
+        const final = first_cell + byte_to_cell[span.end - 1];
         const end = if (frame.cells.items[final].width == .wide and final % frame.columns + 1 < frame.columns)
             final + 1
         else
@@ -195,8 +205,12 @@ pub fn findLinkInFrameRow(frame: anytype, row: u16, column: u16, out_url: ?[]u8)
                 url_len = normalized.len;
             }
             return .{
-                .start_col = @intCast(@max(start, row_start) - row_start),
-                .end_col = @intCast(@min(end, row_start + frame.columns - 1) - row_start),
+                .span = .{
+                    .start_row = @intCast(start / frame.columns),
+                    .start_col = @intCast(start % frame.columns),
+                    .end_row = @intCast(end / frame.columns),
+                    .end_col = @intCast(end % frame.columns),
+                },
                 .url_len = url_len,
             };
         }

@@ -21,8 +21,7 @@ pub const WorkspaceAction = enum(u32) { new_tab = 0, split_right = 1, split_down
 pub const PointerEvent = enum(u32) { hover = c.VEX_POINTER_HOVER, begin = c.VEX_POINTER_BEGIN, move = c.VEX_POINTER_MOVE, end = c.VEX_POINTER_END, cancel = c.VEX_POINTER_CANCEL };
 /// Win32 owns capture: armed tabs wait for the drag threshold, while divider/tab/selection drags request immediate capture.
 pub const PointerResponse = enum(u32) { normal = c.VEX_POINTER_NORMAL, right = c.VEX_POINTER_RIGHT, down = c.VEX_POINTER_DOWN, tab_armed = c.VEX_POINTER_TAB_ARMED, tab_dragging = c.VEX_POINTER_TAB_DRAGGING, selection = c.VEX_POINTER_SELECTION, link = c.VEX_POINTER_LINK, text = c.VEX_POINTER_TEXT };
-/// Span of cells within a single viewport row highlighted as a clickable URL.
-pub const HoveredLinkSpan = struct { row: u16, start_col: u16, end_col: u16 };
+pub const HoveredLinkSpan = @import("../terminal/url_detector.zig").LinkSpan;
 /// Viewport cell coordinate and physical surface position relative to a pane's terminal grid.
 pub const ViewportPoint = struct { column: u16, row: u16, x_px: f64, y_px: f64 };
 /// Window sizes/font metrics are in DIPs; only cell pixel metrics multiply by scale.
@@ -1182,7 +1181,7 @@ fn terminalGeometryKey(
         .selection_background = theme.selection_background,
         .accent = theme.accent,
         .is_dark = @intFromBool(theme.is_dark),
-        .link_row = if (hovered_link) |link| link.row else absent,
+        .link_rows = if (hovered_link) |link| @as(u32, link.start_row) << 16 | link.end_row else absent,
         .link_start = if (hovered_link) |link| link.start_col else absent,
         .link_end = if (hovered_link) |link| link.end_col else absent,
         .cursor_row = if (frame.cursor.visible) frame.cursor.row else absent,
@@ -1230,7 +1229,7 @@ fn blockCursorRun(frame: *const terminal.TerminalFrame, hovered_link: ?HoveredLi
     style.background = theme.cursor;
     style.foreground = theme.background;
     if (hovered_link) |link| {
-        if (link.row == cursor.row and cursor.column >= link.start_col and cursor.column <= link.end_col) style.underline = true;
+        if (cell.width != .head and link.contains(cursor.row, cursor.column)) style.underline = true;
     }
     return .{ .cells = if (cell.width == .wide) 2 else 1, .text = frame.cellText(cell), .style = style };
 }
@@ -1369,7 +1368,13 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
     var cached_corrected_fg: u32 = theme.foreground;
     for (0..frame.rows) |row| {
         const cells = frame.cells.items[row * frame.columns ..][0..frame.columns];
-        const row_link = if (hovered_link) |hl| (if (hl.row == row) hl else null) else null;
+        const row_link = if (hovered_link) |link| link: {
+            if (row < link.start_row or row > link.end_row) break :link null;
+            break :link @as(?struct { start: u16, end: u16 }, .{
+                .start = if (row == link.start_row) link.start_col else 0,
+                .end = if (row == link.end_row) link.end_col else frame.columns - 1,
+            });
+        } else null;
         var start: usize = 0;
         var run_cells: usize = 0;
         var buffer: [4096]u8 = undefined;
@@ -1378,7 +1383,7 @@ fn drawTerminalCells(frame: *const terminal.TerminalFrame, hovered_link: ?Hovere
         for (cells, 0..) |cell, column| {
             if (cell.width == .tail) continue;
             const text = frame.cellText(cell);
-            const in_link = if (row_link) |hl| (column >= hl.start_col and column <= hl.end_col) else false;
+            const in_link = if (row_link) |link| column >= link.start and column <= link.end and cell.width != .head else false;
             var cell_style = surfaceStyle(cell, appearance);
             if (in_link) {
                 cell_style.underline = true;
@@ -1461,7 +1466,7 @@ test "block cursor overlay preserves wide text and decorations without inheritin
     const frame = try emulator.readFrame();
     try std.testing.expect(frame.cells.items[0].selected);
     const theme = terminal_theme.themes[0];
-    const link: HoveredLinkSpan = .{ .row = 0, .start_col = 0, .end_col = 2 };
+    const link: HoveredLinkSpan = .{ .start_row = 0, .start_col = 0, .end_row = 1, .end_col = 2 };
     const run = blockCursorRun(frame, link, theme) orelse return error.MissingBlockCursor;
     try std.testing.expectEqual(@as(usize, 2), run.cells);
     try std.testing.expectEqualStrings("界", run.text);
@@ -1493,11 +1498,11 @@ test "terminal geometry keys distinguish content owners, themes and hovered link
     var changed_theme = theme;
     changed_theme.selection_background ^= 1;
     try testing.expect(!std.meta.eql(initial, terminalGeometryKey(pane, &frame, null, changed_theme)));
-    const link: HoveredLinkSpan = .{ .row = 1, .start_col = 2, .end_col = 8 };
+    const link: HoveredLinkSpan = .{ .start_row = 1, .start_col = 2, .end_row = 2, .end_col = 8 };
     const linked = terminalGeometryKey(pane, &frame, link, theme);
     try testing.expect(!std.meta.eql(initial, linked));
     var changed_link = link;
-    changed_link.end_col += 1;
+    changed_link.end_row += 1;
     try testing.expect(!std.meta.eql(linked, terminalGeometryKey(pane, &frame, changed_link, theme)));
 }
 

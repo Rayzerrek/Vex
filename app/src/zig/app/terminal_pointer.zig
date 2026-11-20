@@ -15,9 +15,8 @@ const drag_preview = @import("../workspace/pane_drag_preview.zig");
 
 pub const HoveredLink = struct {
     pane_id: panes.PaneId,
-    row: u16,
-    start_col: u16,
-    end_col: u16,
+    generation: u64,
+    span: url_detector.LinkSpan,
 };
 
 const SelectionDrag = struct {
@@ -271,14 +270,11 @@ fn updateHoverState(self: *Application, can_focus: bool, x: f32, y: f32, modifie
                         if (self.metrics) |metrics| {
                             if (try metrics.viewportPoint(placement.bounds, x, y, false)) |vp| {
                                 const frame = try session.terminal.readFrame();
-                                const link = (try session.terminal.osc8LinkAt(vp.row, vp.column, frame, null)) orelse
-                                    url_detector.findLinkInFrameRow(frame, vp.row, vp.column, null);
-                                if (link) |match| {
+                                if (try session.terminal.hoverLinkAt(vp.row, vp.column, frame)) |span| {
                                     next_link = .{
                                         .pane_id = placement.id,
-                                        .row = vp.row,
-                                        .start_col = match.start_col,
-                                        .end_col = match.end_col,
+                                        .generation = frame.generation,
+                                        .span = span,
                                     };
                                 }
                             }

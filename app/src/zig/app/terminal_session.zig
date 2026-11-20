@@ -236,7 +236,7 @@ pub const TerminalSession = struct {
             return error.SessionTransportFailed;
         };
     }
-    /// Normalizes clipboard newlines and applies bracketed paste when the active shell/TUI requested DEC 2004.
+    /// Inserts clipboard text without sending submit keys to clients lacking bracketed paste.
     pub fn paste(self: *TerminalSession, allocator: std.mem.Allocator, text: []const u8) !void {
         if (text.len == 0) return;
         const encoded = try self.terminal.encodePasteAlloc(allocator, text);

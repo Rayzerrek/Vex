@@ -230,7 +230,7 @@ typedef struct {
     uint64_t generation;
     uint32_t pane_id, columns, rows;
     uint32_t background, foreground, cursor, selection_background, accent, is_dark;
-    uint32_t link_row, link_start, link_end;
+    uint32_t link_rows, link_start, link_end;
     uint32_t cursor_row, cursor_column;
 } VexTerminalGeometryKey;
 int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reused);

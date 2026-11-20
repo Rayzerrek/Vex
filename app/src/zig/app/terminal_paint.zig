@@ -59,7 +59,10 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
                 null;
             self.cursor_blink.synchronize(key, self.cursorNowMs());
         }
-        const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none and fraction == 0 and !session.smooth_scroll.pending(paint_now)) (if (self.hovered_link) |hl| (if (hl.pane_id == placement.id) .{ .row = hl.row, .start_col = hl.start_col, .end_col = hl.end_col } else null) else null) else null;
+        const pane_link: ?platform.HoveredLinkSpan = if (self.overlay == .none and fraction == 0 and !session.smooth_scroll.pending(paint_now)) link: {
+            const hovered_link = self.hovered_link orelse break :link null;
+            break :link if (hovered_link.pane_id == placement.id and hovered_link.generation == frame.generation) hovered_link.span else null;
+        } else null;
         {
             const summary = session.terminal.program_status.programStatus();
             platform.beginPane(placement.bounds, grid, placement.id, active_tab.active_pane == placement.id, hovered, can_focus, active_tab.is_focus_mode, hovered_action, status_presentation.statusTitle(summary, session.displayTitle()), session.icon, summary, self.status_pulse.phaseIndex(), !std.meta.eql(placement.bounds, final_placement.bounds), metrics.single_pane);

@@ -68,6 +68,15 @@ keep their arrows and paging keys. Copy/paste/cut remain available there.
 `Ctrl+C` sends an interrupt when nothing is selected. Hold Shift to bypass a
 TUI's mouse reporting and select locally.
 
+Pasting keeps line breaks and tabs when the shell or TUI enables bracketed
+paste. Otherwise Vex inserts spaces instead of sending Enter or Tab, so a
+multiline paste does not submit commands by itself. Check the resulting line
+before pressing Enter.
+
+Wrapped URLs are highlighted as one link. `Ctrl+Click` on any part opens the
+full destination, including OSC 8 links whose displayed label differs from the URL.
+Vex does not open truncated plain-text URLs when a logical line is clipped.
+
 The terminal wheel scrolls smoothly, retaining small touchpad deltas. Windows'
 client-area animation preference controls the transition; scrollbar dragging and
 keyboard paging remain direct.

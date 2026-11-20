@@ -604,7 +604,7 @@ extern "C" int vex_terminal_geometry_begin(VexTerminalGeometryKey key, bool* reu
     const uint32_t scalars[] = {
         key.pane_id, key.columns, key.rows, key.background, key.foreground, key.cursor,
         key.selection_background, key.accent, key.is_dark | (scrollGuard ? 8u : 0u),
-        key.link_row, key.link_start, key.link_end, key.cursor_row, key.cursor_column
+        key.link_rows, key.link_start, key.link_end, key.cursor_row, key.cursor_column
     };
     const float geometry[] = { gridLeft, gridTop, cellWidth, cellHeight };
     return (int)renderer->terminalResult(renderer->terminal.beginGeometry(key.generation, scalars, geometry, *reused));

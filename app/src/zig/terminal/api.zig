@@ -68,6 +68,7 @@ pub const Api = struct {
     cell_get: Function("cell_get"),
     cell_get_multi: Function("cell_get_multi"),
     row_get: Function("row_get"),
+    row_get_multi: Function("row_get_multi"),
     key_encoder_new: Function("key_encoder_new"),
     key_encoder_free: Function("key_encoder_free"),
     key_encoder_set: Function("key_encoder_set"),

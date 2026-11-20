@@ -961,8 +961,8 @@ static void refreshHoverCursor(HWND hwnd) {
     if (!GetCursorPos(&point) || WindowFromPoint(point) != hwnd || !ScreenToClient(hwnd, &point)) return;
     RECT bounds;
     if (!GetClientRect(hwnd, &bounds) || point.x < 0 || point.y < 0 || point.x >= bounds.right || point.y >= bounds.bottom) return;
-    float scale = GetDpiForWindow(hwnd) / 96.0f;
-    float x = point.x / scale, y = point.y / scale;
+    const float scale = GetDpiForWindow(hwnd) / 96.0f;
+    const float x = point.x / scale, y = point.y / scale;
     updateChromeTooltipPointer(x, y);
     updateTopChromeHover(x, y);
     const auto notice = notificationPointer(x, y, false);

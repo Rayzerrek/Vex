@@ -33,11 +33,15 @@ test "plain URLs resolve every wrapped cell after reflow and cached row reuse" {
                     return error.MissingWrappedUrl;
                 };
                 try std.testing.expectEqualStrings(url, buffer[0..match.url_len]);
-                try std.testing.expectEqual(@as(u16, if (row == 0) 5 else 0), match.start_col);
-                try std.testing.expectEqual(@as(u16, @intCast(@min(5 + url.len - 1, (@as(usize, row) + 1) * columns - 1) % columns)), match.end_col);
-                const hover = url_detector.findLinkInFrameRow(frame, row, col, null).?;
-                try std.testing.expectEqual(match.start_col, hover.start_col);
-                try std.testing.expectEqual(match.end_col, hover.end_col);
+                const end = 5 + url.len - 1;
+                const expected: url_detector.LinkSpan = .{
+                    .start_row = 0,
+                    .start_col = 5,
+                    .end_row = @intCast(end / columns),
+                    .end_col = @intCast(end % columns),
+                };
+                try std.testing.expectEqual(expected, match.span);
+                try std.testing.expectEqual(expected, url_detector.findLinkInFrameRow(frame, row, col, null).?.span);
             }
             const after = 5 + url.len;
             try std.testing.expect(url_detector.findLinkInFrameRow(frame, @intCast(after / columns), @intCast(after % columns), null) == null);
@@ -752,19 +756,19 @@ fn checkPasteAllocationFailures(allocator: std.mem.Allocator, api: *const bindin
     try std.testing.expectEqualStrings("\x1b[200~first\rsecond\rthird\x1b[201~", pasted);
 }
 
-test "encodePasteAlloc normalizes newlines, tracks DEC 2004 across screens/resets, and strips breakout sequences" {
+test "paste never sends Enter keys without DEC 2004 and preserves bracketed multiline text" {
     const api = try binding.Api.load();
     var terminal = try Terminal.init(std.testing.allocator, &api);
     defer terminal.deinit();
     try std.testing.expect(!try terminal.bracketedPaste());
-    const plain = try terminal.encodePasteAlloc(std.testing.allocator, "a\r\nb\nc\rd");
+    const plain = try terminal.encodePasteAlloc(std.testing.allocator, "a\r\nb\nc\rd\tę\x03\x04\x7f\r\n");
     defer std.testing.allocator.free(plain);
-    try std.testing.expectEqualStrings("a\rb\rc\rd", plain);
+    try std.testing.expectEqualStrings("a b c d ę ", plain);
     try terminal.feedOutput("\x1b[?2004h");
     try std.testing.expect(try terminal.bracketedPaste());
-    const bracketed = try terminal.encodePasteAlloc(std.testing.allocator, "line1\r\nline2\n\x1b[201~safe");
+    const bracketed = try terminal.encodePasteAlloc(std.testing.allocator, "line1\r\n\tline2\n\x1b[201~safe\x1b[200~\n");
     defer std.testing.allocator.free(bracketed);
-    try std.testing.expectEqualStrings("\x1b[200~line1\rline2\rsafe\x1b[201~", bracketed);
+    try std.testing.expectEqualStrings("\x1b[200~line1\r\tline2\rsafe\r\x1b[201~", bracketed);
     try terminal.feedOutput("\x1b[?2004l");
     try std.testing.expect(!try terminal.bracketedPaste());
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkPasteAllocationFailures, .{&api});
@@ -1448,8 +1452,7 @@ test "OSC 8 hyperlinks resolve span, URL, wide characters, and reject unsafe sch
 
     var url_buf: [2048]u8 = undefined;
     const match = (try terminal.osc8LinkAt(0, 1, frame, &url_buf)).?;
-    try std.testing.expectEqual(@as(u16, 0), match.start_col);
-    try std.testing.expectEqual(@as(u16, 3), match.end_col);
+    try std.testing.expectEqual(url_detector.LinkSpan{ .start_row = 0, .start_col = 0, .end_row = 0, .end_col = 3 }, match.span);
     try std.testing.expectEqualStrings("https://ziglang.org/docs", url_buf[0..match.url_len]);
 
     // Space between links and unsafe scheme must not resolve as clickable hyperlinks.
@@ -1458,9 +1461,46 @@ test "OSC 8 hyperlinks resolve span, URL, wide characters, and reject unsafe sch
 
     // Wide CJK glyph tail cell (col 10) still maps back to the wide OSC 8 span (cols 9..10).
     const wide_match = (try terminal.osc8LinkAt(0, 10, frame, &url_buf)).?;
-    try std.testing.expectEqual(@as(u16, 9), wide_match.start_col);
-    try std.testing.expectEqual(@as(u16, 10), wide_match.end_col);
+    try std.testing.expectEqual(url_detector.LinkSpan{ .start_row = 0, .start_col = 9, .end_row = 0, .end_col = 10 }, wide_match.span);
     try std.testing.expectEqualStrings("file:///C:/repo/a.txt", url_buf[0..wide_match.url_len]);
+}
+
+test "OSC 8 uses one span across soft wraps, including wide tails, but never across a hard break" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(8, 5, 8, 16);
+    const url = "https://example.com/target";
+    try terminal.feedOutput("> \x1b]8;;" ++ url ++ "\x07abcde界123456789ab\x1b]8;;\x07?\r\n" ++
+        "\x1b]8;;" ++ url ++ "\x07abcdefgh\r\nijkl\x1b]8;;\x07");
+    const frame = try terminal.readFrame();
+    const expected: url_detector.LinkSpan = .{ .start_row = 0, .start_col = 2, .end_row = 2, .end_col = 4 };
+    var buffer: [2048]u8 = undefined;
+    for ([_][2]u16{ .{ 0, 2 }, .{ 1, 0 }, .{ 1, 1 }, .{ 2, 4 } }) |pos| {
+        const link = (try terminal.osc8LinkAt(pos[0], pos[1], frame, &buffer)).?;
+        try std.testing.expectEqual(expected, link.span);
+        try std.testing.expectEqualStrings(url, buffer[0..link.url_len]);
+    }
+    try std.testing.expect((try terminal.osc8LinkAt(2, 5, frame, null)) == null);
+    const hard = (try terminal.osc8LinkAt(4, 0, frame, null)).?;
+    try std.testing.expectEqual(url_detector.LinkSpan{ .start_row = 4, .start_col = 0, .end_row = 4, .end_col = 3 }, hard.span);
+    try std.testing.expectEqual(expected, (try terminal.hoverLinkAt(1, 0, frame)).?);
+    try terminal.feedOutput("\x1b[2;1H\x1b[2Kordinary");
+    try std.testing.expect((try terminal.hoverLinkAt(1, 0, try terminal.readFrame())) == null);
+}
+
+test "hovering into OSC 8 takes priority over a previously hovered plain URL" {
+    const api = try binding.Api.load();
+    var terminal = try Terminal.init(std.testing.allocator, &api);
+    defer terminal.deinit();
+    try terminal.resize(40, 4, 8, 16);
+    const prefix = "https://example.com/";
+    try terminal.feedOutput(prefix ++ "\x1b]8;;https://ziglang.org/\x07label\x1b]8;;\x07/rest");
+    const frame = try terminal.readFrame();
+    const plain = (try terminal.hoverLinkAt(0, 1, frame)).?;
+    try std.testing.expectEqual(@as(u16, prefix.len + "label/rest".len - 1), plain.end_col);
+    const explicit = (try terminal.hoverLinkAt(0, prefix.len, frame)).?;
+    try std.testing.expectEqual(url_detector.LinkSpan{ .start_row = 0, .start_col = prefix.len, .end_row = 0, .end_col = prefix.len + "label".len - 1 }, explicit);
 }
 
 test "OSC 9 and OSC 777 desktop notifications raise attention while OSC 9;4 only reports progress" {

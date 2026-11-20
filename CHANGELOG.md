@@ -7,6 +7,8 @@
 - Save the default sidebar visibility in Preferences, add explicit show/hide commands, make Tab Overview toggle, and slide the sidebar on pointer input without animating the PTY. The expanded workspace caption shows only the window buttons.
 - Restore animated selection and tab resizing in the horizontal strip. Animate tab creation and closure in both layouts without delaying tab actions or resizing the terminal during the transition.
 - Prevent Tab Overview and the sliding sidebar from acting on obscured tabs. Keep narrow horizontal tabs numbered, and preserve the live sidebar state if saving preferences fails.
+- Treat soft-wrapped URLs and OSC 8 labels as one hover target. Ctrl+click on any visible part opens the full destination.
+- Keep pasted line breaks in bracketed-paste clients. Otherwise paste line breaks and tabs as spaces instead of sending Enter or Tab.
 
 ## 2.1.1
 

@@ -65,6 +65,7 @@ pub const TerminalFrame = struct {
 pub const RowWrap = struct {
     wrap: bool = false,
     continuation: bool = false,
+    hyperlink: bool = false,
 };
 /// Terminal mouse tracking mode negotiated via DEC private modes 9, 1000, 1002, 1003.
 pub const MouseTrackingMode = enum(c.GhosttyMouseTrackingMode) {
@@ -151,6 +152,7 @@ pub const Terminal = struct {
     kb_focus_col: u16 = 0,
     kb_focus_row: u16 = 0,
     frame: TerminalFrame = .{},
+    link_probe: ?struct { generation: u64, row: u16, column: u16, span: ?url_detector.LinkSpan, osc8: bool } = null,
     optimistic_edit: OptimisticEdit = .{},
     scroll_guard: TerminalFrame = .{},
     scroll_guard_generation: ?u64 = null,
@@ -916,6 +918,27 @@ pub const Terminal = struct {
             else => .default,
         };
     }
+    /// Keep one hit (or miss) for the current snapshot, not a viewport-wide link index.
+    pub fn hoverLinkAt(self: *Terminal, row: u16, column: u16, frame: *const TerminalFrame) !?url_detector.LinkSpan {
+        const index = @as(usize, row) * frame.columns + column;
+        if (row >= frame.rows or column >= frame.columns or row >= frame.row_wraps.items.len or index >= frame.cells.items.len) return null;
+        if (self.link_probe) |last| {
+            if (last.generation == frame.generation) {
+                if (last.row == row and last.column == column) return last.span;
+                if (last.span) |span| {
+                    // A plain URL must not hide a higher-priority OSC 8 destination.
+                    const reuse = if (last.osc8) frame.cells.items[index].width != .head else !frame.row_wraps.items[row].hyperlink;
+                    if (reuse and span.contains(row, column)) return span;
+                }
+            }
+        }
+        const explicit = try self.osc8LinkAt(row, column, frame, null);
+        const match = explicit orelse url_detector.findLinkInFrameRow(frame, row, column, null);
+        const span = if (match) |link| link.span else null;
+        self.link_probe = .{ .generation = frame.generation, .row = row, .column = column, .span = span, .osc8 = explicit != null };
+        return span;
+    }
+
     /// Returns the OSC 8 hyperlink span covering `(row, column)` when its URI uses a supported scheme.
     pub fn osc8LinkAt(
         self: *const Terminal,
@@ -923,53 +946,55 @@ pub const Terminal = struct {
         column: u16,
         frame: *const TerminalFrame,
         out_url: ?[]u8,
-    ) !?url_detector.RowLinkMatch {
-        if (row >= frame.rows or column >= frame.columns or frame.columns == 0) return null;
-        const row_offset = @as(usize, row) * @as(usize, frame.columns);
-        if (row_offset + frame.columns > frame.cells.items.len) return null;
-        const cells = frame.cells.items[row_offset .. row_offset + frame.columns];
+    ) !?url_detector.LinkMatch {
+        const cols: usize = frame.columns;
+        if (row >= frame.rows or column >= cols or frame.row_wraps.items.len < frame.rows) return null;
+        if (!frame.row_wraps.items[row].hyperlink) return null;
+        const limit = @as(usize, frame.rows) * cols;
+        if (frame.cells.items.len < limit) return null;
+        const cells = frame.cells.items[0..limit];
+        var probe = @as(usize, row) * cols + column;
+        if (cells[probe].width == .head) return null;
+        if (column > 0 and cells[probe].width == .tail and cells[probe - 1].width == .wide) probe -= 1;
 
-        var probe_col = column;
         var raw_buf: [2048]u8 = undefined;
-        var raw_uri = try self.cellHyperlinkUri(row, probe_col, &raw_buf);
-        if (raw_uri == null and cells[column].width == .tail and column > 0 and cells[column - 1].width == .wide) {
-            probe_col = column - 1;
-            raw_uri = try self.cellHyperlinkUri(row, probe_col, &raw_buf);
-        }
-        const uri = raw_uri orelse return null;
+        const uri = (try self.cellHyperlinkUri(row, @intCast(probe % cols), &raw_buf)) orelse return null;
 
         var normalized_buf: [2048]u8 = undefined;
-        const normalized = url_detector.normalizeUrl(uri, &normalized_buf) orelse return null;
-        var url_len: usize = 0;
-        if (out_url) |buf| {
-            if (normalized.len > buf.len) return null;
-            @memcpy(buf[0..normalized.len], normalized);
-            url_len = normalized.len;
-        }
-
-        var start_col = probe_col;
+        const normalized = url_detector.normalizeUrl(uri, out_url orelse &normalized_buf) orelse return null;
+        var start = probe;
+        var end = probe;
         var scan_buf: [2048]u8 = undefined;
-        while (start_col > 0) {
-            const prev_col = start_col - 1;
-            const prev_uri = try self.cellHyperlinkUri(row, prev_col, &scan_buf) orelse break;
+        while (start > 0) {
+            if (start % cols == 0 and !frame.row_wraps.items[start / cols - 1].wrap) break;
+            var prev = start - 1;
+            if (start % cols == 0 and cells[prev].width == .head) {
+                if (cols == 1) break;
+                prev -= 1;
+            }
+            if (prev % cols > 0 and cells[prev].width == .tail and cells[prev - 1].width == .wide) prev -= 1;
+            const prev_uri = (try self.cellHyperlinkUri(@intCast(prev / cols), @intCast(prev % cols), &scan_buf)) orelse break;
             if (!std.mem.eql(u8, prev_uri, uri)) break;
-            start_col = prev_col;
+            start = prev;
         }
-
-        var end_col = probe_col;
-        while (end_col + 1 < frame.columns) {
-            const next_col = end_col + 1;
-            const next_uri = try self.cellHyperlinkUri(row, next_col, &scan_buf) orelse break;
+        while (true) {
+            if (cells[end].width == .wide and end % cols + 1 < cols) end += 1;
+            var next = end + 1;
+            if (next == limit) break;
+            if (next % cols + 1 == cols and cells[next].width == .head) next += 1;
+            if (next == limit or (next % cols == 0 and !frame.row_wraps.items[end / cols].wrap)) break;
+            const next_uri = (try self.cellHyperlinkUri(@intCast(next / cols), @intCast(next % cols), &scan_buf)) orelse break;
             if (!std.mem.eql(u8, next_uri, uri)) break;
-            end_col = next_col;
-        }
-        if (cells[end_col].width == .wide and end_col + 1 < frame.columns) {
-            end_col += 1;
+            end = next;
         }
         return .{
-            .start_col = start_col,
-            .end_col = end_col,
-            .url_len = url_len,
+            .span = .{
+                .start_row = @intCast(start / cols),
+                .start_col = @intCast(start % cols),
+                .end_row = @intCast(end / cols),
+                .end_col = @intCast(end % cols),
+            },
+            .url_len = if (out_url != null) normalized.len else 0,
         };
     }
     fn cellHyperlinkUri(self: *const Terminal, row: u16, column: u16, uri_buf: []u8) !?[]const u8 {
@@ -1022,33 +1047,31 @@ pub const Terminal = struct {
         if (length > output.len) return error.InvalidTerminalBufferLength;
         return output[0..length];
     }
-    /// Normalizes CRLF/LF to CR, strips bracket-closing escapes, and wraps in DEC 2004 markers when active.
+    /// Without DEC 2004, line breaks and tabs are input keys rather than literal text.
     pub fn encodePasteAlloc(self: *const Terminal, allocator: std.mem.Allocator, text: []const u8) ![]u8 {
         if (text.len == 0) return allocator.alloc(u8, 0);
         const bracketed = try self.bracketedPaste();
         var encoded: std.ArrayList(u8) = .empty;
         errdefer encoded.deinit(allocator);
         const wrapper_len: usize = if (bracketed) 12 else 0;
-        try encoded.ensureTotalCapacity(allocator, try std.math.add(usize, text.len, wrapper_len));
+        try encoded.ensureTotalCapacityPrecise(allocator, try std.math.add(usize, text.len, wrapper_len));
         if (bracketed) encoded.appendSliceAssumeCapacity("\x1b[200~");
         var index: usize = 0;
-        while (index < text.len) {
-            if (std.mem.startsWith(u8, text[index..], "\x1b[201~")) {
-                index += 6;
-                continue;
+        while (index < text.len) : (index += 1) {
+            switch (text[index]) {
+                '\r', '\n' => {
+                    encoded.appendAssumeCapacity(if (bracketed) '\r' else ' ');
+                    if (text[index] == '\r' and index + 1 < text.len and text[index + 1] == '\n') index += 1;
+                },
+                '\t' => encoded.appendAssumeCapacity(if (bracketed) '\t' else ' '),
+                // Clipboard text must not inject keys or change the paste mode.
+                0x1b => {
+                    if (std.mem.startsWith(u8, text[index + 1 ..], "[201~") or
+                        std.mem.startsWith(u8, text[index + 1 ..], "[200~")) index += 5;
+                },
+                0...8, 11, 12, 14...26, 28...31, 127 => {},
+                else => encoded.appendAssumeCapacity(text[index]),
             }
-            if (text[index] == '\r') {
-                encoded.appendAssumeCapacity('\r');
-                index += if (index + 1 < text.len and text[index + 1] == '\n') 2 else 1;
-                continue;
-            }
-            if (text[index] == '\n') {
-                encoded.appendAssumeCapacity('\r');
-                index += 1;
-                continue;
-            }
-            encoded.appendAssumeCapacity(text[index]);
-            index += 1;
         }
         if (bracketed) encoded.appendSliceAssumeCapacity("\x1b[201~");
         return encoded.toOwnedSlice(allocator);
@@ -1286,8 +1309,9 @@ pub const Terminal = struct {
             }
             if (row_cells_needed) {
                 var wrap: RowWrap = .{};
-                try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_WRAP, &wrap.wrap));
-                try check(self.api.row_get(raw_row, c.GHOSTTY_ROW_DATA_WRAP_CONTINUATION, &wrap.continuation));
+                const fields = [_]c.GhosttyRowData{ c.GHOSTTY_ROW_DATA_WRAP, c.GHOSTTY_ROW_DATA_WRAP_CONTINUATION, c.GHOSTTY_ROW_DATA_HYPERLINK };
+                var values = [_]?*anyopaque{ &wrap.wrap, &wrap.continuation, &wrap.hyperlink };
+                try check(self.api.row_get_multi(raw_row, fields.len, &fields, &values, null));
                 self.frame.row_wraps.items[row] = wrap;
                 try self.readRowCells(self.row_iterator, raw_row, raw_cells, self.row_cells, columns, foreground, background, &plain_cache, has_row_selection, row_selection, &self.frame.cells, &self.frame.utf8, row_utf8_start);
                 self.row_meta.appendAssumeCapacity(.{

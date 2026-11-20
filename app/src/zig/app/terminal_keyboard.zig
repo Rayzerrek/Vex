@@ -301,7 +301,11 @@ pub fn onPaste(self: *Application, bytes: []const u8) void {
         })) {
             platform.invalidateWindow();
             // Pasting over an editable selection replaces it, like typing does.
-            const preview = if (bytes.len <= 512 and std.mem.indexOfAny(u8, bytes, "\r\n") == null) bytes else "";
+            const preview = preview: {
+                if (bytes.len > 512) break :preview "";
+                for (bytes) |byte| if (std.ascii.isControl(byte)) break :preview "";
+                break :preview bytes;
+            };
             const replaced = bytes.len > 0 and (session.replaceSelectionWithPreview(self.allocator, "", preview) catch |err| {
                 self.fail(err);
                 return;
