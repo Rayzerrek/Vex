@@ -264,36 +264,22 @@ void drawListItem(const DRAWITEMSTRUCT& draw) {
     const bool commands = host.model.kind == 2;
     const bool shells = host.model.kind == 5;
     const bool dark = host.model.palette.is_dark;
-    COLORREF fill = selected
-        ? (commands ? blend(surfaceColor(), color(host.model.palette.accent), dark ? 0.34f : 0.18f)
-            : shells ? blend(surfaceColor(), color(host.model.palette.accent), dark ? 0.24f : 0.14f)
-            : selectionColor())
-        : (shells ? fieldColor() : surfaceColor());
-    COLORREF stroke = selected
-        ? (commands ? blend(surfaceColor(), color(host.model.palette.accent), dark ? 0.56f : 0.32f)
-            : shells ? blend(surfaceColor(), color(host.model.palette.accent), dark ? 0.68f : 0.42f)
-            : fill)
-        : (shells ? blend(surfaceColor(), color(host.model.palette.border), dark ? 0.68f : 0.52f) : fill);
-    roundedFill(draw.hDC, row, fill, stroke, px(commands ? 8 : 14));
+    const COLORREF fill = selected
+        ? (commands || shells ? blend(surfaceColor(), color(host.model.palette.text_primary), dark ? 0.12f : 0.08f) : selectionColor())
+        : surfaceColor();
+    if (selected) roundedFill(draw.hDC, row, fill, fill, px(4));
     RECT text = row; text.left += px(12); text.right -= px(12);
     if (commands) {
         if (item.detail[0]) {
             RECT shortcut = text;
             DrawTextW(draw.hDC, item.detail, -1, &shortcut, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-            const int shortcutWidth = (shortcut.right - shortcut.left) + px(14);
-            const int midY = (row.top + row.bottom) / 2;
-            RECT kbdPill = { row.right - px(8) - shortcutWidth, midY - px(10), row.right - px(8), midY + px(10) };
-            if (kbdPill.left > row.left + px(110)) {
-                COLORREF pillFill = selected
-                    ? blend(fill, color(host.model.palette.accent), dark ? 0.24f : 0.14f)
-                    : blend(fill, color(host.model.palette.pane_bg), 0.78f);
-                COLORREF pillStroke = selected
-                    ? blend(fill, color(host.model.palette.accent), dark ? 0.50f : 0.32f)
-                    : blend(fill, color(host.model.palette.border), 0.72f);
-                roundedFill(draw.hDC, kbdPill, pillFill, pillStroke, px(6));
-                SetTextColor(draw.hDC, color(selected ? host.model.palette.text_primary : host.model.palette.text_muted));
-                DrawTextW(draw.hDC, item.detail, -1, &kbdPill, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-                text.right = kbdPill.left - px(12);
+            const int shortcutWidth = shortcut.right - shortcut.left;
+            shortcut = text;
+            shortcut.left = shortcut.right - shortcutWidth;
+            if (shortcut.left > text.left + px(110)) {
+                SetTextColor(draw.hDC, color(host.model.palette.text_muted));
+                DrawTextW(draw.hDC, item.detail, -1, &shortcut, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                text.right = shortcut.left - px(12);
             }
         }
         const wchar_t* colon = wcsstr(item.label, L": ");
@@ -627,7 +613,7 @@ void paintDialogSurface(HDC dc) {
     if (host.model.kind == 2) {
         RECT search = { px(12), px(12), bounds.right - px(12), px(52) };
         const COLORREF searchBorder = blend(fieldColor(), color(host.model.palette.accent), host.model.palette.is_dark ? 0.46f : 0.34f);
-        roundedFill(dc, search, fieldColor(), searchBorder, px(16));
+        roundedFill(dc, search, fieldColor(), searchBorder, px(6));
         {
             Gdiplus::Graphics graphics(dc);
             graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);

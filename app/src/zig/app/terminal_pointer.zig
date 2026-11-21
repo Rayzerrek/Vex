@@ -220,9 +220,10 @@ pub fn onClick(self: *Application, x: f32, y: f32) void {
 fn handleClick(self: *Application, x: f32, y: f32) !void {
     if (self.overlay != .none) return;
     const model = if (self.model) |*model| model else return;
+    const metrics = self.metrics orelse return;
     const can_focus = model.activeTab().tree.paneCount() > 1;
     for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
-        if (if (can_focus or self.settings.horizontal_tabs) placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) else null) |header_action| {
+        if (if (!metrics.single_pane) placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density) else null) |header_action| {
             switch (header_action) {
                 .focus_toggle => {
                     _ = model.focusPane(placement.id);
@@ -248,6 +249,7 @@ fn handleClick(self: *Application, x: f32, y: f32) !void {
 }
 
 fn updateHoverState(self: *Application, can_focus: bool, x: f32, y: f32, modifiers: u32) !void {
+    const has_header = if (self.metrics) |metrics| !metrics.single_pane else false;
     var next_pane: ?panes.PaneId = null;
     var next_action: ?panes.PaneHeaderAction = null;
     var next_scrollbar: ?panes.PaneId = null;
@@ -255,7 +257,7 @@ fn updateHoverState(self: *Application, can_focus: bool, x: f32, y: f32, modifie
     if (self.pointer_drag == .none) {
         for (self.placements.items) |placement| if (placement.bounds.contains(x, y)) {
             next_pane = placement.id;
-            if (can_focus or self.settings.horizontal_tabs) next_action = placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density);
+            if (has_header) next_action = placement.bounds.hitHeaderActionWithDensity(can_focus, x, y, self.settings.ui_density);
             if (next_action == null) {
                 if (self.findSession(placement.id)) |session| {
                     if ((modifiers & 1) != 0 or !try session.terminal.isMouseTracking()) {

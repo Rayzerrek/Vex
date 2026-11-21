@@ -239,6 +239,8 @@ pub const TerminalApplication = struct {
     }
     /// Animated status dots repaint every visible tab; hidden terminal grids stay unmaterialized.
     fn anyAnimatedStatus(self: *TerminalApplication) bool {
+        // Compact status glyphs are static; do not arm a recurring window repaint for them.
+        if (self.settings.ui_density == .compact) return false;
         const model = if (self.model) |*model| model else return false;
         if (!self.cursor_window_active or self.overlay != .none or self.editing_tab != null or !platform.animationsEnabled()) return false;
         if (self.settings.horizontal_tabs or !self.sidebar_collapsed) for (model.tabs.items) |tab| {
@@ -525,7 +527,7 @@ pub const TerminalApplication = struct {
         path.shell_home = launch_ptr.backend == .wsl;
         const size = if (self.metrics) |window| blk: {
             var metrics = window;
-            metrics.single_pane = !self.settings.horizontal_tabs;
+            metrics.single_pane = self.singlePaneUsesCaption();
             break :blk try metrics.terminalSize(self.contentBounds(metrics));
         } else null;
         return self.addSessionWithLaunch(path, launch_ptr, size);
@@ -610,13 +612,17 @@ pub const TerminalApplication = struct {
         }
         self.closing_panes.clearRetainingCapacity();
     }
+
+    fn paneActionsAnimate(self: *const TerminalApplication) bool {
+        return self.settings.ui_density != .compact and platform.animationsEnabled();
+    }
     fn capturePaneClose(self: *TerminalApplication, id: panes.PaneId) void {
         if (self.findPlacement(id) == null) return;
         // Visual allocation failure must never prevent closing a terminal.
-        self.layout_motion.capture(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled()) catch self.layout_motion.clear();
+        self.layout_motion.capture(self.allocator, self.placements.items, self.cursorNowMs(), self.paneActionsAnimate()) catch self.layout_motion.clear();
     }
     fn preserveClosingPane(self: *TerminalApplication, id: panes.PaneId) void {
-        if (!platform.animationsEnabled() or self.layout_motion.previous.items.len == 0) return;
+        if (self.layout_motion.previous.items.len == 0 or !self.paneActionsAnimate()) return;
         const placement = self.findPlacement(id) orelse return;
         var painted = placement;
         for (self.placements.items, 0..) |candidate, index| {
@@ -647,7 +653,7 @@ pub const TerminalApplication = struct {
     pub fn toggleFocusMode(self: *TerminalApplication) !void {
         const model = if (self.model) |*model| model else return;
         if (model.activeTab().tree.paneCount() <= 1) return;
-        try self.layout_motion.captureFocus(self.allocator, self.placements.items, self.cursorNowMs(), platform.animationsEnabled());
+        try self.layout_motion.captureFocus(self.allocator, self.placements.items, self.cursorNowMs(), self.paneActionsAnimate());
         if (model.toggleFocusMode()) try self.updateLayout();
     }
     pub fn tabLayout(self: *const TerminalApplication) !tab_strip.TabStripLayout {
@@ -664,11 +670,15 @@ pub const TerminalApplication = struct {
         return .{ .x = sidebar + inset, .y = top + inset, .width = @max(0, metrics.width - sidebar - inset * 2), .height = @max(0, metrics.height - top - inset * 2) };
     }
 
+    fn singlePaneUsesCaption(self: *const TerminalApplication) bool {
+        return !self.settings.horizontal_tabs or self.settings.ui_density == .compact;
+    }
+
     pub fn updateLayout(self: *TerminalApplication) !void {
         const model = if (self.model) |*model| model else return;
         if (self.metrics == null) return;
         const tab = model.activeTab();
-        self.metrics.?.single_pane = !self.settings.horizontal_tabs and tab.tree.paneCount() == 1;
+        self.metrics.?.single_pane = self.singlePaneUsesCaption() and tab.tree.paneCount() == 1;
         const metrics = self.metrics.?;
         var ids: [8]u32 = @splat(0);
         for (model.tabs.items, 0..) |item, index| ids[index] = @intFromEnum(item.id);
@@ -1224,7 +1234,7 @@ pub const TerminalApplication = struct {
                 const active = self.activeSession() orelse return error.MissingPaneSession;
                 const session = try self.addSessionWithKind(active.directory.current(), kind);
                 errdefer self.removeSession(session.id);
-                try self.layout_motion.captureSplit(self.allocator, self.placements.items, active.id, session.id, if (mode == .split_right) .right else .down, self.cursorNowMs(), platform.animationsEnabled());
+                try self.layout_motion.captureSplit(self.allocator, self.placements.items, active.id, session.id, if (mode == .split_right) .right else .down, self.cursorNowMs(), self.paneActionsAnimate());
                 try model.splitActivePane(session.id, if (mode == .split_right) .right else .down);
                 try self.updateLayout();
             },
@@ -1525,7 +1535,7 @@ pub const TerminalApplication = struct {
                 const active = self.activeSession() orelse return error.MissingPaneSession;
                 const session = try self.addSplitSession(active);
                 errdefer self.removeSession(session.id);
-                try self.layout_motion.captureSplit(self.allocator, self.placements.items, active.id, session.id, if (action == .split_right) .right else .down, self.cursorNowMs(), platform.animationsEnabled());
+                try self.layout_motion.captureSplit(self.allocator, self.placements.items, active.id, session.id, if (action == .split_right) .right else .down, self.cursorNowMs(), self.paneActionsAnimate());
                 try model.splitActivePane(session.id, if (action == .split_right) .right else .down);
             },
             .toggle_focus_mode => {
@@ -2044,7 +2054,6 @@ test "Ctrl Shift E toggles active pane zoom and restores the split layout" {
     if (platform.animationsEnabled()) {
         try std.testing.expectEqual(@as(usize, 1), app.layout_motion.previous.items.len);
         try std.testing.expectEqualDeep(original, app.layout_motion.previous.items[0].bounds);
-        try std.testing.expectEqual(@as(u64, 250), app.layout_motion.transition_ms);
     } else try std.testing.expectEqual(@as(usize, 0), app.layout_motion.previous.items.len);
     // Model completion without sleeping: the next command captures the settled zoomed pane.
     app.layout_motion.clear();
@@ -2054,6 +2063,18 @@ test "Ctrl Shift E toggles active pane zoom and restores the split layout" {
     try std.testing.expectEqual(@as(usize, 2), app.placements.items.len);
     try std.testing.expectEqualDeep(original, app.placements.items[1].bounds);
     try std.testing.expectEqual(second.id, app.model.?.activeTab().active_pane);
+
+    app.settings.ui_density = .compact;
+    app.metrics.?.ui_density = .compact;
+    try app.updateLayout();
+    try std.testing.expect(app.onKey('E', 3));
+    const zoom = app.placements.items[0];
+    try std.testing.expectEqual(second.id, zoom.id);
+    try std.testing.expectEqualDeep(zoom.bounds, app.layout_motion.bounds(zoom, 0, app.cursorNowMs(), true));
+    try std.testing.expect(app.onKey('E', 3));
+    const restored = app.placements.items[1];
+    try std.testing.expectEqual(second.id, restored.id);
+    try std.testing.expectEqualDeep(restored.bounds, app.layout_motion.bounds(restored, 1, app.cursorNowMs(), true));
     try std.testing.expect(app.health == .running);
 }
 

@@ -43,9 +43,9 @@ chrome, selection, cursor and ANSI colors. Existing theme names remain valid.
 | Vex Ember | Warm charcoal / burnished copper | Vex Apricot | Warm clay / terracotta ink |
 | Vex Glacier | Blue graphite / glacial silver | Vex Sage | Celadon / eucalyptus ink |
 
-Pane headers and floating controls use a restrained glass-like finish: a soft tonal
-gradient, a fine rim and a light-catching upper edge. The material is drawn by
-Vex's GPU renderer on both Windows 10 and 11, without depending on Mica or Acrylic.
+Comfortable and Spacious pane headers and floating controls use a restrained
+glass-like finish drawn by Vex's GPU renderer. Where supported, Windows 11
+provides the Mica backdrop for the window frame.
 Terminal backgrounds stay opaque so text and full-screen applications remain
 readable. Theme Studio (`Ctrl+Shift+M`) previews changes; `Tab` switches between
 the dark and light collections.
@@ -53,17 +53,24 @@ the dark and light collections.
 ## Interface density
 
 Interface density is available in **Settings → Appearance** and through the
-**Interface Density** commands in the command palette. Compact reduces tab and
-pane-header spacing and joins split edges with thin separators; Comfortable is
-the default; Spacious adds room around the workspace. Every density keeps the
-same 6.5 DIP minimum left, right and bottom terminal padding. Whole cells rarely
-fill a pane exactly, so the leftover height is split between the top and bottom
-margins. A single pane uses the window caption instead of a separate pane header.
+**Interface Density** commands in the command palette. Compact uses flat tab
+fills, a narrower sidebar without a section heading, and thin split separators.
+The sidebar and its rows change without transitions; the active split keeps its
+focus outline when enabled. Comfortable is the default; Spacious adds room
+around the workspace. Every density keeps the same 6.5 DIP minimum left, right
+and bottom terminal padding. Whole cells rarely fill a pane exactly, so the
+leftover height is split between the top and bottom margins. In Compact or
+with vertical tabs, a single pane has no separate header.
 Colored edge cells extend into the padding so status lines reach the pane edge.
 The presets only differ in header, tab and workspace chrome. Changes apply
 immediately and are saved with other preferences. They do not change terminal
 font size or Windows caption-button sizes. Existing sessions and scrollback
 remain open.
+
+Compact opens, closes and zooms splits without a layout transition. Pointer
+transfers keep their short settle, and status glyphs stay static without a
+continuous repaint. Command, shell and path pickers open without motion in
+every density. The split drop outline always shows the actual drop target.
 
 ## Save and reload
 

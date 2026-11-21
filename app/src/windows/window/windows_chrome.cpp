@@ -46,7 +46,6 @@ struct TabRowMotion {
 TabRowMotion tabRows[8];
 VexTabStripLayout lastTabLayout;
 float lastTabClientWidth;
-ChromeMotion selectedAlong, selectedWidth;
 struct ExitingTabRow {
     ChromeMotion opacity;
     VexPaneRect bounds;
@@ -70,10 +69,8 @@ bool activePaneBorderEnabled = true;
 ChromeMotion tabHoverMotion[8], tabCloseHoverMotion[8], tabEditMotion[8];
 struct PaneChromeMotion { uint32_t id = 0; ChromeMotion action[4], focus; };
 PaneChromeMotion paneChromeMotion[64];
-ChromeMotion splitPreviewRectMotion[4], splitPreviewAlphaMotion;
-ChromeMotion pathOpenMotion, pathRowMotion;
+ChromeMotion splitPreviewAlphaMotion;
 bool splitPreviewSeenLastFrame, splitPreviewSeenThisFrame;
-bool pathCompletionSeenLastFrame, pathCompletionSeenThisFrame;
 float tabSelectionX;
 uint64_t activeTabIconKey, focusedPaneIconKey;
 size_t activeTabIconCount;
@@ -110,19 +107,19 @@ static void updateTabRows(const WindowChromeFrame& frame) {
     const bool sameStrip = visibleTabStrip(next) && visibleTabStrip(lastTabLayout) &&
         next.horizontal == lastTabLayout.horizontal && next.sidebar_width == lastTabLayout.sidebar_width &&
         next.first_row.height == lastTabLayout.first_row.height && frame.clientWidth == lastTabClientWidth;
-    const bool animate = frame.motionEnabled && !frame.movingSidebar && sameStrip;
+    const bool animate = frame.motionEnabled && !frame.movingSidebar && sameStrip && (next.horizontal || frame.uiMetrics.pane_gap != 0);
     const double now = frame.timeMs;
     bool rosterChanged = next.count != lastTabLayout.count;
     for (uint32_t i = 0; !rosterChanged && i < next.count; ++i)
         rosterChanged = next.ids[i] != lastTabLayout.ids[i];
-    if (!tabRowsMoving && sameStrip && !rosterChanged && next.selected == lastTabLayout.selected &&
+    if (!tabRowsMoving && sameStrip && !rosterChanged &&
         next.first_row.width == lastTabLayout.first_row.width && next.first_row.y == lastTabLayout.first_row.y)
         return;
     if (!animate || now >= exitDeadline) nextExitRow = exitRowCount = 0;
     if (rosterChanged || (visibleTabStrip(next) && !visibleTabStrip(lastTabLayout))) {
         // Remap only at roster/visibility changes. An exiting row never owns a session.
         TabRowMotion previous[8];
-        memcpy(previous, tabRows, sizeof(previous));
+        if (animate) memcpy(previous, tabRows, sizeof(previous));
         if (animate) {
             for (uint32_t i = 0; i < lastTabLayout.count; ++i) {
                 bool remains = false;
@@ -164,12 +161,6 @@ static void updateTabRows(const WindowChromeFrame& frame) {
         motion.painted = row;
         tabRowsMoving |= motion.along.pending(now) || motion.width.pending(now) || motion.reveal.pending(now);
     }
-    if (next.count && next.selected < next.count) {
-        const auto row = chromeTabRow(next, next.selected);
-        selectedAlong.update(next.horizontal ? row.x : row.y, now, animate);
-        selectedWidth.update(row.width, now, animate);
-        tabRowsMoving |= selectedAlong.pending(now) || selectedWidth.pending(now);
-    }
     chromeMotionPending |= tabRowsMoving;
     lastTabLayout = next;
     lastTabClientWidth = frame.clientWidth;
@@ -191,8 +182,6 @@ static VexPaneRect drawTabRow(uint32_t index) {
 void beginWindowChromeFrame(const WindowChromeFrame& frame) {
     splitPreviewSeenLastFrame = splitPreviewSeenThisFrame;
     splitPreviewSeenThisFrame = false;
-    pathCompletionSeenLastFrame = pathCompletionSeenThisFrame;
-    pathCompletionSeenThisFrame = false;
     if (chromeFont != frame.normalFont || textFactory != frame.textFactory) tabRenameLayout.clear();
     target = frame.target;
     textFactory = frame.textFactory;
@@ -370,11 +359,13 @@ static void drawAppIcon(VexAppIcon icon, float x, float y, float sizeDip) {
 
 static uint64_t drawAppIconTile(VexAppIcon icon, float x, float y) {
     constexpr float glyphSize = 12.0f;
-    const uint32_t rawInk = icon.kind ? icon.color_rgb : chromePalette.text_muted;
-    const uint32_t ink = contrastingIconColor(rawInk, chromePalette.pane_header_bg);
-    const uint32_t tileBg = blendRgb(chromePalette.pane_header_bg, ink, chromePalette.is_dark ? 0.12f : 0.08f);
-    brush->SetColor(rgb(tileBg, chromePalette.is_dark ? 0.85f : 0.75f));
-    target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + 18.0f, y + 18.0f), 4.5f, 4.5f), brush);
+    if (uiMetrics.pane_gap != 0) {
+        const uint32_t rawInk = icon.kind ? icon.color_rgb : chromePalette.text_muted;
+        const uint32_t ink = contrastingIconColor(rawInk, chromePalette.pane_header_bg);
+        const uint32_t tileBg = blendRgb(chromePalette.pane_header_bg, ink, chromePalette.is_dark ? 0.12f : 0.08f);
+        brush->SetColor(rgb(tileBg, chromePalette.is_dark ? 0.85f : 0.75f));
+        target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + 18.0f, y + 18.0f), 4.5f, 4.5f), brush);
+    }
     drawAppIcon(icon, x + 3.0f, y + 3.0f, glyphSize);
     return computeIconCacheKey(icon, (uint32_t)glyphSize);
 }
@@ -390,8 +381,8 @@ static uint32_t programStatusColor(VexProgramStatus status) {
 static void drawProgramStatus(VexProgramStatus status, float x, float y, float width, bool iconOnly) {
     if (status.state < 1 || status.state > 5) return;
     const uint32_t color = programStatusColor(status);
-    const float phase = (float)(status.phase % 1200) / 1200.0f;
-    const bool motion = vex_window_animations_enabled();
+    const bool motion = chromeMotionEnabled && uiMetrics.pane_gap != 0;
+    const float phase = motion ? (float)(status.phase % 1200) / 1200.0f : 0.0f;
     if (iconOnly) {
         if (status.state == 2) {
             // A staggered raised-cosine wave eases to rest between lifts.
@@ -486,7 +477,8 @@ extern "C" int vex_window_shell_name(const uint8_t* bytes, size_t length) {
     return 0;
 }
 static D2D1_ROUNDED_RECT tabPill(VexPaneRect row) {
-    return D2D1::RoundedRect(D2D1::RectF(row.x, row.y, row.x + row.width, row.y + row.height), 8, 8);
+    const float radius = uiMetrics.pane_gap == 0 ? 4.0f : 8.0f;
+    return D2D1::RoundedRect(D2D1::RectF(row.x, row.y, row.x + row.width, row.y + row.height), radius, radius);
 }
 
 extern "C" bool vex_begin_sidebar_rows(bool exiting) {
@@ -508,8 +500,11 @@ extern "C" bool vex_begin_sidebar_rows(bool exiting) {
     savedTooltips = tooltipsEnabled;
     hoveredTabIndex = -1;
     tooltipsEnabled = false;
-    rectangle(0, 44, sidebarEdge, clientHeight - 44, blendRgb(chromePalette.pane_bg, chromePalette.is_dark ? 0 : chromePalette.accent, chromePalette.is_dark ? 0.10f : 0.035f));
-    brush->SetColor(rgb(chromePalette.border, chromePalette.is_dark ? 0.5f : 0.6f));
+    const bool compact = uiMetrics.pane_gap == 0;
+    const uint32_t sidebarBg = compact ? chromePalette.pane_bg
+        : blendRgb(chromePalette.pane_bg, chromePalette.is_dark ? 0 : chromePalette.accent, chromePalette.is_dark ? 0.10f : 0.035f);
+    rectangle(0, 44, sidebarEdge, clientHeight - 44, sidebarBg);
+    brush->SetColor(rgb(chromePalette.border, compact ? 0.42f : (chromePalette.is_dark ? 0.5f : 0.6f)));
     target->FillRectangle(D2D1::RectF(sidebarEdge - 1, 44, sidebarEdge, clientHeight), brush);
     return true;
 }
@@ -529,10 +524,11 @@ extern "C" void vex_end_sidebar_rows() {
 
 extern "C" void vex_draw_tab_strip_background(uint32_t active_index) {
     if (active_index >= tabs->count) return;
-    tabSelectionX = windowTabs->horizontal ? selectedAlong.sample(chromeTimeMs) : chromeTabRow(*windowTabs, active_index).x;
+    tabSelectionX = windowTabs->horizontal ? drawTabRow(active_index).x : chromeTabRow(*windowTabs, active_index).x;
+    const bool compact = uiMetrics.pane_gap == 0;
     const bool expanded = tabs->sidebar_width > 0;
     const bool visible = expanded || tabs->horizontal;
-    if (expanded) labelWithFont(badgeFont, L"Sessions", tabs->first_row.x + 8, 48, tabs->first_row.width - 16, chromePalette.text_muted, 0.82f);
+    if (expanded && !compact) labelWithFont(badgeFont, L"Sessions", tabs->first_row.x + 8, 48, tabs->first_row.width - 16, chromePalette.text_muted, 0.82f);
     if (!visible) return;
     for (unsigned i = 0; i < exitRowCount; ++i) {
         const auto& exit = exitingRows[i];
@@ -547,37 +543,35 @@ extern "C" void vex_draw_tab_strip_background(uint32_t active_index) {
     }
     for (uint32_t i = 0; i < tabs->count; ++i) {
         auto row = drawTabRow(i);
-        const float hover = tabHoverMotion[i].update(row.width > 0 && (int)i == hoveredTabIndex ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled);
+        const float hover = tabHoverMotion[i].update(row.width > 0 && (int)i == hoveredTabIndex ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled && !compact);
         chromeMotionPending |= tabHoverMotion[i].pending(chromeTimeMs);
         if (row.width <= 0 || (i != active_index && hover <= 0)) continue;
         if (i == active_index) {
-            if (!movingSidebarClip) {
-                const float along = selectedAlong.sample(chromeTimeMs);
-                if (tabs->horizontal) row.x = along; else row.y = along;
-                row.width = selectedWidth.sample(chromeTimeMs);
-            }
-            if (tabs->horizontal) {
+            if (compact) {
+                brush->SetColor(rgb(blendRgb(chromePalette.pane_bg, chromePalette.text_primary, chromePalette.is_dark ? 0.12f : 0.08f)));
+            } else if (tabs->horizontal) {
                 auto shadow = row;
                 shadow.y += 1;
                 brush->SetColor(rgb(0, chromePalette.is_dark ? 0.24f : 0.12f));
                 target->FillRoundedRectangle(tabPill(shadow), brush);
                 fillUiMaterial(*target, *brush, tabPill(row), chromePalette, chromePalette.active_tab_bg);
                 continue;
+            } else {
+                brush->SetColor(rgb(blendRgb(chromePalette.active_tab_bg, chromePalette.text_primary, chromePalette.is_dark ? 0.19f : 0.09f)));
             }
-            brush->SetColor(rgb(blendRgb(chromePalette.active_tab_bg, chromePalette.text_primary, chromePalette.is_dark ? 0.19f : 0.09f)));
         } else {
             brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg, hover));
         }
         target->FillRoundedRectangle(tabPill(row), brush);
     }
-    if (tabs->horizontal) for (uint32_t i = 1; i < tabs->count; ++i) {
+    if (!compact && tabs->horizontal) for (uint32_t i = 1; i < tabs->count; ++i) {
         if (i == active_index || i - 1 == active_index) continue;
         const auto row = drawTabRow(i);
         const float opacity = 1 - fmaxf(tabHoverMotion[i - 1].sample(chromeTimeMs), tabHoverMotion[i].sample(chromeTimeMs));
         brush->SetColor(rgb(chromePalette.border, 0.36f * opacity));
         target->FillRectangle(D2D1::RectF(row.x - 2.5f, row.y + 7.5f, row.x - 1.5f, row.y + row.height - 7.5f), brush);
     }
-    if (!movingSidebarClip) for (uint32_t i = 0; i < tabs->count; ++i) {
+    if (!compact && !movingSidebarClip) for (uint32_t i = 0; i < tabs->count; ++i) {
         const float reveal = tabRows[i].reveal.sample(chromeTimeMs);
         if (reveal >= 0.999f) continue;
         brush->SetColor(rgb(chromePalette.accent, 0.18f * (1 - reveal)));
@@ -621,6 +615,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
     if (active) activeTabIconCount = icon_count;
     if (edit.editing) tooltipsEnabled = false;
     const bool isHovered = (int)index == hoveredTabIndex;
+    const bool compact = uiMetrics.pane_gap == 0;
     if (active && !edit.editing) tabRenameLayout.clear();
     const float editT = index < 8
         ? tabEditMotion[index].update(edit.editing ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled && edit.editing)
@@ -629,7 +624,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
     float inset = 9.0f;
     if (icons && icon_count && width >= 68) {
         const float tx = x + 8.0f, ty = 13.0f + dy;
-        const bool secondary = icon_count > 1 && tabs->sidebar_width > 0 && !edit.editing && width >= 128;
+        const bool secondary = !compact && icon_count > 1 && tabs->sidebar_width > 0 && !edit.editing && width >= 128;
         if (secondary) drawAppIconTile(icons[1], tx + 10, ty);
         const uint64_t key = drawAppIconTile(icons[0], tx, ty);
         if (active) activeTabIconKey = key;
@@ -732,10 +727,11 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
             }
         }
     } else {
+        const bool animatedRows = !movingSidebarClip && (tabs->horizontal || !compact);
         const float textW = width >= 68.0f ? fmaxf(0.0f, width - inset - rightReserve) : 0;
         titleLabel(title, title_length, x + inset, 13.0f + dy, textW, active ? chromePalette.text_primary : chromePalette.text_muted, tabTitleFont,
-            { x, row.y, fmaxf(0, width - rightReserve), row.height }, movingSidebarClip ? nullptr : tabRows[index].title,
-            movingSidebarClip ? 1.0f : 0.35f + 0.65f * tabRows[index].reveal.sample(chromeTimeMs));
+            { x, row.y, fmaxf(0, width - rightReserve), row.height }, animatedRows ? tabRows[index].title : nullptr,
+            animatedRows ? 0.35f + 0.65f * tabRows[index].reveal.sample(chromeTimeMs) : 1.0f);
         if (tabs->horizontal && textW <= 0) {
             const wchar_t number[] = { (wchar_t)(L'1' + index), 0 };
             labelWithFont(tabTitleFont, number, x + 8, 13.0f + dy, fmaxf(0, width - 22),
@@ -754,7 +750,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
     const float closeX = x + width - 20.0f, closeY = 14.0f + dy;
     const bool closeHot = isHovered && hoveredTabClose;
     const float closeAlpha = index < 8
-        ? tabCloseHoverMotion[index].update(closeHot ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled)
+        ? tabCloseHoverMotion[index].update(closeHot ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled && !compact)
         : (closeHot ? 1.0f : 0.0f);
     if (index < 8) chromeEffectsPending |= tabCloseHoverMotion[index].pending(chromeTimeMs);
     if (closeAlpha > 0.0f) {
@@ -762,7 +758,7 @@ extern "C" void vex_draw_tab(uint32_t index, uint32_t count, bool active, VexTab
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(closeX, closeY, closeX + 16.0f, closeY + 16.0f), 4.0f, 4.0f), brush);
     }
     const float tabHoverT = index < 8 ? tabHoverMotion[index].sample(chromeTimeMs) : (isHovered ? 1.0f : 0.0f);
-    const float closeVisibility = tabs->horizontal && active ? 0.76f + 0.24f * closeAlpha : fmaxf(tabHoverT, closeAlpha);
+    const float closeVisibility = active && (compact || tabs->horizontal) ? 0.76f + 0.24f * closeAlpha : fmaxf(tabHoverT, closeAlpha);
     if (closeVisibility <= 0) return;
     const float cx = closeX + 8.0f, cy = closeY + 8.0f;
     brush->SetColor(rgb(blendRgb(chromePalette.text_muted, chromePalette.text_primary, closeAlpha), closeVisibility));
@@ -858,13 +854,13 @@ extern "C" void vex_begin_pane(VexPaneRect bounds, VexPaneRect grid, uint32_t pa
     }
     auto& motion = paneChromeMotion[pane_id % 64];
     if (motion.id != pane_id) { motion = {}; motion.id = pane_id; }
-    const float focus = motion.focus.update(can_focus && focused ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled);
+    const float focus = motion.focus.update(can_focus && focused ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled && !joined);
     chromeEffectsPending |= motion.focus.pending(chromeTimeMs);
     const uint32_t borderCol = blendRgb(chromePalette.border, chromePalette.active_tab_border, focus * 0.45f);
     if (joined) {
-        brush->SetColor(rgb(chromePalette.border, 0.65f));
-        target->DrawLine(D2D1::Point2F(bounds.x, bounds.y + 0.5f), D2D1::Point2F(bounds.x + bounds.width, bounds.y + 0.5f), brush, 1);
-        if (bounds.x > 0) target->DrawLine(D2D1::Point2F(bounds.x + 0.5f, bounds.y), D2D1::Point2F(bounds.x + 0.5f, bounds.y + bounds.height), brush, 1);
+        brush->SetColor(rgb(chromePalette.border, 0.42f));
+        if (bounds.y > 44.0f) target->DrawLine(D2D1::Point2F(bounds.x, bounds.y + 0.5f), D2D1::Point2F(bounds.x + bounds.width, bounds.y + 0.5f), brush, 1);
+        if (bounds.x > windowTabs->sidebar_width) target->DrawLine(D2D1::Point2F(bounds.x + 0.5f, bounds.y), D2D1::Point2F(bounds.x + 0.5f, bounds.y + bounds.height), brush, 1);
     } else {
         brush->SetColor(rgb(borderCol, 0.46f + focus * 0.28f));
         target->DrawRoundedRectangle(paneCard, brush, 1.0f);
@@ -1066,49 +1062,31 @@ extern "C" void vex_draw_pane_drag(VexPaneRect bounds, VexPaneRect detach_target
 }
 extern "C" void vex_draw_split_preview(VexPaneRect bounds) {
     if (!target || !brush || !isfinite(bounds.x) || !isfinite(bounds.y) || !isfinite(bounds.width) || !isfinite(bounds.height)) return;
-    const bool visible = bounds.width > 0.0f && bounds.height > 0.0f;
-    const bool continuing = splitPreviewSeenLastFrame || splitPreviewAlphaMotion.sample(chromeTimeMs) > 0.0f;
-    splitPreviewSeenThisFrame = visible;
-    if (visible) tooltipsEnabled = false;
-    const bool animate = chromeMotionEnabled && continuing;
-    if (visible && !continuing) {
-        splitPreviewAlphaMotion = {};
-        splitPreviewAlphaMotion.update(0.0f, chromeTimeMs, false);
-    }
-    const float alpha = splitPreviewAlphaMotion.update(visible ? 1.0f : 0.0f, chromeTimeMs, chromeMotionEnabled);
+    if (bounds.width <= 0.0f || bounds.height <= 0.0f) return;
+    splitPreviewSeenThisFrame = true;
+    tooltipsEnabled = false;
+    const bool animateFill = chromeMotionEnabled && uiMetrics.pane_gap != 0;
+    if (animateFill && !splitPreviewSeenLastFrame) splitPreviewAlphaMotion.update(0.0f, chromeTimeMs, false);
+    const float alpha = splitPreviewAlphaMotion.update(1.0f, chromeTimeMs, animateFill);
     chromeEffectsPending |= splitPreviewAlphaMotion.pending(chromeTimeMs);
-    // The workspace calls this with an empty target to finish an exit. Once hidden,
-    // submit neither invisible geometry nor rectangle-animation wakes on idle frames.
-    if (!visible && alpha <= 0.0f) return;
-    const float rx = visible ? splitPreviewRectMotion[0].update(bounds.x, chromeTimeMs, animate) : splitPreviewRectMotion[0].sample(chromeTimeMs);
-    const float ry = visible ? splitPreviewRectMotion[1].update(bounds.y, chromeTimeMs, animate) : splitPreviewRectMotion[1].sample(chromeTimeMs);
-    const float rw = visible ? splitPreviewRectMotion[2].update(bounds.width, chromeTimeMs, animate) : splitPreviewRectMotion[2].sample(chromeTimeMs);
-    const float rh = visible ? splitPreviewRectMotion[3].update(bounds.height, chromeTimeMs, animate) : splitPreviewRectMotion[3].sample(chromeTimeMs);
-    if (visible) for (int i = 0; i < 4; ++i) chromeEffectsPending |= splitPreviewRectMotion[i].pending(chromeTimeMs);
-    if (alpha <= 0.0f) return;
 
-    const D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(rx, ry, rx + rw, ry + rh), 6.0f, 6.0f);
-    brush->SetColor(D2D1::ColorF(chromePalette.accent, 0.18f * alpha));
-    target->FillRoundedRectangle(rect, brush);
-    brush->SetColor(D2D1::ColorF(chromePalette.accent, 0.78f * alpha));
+    // The outline is the hit target, so only its fill may animate.
+    const auto rect = D2D1::RoundedRect(D2D1::RectF(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height), 6.0f, 6.0f);
+    if (alpha > 0.0f) {
+        brush->SetColor(D2D1::ColorF(chromePalette.accent, 0.18f * alpha));
+        target->FillRoundedRectangle(rect, brush);
+    }
+    brush->SetColor(D2D1::ColorF(chromePalette.accent, 0.78f));
     target->DrawRoundedRectangle(rect, brush, 1.5f);
 }
 extern "C" void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* directory, size_t directory_length, const uint8_t* query, size_t query_length, const VexPathCompletionItem* items, size_t item_count, uint32_t flags) {
     if (!target || !brush || bounds.width <= 0.0f || bounds.height <= 0.0f) return;
     tooltipsEnabled = false;
-    pathCompletionSeenThisFrame = true;
-    if (!pathCompletionSeenLastFrame) {
-        pathOpenMotion = {};
-        pathOpenMotion.update(0.0f, chromeTimeMs, false);
-    }
-    const float openT = pathOpenMotion.update(1.0f, chromeTimeMs, chromeMotionEnabled);
-    chromeEffectsPending |= pathOpenMotion.pending(chromeTimeMs);
-    const float slideY = (1.0f - openT) * 5.0f;
-    const float mx = bounds.x, my = bounds.y + slideY, mw = bounds.width, mh = bounds.height;
+    const float mx = bounds.x, my = bounds.y, mw = bounds.width, mh = bounds.height;
 
     for (int layer = 3; layer >= 1; --layer) {
         const float sp = (float)layer * 3.0f;
-        brush->SetColor(D2D1::ColorF(0x000000, (chromePalette.is_dark ? 0.16f : 0.07f) * openT));
+        brush->SetColor(D2D1::ColorF(0x000000, chromePalette.is_dark ? 0.16f : 0.07f));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx - sp, my + 2.0f - sp * 0.5f, mx + mw + sp, my + mh + 4.0f + sp), 8.0f + sp, 8.0f + sp), brush);
     }
     const D2D1_ROUNDED_RECT card = D2D1::RoundedRect(D2D1::RectF(mx, my, mx + mw, my + mh), 8.0f, 8.0f);
@@ -1152,31 +1130,19 @@ extern "C" void vex_draw_path_completion(VexPaneRect bounds, const uint8_t* dire
     if (visible == 0 || !items) {
         labelWithFont(badgeFont, (flags & 2) ? L"Indexing folder... You can keep typing" : (flags & 1) ? L"Unable to read this folder" : L"No matching paths", mx + 14.0f, listY + 5.0f, mw - 28.0f, chromePalette.text_muted);
     } else {
-        int selectedIdx = -1;
-        for (size_t i = 0; i < visible; i++) {
-            if (items[i].selected) { selectedIdx = (int)i; break; }
-        }
-        if (selectedIdx >= 0) {
-            const float targetRowY = (float)selectedIdx * rowH;
-            if (!pathCompletionSeenLastFrame) {
-                pathRowMotion = {};
-                pathRowMotion.update(targetRowY, chromeTimeMs, false);
-            }
-            const float animRowY = listY + pathRowMotion.update(targetRowY, chromeTimeMs, chromeMotionEnabled);
-            chromeEffectsPending |= pathRowMotion.pending(chromeTimeMs);
-            const D2D1_ROUNDED_RECT selRect = D2D1::RoundedRect(D2D1::RectF(mx + 6.0f, animRowY, mx + mw - 6.0f, animRowY + rowH - 2.0f), 5.0f, 5.0f);
-            const uint32_t selFill = blendRgb(chromePalette.active_tab_bg, chromePalette.accent, chromePalette.is_dark ? 0.28f : 0.16f);
-            brush->SetColor(rgb(selFill));
-            target->FillRoundedRectangle(selRect, brush);
-            brush->SetColor(rgb(chromePalette.accent, chromePalette.is_dark ? 0.50f : 0.38f));
-            target->DrawRoundedRectangle(selRect, brush, 1.0f);
-            brush->SetColor(rgb(chromePalette.accent));
-            target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx + 8.5f, animRowY + 5.0f, mx + 11.5f, animRowY + rowH - 7.0f), 1.5f, 1.5f), brush);
-        }
+        const uint32_t selFill = blendRgb(chromePalette.active_tab_bg, chromePalette.accent, chromePalette.is_dark ? 0.28f : 0.16f);
         for (size_t i = 0; i < visible; i++) {
             const VexPathCompletionItem& it = items[i];
             const float iy = listY + (float)i * rowH;
-            if (it.hovered && !it.selected) {
+            if (it.selected) {
+                const auto selection = D2D1::RoundedRect(D2D1::RectF(mx + 6.0f, iy, mx + mw - 6.0f, iy + rowH - 2.0f), 5.0f, 5.0f);
+                brush->SetColor(rgb(selFill));
+                target->FillRoundedRectangle(selection, brush);
+                brush->SetColor(rgb(chromePalette.accent, chromePalette.is_dark ? 0.50f : 0.38f));
+                target->DrawRoundedRectangle(selection, brush, 1.0f);
+                brush->SetColor(rgb(chromePalette.accent));
+                target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(mx + 8.5f, iy + 5.0f, mx + 11.5f, iy + rowH - 7.0f), 1.5f, 1.5f), brush);
+            } else if (it.hovered) {
                 const D2D1_ROUNDED_RECT rowRect = D2D1::RoundedRect(D2D1::RectF(mx + 6.0f, iy, mx + mw - 6.0f, iy + rowH - 2.0f), 5.0f, 5.0f);
                 brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
                 target->FillRoundedRectangle(rowRect, brush);

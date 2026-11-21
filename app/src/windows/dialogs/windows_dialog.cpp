@@ -83,7 +83,7 @@ void closeDialog(bool restoreFocus) {
 void finish(uint32_t event, uint32_t value = 0) {
     if (host.phase != DialogHost::Phase::active) return;
     // Dispatch commands immediately; a closing animation must never delay an action or the next picker.
-    if (event == 0 && host.model.kind != 2 && host.model.kind != 8 && host.layered && vex_window_animations_enabled()) {
+    if (event == 0 && host.model.kind != 8 && host.layered && vex_window_animations_enabled()) {
         host.pendingEvent = event; host.pendingValue = value;
         host.phase = DialogHost::Phase::closing;
         host.motion.start(0, GetTickCount64(), true);
@@ -834,7 +834,7 @@ extern "C" int vex_dialog_open(VexDialogRequest request) {
     host.phase = DialogHost::Phase::active;
     repositionTerminalDialogs();
     // Theme thumbnails are cached on first visible paint, never on the opening path.
-    if (vex_window_animations_enabled()) {
+    if (request.kind != 2 && request.kind != 5 && vex_window_animations_enabled()) {
         const LONG_PTR style = GetWindowLongPtrW(result, GWL_EXSTYLE);
         SetWindowLongPtrW(result, GWL_EXSTYLE, style | WS_EX_LAYERED);
         if (SetLayeredWindowAttributes(result, 0, 220, LWA_ALPHA)) {

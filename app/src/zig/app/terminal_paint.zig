@@ -91,7 +91,6 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
             if (opacity > 0) platform.drawScrollbar(placement.bounds, sb, sb_active, opacity);
         }
     }
-    var preview_bounds: panes.PaneRect = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
     const drop: pointer.PaneDrop = blk: {
         if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging) {
             const drag = self.pointer_drag.pane;
@@ -106,11 +105,9 @@ pub fn paintWorkspace(self: *TerminalApplication) !void {
     };
     if (drop.target) |target| {
         if (self.findPlacement(target)) |placement| {
-            if (placement.bounds.splitPreviewRectWithDensity(drop.zone, self.settings.ui_density)) |preview| preview_bounds = preview;
+            if (placement.bounds.splitPreviewRectWithDensity(drop.zone, self.settings.ui_density)) |preview| platform.drawSplitPreview(preview);
         }
     }
-    // An empty target lets the native chrome finish its interruptible fade-out.
-    platform.drawSplitPreview(preview_bounds);
     if (self.pointer_drag == .pane and self.pointer_drag.pane.dragging) {
         const drag = self.pointer_drag.pane;
         const session = self.findSession(drag.pane_id) orelse return;
@@ -170,7 +167,7 @@ fn paintTabRows(self: *TerminalApplication, layout: @import("../workspace/tab_st
                 icon_count = 1;
             }
         }
-        try collectTabIcons(self, tab.tree.root, &tab_icons, &icon_count);
+        if (self.settings.ui_density != .compact) try collectTabIcons(self, tab.tree.root, &tab_icons, &icon_count);
         if (icon_count == 0) {
             tab_icons[0] = active_session.icon;
             icon_count = 1;

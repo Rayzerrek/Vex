@@ -202,9 +202,10 @@ static bool animateSidebarGlyph;
 static bool pointerSidebarToggle;
 extern "C" void vex_window_tab_strip(VexTabStripLayout layout) {
     if (tabs.horizontal != layout.horizontal || tabs.sidebar_width != layout.sidebar_width || tabs.plus_x != layout.plus_x) {
-        if (tabs.sidebar_width > 0) sidebarTransitionLayout = tabs;
-        // Publish the transition with the geometry, before a synchronous paint can observe it.
-        animateSidebarSlide = animateSidebarGlyph = pointerSidebarToggle && (tabs.sidebar_width == 0) != (layout.sidebar_width == 0);
+        // Compact applies the new geometry in one frame instead of painting a second sliding sidebar.
+        const bool slide = uiMetrics.pane_gap != 0 && pointerSidebarToggle && (tabs.sidebar_width == 0) != (layout.sidebar_width == 0);
+        if (slide && tabs.sidebar_width > 0) sidebarTransitionLayout = tabs;
+        animateSidebarSlide = animateSidebarGlyph = slide;
         clearWorkspacePress(window);
     }
     tabs = layout;
@@ -500,32 +501,35 @@ extern "C" int vex_window_schedule_cursor_wake(uint32_t delay_ms) {
     return 0;
 }
 
-static void drawSidebarControls(double timeMs, bool animate) {
-    if (!tabs.count || tabs.horizontal) return;
+static void drawWorkspaceCaptionControls(double timeMs, bool animate) {
+    if (!tabs.count) return;
     const auto pill = [](VexPaneRect button, bool hot) {
         if (!hot) return;
         brush->SetColor(rgb(chromePalette.inactive_tab_hover_bg));
         target->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(button.x, button.y, button.x + button.width, button.y + button.height), 6, 6), brush);
     };
-    const float x = tabs.toggle.x + tabs.toggle.width / 2, y = 22;
-    const bool pressed = hoveredSidebarToggle && pressedWorkspaceButton == WorkspaceButton::sidebar;
-    pill(tabs.toggle, hoveredSidebarToggle);
-    brush->SetColor(rgb(hoveredSidebarToggle ? chromePalette.text_primary : chromePalette.text_muted, pressed ? 0.68f : 1.0f));
-    const float expanded = sidebarGlyphMotion.update(tabs.sidebar_width > 0 ? 1.0f : 0.0f, timeMs, animate && animateSidebarGlyph);
-    animateSidebarGlyph = sidebarGlyphMotion.pending(timeMs);
-    topChromeAnimationPending |= animateSidebarGlyph;
-    target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 7, y - 5, x + 7, y + 5), 2, 2), brush, 1.2f);
-    brush->SetColor(rgb(hoveredSidebarToggle ? chromePalette.text_primary : chromePalette.text_muted, 0.42f + expanded * 0.58f));
-    target->DrawLine(D2D1::Point2F(x - 4 + expanded * 2, y - 4.5f), D2D1::Point2F(x - 4 + expanded * 2, y + 4.5f), brush, 1.2f);
-    offerWindowChromeShortcut(tabs.sidebar_width > 0 ? L"Hide sidebar   Ctrl + Shift + B" : L"Show sidebar   Ctrl + Shift + B", tabs.toggle);
-    const auto overview = overviewButton();
-    if (overview.width > 0) {
-        pill(overview, hoveredOverview);
-        brush->SetColor(rgb(hoveredOverview ? chromePalette.text_primary : chromePalette.text_muted));
-        const float cx = overview.x + overview.width / 2;
-        target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, y), 7, 4), brush, 1.2f);
-        target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, y), 1.7f, 1.7f), brush);
-        offerWindowChromeShortcut(L"Tab overview   Ctrl + Shift + Space", overview);
+    const float y = 22;
+    if (!tabs.horizontal) {
+        const float x = tabs.toggle.x + tabs.toggle.width / 2;
+        const bool pressed = hoveredSidebarToggle && pressedWorkspaceButton == WorkspaceButton::sidebar;
+        pill(tabs.toggle, hoveredSidebarToggle);
+        brush->SetColor(rgb(hoveredSidebarToggle ? chromePalette.text_primary : chromePalette.text_muted, pressed ? 0.68f : 1.0f));
+        const float expanded = sidebarGlyphMotion.update(tabs.sidebar_width > 0 ? 1.0f : 0.0f, timeMs, animate && animateSidebarGlyph);
+        animateSidebarGlyph = sidebarGlyphMotion.pending(timeMs);
+        topChromeAnimationPending |= animateSidebarGlyph;
+        target->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - 7, y - 5, x + 7, y + 5), 2, 2), brush, 1.2f);
+        brush->SetColor(rgb(hoveredSidebarToggle ? chromePalette.text_primary : chromePalette.text_muted, 0.42f + expanded * 0.58f));
+        target->DrawLine(D2D1::Point2F(x - 4 + expanded * 2, y - 4.5f), D2D1::Point2F(x - 4 + expanded * 2, y + 4.5f), brush, 1.2f);
+        offerWindowChromeShortcut(tabs.sidebar_width > 0 ? L"Hide sidebar   Ctrl + Shift + B" : L"Show sidebar   Ctrl + Shift + B", tabs.toggle);
+        const auto overview = overviewButton();
+        if (overview.width > 0) {
+            pill(overview, hoveredOverview);
+            brush->SetColor(rgb(hoveredOverview ? chromePalette.text_primary : chromePalette.text_muted));
+            const float cx = overview.x + overview.width / 2;
+            target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, y), 7, 4), brush, 1.2f);
+            target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, y), 1.7f, 1.7f), brush);
+            offerWindowChromeShortcut(L"Tab overview   Ctrl + Shift + Space", overview);
+        }
     }
     if (tabs.single_pane && tabs.sidebar_width == 0) for (unsigned i = 0; i < 2; ++i) {
         const auto button = splitButton(i);
@@ -548,7 +552,7 @@ static void drawNewTabButton(double timeMs, bool animate) {
     const float plusHover = newTabHoverMotion.update((enabled && hoveredNewTab) ? 1.0f : 0.0f, timeMs, animate);
     const float pickerHover = shellPickerHoverMotion.update((enabled && hoveredShellPicker) ? 1.0f : 0.0f, timeMs, animate);
     if (newTabHoverMotion.pending(timeMs) || shellPickerHoverMotion.pending(timeMs)) topChromeAnimationPending = true;
-    const float groupHover = fmaxf(plusHover, pickerHover);
+    const float groupHover = uiMetrics.pane_gap == 0 ? 0.0f : fmaxf(plusHover, pickerHover);
     if (groupHover > 0.004f) {
         const D2D1_ROUNDED_RECT groupRect = D2D1::RoundedRect(D2D1::RectF(bx, by, sx + 15.0f, by + 28.0f), 6.5f, 6.5f);
         brush->SetColor(rgb(chromePalette.active_tab_bg, (chromePalette.is_dark ? 0.42f : 0.54f) * groupHover));
@@ -695,24 +699,30 @@ static void renderScene(double timeMs, bool captureOpaque) {
         timeMs, animate,
         chromePointerX, chromePointerY, !tooltipSuppressed && trackingMouseLeave && pointerCaptureState == PointerCaptureState::none && GetForegroundWindow() == window && IsWindowEnabled(window) });
     beginTerminalDrawingFrame({ &renderer, drawingFactory, textFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, &terminalLigatures, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
-    const uint32_t chromeBg = uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg;
+    const bool compact = uiMetrics.pane_gap == 0;
+    const uint32_t chromeBg = compact ? chromePalette.pane_bg : chromePalette.titlebar_bg;
     const float chromeAlpha = nativeMica ? (chromePalette.is_dark ? 0.18f : 0.24f) : 1.0f;
     target->Clear(rgb(chromeBg, chromeAlpha));
     if (tabs.sidebar_width > 0) {
         const float sidebarBottom = sliding ? 44.0f : clientHeight;
-        brush->SetColor(rgb(chromePalette.pane_bg));
-        target->FillRectangle(D2D1::RectF(0, 0, tabs.sidebar_width, sidebarBottom), brush);
-        brush->SetColor(rgb(chromePalette.is_dark ? 0x000000 : chromePalette.accent, chromePalette.is_dark ? 0.10f : 0.035f));
-        target->FillRectangle(D2D1::RectF(0, 0, tabs.sidebar_width, sidebarBottom), brush);
-        brush->SetColor(rgb(chromePalette.border, chromePalette.is_dark ? 0.5f : 0.6f));
-        target->FillRectangle(D2D1::RectF(tabs.sidebar_width - 1, 7, tabs.sidebar_width, sidebarBottom), brush);
+        if (sidebarBottom > 44.0f || !compact) {
+            const auto sidebar = D2D1::RectF(0, compact ? 44.0f : 0.0f, tabs.sidebar_width, sidebarBottom);
+            brush->SetColor(rgb(chromePalette.pane_bg));
+            target->FillRectangle(sidebar, brush);
+            if (!compact) {
+                brush->SetColor(rgb(chromePalette.is_dark ? 0x000000 : chromePalette.accent, chromePalette.is_dark ? 0.10f : 0.035f));
+                target->FillRectangle(sidebar, brush);
+            }
+            brush->SetColor(rgb(chromePalette.border, compact ? 0.42f : (chromePalette.is_dark ? 0.5f : 0.6f)));
+            target->FillRectangle(D2D1::RectF(tabs.sidebar_width - 1, compact ? 44.0f : 7.0f, tabs.sidebar_width, sidebarBottom), brush);
+        }
     }
-    if (uiMetrics.pane_gap == 0) {
-        brush->SetColor(rgb(chromePalette.border, chromePalette.is_dark ? 0.42f : 0.52f));
-        target->FillRectangle(D2D1::RectF(tabs.sidebar_width, 43.0f, clientWidth, 44.0f), brush);
+    if (compact) {
+        brush->SetColor(rgb(chromePalette.border, 0.42f));
+        target->FillRectangle(D2D1::RectF(0, 43.0f, clientWidth, 44.0f), brush);
     }
     if (tabs.count) drawNewTabButton(timeMs, animate);
-    drawSidebarControls(timeMs, animate);
+    drawWorkspaceCaptionControls(timeMs, animate);
     callbacks.paint(callbacks.context);
     if (tabs.count) offerWindowChromeShortcut(canAddTab() ? L"Ctrl + Shift + T" : L"Tab limit reached", plusButton());
     drawCaptionButtons(timeMs, animate);
@@ -1007,15 +1017,31 @@ static void beginPointerGesture(HWND hwnd, float x, float y) {
     else capturePointerGesture(hwnd);
     setPointerCursor(response);
 }
+static int hitCaptionButton(float x, float y) {
+    if (y < 0.0f || y >= 44.0f || x < clientWidth - 120.0f || x >= clientWidth) return 0;
+    return x >= clientWidth - 40.0f ? 3 : x >= clientWidth - 80.0f ? 2 : 1;
+}
+static void clearCaptionPress(HWND hwnd) {
+    if (!pressedCaptionButton) return;
+    pressedCaptionButton = 0;
+    if (GetCapture() == hwnd) ReleaseCapture();
+    vex_window_invalidate();
+}
+static void beginCaptionPress(HWND hwnd, int button) {
+    hideChromeTooltip();
+    pressedCaptionButton = button;
+    SetCapture(hwnd);
+    if (GetCapture() != hwnd) clearCaptionPress(hwnd);
+    vex_window_invalidate();
+}
 static void updateTopChromeHover(float x, float y) {
     int nextCaption = 0;
     int nextSplit = -1;
     bool nextNewTab = false, nextShellPicker = false, nextToggle = false, nextOverview = false;
     ChromeTabHit hit;
     if (pointerCaptureState == PointerCaptureState::none) {
-        if (y >= 0.0f && y < 44.0f && x >= clientWidth - 120.0f && x < clientWidth) {
-            nextCaption = (x >= clientWidth - 40.0f) ? 3 : (x >= clientWidth - 80.0f) ? 2 : 1;
-        } else if (tabs.count) {
+        nextCaption = hitCaptionButton(x, y);
+        if (!nextCaption && tabs.count) {
             const auto button = hitWorkspaceButton(x, y);
             nextNewTab = button == WorkspaceButton::plus;
             nextShellPicker = button == WorkspaceButton::shellPicker;
@@ -1062,6 +1088,28 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             return 0;
         }
         break;
+    case WM_NCMOUSEMOVE:
+        if (wparam == HTMAXBUTTON) {
+            TRACKMOUSEEVENT tracking = { sizeof(tracking), TME_LEAVE | TME_NONCLIENT, hwnd, 0 };
+            TrackMouseEvent(&tracking);
+            POINT point = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+            ScreenToClient(hwnd, &point);
+            const float scale = GetDpiForWindow(hwnd) / 96.0f;
+            updateTopChromeHover(point.x / scale, point.y / scale);
+            hideChromeTooltip();
+        } else if (hoveredCaptionButton == 2) {
+            updateTopChromeHover(-1, -1);
+        }
+        break;
+    case WM_NCMOUSELEAVE:
+        if (hoveredCaptionButton == 2) updateTopChromeHover(-1, -1);
+        break;
+    case WM_NCLBUTTONDOWN: case WM_NCLBUTTONDBLCLK:
+        if (wparam == HTMAXBUTTON) {
+            beginCaptionPress(hwnd, 2);
+            return 0;
+        }
+        break;
     case WM_NCHITTEST: {
         POINT point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
         ScreenToClient(hwnd, &point);
@@ -1084,6 +1132,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         const float x = point.x / scale, y = point.y / scale;
+        // Let the shell identify the custom maximize button for Windows 11 Snap Layouts.
+        if (hitCaptionButton(x, y) == 2) return HTMAXBUTTON;
         if (y < 44 && x < clientWidth - 120 &&
             (!tabs.count || (!chromeContains(tabs.toggle, x, y) && !chromeContains(plusButton(), x, y) &&
              !chromeContains(shellPickerButton(), x, y) && !chromeContains(overviewButton(), x, y) &&
@@ -1146,9 +1196,8 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             setNotificationCursor(message == WM_LBUTTONDOWN && notice == NotificationHit::close ? NotificationHit::body : notice);
             return 0;
         }
-        if (message != WM_MBUTTONDOWN && y < 44 && x >= clientWidth - 120) {
-            pressedCaptionButton = (x >= clientWidth - 40) ? 3 : (x >= clientWidth - 80) ? 2 : 1;
-            vex_window_invalidate();
+        if (const int caption = message == WM_MBUTTONDOWN ? 0 : hitCaptionButton(x, y)) {
+            beginCaptionPress(hwnd, caption);
             return 0;
         }
         if (overviewOwnsPoint(y)) {
@@ -1225,24 +1274,21 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
             }
             return 0;
         }
-        int wasPressedCaption = pressedCaptionButton;
-        if (pressedCaptionButton != 0) {
-            pressedCaptionButton = 0;
-            vex_window_invalidate();
+        if (const int caption = pressedCaptionButton) {
+            const bool activate = hitCaptionButton(x, y) == caption;
+            clearCaptionPress(hwnd);
+            updateTopChromeHover(x, y);
+            if (activate) {
+                const WPARAM command = caption == 3 ? SC_CLOSE : caption == 1 ? SC_MINIMIZE : IsZoomed(hwnd) ? SC_RESTORE : SC_MAXIMIZE;
+                SendMessageW(hwnd, WM_SYSCOMMAND, command, 0);
+            }
+            return 0;
         }
         if (pointerCaptureState != PointerCaptureState::none) {
             if (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging) callbacks.pointer(callbacks.context, VEX_POINTER_END, x, y, currentModifiers());
             releasePointerCapture();
             pointerCaptureState = PointerCaptureState::none;
             return 0;
-        }
-        if (y < 44 && x >= clientWidth - 120) {
-            int btn = (x >= clientWidth - 40) ? 3 : (x >= clientWidth - 80) ? 2 : 1;
-            if (wasPressedCaption == btn) {
-                if (btn == 3) SendMessageW(hwnd, WM_CLOSE, 0, 0);
-                else if (btn == 2) ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
-                else ShowWindow(hwnd, SW_MINIMIZE);
-            }
         }
         return 0;
     }
@@ -1257,6 +1303,12 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         float scale = GetDpiForWindow(hwnd) / 96.0f;
         float x = GET_X_LPARAM(lparam) / scale, y = GET_Y_LPARAM(lparam) / scale;
         updateChromeTooltipPointer(x, y);
+        if (pressedCaptionButton) {
+            if (!(wparam & MK_LBUTTON)) clearCaptionPress(hwnd);
+            updateTopChromeHover(x, y);
+            setPointerCursor(VEX_POINTER_NORMAL);
+            return 0;
+        }
         if (pressedWorkspaceButton != WorkspaceButton::none) {
             if (!(wparam & MK_LBUTTON)) clearWorkspacePress(hwnd);
             updateTopChromeHover(x, y);
@@ -1283,10 +1335,9 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         notificationPointer(-1, -1, false);
         trackingMouseLeave = false;
         if (pointerCaptureState == PointerCaptureState::armed && !(GetKeyState(VK_LBUTTON) < 0)) cancelPointerGesture();
-        if (hoveredCaptionButton != 0 || pressedCaptionButton != 0 || hoveredNewTab || hoveredShellPicker ||
+        if (hoveredCaptionButton != 0 || hoveredNewTab || hoveredShellPicker ||
             hoveredSidebarToggle || hoveredOverview || hoveredCaptionSplit >= 0 || hoveredTabIndex != -1 || hoveredTabClose) {
             hoveredCaptionButton = 0;
-            pressedCaptionButton = 0;
             hoveredNewTab = false;
             hoveredShellPicker = false;
             hoveredSidebarToggle = hoveredOverview = false;
@@ -1297,6 +1348,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_CAPTURECHANGED: case WM_CANCELMODE:
+        clearCaptionPress(hwnd);
         clearWorkspacePress(hwnd);
         cancelPointerGesture();
         return 0;
@@ -1588,6 +1640,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         nextOutputFrame = 0;
         if (terminalNotificationKey((uint32_t)wparam, currentModifiers()) || windowsUpdateKey((uint32_t)wparam, currentModifiers())) { refreshHoverCursor(hwnd); return 1; }
         if (pointerCaptureState == PointerCaptureState::armed && !(GetKeyState(VK_LBUTTON) < 0)) cancelPointerGesture();
+        if (wparam == VK_ESCAPE && pressedCaptionButton) { clearCaptionPress(hwnd); return 1; }
         if (wparam == VK_ESCAPE && pressedWorkspaceButton != WorkspaceButton::none) { clearWorkspacePress(hwnd); return 1; }
         if (wparam == VK_ESCAPE && (pointerCaptureState == PointerCaptureState::armed || pointerCaptureState == PointerCaptureState::dragging)) { cancelPointerGesture(); return 1; }
         if (wparam == VK_CONTROL || wparam == VK_LCONTROL || wparam == VK_RCONTROL) refreshHoverCursor(hwnd);
@@ -1605,6 +1658,7 @@ static LRESULT CALLBACK windowProcedure(HWND hwnd, UINT message, WPARAM wparam, 
         break;
     case WM_KILLFOCUS:
         hideChromeTooltip();
+        clearCaptionPress(hwnd);
         clearWorkspacePress(hwnd);
         notificationMouseButtons = 0;
         cancelPointerGesture(); pendingSurrogate = 0;

@@ -36,7 +36,7 @@ pub const TabStripLayout = struct {
             .count = count,
             .selected = selected,
             .sidebar_width = sidebar,
-            .first_row = .{ .x = 8, .y = 69, .width = @max(0, sidebar - 16), .height = row_height },
+            .first_row = .{ .x = 8, .y = if (density == .compact) height + 7 else 69, .width = @max(0, sidebar - 16), .height = row_height },
             .row_pitch = row_height + 3,
             .plus_x = plus_x,
         };
@@ -46,16 +46,19 @@ pub const TabStripLayout = struct {
         var layout = try init(width, count, selected, density, true);
         layout.horizontal = true;
         const inset = density.metrics().tab_inset;
-        const pitch = @min(density.metrics().tab_max_width + 4, @max(4, (width - 170) / @as(f32, @floatFromInt(count))));
+        // Reserve both caption split buttons without shifting existing tabs when a split opens.
+        const split_controls: f32 = if (density == .compact) 56 else 0;
+        const pitch = @min(density.metrics().tab_max_width + 4, @max(4, (width - 170 - split_controls) / @as(f32, @floatFromInt(count))));
         layout.first_row = .{ .x = 8, .y = inset, .width = pitch - 4, .height = height - 2 * inset };
         layout.row_pitch = pitch;
-        layout.plus_x = @max(layout.plus_x, 8 + pitch * @as(f32, @floatFromInt(count)));
+        layout.plus_x = @max(layout.plus_x, 8 + pitch * @as(f32, @floatFromInt(count)) + split_controls);
         return layout;
     }
 
     pub fn sidebarWidth(width: f32, density: Density) f32 {
         if (width < 320) return 0;
-        return @min(density.metrics().tab_max_width + 16, @floor(width * 0.36));
+        const max = density.metrics().tab_max_width + @as(f32, if (density == .compact) 0 else 16);
+        return @min(max, @floor(width * 0.36));
     }
 
     pub fn tabBounds(self: TabStripLayout, index: usize) ?Rect {
@@ -131,11 +134,14 @@ test "a collapsed sidebar has no tab rows or tab hit targets in the caption" {
 }
 
 test "eight horizontal tabs leave the new-tab controls clear and reorder along x" {
-    const layout = try TabStripLayout.initHorizontal(640, 8, 0, .comfortable);
-    const last = layout.tabBounds(7).?;
-    try std.testing.expect(last.x + last.width < layout.plus_x);
-    const point: TabPointer = .{ .x = last.x + last.width - 1, .y = 22 };
-    try std.testing.expectEqual(@as(usize, 7), (try layout.hitTab(point)).?.index);
-    try std.testing.expectEqual(@as(?usize, 7), try layout.insertionSlot(0, point));
-    try std.testing.expect(try layout.insertionSlot(0, .{ .x = point.x, .y = 44 }) == null);
+    for (std.enums.values(Density)) |density| {
+        const layout = try TabStripLayout.initHorizontal(640, 8, 0, density);
+        const last = layout.tabBounds(7).?;
+        const split_controls: f32 = if (density == .compact) 56 else 0;
+        try std.testing.expect(last.x + last.width < layout.plus_x - split_controls);
+        const point: TabPointer = .{ .x = last.x + last.width - 1, .y = 22 };
+        try std.testing.expectEqual(@as(usize, 7), (try layout.hitTab(point)).?.index);
+        try std.testing.expectEqual(@as(?usize, 7), try layout.insertionSlot(0, point));
+        try std.testing.expect(try layout.hitTab(.{ .x = point.x, .y = 44 }) == null);
+    }
 }

@@ -5,10 +5,13 @@
 - Add a collapsible vertical tab sidebar with application icons, drag reorder, and OSC 7501 activity. The original horizontal strip is available in Tab layout; hiding the vertical sidebar does not display a tab in the caption.
 - Start new tabs at their final grid size, cancel toolbar clicks released outside, and disable new-tab controls at the tab limit.
 - Save the default sidebar visibility in Preferences, add explicit show/hide commands, make Tab Overview toggle, and slide the sidebar on pointer input without animating the PTY. The expanded workspace caption shows only the window buttons.
-- Restore animated selection and tab resizing in the horizontal strip. Animate tab creation and closure in both layouts without delaying tab actions or resizing the terminal during the transition.
+- Animate tab creation and closure without delaying tab actions or resizing the terminal during the transition; switching between existing tabs is immediate.
 - Prevent Tab Overview and the sliding sidebar from acting on obscured tabs. Keep narrow horizontal tabs numbered, and preserve the live sidebar state if saving preferences fails.
 - Treat soft-wrapped URLs and OSC 8 labels as one hover target. Ctrl+click on any visible part opens the full destination.
 - Keep pasted line breaks in bracketed-paste clients. Otherwise paste line breaks and tabs as spaces instead of sending Enter or Tab.
+- Flatten Compact window chrome, make its vertical sidebar narrower and immediate, and use one app icon per tab. Unify the selection treatment in the command palette and shell picker; open the command palette without animation.
+- Expose the custom maximize button to Windows Snap Layouts and cancel caption-button clicks released outside the button.
+- Make Compact split and zoom actions immediate and keep activity glyphs static. Keep split drop outlines aligned with the hit target, and remove motion from shell and path pickers.
 
 ## 2.1.1
 
