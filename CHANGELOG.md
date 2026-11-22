@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.0
 
 - Add a collapsible vertical tab sidebar with application icons, drag reorder, and OSC 7501 activity. The original horizontal strip is available in Tab layout; hiding the vertical sidebar does not display a tab in the caption.
 - Start new tabs at their final grid size, cancel toolbar clicks released outside, and disable new-tab controls at the tab limit.
