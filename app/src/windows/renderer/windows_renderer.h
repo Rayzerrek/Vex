@@ -21,7 +21,7 @@ public:
     HRESULT finishDevicePreparation();
     HRESULT initialize(HWND window, ID2D1Factory1* factory, bool forceWarp, void (*milestone)(const char*) = nullptr, bool allowComposition = false);
     HRESULT resize(UINT width, UINT height, float dpi);
-    HRESULT beginFrame();
+    HRESULT beginFrame(uint32_t background = 0, uint8_t opacity = 0);
     // Optional BGRA readback is bottom-up, tightly packed, and only used by desktop capture.
     HRESULT endFrame(void* pixels = nullptr, UINT stride = 0);
     HRESULT shutdown();

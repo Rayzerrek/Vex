@@ -7,6 +7,23 @@ between their grids or an incorrectly negotiated application protocol.
 
 This is a source-level repair plan, not a desktop validation report.
 
+## Frame background
+
+The first D3D12 pass clears the swap-chain buffer directly to the window
+background. This replaces a transparent clear followed by a full-window
+blended quad. The clear uses premultiplied RGBA for composition and remains
+opaque for capture. Later UI and terminal passes preserve existing pixels.
+
+To measure the change, alternate a transparent clear plus the background quad
+and a direct background clear on the same BGRA8 render target. Keep the
+subsequent draws identical and report GPU timestamp p50 and p95 after warmup.
+Measure opaque and translucent backgrounds separately. This isolates the
+background pass; it does not measure input latency or presentation.
+
+The swap chain still uses `FLIP_DISCARD` and redraws the whole window. Partial
+redraw would need explicit ownership of preserved pixels across buffers and
+invalidation of both old and new bounds for moving content.
+
 ## Font selection
 
 `app/src/windows/renderer/terminal_font.cpp` now resolves the requested family

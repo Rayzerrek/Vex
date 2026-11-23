@@ -682,9 +682,8 @@ static void renderUiVerificationScene() {
     target->DrawText(text, 192, chromeFont, rect(20, 340, 1060, 380), &paint, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
-static void renderScene(double timeMs, bool captureOpaque) {
+static void renderScene(double timeMs) {
     const bool animate = vex_window_animations_enabled() && GetForegroundWindow() == window && IsWindowEnabled(window);
-    const bool nativeMica = dwmBackdropSupported && renderer.composition() && !captureOpaque;
     topChromeAnimationPending = false;
     const float edge = sidebarSlide.update(tabs.sidebar_width, timeMs, animate && animateSidebarSlide);
     animateSidebarSlide = sidebarSlide.pending(timeMs);
@@ -700,9 +699,6 @@ static void renderScene(double timeMs, bool captureOpaque) {
         chromePointerX, chromePointerY, !tooltipSuppressed && trackingMouseLeave && pointerCaptureState == PointerCaptureState::none && GetForegroundWindow() == window && IsWindowEnabled(window) });
     beginTerminalDrawingFrame({ &renderer, drawingFactory, textFactory, { terminalFonts[0], terminalFonts[1], terminalFonts[2], terminalFonts[3] }, &terminalLigatures, dpiScale, cellWidth, cellHeight, chromePalette.pane_bg });
     const bool compact = uiMetrics.pane_gap == 0;
-    const uint32_t chromeBg = compact ? chromePalette.pane_bg : chromePalette.titlebar_bg;
-    const float chromeAlpha = nativeMica ? (chromePalette.is_dark ? 0.18f : 0.24f) : 1.0f;
-    target->Clear(rgb(chromeBg, chromeAlpha));
     if (tabs.sidebar_width > 0) {
         const float sidebarBottom = sliding ? 44.0f : clientHeight;
         if (sidebarBottom > 44.0f || !compact) {
@@ -777,7 +773,12 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
         return false;
     }
     HRESULT result = createRenderTarget();
-    if (SUCCEEDED(result)) result = renderer.beginFrame();
+    if (SUCCEEDED(result)) {
+        const bool nativeMica = dwmBackdropSupported && renderer.composition() && !pixels;
+        const uint32_t background = uiMetrics.pane_gap == 0 ? chromePalette.pane_bg : chromePalette.titlebar_bg;
+        const uint8_t opacity = nativeMica ? (chromePalette.is_dark ? 46 : 61) : 255;
+        result = renderer.beginFrame(background, opacity);
+    }
     if (FAILED(result)) { rendererFault(result); return false; }
     if (frameSchedule == FrameSchedule::posted || frameSchedule == FrameSchedule::output) {
         if (outputFrameTimer) CancelWaitableTimer(outputFrameTimer);
@@ -792,7 +793,7 @@ static bool drawWindow(void* pixels = nullptr, UINT stride = 0) {
         }
     }
     workspaceAnimationPending = false;
-    renderScene(1000.0 * sceneBegin.QuadPart / counterFrequency.QuadPart, pixels != nullptr);
+    renderScene(1000.0 * sceneBegin.QuadPart / counterFrequency.QuadPart);
     if (measureFrameTiming) {
         LARGE_INTEGER sceneEnd; QueryPerformanceCounter(&sceneEnd);
         sceneDurationUs = (UINT64)((sceneEnd.QuadPart - sceneBegin.QuadPart) * 1000000 / counterFrequency.QuadPart);

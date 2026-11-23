@@ -122,6 +122,33 @@ int testTerminalTextBlend(WindowsRenderer& renderer, ID2D1Factory* d2d) {
     return sawColorCorrection ? 0 : 50;
 }
 
+int testFrameBackground(WindowsRenderer& renderer) {
+    constexpr UINT width = 32, height = 16;
+    const float dpis[] = { 96.0f, 120.0f };
+    const uint8_t opacities[] = { 255, 46, 61, 0 };
+    uint8_t reference[width * height * 4], pixels[sizeof(reference)];
+    for (const float dpi : dpis) {
+        if (FAILED(renderer.resize(width, height, dpi))) return 51;
+        for (const uint8_t alpha : opacities) {
+            if (FAILED(renderer.beginFrame())) return 52;
+            renderer.ui.Clear(D2D1::ColorF(0x2060a0, alpha / 255.0f));
+            UiBrush overlay;
+            overlay.SetColor(D2D1::ColorF(0x783018, 0.5f));
+            const auto region = D2D1::RectF(0, 0, 8, 8);
+            renderer.ui.FillRectangle(region, &overlay);
+            if (FAILED(renderer.endFrame(reference, width * 4))) return 53;
+            // Repeat across swap-chain buffers; unpainted pixels must not retain the prior frame.
+            for (unsigned frame = 0; frame < 2; ++frame) {
+                if (FAILED(renderer.beginFrame(0x2060a0, alpha))) return 54;
+                renderer.ui.FillRectangle(region, &overlay);
+                if (FAILED(renderer.endFrame(pixels, width * 4))) return 55;
+                if (memcmp(pixels, reference, sizeof(pixels))) return 56;
+            }
+        }
+    }
+    return 0;
+}
+
 int testTerminalTextTiles(WindowsRenderer& renderer, ID2D1Factory* d2d) {
     RendererComPtr<IDWriteFactory> factory;
     if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&factory)))) return 30;
@@ -242,6 +269,7 @@ int testRendererStartup() {
             }
         }
     }
+    if (!failure) failure = testFrameBackground(renderer);
     if (!failure) failure = testTerminalTextTiles(renderer, factory.Get());
     if (!failure) failure = testTerminalTextBlend(renderer, factory.Get());
     if (FAILED(renderer.shutdown()) && !failure) failure = 18;

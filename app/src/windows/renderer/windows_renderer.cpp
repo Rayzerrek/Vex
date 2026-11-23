@@ -240,7 +240,7 @@ HRESULT WindowsRenderer::resize(UINT width, UINT height, float dpi) {
     return createBuffers(dpi);
 }
 
-HRESULT WindowsRenderer::beginFrame() {
+HRESULT WindowsRenderer::beginFrame(uint32_t background, uint8_t opacity) {
     if (!ready() || phase != FramePhase::none) return E_UNEXPECTED;
     frameError = S_OK;
     frameIndex = swapChain->GetCurrentBackBufferIndex();
@@ -252,7 +252,11 @@ HRESULT WindowsRenderer::beginFrame() {
     if (FAILED(result)) return result;
     ui.resetFrame(pixelWidth, pixelHeight, targetDpi);
     const D3D12_RECT clip = { 0, 0, (LONG)pixelWidth, (LONG)pixelHeight };
-    result = ui.batches.beginPass(frame.buffer.Get(), frame.rtv, clip, pixelWidth, pixelHeight, targetDpi, true);
+    // Match blending the old 8-bit background quad over transparent black.
+    const float alpha = opacity / 255.0f;
+    const float color[] = { ((background >> 16) & 255) / 255.0f * alpha,
+        ((background >> 8) & 255) / 255.0f * alpha, (background & 255) / 255.0f * alpha, alpha };
+    result = ui.batches.beginPass(frame.buffer.Get(), frame.rtv, clip, pixelWidth, pixelHeight, targetDpi, &color);
     if (SUCCEEDED(result)) phase = FramePhase::ui;
     return result;
 }

@@ -17,7 +17,8 @@ public:
     HRESULT initialize(ID3D12Device* device, ID2D1Factory* factory, const TerminalRenderer* sharedPipeline = nullptr);
     void shutdown();
     HRESULT beginFrame(UINT index);
-    HRESULT beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_RECT clip, UINT width, UINT height, float dpi, bool clearRtv = false);
+    // Pass premultiplied RGBA only when initializing the target for a new frame.
+    HRESULT beginPass(ID3D12Resource* buffer, D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_RECT clip, UINT width, UINT height, float dpi, const float (*clearColor)[4] = nullptr);
     HRESULT endPass(ID3D12CommandQueue* queue);
     HRESULT drawImage(uint64_t generation, const uint8_t* rgba, UINT width, UINT height, const float (&bounds)[4], const float (&uv)[4]);
     UINT64 imageHits = 0, imageUploads = 0;
