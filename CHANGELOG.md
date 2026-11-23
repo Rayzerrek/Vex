@@ -14,6 +14,7 @@
 - Make Compact split and zoom actions immediate and keep activity glyphs static. Keep split drop outlines aligned with the hit target, and remove motion from shell and path pickers.
 - Clear the D3D12 backbuffer directly to the window background instead of blending a second full-window quad on every frame.
 - Include the failed Win32 step in clipboard-write errors without clearing the selection on failure.
+- Give terminal text more room with 12 DIP of padding on all sides and a 6 DIP workspace margin in Comfortable.
 
 ## 2.1.1
 

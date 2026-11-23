@@ -56,11 +56,12 @@ Interface density is available in **Settings → Appearance** and through the
 **Interface Density** commands in the command palette. Compact uses flat tab
 fills, a narrower sidebar without a section heading, and thin split separators.
 The sidebar and its rows change without transitions; the active split keeps its
-focus outline when enabled. Comfortable is the default; Spacious adds room
-around the workspace. Every density keeps the same 6.5 DIP minimum left, right
-and bottom terminal padding. Whole cells rarely fill a pane exactly, so the
-leftover height is split between the top and bottom margins. In Compact or
-with vertical tabs, a single pane has no separate header.
+focus outline when enabled. The default Comfortable preset leaves a 6 DIP
+margin around the workspace; Spacious uses 8 DIP and Compact stays flush.
+Every preset reserves 12 DIP on each side of the terminal grid, including
+below any pane header, when the pane is large enough. Leftover space from
+fitting whole cells is distributed evenly between opposite edges. In Compact
+or with vertical tabs, a single pane has no separate header.
 Colored edge cells extend into the padding so status lines reach the pane edge.
 The presets only differ in header, tab and workspace chrome. Changes apply
 immediately and are saved with other preferences. They do not change terminal

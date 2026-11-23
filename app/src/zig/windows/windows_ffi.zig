@@ -39,25 +39,13 @@ pub const WindowMetrics = struct {
             if (!std.math.isFinite(value) or value <= 0 or value > 65536) return error.InvalidWindowMetrics;
         }
     }
-    /// Chooses a whole-cell count whose visible padding is closest to the
-    /// requested target. Using one more cell can turn a large remainder into a
-    /// near-exact inset; the minimum keeps text from hugging the pane edge.
-    fn fittedCellCount(extent: f32, start: f32, cell: f32, target: f32, minimum: f32, min_cells: u16, max_cells: u16) u16 {
-        const span = extent - start;
-        if (!std.math.isFinite(span) or !std.math.isFinite(cell) or cell <= 0) return min_cells;
-        var count: f32 = @floor(@max(0, span - target * 2) / cell);
-        const base_padding = (span - count * cell) / 2;
-        const next_padding = (span - (count + 1) * cell) / 2;
-        if (next_padding >= minimum and @abs(next_padding - target) < @abs(base_padding - target)) count += 1;
-        return @intFromFloat(std.math.clamp(count, @as(f32, @floatFromInt(min_cells)), @as(f32, @floatFromInt(max_cells))));
-    }
     /// Bounded terminal grid matches the pane's inner surface, including header/padding.
     pub fn terminalSize(self: WindowMetrics, bounds: panes.PaneRect) !TerminalSize {
         try self.validate();
         try bounds.validate();
         const style = self.ui_density.metrics();
         return .{
-            .columns = fittedCellCount(bounds.width, 0, self.cell_width, style.pane_padding, density.UiDensity.terminal_min_padding, 2, 1000),
+            .columns = @intFromFloat(std.math.clamp(@floor((bounds.width - style.horizontalInset()) / self.cell_width), 2, 1000)),
             .rows = @intFromFloat(std.math.clamp(@floor((bounds.height - self.gridTop() - style.pane_padding) / self.cell_height), 1, 1000)),
             .cell_width_px = @intFromFloat(std.math.clamp(@round(self.cell_width * self.scale), 1, 65536)),
             .cell_height_px = @intFromFloat(std.math.clamp(@round(self.cell_height * self.scale), 1, 65536)),
@@ -67,11 +55,8 @@ pub const WindowMetrics = struct {
         return if (self.single_pane) self.ui_density.metrics().pane_padding else self.ui_density.metrics().terminalTop();
     }
 
-    /// Integral cell area inside a pane. Left and right share a fixed 6.5 DIP
-    /// target margin. Vertically the grid keeps 6.5 DIP at the bottom and starts
-    /// at the pane header; the sub-row remainder is split evenly between the gap
-    /// under the header and the bottom margin, so the bottom never absorbs a
-    /// whole row's worth of slack on its own.
+    /// Center the integral grid within the padded area. The pane header, when
+    /// present, is outside that area.
     pub fn terminalGrid(self: WindowMetrics, bounds: panes.PaneRect) !panes.PaneRect {
         const size = try self.terminalSize(bounds);
         const style = self.ui_density.metrics();
@@ -1729,7 +1714,7 @@ test "window geometry rejects NaN/zero metrics and clamps tiny/large terminal vi
     try std.testing.expectError(error.InvalidWindowMetrics, invalid.validate());
 }
 
-test "density grid sizes and mouse coordinates use identical insets at mixed DPI" {
+test "split grid sizes and mouse coordinates share padded bounds at mixed DPI" {
     const bounds: panes.PaneRect = .{ .x = 10, .y = 50, .width = 500, .height = 400 };
     for (std.enums.values(density.UiDensity)) |value| {
         const metrics: WindowMetrics = .{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1.5, .ui_density = value };
@@ -1737,14 +1722,12 @@ test "density grid sizes and mouse coordinates use identical insets at mixed DPI
         const grid = try metrics.terminalGrid(bounds);
         const left = grid.x - bounds.x;
         const right = bounds.x + bounds.width - (grid.x + grid.width);
-        const top = grid.y - (bounds.y + style.terminalTop());
+        const top = grid.y - (bounds.y + style.pane_header_height + 2);
         const bottom = bounds.y + bounds.height - (grid.y + grid.height);
         try std.testing.expectApproxEqAbs(left, right, 0.001);
-        // The sub-row remainder is shared, so the bottom margin exceeds the header gap by exactly the fixed padding.
-        try std.testing.expect(top >= 0);
-        try std.testing.expectApproxEqAbs(style.pane_padding, bottom - top, 0.001);
-        try std.testing.expect(left >= density.UiDensity.terminal_min_padding - 0.001);
-        try std.testing.expect(bottom >= style.pane_padding - 0.001);
+        try std.testing.expectApproxEqAbs(top, bottom, 0.001);
+        try std.testing.expect(left >= 12);
+        try std.testing.expect(top >= 12);
         const origin = (try metrics.viewportPoint(bounds, grid.x, grid.y, false)).?;
         try std.testing.expectEqual(@as(u16, 0), origin.column);
         try std.testing.expectEqual(@as(u16, 0), origin.row);
@@ -1761,26 +1744,26 @@ test "density grid sizes and mouse coordinates use identical insets at mixed DPI
     }
 }
 
-test "terminal grid splits the vertical remainder and keeps left/right padding equal" {
-    const bounds: panes.PaneRect = .{ .x = 0, .y = 0, .width = 953, .height = 990 };
-    const metrics: WindowMetrics = .{ .width = 953, .height = 990, .cell_width = 10, .cell_height = 18, .scale = 1, .ui_density = .compact };
-    const style = metrics.ui_density.metrics();
-    const grid = try metrics.terminalGrid(bounds);
+test "terminal grids center spare space between padded edges with and without a header" {
+    const bounds: panes.PaneRect = .{ .x = 0, .y = 0, .width = 953, .height = 1000 };
+    const split: WindowMetrics = .{ .width = 953, .height = 1000, .cell_width = 10, .cell_height = 18, .scale = 1, .ui_density = .compact };
+    var single = split;
+    single.single_pane = true;
+    const grid = try split.terminalGrid(bounds);
     const left = grid.x - bounds.x;
     const right = bounds.x + bounds.width - (grid.x + grid.width);
-    const top = grid.y - (bounds.y + style.terminalTop());
+    const top = grid.y - (bounds.y + 30);
     const bottom = bounds.y + bounds.height - (grid.y + grid.height);
     try std.testing.expectApproxEqAbs(left, right, 0.001);
-    // 990 - 36.5 = 953.5 DIP of rows = 52 rows (936) + 17.5 spare: 8.75 above, 6.5 + 8.75 below.
-    try std.testing.expectApproxEqAbs(@as(f32, 8.75), top, 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 15.25), bottom, 0.001);
-    try std.testing.expect(left >= density.UiDensity.terminal_min_padding);
-    try std.testing.expect(bottom >= style.pane_padding);
-    // An exact fit has no spare room: the grid sits directly under the header again.
-    const exact: panes.PaneRect = .{ .x = 0, .y = 0, .width = 953, .height = style.verticalInset() + 18 * 50 };
-    const flush = try metrics.terminalGrid(exact);
-    try std.testing.expectApproxEqAbs(style.terminalTop(), flush.y, 0.001);
-    try std.testing.expectApproxEqAbs(style.pane_padding, exact.height - (flush.y + flush.height), 0.001);
+    // The split has 10 DIP left after reserving 30 for the header, 24 for padding and 936 for rows.
+    try std.testing.expectApproxEqAbs(@as(f32, 17), top, 0.001);
+    try std.testing.expectApproxEqAbs(top, bottom, 0.001);
+    const single_grid = try single.terminalGrid(bounds);
+    try std.testing.expectApproxEqAbs(@as(f32, 14), single_grid.y, 0.001);
+    try std.testing.expectApproxEqAbs(single_grid.y, bounds.height - single_grid.y - single_grid.height, 0.001);
+    // An exact fit still leaves the full padding on all sides.
+    const flush = try split.terminalGrid(.{ .x = 0, .y = 0, .width = 924, .height = 954 });
+    try std.testing.expectEqual(panes.PaneRect{ .x = 12, .y = 42, .width = 900, .height = 900 }, flush);
 }
 
 test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid cells and scaled pixels" {
@@ -1788,19 +1771,19 @@ test "viewportPoint rejects header clicks unless clamping and maps DIPs to grid 
     const bounds: panes.PaneRect = .{ .x = 10, .y = 50, .width = 332, .height = 228 };
     // Header clicks (y < grid.y) do not start a viewport selection.
     try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 24, 62, false));
-    // Inside the grid (grid_left = 16, grid_top = 89.75: half of the 11.5 DIP spare room sits above the rows):
-    const inside = (try metrics.viewportPoint(bounds, 36, 127.75, false)).?;
+    // The grid starts at (24, 101); choose a point in the third column and row.
+    const inside = (try metrics.viewportPoint(bounds, 44, 139, false)).?;
     try std.testing.expectEqual(@as(u16, 2), inside.column);
     try std.testing.expectEqual(@as(u16, 2), inside.row);
     try std.testing.expectApproxEqAbs(@as(f64, 30.0), inside.x_px, 0.01);
     try std.testing.expectApproxEqAbs(@as(f64, 57.0), inside.y_px, 0.01);
     // The right padding is outside the cells; clicking it never selects text.
     try std.testing.expectEqual(@as(?ViewportPoint, null), try metrics.viewportPoint(bounds, 340, 127.75, false));
-    try std.testing.expectEqual(@as(u16, 40), (try metrics.terminalSize(bounds)).columns);
-    // Clamped drag outside the pane clamps to the boundary cells. Grid height 176 / 16 = 11 rows, so the last row is 10.
+    try std.testing.expectEqual(@as(u16, 38), (try metrics.terminalSize(bounds)).columns);
+    // Dragging outside clamps to the boundary cells.
     const clamped = (try metrics.viewportPoint(bounds, -50, 900, true)).?;
     try std.testing.expectEqual(@as(u16, 0), clamped.column);
-    try std.testing.expectEqual(@as(u16, 10), clamped.row);
+    try std.testing.expectEqual(@as(u16, 9), clamped.row);
 }
 
 test "ScrollbarGeometry computes thumb travel, right-edge hit zone, and drag target offsets" {

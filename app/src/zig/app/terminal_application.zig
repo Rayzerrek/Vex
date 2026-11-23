@@ -2317,7 +2317,8 @@ test "density commands resize live grids without replacing sessions or terminal 
     var app = try recoveryTestApplication(path);
     defer app.deinit();
     defer platform.setUiDensity(.comfortable);
-    app.onResize(.{ .width = 1120, .height = 700, .cell_width = 8, .cell_height = 16, .scale = 1 });
+    // Fit a whole row in Comfortable that no longer fits with the Spacious margin.
+    app.onResize(.{ .width = 1120, .height = 704, .cell_width = 8, .cell_height = 16, .scale = 1 });
     try std.testing.expect(app.health == .running);
     const session = app.activeSession().?;
     const identity = session.id;
