@@ -50,40 +50,47 @@ extern "C" int vex_shell_path(uint8_t* bytes, size_t capacity, size_t* length) {
 }
 
 extern "C" int vex_clipboard_write(const uint8_t* bytes, size_t length, void* owner, uint32_t* stage) {
-    *stage = VEX_CLIPBOARD_PREPARE;
+    const auto fail = [stage](VexClipboardWriteStage step, DWORD error) {
+        *stage = step;
+        return (int)error;
+    };
     const HWND window = owner ? static_cast<HWND>(owner) : vex_native_window();
-    if (!IsWindow(window)) return ERROR_INVALID_WINDOW_HANDLE;
-    if (!bytes || !length || length > 768 * 1024 - 4) return ERROR_INVALID_PARAMETER;
+    // OpenClipboard validates non-null handles; NULL would leave the write without an owner.
+    if (!window) return fail(VEX_CLIPBOARD_PREPARE, ERROR_INVALID_WINDOW_HANDLE);
+    if (!bytes || !length || length > 768 * 1024 - 4) return fail(VEX_CLIPBOARD_PREPARE, ERROR_INVALID_PARAMETER);
     int units = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)bytes, (int)length, nullptr, 0);
-    if (units <= 0) return (int)GetLastError();
+    if (units <= 0) return fail(VEX_CLIPBOARD_PREPARE, GetLastError());
     HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, ((size_t)units + 1) * sizeof(wchar_t));
-    if (!memory) return ERROR_OUTOFMEMORY;
+    if (!memory) return fail(VEX_CLIPBOARD_PREPARE, ERROR_OUTOFMEMORY);
     auto wide = static_cast<wchar_t*>(GlobalLock(memory));
-    if (!wide) { DWORD error = GetLastError(); GlobalFree(memory); return (int)(error ? error : ERROR_OUTOFMEMORY); }
+    if (!wide) {
+        const DWORD error = GetLastError();
+        GlobalFree(memory);
+        return fail(VEX_CLIPBOARD_PREPARE, error ? error : ERROR_OUTOFMEMORY);
+    }
     int written = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)bytes, (int)length, wide, units);
     wide[units] = 0;
     GlobalUnlock(memory);
-    if (written != units) { GlobalFree(memory); return ERROR_NO_UNICODE_TRANSLATION; }
-    *stage = VEX_CLIPBOARD_OPEN;
+    if (written != units) {
+        GlobalFree(memory);
+        return fail(VEX_CLIPBOARD_PREPARE, ERROR_NO_UNICODE_TRANSLATION);
+    }
     if (!OpenClipboard(window)) {
         const DWORD error = GetLastError();
         GlobalFree(memory);
-        return (int)(error ? error : ERROR_ACCESS_DENIED);
+        return fail(VEX_CLIPBOARD_OPEN, error ? error : ERROR_ACCESS_DENIED);
     }
-    DWORD error = ERROR_SUCCESS;
-    *stage = VEX_CLIPBOARD_EMPTY;
-    if (!EmptyClipboard()) error = GetLastError();
+    VexClipboardWriteStage step;
+    if (!EmptyClipboard()) step = VEX_CLIPBOARD_EMPTY;
+    else if (!SetClipboardData(CF_UNICODETEXT, memory)) step = VEX_CLIPBOARD_PUBLISH;
     else {
-        *stage = VEX_CLIPBOARD_PUBLISH;
-        if (!SetClipboardData(CF_UNICODETEXT, memory)) error = GetLastError();
-        else memory = nullptr; // Ownership transferred to Windows.
+        CloseClipboard(); // Windows owns the memory after SetClipboardData succeeds.
+        return 0;
     }
-    if (memory) {
-        if (!error) error = ERROR_WRITE_FAULT;
-        GlobalFree(memory);
-    }
+    const DWORD error = GetLastError();
     CloseClipboard();
-    return (int)error;
+    GlobalFree(memory);
+    return fail(step, error ? error : ERROR_WRITE_FAULT);
 }
 
 extern "C" void* vex_terminal_symbol(const char* name) {

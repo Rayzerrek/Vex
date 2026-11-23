@@ -174,7 +174,7 @@ int vex_shell_path(uint8_t* bytes, size_t capacity, size_t* length);
 enum VexClipboardWriteStage {
     VEX_CLIPBOARD_PREPARE, VEX_CLIPBOARD_OPEN, VEX_CLIPBOARD_EMPTY, VEX_CLIPBOARD_PUBLISH
 };
-/* A null owner selects the live Vex window. A non-null owner lets desktop tests use their own HWND. */
+/* A null owner selects the live Vex window; desktop tests supply their own HWND. Stage is set only on failure. */
 int vex_clipboard_write(const uint8_t* bytes, size_t length, void* owner, uint32_t* stage);
 int vex_open_url(const uint8_t* bytes, size_t length);
 void vex_pty_close(VexPty* session);

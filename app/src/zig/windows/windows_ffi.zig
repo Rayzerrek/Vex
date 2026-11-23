@@ -670,8 +670,10 @@ pub fn writeClipboardText(text: []const u8) !void {
     if (text.len == 0 or std.mem.indexOfScalar(u8, text, 0) != null or !std.unicode.utf8ValidateSlice(text)) return error.InvalidClipboardText;
     var stage: u32 = undefined;
     const code = c.vex_clipboard_write(text.ptr, text.len, if (@import("builtin").is_test) clipboard_test_owner else null, &stage);
-    last_clipboard_write_failure = .{ .stage = @enumFromInt(stage), .code = code };
-    if (code != 0) return error.ClipboardWriteFailed;
+    if (code != 0) {
+        last_clipboard_write_failure = .{ .stage = @enumFromInt(stage), .code = code };
+        return error.ClipboardWriteFailed;
+    }
 }
 /// Reads CF_UNICODETEXT from the system clipboard and routes it through the active session paste handler.
 /// Shared earliest-deadline tick: metadata bursts and copy feedback must not postpone each other.

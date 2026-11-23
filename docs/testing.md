@@ -47,10 +47,11 @@ try {
 ```
 
 Clipboard tests use hidden Win32 owner windows for actual writes and verify
-that a competing owner fails at `OpenClipboard`. PowerShell 7 integration
-tests report discovery, workspace startup, tab launch and split failures
-separately. Settings tests isolate GUI saves, Lua reload and rollback when
-the backup cannot be replaced.
+that a competing owner fails at `OpenClipboard`. Diagnostics are recorded
+only on failure; successful writes need no extra window validation call.
+PowerShell 7 integration tests report discovery, workspace startup, tab launch
+and split failures separately. Settings tests isolate GUI saves, Lua reload
+and rollback when the backup cannot be replaced.
 
 Native font regressions check DirectWrite ink bounds and software-rasterized
 pixels for all four styles, combining marks and private-use icons at 100–200%
