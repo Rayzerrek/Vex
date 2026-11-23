@@ -590,18 +590,44 @@ pub fn shellEnvironment(allocator: std.mem.Allocator) !std.process.EnvMap {
     }
     return environment;
 }
+pub const ClipboardTestWindow = struct {
+    const native = @cImport({
+        @cInclude("windows.h");
+    });
+
+    window: native.HWND,
+
+    pub fn init() !ClipboardTestWindow {
+        std.debug.assert(clipboard_test_owner == null);
+        const window = createWindow() orelse return error.ClipboardTestWindowCreationFailed;
+        clipboard_test_owner = window;
+        return .{ .window = window };
+    }
+
+    pub fn deinit(self: ClipboardTestWindow) void {
+        clipboard_test_owner = null;
+        _ = native.DestroyWindow(self.window);
+    }
+
+    fn createWindow() native.HWND {
+        return native.CreateWindowExW(0, std.unicode.utf8ToUtf16LeStringLiteral("STATIC"), null, 0, 0, 0, 1, 1, null, null, null, null);
+    }
+};
+
+var clipboard_test_owner: ?*anyopaque = null;
+
 test "clipboard lock contention is reported instead of acknowledging a lost copy or cut" {
+    const owner = try ClipboardTestWindow.init();
+    defer owner.deinit();
     const ClipboardLock = struct {
-        const native = @cImport({
-            @cInclude("windows.h");
-        });
+        const native = ClipboardTestWindow.native;
 
         ready: std.Thread.ResetEvent = .{},
         release: std.Thread.ResetEvent = .{},
         acquired: bool = false,
 
         fn hold(self: *@This()) void {
-            const window = native.CreateWindowExW(0, std.unicode.utf8ToUtf16LeStringLiteral("STATIC"), null, 0, 0, 0, 1, 1, null, null, null, null);
+            const window = ClipboardTestWindow.createWindow();
             defer if (window != null) {
                 _ = native.DestroyWindow(window);
             };
@@ -620,21 +646,32 @@ test "clipboard lock contention is reported instead of acknowledging a lost copy
     lock.ready.wait();
     if (!lock.acquired) return error.SkipZigTest;
     try std.testing.expectError(error.ClipboardWriteFailed, writeClipboardText("keep this tab name"));
-    try std.testing.expect(lastClipboardWriteError() != 0);
+    const failure = lastClipboardWriteFailure();
+    try std.testing.expectEqual(ClipboardWriteStage.open, failure.stage);
+    try std.testing.expect(failure.code != 0);
 }
 
-var last_clipboard_write_error: c_int = 0;
+const ClipboardWriteStage = enum(u32) {
+    prepare = c.VEX_CLIPBOARD_PREPARE,
+    open = c.VEX_CLIPBOARD_OPEN,
+    empty = c.VEX_CLIPBOARD_EMPTY,
+    publish = c.VEX_CLIPBOARD_PUBLISH,
+};
+const ClipboardWriteFailure = struct { stage: ClipboardWriteStage, code: c_int };
+var last_clipboard_write_failure: ClipboardWriteFailure = .{ .stage = .prepare, .code = 0 };
 
 /// Diagnostics only; copy failures retain their selection and are never retried silently.
-pub fn lastClipboardWriteError() c_int {
-    return last_clipboard_write_error;
+pub fn lastClipboardWriteFailure() ClipboardWriteFailure {
+    return last_clipboard_write_failure;
 }
 
 /// Publishes validated UTF-8 text; callers retain their source text when the clipboard is busy or fails.
 pub fn writeClipboardText(text: []const u8) !void {
     if (text.len == 0 or std.mem.indexOfScalar(u8, text, 0) != null or !std.unicode.utf8ValidateSlice(text)) return error.InvalidClipboardText;
-    last_clipboard_write_error = c.vex_clipboard_write(text.ptr, text.len);
-    if (last_clipboard_write_error != 0) return error.ClipboardWriteFailed;
+    var stage: u32 = undefined;
+    const code = c.vex_clipboard_write(text.ptr, text.len, if (@import("builtin").is_test) clipboard_test_owner else null, &stage);
+    last_clipboard_write_failure = .{ .stage = @enumFromInt(stage), .code = code };
+    if (code != 0) return error.ClipboardWriteFailed;
 }
 /// Reads CF_UNICODETEXT from the system clipboard and routes it through the active session paste handler.
 /// Shared earliest-deadline tick: metadata bursts and copy feedback must not postpone each other.
@@ -718,6 +755,8 @@ pub fn reportOperationFailure(err: anyerror) void {
     var buffer: [512]u8 = undefined;
     const text = if (err == error.ShellStartFailed and last_pty_launch_error != 0)
         std.fmt.bufPrint(&buffer, "{s} ({s}; Win32 {d})", .{ message, @errorName(err), last_pty_launch_error }) catch message
+    else if (err == error.ClipboardWriteFailed and last_clipboard_write_failure.code != 0)
+        std.fmt.bufPrint(&buffer, "{s} ({s}; Win32 {d})", .{ message, @tagName(last_clipboard_write_failure.stage), last_clipboard_write_failure.code }) catch message
     else
         std.fmt.bufPrint(&buffer, "{s} ({s})", .{ message, @errorName(err) }) catch message;
     dialogs.showOperationFailure(text);

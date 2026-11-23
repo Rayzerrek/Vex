@@ -49,7 +49,10 @@ extern "C" int vex_shell_path(uint8_t* bytes, size_t capacity, size_t* length) {
     return result;
 }
 
-extern "C" int vex_clipboard_write(const uint8_t* bytes, size_t length) {
+extern "C" int vex_clipboard_write(const uint8_t* bytes, size_t length, void* owner, uint32_t* stage) {
+    *stage = VEX_CLIPBOARD_PREPARE;
+    const HWND window = owner ? static_cast<HWND>(owner) : vex_native_window();
+    if (!IsWindow(window)) return ERROR_INVALID_WINDOW_HANDLE;
     if (!bytes || !length || length > 768 * 1024 - 4) return ERROR_INVALID_PARAMETER;
     int units = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)bytes, (int)length, nullptr, 0);
     if (units <= 0) return (int)GetLastError();
@@ -61,15 +64,21 @@ extern "C" int vex_clipboard_write(const uint8_t* bytes, size_t length) {
     wide[units] = 0;
     GlobalUnlock(memory);
     if (written != units) { GlobalFree(memory); return ERROR_NO_UNICODE_TRANSLATION; }
-    const HWND window = vex_native_window();
-    if (!OpenClipboard(IsWindow(window) ? window : nullptr)) {
+    *stage = VEX_CLIPBOARD_OPEN;
+    if (!OpenClipboard(window)) {
         const DWORD error = GetLastError();
         GlobalFree(memory);
         return (int)(error ? error : ERROR_ACCESS_DENIED);
     }
     DWORD error = ERROR_SUCCESS;
-    if (!EmptyClipboard() || !SetClipboardData(CF_UNICODETEXT, memory)) {
-        error = GetLastError();
+    *stage = VEX_CLIPBOARD_EMPTY;
+    if (!EmptyClipboard()) error = GetLastError();
+    else {
+        *stage = VEX_CLIPBOARD_PUBLISH;
+        if (!SetClipboardData(CF_UNICODETEXT, memory)) error = GetLastError();
+        else memory = nullptr; // Ownership transferred to Windows.
+    }
+    if (memory) {
         if (!error) error = ERROR_WRITE_FAULT;
         GlobalFree(memory);
     }

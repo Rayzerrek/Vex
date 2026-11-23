@@ -1776,22 +1776,28 @@ test "workspace autorepeat cannot fill the tab bar or repeatedly resize the PTY"
 test "installed PowerShell 7 launches in a new tab and its inherited splits" {
     var app = try recoveryTestApplication("unused-recovery-test.lua");
     defer app.deinit();
-    const launch = try terminal_shells.resolveShellLaunch(&app, .pwsh);
+    const launch = terminal_shells.resolveShellLaunch(&app, .pwsh) catch |err| {
+        std.debug.print("PowerShell 7 discovery failed: {s}\n", .{@errorName(err)});
+        return err;
+    };
     if (launch.kind != .pwsh) return error.SkipZigTest;
-    try app.initializeWorkspace();
+    app.initializeWorkspace() catch |err| {
+        std.debug.print("PowerShell 7 test could not start the initial workspace: {s}, Win32={d}\n", .{ @errorName(err), platform.lastPtyLaunchError() });
+        return err;
+    };
     app.executeShellPickerChoice(.new_tab, .pwsh) catch |err| {
         std.debug.print("PowerShell 7 tab launch failed: {s}, Win32={d}, program={s}\n", .{ @errorName(err), platform.lastPtyLaunchError(), launch.program });
         return err;
     };
     const original = app.activeSession().?;
-    try std.testing.expect(original.shell_launch == launch);
-    app.applyAction(.split_right, 0) catch |err| {
-        std.debug.print("PowerShell 7 split failed: {s}, Win32={d}, program={s}, directory={s}\n", .{ @errorName(err), platform.lastPtyLaunchError(), launch.program, original.directory.current().bytes });
-        return err;
-    };
-    try std.testing.expect(app.activeSession().?.shell_launch == launch);
-    try app.applyAction(.split_down, 0);
-    try std.testing.expect(app.activeSession().?.shell_launch == launch);
+    try std.testing.expectEqual(launch, original.shell_launch);
+    for ([_]platform.WorkspaceAction{ .split_right, .split_down }) |action| {
+        app.applyAction(action, 0) catch |err| {
+            std.debug.print("PowerShell 7 {s} failed: {s}, Win32={d}, program={s}, directory={s}\n", .{ @tagName(action), @errorName(err), platform.lastPtyLaunchError(), launch.program, original.directory.current().bytes });
+            return err;
+        };
+        try std.testing.expectEqual(launch, app.activeSession().?.shell_launch);
+    }
 }
 
 test "OSC identities bypass process polling in visible and hidden panes and late metadata is harmless" {
@@ -1880,6 +1886,8 @@ test "cancelling update restart clears the install intent without closing sessio
 }
 
 test "copy clears selection and rendered highlights while pointer copies preserve multi-click history" {
+    const owner = try platform.ClipboardTestWindow.init();
+    defer owner.deinit();
     var app = try recoveryTestApplication("unused-recovery-test.lua");
     defer app.deinit();
     const session = try app.addSession(app.startup_directory);
@@ -1896,11 +1904,10 @@ test "copy clears selection and rendered highlights while pointer copies preserv
         try session.terminal.setKeyboardSelection(0, 0, 4, 0);
         try std.testing.expect((try session.terminal.readFrame()).cells.items[0].selected);
         const accepted = app.onKey(shortcut.key, shortcut.modifiers);
-        if (!accepted) std.debug.print("copy shortcut rejected: key={d} modifiers={d} Win32={d}\n", .{ shortcut.key, shortcut.modifiers, platform.lastClipboardWriteError() });
         try std.testing.expect(accepted);
         try std.testing.expect(app.health == .running);
         const cleared = !try session.terminal.hasSelection();
-        if (!cleared) std.debug.print("copy retained selection: key={d} modifiers={d} Win32={d}\n", .{ shortcut.key, shortcut.modifiers, platform.lastClipboardWriteError() });
+        if (!cleared) logClipboardCopyFailure("keyboard copy retained selection");
         try std.testing.expect(cleared);
         for ((try session.terminal.readFrame()).cells.items) |cell| try std.testing.expect(!cell.selected);
     }
@@ -1914,13 +1921,18 @@ test "copy clears selection and rendered highlights while pointer copies preserv
         try std.testing.expectEqual(@as(u8, @intCast(click_count)), try session.terminal.selectionPress(1, 0, 12, 8));
         try session.terminal.selectionRelease(1, 0);
         const copied = session.copyAndClearSelection(app.allocator, app.cursorNowMs(), false) catch |err| {
-            std.debug.print("pointer copy failed: Win32={d}\n", .{platform.lastClipboardWriteError()});
+            logClipboardCopyFailure("pointer copy failed");
             return err;
         };
         try std.testing.expect(copied);
         try std.testing.expect(!try session.terminal.hasSelection());
         for ((try session.terminal.readFrame()).cells.items) |cell| try std.testing.expect(!cell.selected);
     }
+}
+
+fn logClipboardCopyFailure(context: []const u8) void {
+    const failure = platform.lastClipboardWriteFailure();
+    std.debug.print("{s}: stage={s}, Win32={d}\n", .{ context, @tagName(failure.stage), failure.code });
 }
 
 test "typing, encoded keys and paste reveal live input but viewport navigation and output preserve history" {
@@ -2328,7 +2340,7 @@ test "density commands resize live grids without replacing sessions or terminal 
     try std.testing.expectEqualDeep(initial, session.size.?);
 }
 
-test "GUI and Lua stay synchronized, malformed reloads and failed saves retain committed preferences" {
+test "GUI preferences round trip through Lua without persisting live sidebar toggles" {
     var temp = std.testing.tmpDir(.{});
     defer temp.cleanup();
     const root = try temp.dir.realpathAlloc(std.testing.allocator, ".");
@@ -2351,6 +2363,23 @@ test "GUI and Lua stay synchronized, malformed reloads and failed saves retain c
     try app.executeCommand(.hide_sidebar);
     try std.testing.expect(app.sidebar_collapsed);
     try std.testing.expect(!(try preferences.loadUserSettings(app.allocator, path)).show_tab_sidebar);
+}
+
+test "Lua reload applies valid preferences and rejects malformed updates" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(path);
+    const config = try std.fs.path.join(std.testing.allocator, &.{ path, "init.lua" });
+    defer std.testing.allocator.free(config);
+    var app = try recoveryTestApplication(config);
+    defer app.deinit();
+    defer platform.setFontPreferences(&preferences.default_font, 14) catch {};
+    var before = app.settings;
+    before.font_size = 21;
+    before.ui_density = .spacious;
+    before.show_tab_sidebar = false;
+    try app.commitPreferences(before);
     try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = "-- edited by hand\nvex.config.font_size = 19" });
     app.reloadUserConfiguration();
     try std.testing.expectEqual(@as(u8, 19), app.settings.font_size);
@@ -2362,19 +2391,43 @@ test "GUI and Lua stay synchronized, malformed reloads and failed saves retain c
     app.reloadUserConfiguration();
     try std.testing.expectEqualDeep(committed, app.settings);
     try std.testing.expect(app.health == .running);
-    // Backup replacement failure must prevent both disk replacement and live GUI changes.
-    try temp.dir.makeDir("init.backup.lua");
+}
+
+test "GUI preferences roll back when the Lua backup cannot be replaced" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const path = try temp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(path);
+    const config = try std.fs.path.join(std.testing.allocator, &.{ path, "init.lua" });
+    defer std.testing.allocator.free(config);
+    var app = try recoveryTestApplication(config);
+    defer app.deinit();
+    defer platform.setFontPreferences(&preferences.default_font, 14) catch {};
+
+    const original = "-- handwritten settings\nvex.config.font_size = 19";
+    try temp.dir.writeFile(.{ .sub_path = "init.lua", .data = original });
+    app.reloadUserConfiguration();
+    try std.testing.expectEqual(@as(f32, 19), platform.fontSize());
+    const committed = app.settings;
     try app.executeCommand(.hide_sidebar);
-    try app.executeCommand(.horizontal_tabs);
-    try std.testing.expectEqualDeep(committed, app.settings);
-    try std.testing.expect(app.sidebar_collapsed);
+
+    try temp.dir.makeDir("init.backup.lua");
+    var gui = committed;
     gui.font_size = 23;
+    gui.horizontal_tabs = true;
+    if (preferences.saveUserSettings(app.allocator, config, gui)) |_| {
+        return error.BackupShouldRejectReplacement;
+    } else |err| switch (err) {
+        error.AccessDenied, error.IsDir, error.PathAlreadyExists => {},
+        else => return err,
+    }
     try app.commitPreferences(gui);
     try std.testing.expectEqualDeep(committed, app.settings);
+    try std.testing.expect(app.sidebar_collapsed);
     try std.testing.expectEqual(@as(f32, 19), platform.fontSize());
     const source = try temp.dir.readFileAlloc(app.allocator, "init.lua", 65536);
     defer app.allocator.free(source);
-    try std.testing.expectEqualStrings("vex.config.font_size = ", source);
+    try std.testing.expectEqualStrings(original, source);
     try std.testing.expect(app.health == .running);
 }
 

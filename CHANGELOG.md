@@ -13,6 +13,7 @@
 - Expose the custom maximize button to Windows Snap Layouts and cancel caption-button clicks released outside the button.
 - Make Compact split and zoom actions immediate and keep activity glyphs static. Keep split drop outlines aligned with the hit target, and remove motion from shell and path pickers.
 - Clear the D3D12 backbuffer directly to the window background instead of blending a second full-window quad on every frame.
+- Include the failed Win32 step in clipboard-write errors without clearing the selection on failure.
 
 ## 2.1.1
 
